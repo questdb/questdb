@@ -95,7 +95,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                 case KEY_PER_FRAME -> new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
                 case NONE -> throw new UnsupportedOperationException();
             };
-            cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+            cursor = rowCursorFactory instanceof KeyOrderedRowCursorFactory keyOrderedFactory
+                    ? new KeyOrderedPageFrameRecordCursor(configuration, metadata, keyOrderedFactory, false, filter)
+                    : new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
             followedOrderByAdvice = indexOrder.isRequested();
             isTableOrder = indexOrder.isTableOrder();
         } catch (Throwable th) {

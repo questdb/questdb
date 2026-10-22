@@ -34,6 +34,47 @@ import org.junit.Test;
 public class ObjListTest {
 
     @Test
+    public void testClearCostFollowsSlotsInUse() {
+        final ObjList<Object> list = new ObjList<>(1_000_000);
+        final Object value = new Object();
+        final long start = System.nanoTime();
+        for (int i = 0; i < 20_000; i++) {
+            list.add(value);
+            list.clear();
+        }
+        final long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+        Assert.assertTrue("clear() must not wipe unused capacity", elapsedMillis < 500);
+    }
+
+    @Test
+    public void testClearReleasesSlotsPastSize() {
+        final Object value = new Object();
+        final ObjList<Object> shrunk = new ObjList<>();
+        for (int i = 0; i < 32; i++) {
+            shrunk.add(value);
+        }
+        shrunk.setPos(4);
+        shrunk.clear();
+        Assert.assertTrue("slots past a shrunk size must be cleared", shrunk.hasOnlyNullsBeyondSizeForTesting());
+        shrunk.setPos(32);
+        for (int i = 0; i < 32; i++) {
+            Assert.assertNull(shrunk.getQuick(i));
+        }
+
+        final ObjList<Object> setPastSize = new ObjList<>();
+        setPastSize.add(value);
+        setPastSize.set(12, value);
+        setPastSize.set(5, 10, value);
+        setPastSize.clear();
+        Assert.assertTrue("slots set past the size must be cleared", setPastSize.hasOnlyNullsBeyondSizeForTesting());
+
+        final ObjList<Object> setAll = new ObjList<>();
+        setAll.setAll(2, value);
+        setAll.clear();
+        Assert.assertTrue("slots setAll() filled past the size must be cleared", setAll.hasOnlyNullsBeyondSizeForTesting());
+    }
+
+    @Test
     public void testContains() {
         Assert.assertTrue(list("a", "b", "c").contains("a"));
         Assert.assertTrue(list("a", "b", "c").contains("b"));

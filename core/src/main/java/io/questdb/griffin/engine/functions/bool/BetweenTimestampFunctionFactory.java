@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -90,6 +91,10 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
 
+        fromFn = CastDateToTimestampFunctionFactory.toNanosOperand(fromFn, argType);
+        toFn = CastDateToTimestampFunctionFactory.toNanosOperand(toFn, argType);
+        fromType = ColumnType.getTimestampType(fromFn.getType());
+        toType = ColumnType.getTimestampType(toFn.getType());
         TimestampDriver driver = ColumnType.getTimestampDriver(argType);
 
         if (fromFn.isConstant() && toFn.isConstant()) {

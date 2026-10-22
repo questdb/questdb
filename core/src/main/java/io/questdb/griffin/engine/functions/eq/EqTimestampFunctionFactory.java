@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -70,10 +71,15 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
+        final int timestampType = ColumnType.getHigherPrecisionTimestampType(
+                ColumnType.getTimestampType(left.getType()),
+                ColumnType.getTimestampType(right.getType())
+        );
+        assert ColumnType.isTimestamp(timestampType);
+        left = CastDateToTimestampFunctionFactory.toNanosOperand(left, timestampType);
+        right = CastDateToTimestampFunctionFactory.toNanosOperand(right, timestampType);
         int leftType = ColumnType.getTimestampType(left.getType());
         int rightType = ColumnType.getTimestampType(right.getType());
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
-        assert ColumnType.isTimestamp(timestampType);
 
         // Equality is symmetric: normalize so the lower-precision (converting) side is
         // always on the left. That removes the need for mirrored Right* variants.

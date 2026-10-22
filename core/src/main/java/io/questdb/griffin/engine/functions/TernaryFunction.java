@@ -24,19 +24,20 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public interface TernaryFunction extends Function {
 
     @Override
     default void close() {
-        getLeft().close();
-        getCenter().close();
-        getRight().close();
+        final Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, getLeft()), getCenter());
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, getRight()));
     }
 
     @Override

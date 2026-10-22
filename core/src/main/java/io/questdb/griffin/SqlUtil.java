@@ -115,28 +115,31 @@ public class SqlUtil {
     public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
         try {
             return driver.fromDate(parsePGDate(value));
-        } catch (NumericException ignore) {
+        } catch (NumericException | ImplicitCastException ignore) {
             throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
         }
     }
 
     public static long castPGDates(Utf8Sequence value, int fromColumnType, TimestampDriver driver) {
         try {
-            // The common case needs neither an ASCII scan nor UTF-16 decoding.
-            return driver.fromDate(parsePGDate(value.asAsciiCharSequence()));
-        } catch (NumericException ignore) {
-        }
-        // A failed parse may still be a valid localized time-zone name.
-        // Avoid decoding when the false ASCII hint was merely conservative.
-        if (!Utf8s.isAscii(value)) {
-            final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
-            utf16Sink.clear();
-            if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
-                try {
-                    return driver.fromDate(parsePGDate(utf16Sink));
-                } catch (NumericException ignore) {
+            try {
+                // The common case needs neither an ASCII scan nor UTF-16 decoding.
+                return driver.fromDate(parsePGDate(value.asAsciiCharSequence()));
+            } catch (NumericException ignore) {
+            }
+            // A failed parse may still be a valid localized time-zone name.
+            // Avoid decoding when the false ASCII hint was merely conservative.
+            if (!Utf8s.isAscii(value)) {
+                final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
+                utf16Sink.clear();
+                if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
+                    try {
+                        return driver.fromDate(parsePGDate(utf16Sink));
+                    } catch (NumericException ignore) {
+                    }
                 }
             }
+        } catch (ImplicitCastException ignore) {
         }
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }

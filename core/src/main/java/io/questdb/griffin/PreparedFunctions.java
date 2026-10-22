@@ -45,7 +45,8 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * Owns the executable roots the parser builds while binding, one slot per bound expression, and the constant arguments
- * and column leaves of calls the binder leaves unconstructed, until a consumer adopts, retargets or closes them.
+ * other than fixed-size literals and the column leaves of calls the binder leaves unconstructed, until a consumer
+ * adopts, retargets or closes them.
  */
 public final class PreparedFunctions implements Mutable {
     private final ObjectPool<Entry> entries;

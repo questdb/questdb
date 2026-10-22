@@ -818,10 +818,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void union(long lo, long hi) {
-        if (isEmptySet()) {
-            return;
-        }
-
         if (dynamicRangeList.size() == 0) {
             staticIntervals.add(lo, hi);
             if (intervalApplied) {
@@ -836,10 +832,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        if (isEmptySet()) {
-            return;
-        }
-
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         if (containsDateVariable(seq, lo, lim)) {
@@ -872,12 +864,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void unionRuntimeTimestamp(Function function, int functionPosition) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(function);
-            return;
-        }
-
         try {
             final boolean isCursor = function.getType() == ColumnType.CURSOR;
             reserveEncodedIntervals(1, isCursor ? 1 : 0);
@@ -1223,10 +1209,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void unionCompiledTickExpr(Function expr) {
-        if (isEmptySet()) {
-            Misc.free(expr);
-            return;
-        }
         try {
             reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);

@@ -121,19 +121,6 @@ public final class PushdownFilterExtractor {
     }
 
     /**
-     * Reports whether a negated range comparison over this column type may drive row group pruning. Its condition
-     * prunes only a row group whose null count is zero, which has to prove that no row compares as NULL. CHAR fails
-     * that: the writer stores {@code Numbers.CHAR_NULL} as an ordinary value. FLOAT and DOUBLE also fail because
-     * external writers can store NaN as an ordinary value without including it in the null count or min/max.
-     */
-    public static boolean isNullMatchingPushable(int columnType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> false;
-            default -> true;
-        };
-    }
-
-    /**
      * Rebuilds a constant DECIMAL function so its storage tag and scale match the
      * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
      * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes

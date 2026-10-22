@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.PlanSink;
@@ -49,6 +50,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 /**
@@ -63,9 +65,13 @@ import org.junit.Assert;
  * failure paths are reached through the table function's metadata instead:
  * {@link #assertMetadataFaultSweep} fails each {@code getColumnType()} call a compilation makes, one
  * at a time; {@link #assertCompileOomSweep} covers the constructors that do allocate.
+ * {@code owned_long} fails its own lifecycle on demand: {@link #assertLongInstantiationFaultSweep} fails
+ * each instantiation a compilation makes, and {@link #assertCursorFails} runs a query whose
+ * {@code owned_long} fails {@code init()} or its value read.
  */
 final class OwnershipFixture implements AutoCloseable {
     private static final String LONG_FUNCTION = "owned_long";
+    private static final String LONG_INSTANTIATION_FAULT = "owned_long instantiation fault";
     private static final int OOM_SWEEP_SLACK_MAX = 16 * 1024 * 1024;
     private static final int OOM_SWEEP_STEP = 64;
     private static final String TABLE_FUNCTION = "owned_table";
@@ -75,7 +81,12 @@ final class OwnershipFixture implements AutoCloseable {
     private final ObjList<TrackingFactory> tables = new ObjList<>();
     private int columnTypeCalls;
     private int failingColumnTypeCall = -1;
+    private int failingLongInstantiation = -1;
+    private boolean isLongInstantiationFaultRaised;
     private RuntimeException longCloseFailure;
+    private RuntimeException longInitFailure;
+    private int longInstantiations;
+    private RuntimeException longReadFailure;
     private RuntimeException metadataFailure;
 
     OwnershipFixture(CairoEngine engine) {
@@ -108,8 +119,14 @@ final class OwnershipFixture implements AutoCloseable {
             @Override
             public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
                                         CairoConfiguration configuration, SqlExecutionContext context) {
+                if (++longInstantiations == failingLongInstantiation) {
+                    isLongInstantiationFaultRaised = true;
+                    throw new RuntimeException(LONG_INSTANTIATION_FAULT);
+                }
                 final TrackingLong function = new TrackingLong(args.getQuick(0));
                 function.closeFailure = longCloseFailure;
+                function.initFailure = longInitFailure;
+                function.readFailure = longReadFailure;
                 longs.add(function);
                 return function;
             }
@@ -154,6 +171,72 @@ final class OwnershipFixture implements AutoCloseable {
             metadataFailure = null;
         }
         reset();
+    }
+
+    /**
+     * Compiles {@code sql} once, without the armed close failure, to count the {@code owned_long}
+     * instantiations it makes, then compiles it again failing each of them in turn. Every injected
+     * failure must reach the caller unmasked, carry any armed close failure as a suppressed exception,
+     * and leave every instantiated owner closed exactly once. An armed close failure that ends the
+     * compilation before it reaches the failing instantiation must reach the caller itself.
+     */
+    void assertLongInstantiationFaultSweep(SqlCompiler compiler, SqlExecutionContext context, String sql) throws SqlException {
+        reset();
+        final RuntimeException closeFailure = longCloseFailure;
+        longCloseFailure = null;
+        try {
+            compileAndClose(compiler, context, sql);
+        } finally {
+            longCloseFailure = closeFailure;
+        }
+        assertAllClosedOnce();
+        final int instantiationCount = longInstantiations;
+        try {
+            for (int call = 1; call <= instantiationCount; call++) {
+                reset();
+                failingLongInstantiation = call;
+                final Throwable thrown = Assert.assertThrows(Throwable.class, () -> compiler.compile(sql, context));
+                if (isLongInstantiationFaultRaised) {
+                    if (!(thrown instanceof FlyweightMessageContainer container)
+                            || !Chars.contains(container.getFlyweightMessage(), LONG_INSTANTIATION_FAULT)) {
+                        throw new AssertionError("injected failure was masked at instantiation " + call, thrown);
+                    }
+                    assertCloseFailuresSuppressed(thrown);
+                } else if (thrown != longCloseFailure) {
+                    throw new AssertionError("compilation failed before instantiation " + call, thrown);
+                }
+                assertClosedOnce();
+            }
+        } finally {
+            failingLongInstantiation = -1;
+        }
+        reset();
+    }
+
+    /**
+     * Compiles {@code sql} and drains its cursor, expecting {@code failure}, an armed init or read failure,
+     * from either. The failure must reach the caller unmasked, and once the factory closes every
+     * instantiated owner must be closed exactly once.
+     */
+    void assertCursorFails(SqlCompiler compiler, SqlExecutionContext context, String sql, RuntimeException failure) {
+        reset();
+        RecordCursorFactory factory = null;
+        Throwable thrown = null;
+        try {
+            factory = compiler.compile(sql, context).getRecordCursorFactory();
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                TestUtils.drainCursor(cursor);
+            }
+        } catch (Throwable th) {
+            thrown = th;
+        }
+        if (factory != null) {
+            closeExpectingArmedFailure(factory);
+        }
+        if (thrown != failure) {
+            throw new AssertionError("injected failure was masked", thrown);
+        }
+        assertAllClosedOnce();
     }
 
     /**
@@ -236,6 +319,14 @@ final class OwnershipFixture implements AutoCloseable {
         longCloseFailure = failure;
     }
 
+    void failLongInit(RuntimeException failure) {
+        longInitFailure = failure;
+    }
+
+    void failLongRead(RuntimeException failure) {
+        longReadFailure = failure;
+    }
+
     int longCount() {
         return longs.size();
     }
@@ -244,6 +335,8 @@ final class OwnershipFixture implements AutoCloseable {
         tables.clear();
         longs.clear();
         columnTypeCalls = 0;
+        longInstantiations = 0;
+        isLongInstantiationFaultRaised = false;
     }
 
     int tableCount() {
@@ -395,6 +488,8 @@ final class OwnershipFixture implements AutoCloseable {
         private final Function arg;
         private int closeCount;
         private RuntimeException closeFailure;
+        private RuntimeException initFailure;
+        private RuntimeException readFailure;
 
         private TrackingLong(Function arg) {
             this.arg = arg;
@@ -416,12 +511,23 @@ final class OwnershipFixture implements AutoCloseable {
 
         @Override
         public long getLong(Record rec) {
+            if (readFailure != null) {
+                throw readFailure;
+            }
             return arg.getLong(rec);
         }
 
         @Override
         public String getName() {
             return LONG_FUNCTION;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            if (initFailure != null) {
+                throw initFailure;
+            }
+            UnaryFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

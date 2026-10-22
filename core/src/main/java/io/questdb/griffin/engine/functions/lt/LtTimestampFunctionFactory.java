@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
+import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -69,12 +70,17 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function left = RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.TIMESTAMP);
-        final Function right = RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.TIMESTAMP);
-        int leftType = ColumnType.getTimestampType(left.getType());
-        int rightType = ColumnType.getTimestampType(right.getType());
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
+        Function left = RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.TIMESTAMP);
+        Function right = RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.TIMESTAMP);
+        final int timestampType = ColumnType.getHigherPrecisionTimestampType(
+                ColumnType.getTimestampType(left.getType()),
+                ColumnType.getTimestampType(right.getType())
+        );
         assert ColumnType.isTimestamp(timestampType);
+        left = CastDateToTimestampFunctionFactory.toNanosOperand(left, timestampType);
+        right = CastDateToTimestampFunctionFactory.toNanosOperand(right, timestampType);
+        final int leftType = ColumnType.getTimestampType(left.getType());
+        final int rightType = ColumnType.getTimestampType(right.getType());
         if (leftType == rightType) {
             return new Func(left, right);
         } else if (leftType != timestampType) {

@@ -2421,6 +2421,25 @@ public final class TestUtils {
      * counting failures instead reports them as "expected:&lt;0&gt; but was:&lt;3&gt;" -- no message, no stack
      * trace, no failing value.
      */
+    /**
+     * Rewrites the {@code created_by} QuestDB's parquet writer stamps on every footer of a file into one of the same
+     * length, so the file reads as another writer's.
+     */
+    public static void rewriteParquetCreatedBy(String path) throws IOException {
+        final java.nio.file.Path file = Paths.get(path);
+        final byte[] bytes = java.nio.file.Files.readAllBytes(file);
+        final byte[] createdBy = "QuestDB version 9.0".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        boolean isFound = false;
+        for (int i = 0, n = bytes.length - createdBy.length; i <= n; i++) {
+            if (Arrays.equals(bytes, i, i + createdBy.length, createdBy, 0, createdBy.length)) {
+                bytes[i] = 'X';
+                isFound = true;
+            }
+        }
+        Assert.assertTrue("created_by not found", isFound);
+        java.nio.file.Files.write(file, bytes);
+    }
+
     public static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
         final AtomicReference<Throwable> firstError = new AtomicReference<>();

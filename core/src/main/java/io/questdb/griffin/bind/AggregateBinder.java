@@ -830,12 +830,15 @@ final class AggregateBinder implements Mutable {
             return false;
         }
         if (left.type == ExpressionNode.LITERAL) {
-            final boolean isLeftOuter = ctx.functionBinder.isOuterColumn(left, input, sourceAlias(source));
-            final boolean isRightOuter = ctx.functionBinder.isOuterColumn(right, input, sourceAlias(source));
+            final CharSequence alias = sourceAlias(source);
+            final int leftIndex = FunctionBinder.findColumn(left, input, alias);
+            final int rightIndex = FunctionBinder.findColumn(right, input, alias);
+            final boolean isLeftOuter = leftIndex == -1 && ctx.functionBinder.isOuterScopeColumn(left);
+            final boolean isRightOuter = rightIndex == -1 && ctx.functionBinder.isOuterScopeColumn(right);
             if (isLeftOuter || isRightOuter) {
                 return isLeftOuter && isRightOuter && Chars.equalsIgnoreCase(left.token, right.token);
             }
-            return isSameColumn(left, right, input, source);
+            return leftIndex >= 0 && leftIndex == rightIndex;
         }
         if (left.type == ExpressionNode.CONSTANT ? !Chars.equals(left.token, right.token) : !Chars.equalsIgnoreCase(left.token, right.token)) {
             return false;

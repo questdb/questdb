@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.model.RuntimeIntervalModel;
@@ -68,6 +69,11 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.InputStream;
+import java.lang.classfile.Attributes;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.MethodModel;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -840,6 +846,24 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final long expectedNumOfRows = 300 + 1;
 
         testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testHasNextFitsHotInlineSize() throws Exception {
+        // C2 does not inline a hot callee whose bytecode exceeds FreqInlineSize, 325 bytes by default, so a larger
+        // hasNext() costs every row loop that drives the scan, such as a hash join's build and probe loops, a call.
+        final byte[] classBytes;
+        try (InputStream in = PageFrameRecordCursorImpl.class.getResourceAsStream("PageFrameRecordCursorImpl.class")) {
+            Assert.assertNotNull(in);
+            classBytes = in.readAllBytes();
+        }
+        int codeLength = -1;
+        for (MethodModel method : ClassFile.of().parse(classBytes).methods()) {
+            if (method.methodName().equalsString("hasNext") && method.methodType().equalsString("()Z")) {
+                codeLength = method.findAttribute(Attributes.code()).orElseThrow().codeLength();
+            }
+        }
+        Assert.assertTrue("hasNext() bytecode exceeds the C2 hot inline size", codeLength > 0 && codeLength <= 325);
     }
 
     @Test

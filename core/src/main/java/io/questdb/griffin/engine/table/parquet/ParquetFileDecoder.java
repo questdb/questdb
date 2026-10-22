@@ -222,7 +222,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     @Override
     public boolean hasNoNulls(int rowGroupIndex, int columnIndex) {
         assert ptr != 0;
-        return rowGroupColumnHasNoNulls(ptr, rowGroupIndex, columnIndex);
+        return rowGroupColumnHasNoSqlNulls(ptr, rowGroupIndex, columnIndex);
     }
 
     public Metadata metadata() {
@@ -375,7 +375,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int encoding
     ) throws CairoException;
 
-    private static native boolean rowGroupColumnHasNoNulls(
+    private static native boolean rowGroupColumnHasNoSqlNulls(
             long decoderPtr,
             int rowGroupIndex,
             int columnIndex

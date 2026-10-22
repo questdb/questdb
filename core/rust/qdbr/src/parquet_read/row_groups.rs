@@ -20,6 +20,7 @@ use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+use qdb_parquet_meta::convert::is_written_by_questdb;
 use std::{cmp, mem::size_of, ptr, slice};
 
 // The metadata fields are accessed from Java.
@@ -1714,18 +1715,6 @@ impl ParquetDecoder {
             .any(|encoding| encoding.0 == parquet_encoding))
     }
 
-    /// Reports whether the chunk's statistics prove it holds no NULL.
-    pub fn row_group_column_has_no_nulls(
-        &self,
-        row_group_index: u32,
-        column_index: u32,
-    ) -> ParquetResult<bool> {
-        Ok(
-            Self::chunk_null_count(self.column_chunk_meta(row_group_index, column_index)?)
-                == Some(0),
-        )
-    }
-
     fn column_chunk_meta(
         &self,
         row_group_index: u32,
@@ -1748,6 +1737,95 @@ impl ParquetDecoder {
                 column_index,
                 columns.len()
             )
+        })
+    }
+
+    /// Reports whether the chunk's statistics prove it holds no SQL NULL. A zero null count rules
+    /// out Parquet nulls only: an external writer stores a value that reads back as the NULL
+    /// sentinel of the column type as an ordinary value and does not count it, so the bounds have
+    /// to exclude the sentinel as well.
+    ///
+    /// - BOOLEAN, BYTE, SHORT, VARCHAR, STRING and SYMBOL have no sentinel among their values.
+    /// - INT and LONG, and DATE and TIMESTAMP stored as INT64, read the stored value as is, and
+    ///   their sentinel is the domain minimum, so a minimum above it excludes it. Both bounds are
+    ///   read in signed order; a writer that ordered them unsigned leaves a value at or past the
+    ///   sign boundary as a minimum above the maximum, which declines.
+    /// - IPv4 reads the stored value as is and its sentinel is 0, which a non-zero minimum in
+    ///   unsigned order excludes; a writer that ordered the bounds signed leaves 0 as a minimum,
+    ///   or a negative minimum above the maximum in unsigned order, which declines.
+    /// - DATE stored as INT32 days reads back as days times 86,400,000 milliseconds, which never
+    ///   reaches LONG's minimum.
+    /// - A decimal sentinel lies outside every precision of its width, so bounds within the
+    ///   precision exclude it.
+    /// - CHAR reads an INT32 value as a 16-bit char, and its sentinel is 0, so bounds inside
+    ///   1..=65535 exclude both a stored 0 and a value that truncates to one.
+    /// - FLOAT and DOUBLE also read an infinity as NULL, which the bounds of a finite range
+    ///   exclude. Their NaN is NULL too, and other writers keep it out of both the null count and
+    ///   the bounds, so only a file QuestDB's writer wrote, which writes NaN as a Parquet null,
+    ///   can prove it absent.
+    pub fn row_group_column_has_no_sql_nulls(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<bool> {
+        let column = self.column_chunk_meta(row_group_index, column_index)?;
+        if Self::chunk_null_count(column) != Some(0) {
+            return Ok(false);
+        }
+        let Some(column_type) = self
+            .columns
+            .get(column_index as usize)
+            .and_then(|c| c.column_type)
+        else {
+            return Ok(false);
+        };
+        let physical_type = column.physical_type();
+        let statistics = column
+            .column_chunk()
+            .meta_data
+            .as_ref()
+            .and_then(|m| m.statistics.as_ref());
+        let (min, max) = Self::comparable_min_max(statistics, &physical_type, column_type.code());
+        let tag = column_type.tag();
+        Ok(match (tag, physical_type) {
+            (
+                ColumnTypeTag::Boolean
+                | ColumnTypeTag::Byte
+                | ColumnTypeTag::Short
+                | ColumnTypeTag::Varchar
+                | ColumnTypeTag::String
+                | ColumnTypeTag::Symbol,
+                _,
+            ) => true,
+            (ColumnTypeTag::Int, PhysicalType::Int32) => {
+                matches!(i32_bounds(min, max), Some((lo, hi)) if lo != nulls::INT && lo <= hi)
+            }
+            (ColumnTypeTag::IPv4, PhysicalType::Int32) => {
+                matches!(i32_bounds(min, max), Some((lo, hi)) if lo != nulls::IPV4 && (lo as u32) <= (hi as u32))
+            }
+            (ColumnTypeTag::Date, PhysicalType::Int32) => true,
+            (ColumnTypeTag::Char, PhysicalType::Int32) => {
+                matches!(i32_bounds(min, max), Some((lo, hi)) if lo > 0 && lo <= hi && hi <= u16::MAX as i32)
+            }
+            (ColumnTypeTag::Float, PhysicalType::Float) => {
+                is_written_by_questdb(self.metadata.created_by.as_deref())
+                    && matches!(f32_bounds(min, max), Some((lo, hi)) if lo.is_finite() && hi.is_finite())
+            }
+            (ColumnTypeTag::Double, PhysicalType::Double) => {
+                is_written_by_questdb(self.metadata.created_by.as_deref())
+                    && matches!(f64_bounds(min, max), Some((lo, hi)) if lo.is_finite() && hi.is_finite())
+            }
+            (
+                ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                PhysicalType::Int64,
+            ) => matches!(i64_bounds(min, max), Some((lo, hi)) if lo != nulls::LONG && lo <= hi),
+            _ if is_decimal_tag(tag) => decimal_bounds_within_precision(
+                &physical_type,
+                min,
+                max,
+                column_type.decimal_precision(),
+            )?,
+            _ => false,
         })
     }
 
@@ -4270,7 +4348,75 @@ fn resize_signed_be(src: &[u8], dst: &mut [u8]) -> bool {
     true
 }
 
-/// Returns a decimal column's statistics as big-endian two's complement integers. INT32 and
+fn i32_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(i32, i32)> {
+    Some((
+        i32::from_le_bytes(min?.try_into().ok()?),
+        i32::from_le_bytes(max?.try_into().ok()?),
+    ))
+}
+
+fn i64_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(i64, i64)> {
+    Some((
+        i64::from_le_bytes(min?.try_into().ok()?),
+        i64::from_le_bytes(max?.try_into().ok()?),
+    ))
+}
+
+fn f32_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(f32, f32)> {
+    Some((
+        f32::from_le_bytes(min?.try_into().ok()?),
+        f32::from_le_bytes(max?.try_into().ok()?),
+    ))
+}
+
+fn f64_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(f64, f64)> {
+    Some((
+        f64::from_le_bytes(min?.try_into().ok()?),
+        f64::from_le_bytes(max?.try_into().ok()?),
+    ))
+}
+
+/// Reports whether a decimal column's statistics prove every value lies strictly between
+/// -10^precision and 10^precision.
+fn decimal_bounds_within_precision(
+    physical_type: &PhysicalType,
+    min_bytes: Option<&[u8]>,
+    max_bytes: Option<&[u8]>,
+    precision: u8,
+) -> ParquetResult<bool> {
+    let mut min_buf = [0u8; 8];
+    let mut max_buf = [0u8; 8];
+    let Some((min, max)) = decimal_stats_be(
+        physical_type,
+        min_bytes,
+        max_bytes,
+        &mut min_buf,
+        &mut max_buf,
+    ) else {
+        return Ok(false);
+    };
+    let (w0, w1, w2, w3) = pow10_i256(precision as u32)?;
+    let mut upper = [0u8; DECIMAL_MAX_SIZE];
+    upper[..8].copy_from_slice(&w0.to_be_bytes());
+    upper[8..16].copy_from_slice(&w1.to_be_bytes());
+    upper[16..24].copy_from_slice(&w2.to_be_bytes());
+    upper[24..].copy_from_slice(&w3.to_be_bytes());
+    let mut lower = upper.map(|b| !b);
+    for b in lower.iter_mut().rev() {
+        let (sum, carry) = b.overflowing_add(1);
+        *b = sum;
+        if !carry {
+            break;
+        }
+    }
+    Ok(
+        compare_signed_be_varlen(min, &lower) == cmp::Ordering::Greater
+            && compare_signed_be_varlen(max, &upper) == cmp::Ordering::Less
+            && compare_signed_be_varlen(min, max) != cmp::Ordering::Greater,
+    )
+}
+
+/// Returns a decimal column's statistics as big-endian two's complement integers./// Returns a decimal column's statistics as big-endian two's complement integers. INT32 and
 /// INT64 statistics are little-endian, so this reverses them into the caller's buffers;
 /// FIXED_LEN_BYTE_ARRAY and BYTE_ARRAY statistics already are big-endian.
 fn decimal_stats_be<'a>(

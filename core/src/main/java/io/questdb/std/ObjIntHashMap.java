@@ -32,7 +32,7 @@ import java.util.Iterator;
 
 public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final Object noEntryValue = new Object();
+    private static final Object noEntryValue = null;
     private final EntryIterator iterator = new EntryIterator();
     private final double loadFactor;
     private final int noKeyValue;

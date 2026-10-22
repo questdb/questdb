@@ -117,8 +117,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public void toTop() {
-        frameCount = 0;
-        frameCursor.toTop();
+        toTopFrames();
     }
 
     protected void init(@Nullable MemoryTracker memoryTracker) {
@@ -154,6 +153,15 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         recordB.clear();
         frameMemoryPool.releaseParquetBuffers();
         frameCount = 0;
+    }
+
+    /**
+     * Moves the page frame cursor back to its first page frame and numbers the frames from zero again, keeping the
+     * state of the rows the cursor read.
+     */
+    protected final void toTopFrames() {
+        frameCount = 0;
+        frameCursor.toTop();
     }
 
     private void closeFrameResources() {

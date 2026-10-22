@@ -409,7 +409,7 @@ final class TemporalJoinBinder {
             return Integer.MAX_VALUE;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            return FunctionBinder.findColumn(node, scope, alias) == -1 && !ctx.functionBinder.isOuterColumn(node, scope, alias)
+            return FunctionBinder.findColumn(node, scope, alias) == -1 && !ctx.functionBinder.isOuterScopeColumn(node)
                     ? node.position : Integer.MAX_VALUE;
         }
         int position = Math.min(firstUnresolvableReference(node.lhs, scope, alias), firstUnresolvableReference(node.rhs, scope, alias));

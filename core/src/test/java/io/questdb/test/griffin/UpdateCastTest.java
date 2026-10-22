@@ -144,7 +144,7 @@ public class UpdateCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE uc_range (d DATE, ns TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO uc_range VALUES ('2020-01-01', NULL, '2020-01-01'), ('3000-01-01', NULL, '2020-01-02')");
-            assertExceptionNoLeakCheck("UPDATE uc_range SET ns = d", -1, "inconvertible value: 32503680000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertExceptionNoLeakCheck("UPDATE uc_range SET ns = d", -1, "inconvertible value: 32503680000000 [DATE -> TIMESTAMP_NS]");
             assertQuery("SELECT d, ns FROM uc_range").noLeakCheck().expectSize().returns("""
                     d\tns
                     2020-01-01T00:00:00.000Z\t
@@ -162,7 +162,7 @@ public class UpdateCastTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             suspended\twriterTxn\tsequencerTxn\terrorMessage
-                            true\t1\t2\tinconvertible value: 32503680000000000 [TIMESTAMP -> TIMESTAMP_NS]
+                            true\t1\t2\tinconvertible value: 32503680000000 [DATE -> TIMESTAMP_NS]
                             """);
             assertQuery("SELECT d, ns FROM uc_range_wal").noLeakCheck().expectSize().returns("""
                     d\tns

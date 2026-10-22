@@ -1471,8 +1471,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     /**
      * Hands each constant argument and column leaf of a call left unconstructed to the prepared functions, which own
-     * it until the generator adopts it for the call's description, so generation does not build it again. The caller
-     * frees the remaining arguments; on failure this frees every argument it has not handed over.
+     * it until the generator adopts it for the call's description, so generation does not build it again. A
+     * fixed-size literal is the exception: the generator builds it from its description, which costs less than
+     * preparing it. The caller frees the remaining arguments; on failure this frees every argument it has not handed
+     * over.
      */
     private void prepareUnconstructedArguments(ObjList<Function> args) {
         try {
@@ -1480,7 +1482,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 final Function arg = args.getQuick(i);
                 final BoundExpression argument = arguments.getQuick(i);
                 if (arg instanceof ConstantFunction && !(arg instanceof TypeConstant) && argument instanceof ConstantExpression constant
-                        && constant.getDataType() == arg.getType()) {
+                        && (!constant.isLiteral() || ColumnType.isVarSize(constant.getDataType())) && constant.getDataType() == arg.getType()) {
                     final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
                     ctx.preparedFunctions.describe(entry, constant);
                     ctx.preparedFunctions.own(entry, arg);

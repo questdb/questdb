@@ -33,6 +33,7 @@ import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -3796,6 +3797,58 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedFloatingPointRangePrunesOnlyQuestDBWrittenFiniteRowGroups() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            // Rows 101-150 hold NULLs, row 250 +Infinity and row 350 -Infinity, which QuestDB also reads as NULL.
+            final String values = """
+                    SELECT
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL WHEN x = 250 THEN power(10.0, 400)
+                            WHEN x = 350 THEN -power(10.0, 400) ELSE x::DOUBLE END d,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL WHEN x = 250 THEN power(10.0, 400)::FLOAT
+                            WHEN x = 350 THEN -power(10.0, 400)::FLOAT ELSE x::FLOAT END f,
+                        timestamp_sequence('2024-01-01', 10_000) ts
+                    FROM long_sequence(5_000)
+                    """;
+            execute("CREATE TABLE x AS (" + values + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE oracle AS (" + values + ")");
+            execute("INSERT INTO x VALUES (1.0, 1.0, '2024-01-02')");
+            execute("INSERT INTO oracle VALUES (1.0, 1.0, '2024-01-02')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String[] predicates = {"NOT (d < 4901.0)", "NOT (4901.0 > d)", "NOT (f < 4901.0)"};
+            // Every row group below 4901 fails the negation except the three holding NULLs and infinities.
+            for (String predicate : predicates) {
+                Assert.assertEquals(predicate, 46, prunedCountMatchingOracle(predicate));
+            }
+
+            // An O3 write rewrites the parquet partition and keeps the writer QuestDB's.
+            execute("INSERT INTO x VALUES (2.0, 2.0, '2024-01-01T00:00:00.000001Z')");
+            execute("INSERT INTO oracle VALUES (2.0, 2.0, '2024-01-01T00:00:00.000001Z')");
+            for (String predicate : predicates) {
+                Assert.assertTrue(predicate, prunedCountMatchingOracle(predicate) > 0);
+            }
+
+            // ATTACH builds the _pm of a parquet partition from its footer, and trusts NaN to be a Parquet null only
+            // when QuestDB's writer wrote the file.
+            for (boolean isWrittenByQuestDB : new boolean[]{true, false}) {
+                execute("ALTER TABLE x DETACH PARTITION LIST '2024-01-01'");
+                final Path table = Path.of(configuration.getDbRoot().toString(), engine.verifyTableName("x").getDirName());
+                final Path attach = table.resolve("2024-01-01" + configuration.getAttachPartitionSuffix());
+                Files.move(table.resolve("2024-01-01.detached"), attach);
+                Files.delete(attach.resolve(TableUtils.PARQUET_METADATA_FILE_NAME));
+                if (!isWrittenByQuestDB) {
+                    TestUtils.rewriteParquetCreatedBy(attach.resolve(TableUtils.PARQUET_PARTITION_NAME).toString());
+                }
+                execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
+                for (String predicate : predicates) {
+                    final int pruned = prunedCountMatchingOracle(predicate);
+                    Assert.assertEquals(predicate, isWrittenByQuestDB, pruned > 0);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNegatedRangeComparisonPrunesOnlyNullFreeRowGroups() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -3819,10 +3872,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "NOT (s < '4901')"}) {
                 assertPrunedCount(predicate, "count\n150\n", 48);
             }
-            assertPrunedCount("NOT (d < 4901.0)", "count\n150\n", 0);
+            // QuestDB's writer writes a DOUBLE NULL as a Parquet null, so the null count proves the other groups
+            // NULL-free.
+            assertPrunedCount("NOT (d < 4901.0)", "count\n150\n", 48);
             assertPrunedCount("val >= 4901", "count\n100\n", 49);
-            // CHAR stores its NULL as a value the null count misses, so the 50 NULL rows must not be pruned.
-            assertPrunedCount("NOT (c < 'b')", "count\n50\n", 0);
+            // CHAR stores its NULL as a value the null count misses, which keeps the group holding them unpruned.
+            assertPrunedCount("NOT (c < 'b')", "count\n50\n", 49);
             assertPrunedCount("NOT (val < NULL)", "count\n5001\n", 0);
             bindVariableService.clear();
             bindVariableService.setInt(0, Numbers.INT_NULL);
@@ -6977,6 +7032,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             TestUtils.assertEquals(expected, sink);
             Assert.assertEquals(predicate, expectedSkipped, ParquetRowGroupFilter.getRowGroupsSkipped());
         }
+    }
+
+    private int prunedCountMatchingOracle(String predicate) throws Exception {
+        final StringSink expected = new StringSink();
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM oracle WHERE " + predicate);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), expected);
+        }
+        assertQuery("SELECT count() FROM x WHERE " + predicate).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+        // returns() reads the cursor more than once; count the row groups one read skips.
+        ParquetRowGroupFilter.resetRowGroupsSkipped();
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM x WHERE " + predicate);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), new StringSink());
+        }
+        return ParquetRowGroupFilter.getRowGroupsSkipped();
     }
 
     private void assertHasParquetPartitions(String tableName, boolean expected) {

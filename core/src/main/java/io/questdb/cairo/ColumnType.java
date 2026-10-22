@@ -68,7 +68,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
-    public static final int MIGRATION_VERSION = 430;
+    public static final int MIGRATION_VERSION = 431;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
@@ -160,10 +160,11 @@ public final class ColumnType {
     // binary rejects a table stamped MAX_STORAGE_VERSION instead of misreading it, while a
     // table that never went composite (or was compacted back) stays readable.
     //
-    // Fixed literal, deliberately placed above MIGRATION_VERSION (429) so it never collides
-    // with a migration-step number: a stored version in (VERSION, MAX_STORAGE_VERSION] means
-    // "composite", not "needs migration N". A stable on-disk marker must not float with VERSION,
-    // so it is written out as a constant rather than VERSION + 1.
+    // Fixed literal. EngineMigration writes only migration steps up to VERSION into _meta and
+    // records forward-compatible steps above VERSION in _upgrade.d alone, so a stored version in
+    // (VERSION, MAX_STORAGE_VERSION] always means "composite", never "needs migration N", even
+    // where MIGRATION_VERSION reaches or passes this value. A stable on-disk marker must not float
+    // with VERSION, so it is written out as a constant rather than VERSION + 1.
     public static final int MAX_STORAGE_VERSION = 430;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;

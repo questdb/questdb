@@ -102,7 +102,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         };
         // the bit set applies the filter to the merged rows
         isKeyFiltered = filter != null && indexOrder != ScanPlan.IndexOrder.TABLE_PER_FRAME;
-        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+        cursor = rowCursorFactory instanceof KeyOrderedRowCursorFactory keyOrderedFactory
+                ? new KeyOrderedPageFrameRecordCursor(configuration, metadata, keyOrderedFactory, false, filter)
+                : new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         followedOrderByAdvice = indexOrder.isRequested();
         isTableOrder = indexOrder.isTableOrder();
 

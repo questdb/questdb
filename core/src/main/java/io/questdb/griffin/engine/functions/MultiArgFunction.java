@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -39,7 +40,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void close() {
-        Misc.freeObjList(args());
+        CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args()));
     }
 
     @Override

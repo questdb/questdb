@@ -258,7 +258,7 @@ public final class ParquetPushdownExtractor {
         }
         final int type = source.getColumnType(index);
         if (negated) {
-            if (!isNull(value) && PushdownFilterExtractor.isNullMatchingPushable(type)) {
+            if (!isNull(value)) {
                 add(source, index, complement(effective), value).setNullMatching();
             }
         } else if (operation == PushdownFilterExtractor.OP_IS_NOT_NULL) {

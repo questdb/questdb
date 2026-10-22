@@ -24,9 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
@@ -328,10 +326,10 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeBoundLong256IsInvalidDate() throws Exception {
+    public void testRangeBoundLong256HasNoMatchingOperator() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertError("SELECT * FROM x WHERE ts > v::long256", 28, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > v::long256", 25, "there is no matching operator `>` with the argument types: TIMESTAMP > LONG256");
         });
     }
 
@@ -423,11 +421,5 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
 
     private void assertError(String sql, int position, String message) throws Exception {
         assertQuery(sql).noLeakCheck().fails(position, message);
-        try {
-            printSql(sql);
-            Assert.fail("SQL statement should have failed");
-        } catch (SqlException e) {
-            Assert.assertEquals(message, e.getFlyweightMessage().toString());
-        }
     }
 }

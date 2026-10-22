@@ -46,7 +46,6 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatFactory;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
@@ -344,10 +343,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (date == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        final long micros = date * Micros.MILLI_MICROS;
-        throw micros / Micros.MILLI_MICROS == date
-                ? ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO)
-                : ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
+        throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
     }
 
     @Override

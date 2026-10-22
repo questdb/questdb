@@ -1145,7 +1145,7 @@ final class JoinBinder implements Mutable {
             return false;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            return FunctionBinder.findColumn(expression, group.getOutput(), null) == -1 && !isOuterColumn(expression, group)
+            return FunctionBinder.findColumn(expression, group.getOutput(), null) == -1 && !ctx.functionBinder.isOuterScopeColumn(expression)
                     && FunctionBinder.findColumn(expression, join.getOutput(), null) > -1;
         }
         if (hasCommaPrefixReference(expression.lhs, join, group) || hasCommaPrefixReference(expression.rhs, join, group)) {
@@ -1270,9 +1270,6 @@ final class JoinBinder implements Mutable {
      * resolve, which binding the conjunct reports.
      */
     private int joinReferenceSource(ExpressionNode literal, JoinPlan join) {
-        if (isOuterColumn(literal, join)) {
-            return -1;
-        }
         final int index = FunctionBinder.findColumn(literal, join.getOutput(), null);
         return index < 0 ? -1 : LogicalPlans.joinColumnSource(join, join.getOutput().getColumnId(index));
     }

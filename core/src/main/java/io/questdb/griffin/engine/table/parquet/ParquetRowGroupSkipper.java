@@ -71,7 +71,8 @@ public interface ParquetRowGroupSkipper {
     boolean canSkipRowGroup(int rowGroupIndex, long filtersAddr, int filterCount, long filterBufEnd);
 
     /**
-     * Returns {@code true} when the statistics prove the column chunk holds no NULL.
+     * Returns {@code true} when the statistics prove the column chunk holds no SQL NULL: no Parquet null, and no
+     * stored value that reads back as the NULL sentinel of the column type.
      */
     boolean hasNoNulls(int rowGroupIndex, int columnIndex);
 }

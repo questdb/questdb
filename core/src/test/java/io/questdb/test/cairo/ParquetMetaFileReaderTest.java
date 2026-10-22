@@ -41,6 +41,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.zip.CRC32;
 
 public class ParquetMetaFileReaderTest extends AbstractCairoTest {
@@ -1297,7 +1298,12 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     @Test
     public void testHasNoNullsRequiresSentinelFreeStatistics() throws Exception {
         assertMemoryLeak(() -> {
-            // Type, physical type, min, max, flags, null count, expected proof of no SQL NULLs.
+            // Type, physical type, min, max, flags, null count, expected proof of no SQL NULLs, and optionally
+            // whether QuestDB's writer wrote the file.
+            final long floatOne = Float.floatToRawIntBits(1.0f);
+            final long floatTwo = Float.floatToRawIntBits(2.0f);
+            final long doubleOne = Double.doubleToRawLongBits(1.0);
+            final long doubleTwo = Double.doubleToRawLongBits(2.0);
             final long[][] cases = {
                     {ColumnType.INT, 1, Integer.MIN_VALUE, 1, 0x9b, 0, 0},
                     {ColumnType.INT, 1, 1, Integer.MIN_VALUE, 0x9b, 0, 0},
@@ -1320,7 +1326,33 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     {ColumnType.IPv4, 1, -1, 1, 0x9b, 0, 0},
                     {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 0, 1},
                     {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x1b, 0, 0},
-                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 1, 0}
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 1, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, Long.MIN_VALUE, 10, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, Long.MIN_VALUE, 10, 0x9b, 0, 1, 1},
+                    {ColumnType.getDecimalType(9, 2), 1, -999_999_999, 999_999_999, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(9, 2), 1, -1_000_000_000, 10, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(9, 2), 1, -10, 1_000_000_000, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 7, -10, 10, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 7, -10, 10, 0x9b, 0, 1, 1},
+                    {ColumnType.CHAR, 1, 'a', 'z', 0x9b, 0, 1},
+                    {ColumnType.CHAR, 1, 0, 'z', 0x9b, 0, 0},
+                    {ColumnType.CHAR, 1, 'a', 65_536, 0x9b, 0, 0},
+                    {ColumnType.CHAR, 1, -1, 'z', 0x9b, 0, 0},
+                    {ColumnType.CHAR, 2, 'a', 'z', 0x9b, 0, 0},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 0, 0},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 0, 1, 1},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 1, 0, 1},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x1b, 0, 0, 1},
+                    {ColumnType.FLOAT, 4, Float.floatToRawIntBits(Float.NEGATIVE_INFINITY), floatTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.FLOAT, 4, floatOne, Float.floatToRawIntBits(Float.POSITIVE_INFINITY), 0x9b, 0, 0, 1},
+                    {ColumnType.FLOAT, 4, floatOne, Float.floatToRawIntBits(Float.NaN), 0x9b, 0, 0, 1},
+                    {ColumnType.FLOAT, 5, floatOne, floatTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 5, doubleOne, doubleTwo, 0x9b, 0, 0},
+                    {ColumnType.DOUBLE, 5, doubleOne, doubleTwo, 0x9b, 0, 1, 1},
+                    {ColumnType.DOUBLE, 5, Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY), doubleTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 5, doubleOne, Double.doubleToRawLongBits(Double.POSITIVE_INFINITY), 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 5, Double.doubleToRawLongBits(Double.NaN), doubleTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 4, doubleOne, doubleTwo, 0x9b, 0, 0, 1}
             };
             for (long[] values : cases) {
                 try (ParquetMetaTestFile file = buildFile(1, 2)) {
@@ -1333,12 +1365,15 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Unsafe.putLong(chunk + 56, values[3]);
                     Unsafe.putByte(chunk + 2, (byte) values[4]);
                     Unsafe.putLong(chunk + 32, values[5]);
+                    if (values.length > 7 && values[7] != 0) {
+                        Unsafe.putLong(footer + 32, Unsafe.getLong(footer + 32) | (1L << 2));
+                    }
                     patchCrc(file.dataPtr, file.parquetMetaFileSize);
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     try {
                         reader.of(file.dataPtr, file.parquetMetaFileSize);
                         Assert.assertTrue(reader.resolveLastFooter());
-                        Assert.assertEquals(ColumnType.nameOf((int) values[0]), values[6] != 0, reader.hasNoNulls(0, 0));
+                        Assert.assertEquals(Arrays.toString(values), values[6] != 0, reader.hasNoNulls(0, 0));
                     } finally {
                         reader.clear();
                     }

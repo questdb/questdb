@@ -179,10 +179,6 @@ public final class ParquetRowGroupFilter {
                 if (condition.isNullMatching() != (k >= n)) {
                     continue;
                 }
-                // External files can store SQL NULL sentinels as values that their null count misses.
-                if (legacyMetadata != null && condition.isNullMatching()) {
-                    continue;
-                }
                 final int opType = condition.getOperationType();
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();

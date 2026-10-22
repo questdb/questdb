@@ -808,6 +808,79 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionTreatsEmptyDisjunctAsIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p_m (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO p_m VALUES
+                    (1, '2024-01-01T10:00:00.000000Z'),
+                    (2, '2024-01-01T11:00:00.000000Z'),
+                    (3, '2024-01-01T12:00:00.000000Z'),
+                    (4, '2024-01-02T10:00:00.000000Z')
+                    """);
+            final String finer = "ts IN '2024-01-01T10:00:00.0000001Z'";
+            final String hour = "[(\"2024-01-01T12:00:00.000000Z\",\"2024-01-01T12:59:59.999999Z\")]";
+            final String point = "[(\"2024-01-01T12:00:00.000000Z\",\"2024-01-01T12:00:00.000000Z\")]";
+            final String day = "[(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T23:59:59.999999Z\")]";
+            final String row3 = "k\tts\n3\t2024-01-01T12:00:00.000000Z\n";
+            final String day1 = """
+                    k\tts
+                    1\t2024-01-01T10:00:00.000000Z
+                    2\t2024-01-01T11:00:00.000000Z
+                    3\t2024-01-01T12:00:00.000000Z
+                    """;
+            assertUnion("p_m", finer + " OR ts IN '2024-01-01T12'", hour, row3);
+            assertUnion("p_m", "ts IN '2024-01-01T12' OR " + finer, hour, row3);
+            assertUnion("p_m", finer + " OR ts = '2024-01-01T12:00:00Z'", point, row3);
+            assertUnion("p_m", "ts IN '2024-01-01' AND (" + finer + " OR ts IN '2024-01-01T12')", hour, row3);
+            assertUnion("p_m", finer + " OR ts IN '2024-01-01T11:00:00.0000001Z' OR ts IN '2024-01-01T12'", hour, row3);
+            assertUnion("p_m", "ts IN '2024-01-01T11' OR " + finer + " OR ts IN '2024-01-01T12'",
+                    "[(\"2024-01-01T11:00:00.000000Z\",\"2024-01-01T11:59:59.999999Z\")," + hour.substring(1), """
+                            k\tts
+                            2\t2024-01-01T11:00:00.000000Z
+                            3\t2024-01-01T12:00:00.000000Z
+                            """);
+            assertUnion("p_m", finer + " OR ts = (SELECT ts FROM p_m WHERE k = 3)", point, row3);
+            assertUnion("p_m", "ts IN '2024-01-02#Mon' OR ts IN '2024-01-01'", day, day1);
+            assertUnion("p_m", "ts IN '2024-01-01' OR ts IN '2024-01-02#Mon'", day, day1);
+            assertUnion("p_m", "ts IN ('2024-01-01T12:00:00.000000Z', '2024-01-02#Mon')", point, row3);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_110_400_000_000L);
+            assertUnion("p_m", finer + " OR ts = $1", point, row3);
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            assertUnion("p_m", finer + " OR ts = $1", "[]", "k\tts\n");
+            bindVariableService.clear();
+            assertEmptyUnion("p_m", finer + " OR ts IN '2024-01-02#Mon'");
+            assertEmptyUnion("p_m", "ts IN '2024-01-02#Mon' OR " + finer + " OR ts IN '2024-01-01T11:00:00.0000001Z'");
+            assertEmptyUnion("p_m", "ts IN ('2024-01-02#Mon', '2024-01-03#Mon')");
+
+            execute("CREATE TABLE p_n (k INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO p_n VALUES
+                    (1, '2024-01-01T10:00:00.000000000Z'),
+                    (2, '2024-01-01T11:00:00.000000000Z'),
+                    (3, '2024-01-01T12:00:00.000000000Z'),
+                    (4, '2024-01-02T10:00:00.000000000Z')
+                    """);
+            final String nanoDay = "[(\"2024-01-01T00:00:00.000000000Z\",\"2024-01-01T23:59:59.999999999Z\")]";
+            final String nanoPoint = "[(\"2024-01-01T12:00:00.000000000Z\",\"2024-01-01T12:00:00.000000000Z\")]";
+            final String nanoRow3 = "k\tts\n3\t2024-01-01T12:00:00.000000000Z\n";
+            assertUnion("p_n", "ts IN '2024-01-02#Mon' OR ts IN '2024-01-01'", nanoDay, """
+                    k\tts
+                    1\t2024-01-01T10:00:00.000000000Z
+                    2\t2024-01-01T11:00:00.000000000Z
+                    3\t2024-01-01T12:00:00.000000000Z
+                    """);
+            assertUnion("p_n", "ts IN ('2024-01-01T12:00:00.000000000Z', '2024-01-02#Mon')", nanoPoint, nanoRow3);
+            assertUnion("p_n", "ts IN '2024-01-02#Mon' OR ts = (SELECT ts FROM p_n WHERE k = 3)", nanoPoint, nanoRow3);
+            bindVariableService.setTimestampNano(0, 1_704_110_400_000_000_000L);
+            assertUnion("p_n", "ts IN '2024-01-02#Mon' OR ts = $1", nanoPoint, nanoRow3);
+            bindVariableService.clear();
+            assertEmptyUnion("p_n", "ts IN '2024-01-02#Mon' OR ts IN '2024-01-03#Mon'");
+        });
+    }
+
+    @Test
     public void testUndefinedParametersCompareAtNanosecondPrecision() throws Exception {
         assertMemoryLeak(() -> {
             createRows(true);
@@ -897,6 +970,25 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                             Row forward scan
                             Interval forward scan on: lp_epoch
                               intervals: [""" + intervals + "]\n")
+                .returns(expected);
+    }
+
+    private void assertEmptyUnion(String table, String predicate) throws Exception {
+        assertQuery("SELECT * FROM " + table + " WHERE " + predicate)
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlan("Empty table\n")
+                .returns("k\tts\n");
+    }
+
+    private void assertUnion(String table, String predicate, String intervals, String expected) throws Exception {
+        assertQuery("SELECT * FROM " + table + " WHERE " + predicate)
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on:\s""" + table + "\n      intervals: " + intervals + "\n")
                 .returns(expected);
     }
 

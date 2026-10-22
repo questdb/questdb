@@ -6627,9 +6627,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final LogicalPlan plan = subquery.getRoot();
             final RecordCursorFactory factory = codeGenerator.generate(plan, executionContext);
-            assert plan.getOutput().hasColumnTypesOf(factory.getMetadata()) : "generated sub-query metadata differs from its plan";
-            assert executionContext.allowNonDeterministicFunctions() || !factory.usesExternalDataSource()
-                    : "external sub-query passed the binding guard";
+            try {
+                assert plan.getOutput().hasColumnTypesOf(factory.getMetadata()) : "generated sub-query metadata differs from its plan";
+                assert executionContext.allowNonDeterministicFunctions() || !factory.usesExternalDataSource()
+                        : "external sub-query passed the binding guard";
+            } catch (Throwable th) {
+                Misc.free(factory, th);
+                throw th;
+            }
             return factory;
         } finally {
             exitSubquery(SubqueryPhase.GENERATE, depth, executionContext, isWindowContextPushed);

@@ -24,10 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.time.Instant;
@@ -441,11 +445,11 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                     "SELECT id FROM events WHERE event_time BETWEEN '2024-01-01'::DATE AND '9999-12-31'::DATE",
                     "SELECT id, event_time < '9999-12-31'::DATE FROM events"
             }) {
-                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000 [DATE -> TIMESTAMP_NS]");
             }
             assertQuery("SELECT id FROM events WHERE event_time < '2300-01-01'::DATE")
                     .noLeakCheck()
-                    .failsWith("inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+                    .failsWith("inconvertible value: 10413792000000 [DATE -> TIMESTAMP_NS]");
             assertQuery("SELECT id FROM events WHERE event_time < '2200-12-31'::DATE")
                     .noLeakCheck()
                     .returns("""
@@ -469,10 +473,10 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                     "SELECT id FROM events WHERE event_time IN ('2024-01-01'::DATE, '9999-12-31'::DATE)",
                     "SELECT id FROM events WHERE event_time NOT IN ('9999-12-31'::DATE)"
             }) {
-                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000 [DATE -> TIMESTAMP_NS]");
             }
-            assertExceptionNoLeakCheck("INSERT INTO events SELECT d, 3 FROM dates", -1, "inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
-            assertExceptionNoLeakCheck("INSERT INTO events VALUES ('9999-12-31'::DATE, 3)", -1, "inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertExceptionNoLeakCheck("INSERT INTO events SELECT d, 3 FROM dates", -1, "inconvertible value: 253402214400000 [DATE -> TIMESTAMP_NS]");
+            assertExceptionNoLeakCheck("INSERT INTO events VALUES ('9999-12-31'::DATE, 3)", -1, "inconvertible value: 253402214400000 [DATE -> TIMESTAMP_NS]");
             assertQuery("SELECT id FROM events WHERE event_time IN ('2024-02-01'::DATE)").noLeakCheck().returns("""
                     id
                     2
@@ -481,6 +485,50 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                     id
                     1
                     2
+                    """);
+        });
+    }
+
+    @Test
+    public void testNanoConversionReportsTheSourceType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (event_time TIMESTAMP_NS, id INT)");
+            execute("INSERT INTO events VALUES ('2024-01-01', 1)");
+            execute("CREATE TABLE dates (d DATE)");
+            execute("INSERT INTO dates VALUES ('2300-01-01')");
+            execute("CREATE TABLE texts (s STRING, v VARCHAR)");
+            execute("INSERT INTO texts VALUES ('2300-01-01 UTC', '2300-01-01 UTC')");
+            final String dateError = "inconvertible value: 10413792000000 [DATE -> TIMESTAMP_NS]";
+            for (String sql : new String[]{
+                    "SELECT '2300-01-01'::DATE::TIMESTAMP_NS",
+                    "SELECT event_time = d FROM events CROSS JOIN dates",
+                    "SELECT event_time < d FROM events CROSS JOIN dates",
+                    "SELECT d > event_time FROM events CROSS JOIN dates",
+                    "SELECT event_time BETWEEN d AND d FROM events CROSS JOIN dates",
+                    "SELECT event_time FROM events UNION ALL SELECT d FROM dates"
+            }) {
+                assertQuery(sql).noLeakCheck().failsWith(dateError);
+            }
+            bindVariableService.clear();
+            bindVariableService.setDate(0, 10_413_792_000_000L);
+            assertQuery("SELECT id FROM events WHERE event_time < $1").noLeakCheck().failsWith(dateError);
+            assertQuery("SELECT id FROM events WHERE event_time = $1").noLeakCheck().failsWith(dateError);
+            bindVariableService.clear();
+            bindVariableService.define(0, ColumnType.TIMESTAMP_NANO, 0);
+            try {
+                bindVariableService.setDate(0, 10_413_792_000_000L);
+                Assert.fail("setDate() should have failed");
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals(dateError, e.getFlyweightMessage());
+            }
+            bindVariableService.clear();
+            assertExceptionNoLeakCheck("INSERT INTO events SELECT d, 2 FROM dates", -1, dateError);
+            assertExceptionNoLeakCheck("INSERT INTO events SELECT s, 2 FROM texts", -1, "inconvertible value: `2300-01-01 UTC` [STRING -> TIMESTAMP_NS]");
+            assertExceptionNoLeakCheck("INSERT INTO events SELECT v, 2 FROM texts", -1, "inconvertible value: `2300-01-01 UTC` [VARCHAR -> TIMESTAMP_NS]");
+            assertExceptionNoLeakCheck("INSERT INTO events VALUES ('2300-01-01 UTC', 2)", -1, "inconvertible value: `2300-01-01 UTC` [STRING -> TIMESTAMP_NS]");
+            assertQuery("SELECT id FROM events").noLeakCheck().expectSize().returns("""
+                    id
+                    1
                     """);
         });
     }
@@ -495,7 +543,7 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                     "SELECT id FROM events WHERE event_time BETWEEN '2024-01-01'::DATE AND '9999-12-31'::DATE",
                     "SELECT id FROM events WHERE event_time IN ('2024-01-01'::DATE, '9999-12-31'::DATE)"
             }) {
-                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000 [DATE -> TIMESTAMP_NS]");
             }
             assertQuery("SELECT id FROM events WHERE event_time < '2200-12-31'::DATE")
                     .noLeakCheck()

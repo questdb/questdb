@@ -402,13 +402,13 @@ public class RndMemoizationTest extends AbstractCairoTest {
     @Test
     public void testRndLong256() throws Exception {
         allowFunctionMemoization();
-        assertQuery("select rnd_long256() l, l - l from long_sequence(3)")
+        assertQuery("select rnd_long256() l, l::string s from long_sequence(3)")
                 .noLeakCheck()
                 .returnsOnce("""
-                        l\tcolumn
-                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\t0
-                        0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\t0
-                        0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\t0
+                        l\ts
+                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650
+                        0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15
+                        0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa
                         """);
     }
 

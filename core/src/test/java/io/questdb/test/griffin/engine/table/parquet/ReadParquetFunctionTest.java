@@ -48,6 +48,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1096,6 +1097,14 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 .returns("id\n1\n");
 
                         ParquetRowGroupFilter.resetRowGroupsSkipped();
+                        assertQuery(query + " < 2)")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize(!parallel)
+                                .returns("id\n1\n");
+                        Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+                        ParquetRowGroupFilter.resetRowGroupsSkipped();
                         assertQuery(query + " < 2) AND p.id > 2")
                                 .noLeakCheck()
                                 .noRandomAccess()
@@ -1112,6 +1121,108 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 }
             } finally {
                 sqlExecutionContext.setJitMode(previousJitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testNegatedFloatingPointRangePrunesOnlyQuestDBWrittenFiniteRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            // Rows 101-150 hold NULLs, row 250 +Infinity and row 350 -Infinity, which QuestDB also reads as NULL.
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT
+                            CASE WHEN x BETWEEN 101 AND 150 THEN NULL WHEN x = 250 THEN power(10.0, 400)
+                                WHEN x = 350 THEN -power(10.0, 400) ELSE x::DOUBLE END d,
+                            CASE WHEN x BETWEEN 101 AND 150 THEN NULL WHEN x = 250 THEN power(10.0, 400)::FLOAT
+                                WHEN x = 350 THEN -power(10.0, 400)::FLOAT ELSE x::FLOAT END f
+                        FROM long_sequence(5_000)
+                    )
+                    """);
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                for (String file : new String[]{"questdb.parquet", "other.parquet"}) {
+                    path.of(root).concat(file);
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            path,
+                            ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                            true,
+                            false,
+                            100,
+                            0,
+                            ParquetVersion.PARQUET_VERSION_V1,
+                            0.0
+                    );
+                }
+            }
+            TestUtils.rewriteParquetCreatedBy(root + Files.SEPARATOR + "other.parquet");
+            for (String predicate : new String[]{"NOT (d < 4901.0)", "NOT (4901.0 > d)", "NOT (f < 4901.0)"}) {
+                final StringSink expected = new StringSink();
+                printSql("SELECT count() FROM x WHERE " + predicate, expected);
+                // Every row group below 4901 fails the negation except the three holding NULLs and infinities.
+                assertRowGroupsSkipped("SELECT count() FROM read_parquet('questdb.parquet') WHERE " + predicate, expected.toString(), 46);
+                // Another writer can store NaN as an ordinary value that neither the null count nor the bounds record.
+                assertRowGroupsSkipped("SELECT count() FROM read_parquet('other.parquet') WHERE " + predicate, expected.toString(), 0);
+            }
+        });
+    }
+
+    @Test
+    public void testNegatedRangePrunesNullFreeRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT
+                            x::INT i,
+                            x l,
+                            (x * 1_000_000)::TIMESTAMP ts,
+                            x::DATE dt,
+                            x::INT::IPv4 ip,
+                            lpad(x::VARCHAR, 4, '0') s,
+                            x::DECIMAL(9,0) dec,
+                            x::DOUBLE d,
+                            x::FLOAT f
+                        FROM long_sequence(5_000)
+                    )
+                    """);
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        100,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+            }
+            // The negation keeps the 100 rows from 4901 up, and the statistics prove the other 49 row groups
+            // hold no NULL.
+            for (String predicate : new String[]{
+                    "NOT (i < 4901)",
+                    "NOT (4900 >= l)",
+                    "NOT (ts < '1970-01-01T01:21:41')",
+                    "NOT (dt < 4901::DATE)",
+                    "NOT (ip < '0.0.19.37')",
+                    "NOT (s < '4901')",
+                    "NOT (dec < 4901::DECIMAL(9,0))",
+                    "NOT (d < 4901.0)",
+                    "NOT (f < 4901.0)"
+            }) {
+                assertRowGroupsSkipped("SELECT count() FROM read_parquet('x.parquet') WHERE " + predicate, "count\n100\n", 49);
             }
         });
     }
@@ -1147,13 +1258,14 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     );
                 }
             }
-            // read_parquet cannot distinguish these null counts from an external writer's, so it declines pruning.
+            // Every row group below 4901 fails the negation, except the one holding NULLs. Without statistics
+            // nothing proves a row group NULL-free.
             final String expected = """
                     count\tcount1
                     150\t100
                     """;
-            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val < 4901)", expected, 0);
-            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val <= 4900)", expected, 0);
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val < 4901)", expected, 48);
+            assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('stats.parquet') WHERE NOT (val <= 4900)", expected, 48);
             assertRowGroupsSkipped("SELECT count(), count(val) FROM read_parquet('no_stats.parquet') WHERE NOT (val < 4901)", expected, 0);
         });
     }

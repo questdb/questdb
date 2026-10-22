@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -38,8 +39,7 @@ public interface BinaryFunction extends Function {
 
     @Override
     default void close() {
-        Misc.free(getLeft());
-        Misc.free(getRight());
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, getLeft()), getRight()));
     }
 
     @Override

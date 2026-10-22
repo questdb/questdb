@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
@@ -161,6 +162,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int STAT_FLAG_MIN_INLINED = 1 << 1;
     private static final int STAT_FLAG_MIN_PRESENT = 1;
     private static final int STAT_FLAG_NULL_COUNT_PRESENT = 1 << 7;
+    // Footer FEATURE_FLAGS bit (mirrors qdb-parquet-meta FooterFeatureFlags::WRITTEN_BY_QUESTDB_BIT): QuestDB's
+    // writer wrote every row group of the parquet file, so every SQL NULL in it, NaN included, is a Parquet null.
+    private static final long WRITTEN_BY_QUESTDB_FOOTER_FLAG = 1L << 2;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
     // CRC32 verification result for the currently bound _pm mapping. Set
@@ -659,9 +663,33 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return switch (ColumnType.tagOf(getColumnType(columnIndex))) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT,
                  ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
-            // Valid decimal precision excludes the storage NULL sentinel.
+            // QuestDB's writer writes a decimal NULL as a Parquet null. Another writer's values exclude the storage
+            // NULL sentinel only when they lie within the precision.
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> true;
+                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    isWrittenByQuestDB() || hasDecimalBoundsWithinPrecision(rowGroupIndex, columnIndex);
+            // (char) 0 is CHAR's NULL, stored as an ordinary value, and a value outside 0..65535 truncates to a char.
+            case ColumnType.CHAR -> {
+                if (Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) != 1
+                        || !hasInlineMinMax(rowGroupIndex, columnIndex)) {
+                    yield false;
+                }
+                final int min = (int) getChunkMinStat(rowGroupIndex, columnIndex);
+                final int max = (int) getChunkMaxStat(rowGroupIndex, columnIndex);
+                yield min > 0 && min <= max && max <= Character.MAX_VALUE;
+            }
+            // An infinity is NULL as well, and it stays in the bounds. NaN is NULL too: QuestDB's writer writes it as a
+            // Parquet null, while another writer keeps it out of both the null count and the bounds.
+            case ColumnType.FLOAT -> isWrittenByQuestDB()
+                    && Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) == 4
+                    && hasInlineMinMax(rowGroupIndex, columnIndex)
+                    && Float.isFinite(Float.intBitsToFloat((int) getChunkMinStat(rowGroupIndex, columnIndex)))
+                    && Float.isFinite(Float.intBitsToFloat((int) getChunkMaxStat(rowGroupIndex, columnIndex)));
+            case ColumnType.DOUBLE -> isWrittenByQuestDB()
+                    && Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) == 5
+                    && hasInlineMinMax(rowGroupIndex, columnIndex)
+                    && Double.isFinite(Double.longBitsToDouble(getChunkMinStat(rowGroupIndex, columnIndex)))
+                    && Double.isFinite(Double.longBitsToDouble(getChunkMaxStat(rowGroupIndex, columnIndex)));
             case ColumnType.INT, ColumnType.IPv4 -> {
                 if (Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) != 1
                         || !hasInlineMinMax(rowGroupIndex, columnIndex)) {
@@ -892,9 +920,37 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return addr + HEADER_FIXED_SIZE + (long) columnIndex * COLUMN_DESCRIPTOR_SIZE;
     }
 
+    private boolean hasDecimalBoundsWithinPrecision(int rowGroupIndex, int columnIndex) {
+        final int precision = ColumnType.getDecimalPrecision(getColumnType(columnIndex));
+        if (precision > Numbers.pow10max || !hasInlineMinMax(rowGroupIndex, columnIndex)) {
+            return false;
+        }
+        final long min;
+        final long max;
+        switch (Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF)) {
+            case 1 -> {
+                min = (int) getChunkMinStat(rowGroupIndex, columnIndex);
+                max = (int) getChunkMaxStat(rowGroupIndex, columnIndex);
+            }
+            case 2 -> {
+                min = getChunkMinStat(rowGroupIndex, columnIndex);
+                max = getChunkMaxStat(rowGroupIndex, columnIndex);
+            }
+            default -> {
+                return false;
+            }
+        }
+        final long limit = Numbers.pow10[precision];
+        return -limit < min && min <= max && max < limit;
+    }
+
     private boolean hasInlineMinMax(int rowGroupIndex, int columnIndex) {
         final int mask = STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED | STAT_FLAG_MAX_PRESENT | STAT_FLAG_MAX_INLINED;
         return (getChunkStatFlags(rowGroupIndex, columnIndex) & mask) == mask;
+    }
+
+    private boolean isWrittenByQuestDB() {
+        return (Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF) & WRITTEN_BY_QUESTDB_FOOTER_FLAG) != 0;
     }
 
     /**

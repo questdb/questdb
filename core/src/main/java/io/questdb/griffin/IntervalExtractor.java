@@ -376,6 +376,7 @@ public final class IntervalExtractor implements Mutable {
             // A union must not widen bounds already extracted from another conjunct.
             if (!intervals.hasIntervalFilters() && isTimestampUnion(call, timestampColumnId, timestampType)) {
                 unionTimestampPredicates(call, input, executionContext);
+                isIntrinsicFalse |= intervals.isEmptySet();
                 return null;
             }
             return predicate;
@@ -672,6 +673,7 @@ public final class IntervalExtractor implements Mutable {
                 unionElement(constant, seq);
             }
         }
+        isIntrinsicFalse |= intervals.isEmptySet();
         return null;
     }
 

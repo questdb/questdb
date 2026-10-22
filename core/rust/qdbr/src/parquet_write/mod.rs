@@ -10,7 +10,7 @@ pub use file::ParquetWriter;
 mod jni;
 pub mod schema;
 pub mod simd;
-mod update;
+pub(crate) mod update;
 mod util;
 pub mod varchar;
 

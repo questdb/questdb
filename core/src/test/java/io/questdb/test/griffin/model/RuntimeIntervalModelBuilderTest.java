@@ -785,10 +785,6 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         f = new CloseCountingFunction();
         builder.subtractRuntimeIntervals(f, 0);
         Assert.assertEquals(1, f.closeCount);
-
-        f = new CloseCountingFunction();
-        builder.unionRuntimeTimestamp(f, 0);
-        Assert.assertEquals(1, f.closeCount);
     }
 
     @Test
@@ -815,6 +811,34 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         Assert.assertEquals(1, head.closeCount);
         Assert.assertEquals(1, lo.closeCount);
         Assert.assertEquals(1, hi.closeCount);
+    }
+
+    @Test
+    public void testEmptySetIsUnionIdentity() throws Exception {
+        final RuntimeIntervalModelBuilder builder = newFailingBuilder();
+        builder.intersectEmpty();
+        builder.union(10, 20);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertEquals(new LongList(new long[]{10, 20}), builder.getStaticIntervals());
+
+        builder.clear();
+        builder.intersectEmpty();
+        builder.unionIntervals("2024-01-01", 0, 10, 0);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertEquals(new LongList(new long[]{1_704_067_200_000_000L, 1_704_153_599_999_999L}), builder.getStaticIntervals());
+
+        builder.clear();
+        builder.intersectEmpty();
+        final CloseCountingFunction f = new CloseCountingFunction();
+        builder.unionRuntimeTimestamp(f, 0);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertFalse(builder.isStatic());
+        Assert.assertEquals(0, f.closeCount);
+        final RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Assert.assertEquals(0, f.closeCount);
+        Misc.free(model);
+        Assert.assertEquals(1, f.closeCount);
     }
 
     @Test

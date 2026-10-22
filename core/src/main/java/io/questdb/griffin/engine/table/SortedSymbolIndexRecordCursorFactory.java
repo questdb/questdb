@@ -52,7 +52,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
-        cursor = new PageFrameRecordCursorImpl(
+        cursor = new KeyOrderedPageFrameRecordCursor(
                 configuration,
                 metadata,
                 new SortedSymbolIndexRowCursorFactory(

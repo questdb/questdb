@@ -313,6 +313,36 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongInListPreparesNoConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, "64");
+            final int ceiling = configuration.getSqlExpressionPoolCapacity();
+            final StringSink sql = new StringSink();
+            sql.put("SELECT x FROM long_sequence(3) WHERE x IN (");
+            for (int i = 0, n = ceiling + 1_000; i < n; i++) {
+                if (i > 0) {
+                    sql.put(", ");
+                }
+                sql.put(i);
+            }
+            sql.put(')');
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertQuery(sql)
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .returns("""
+                                x
+                                1
+                                2
+                                3
+                                """);
+                compiler.clear();
+                Assert.assertTrue("IN-list constants must not take prepared function slots", compiler.getPreparedFunctionCapacity() <= ceiling);
+            }
+        });
+    }
+
+    @Test
     public void testMinimalPoolCapacitiesCompile() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, "1");
