@@ -24,6 +24,19 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.TestOnly;
+
+/**
+ * Long sort and selection utility. {@link #sort(LongVec, int, int)} runs a dual-pivot
+ * quicksort over a {@link LongVec}. {@link #quickSelect(long, long, long, long)} and
+ * {@link #quickSelectMultiple(long, long, long, int[], int, int)} select order statistics
+ * of longs in native memory with an introselect: Dutch National Flag (three-way)
+ * partitioning around the median of three samples, or a Tukey ninther on ranges above
+ * {@link #NINTHER_THRESHOLD} elements. A partition chain that runs deeper than
+ * 2*log2(N) levels finishes its range with heapsort, which bounds the worst case at
+ * O(N log N) for every input shape. The selection caller must ensure that
+ * {@code ptr + index * 8L} is valid for every index in {@code [lo, hi]}.
+ */
 public class LongSort {
     /**
      * If the length of an array to be sorted is less than this
@@ -43,6 +56,72 @@ public class LongSort {
      * The maximum length of run in merge sort.
      */
     private static final int MAX_RUN_LENGTH = 33;
+    // Ranges above this size pick the selection pivot with a Tukey ninther (median of the
+    // medians of three spaced triples). A single median-of-three sample picks the minimum
+    // of a rise-then-fall range, which made each partition pass strip only a few elements.
+    private static final int NINTHER_THRESHOLD = 128;
+    // Test-only observability for the selection heapsort fallback. heapSort() increments
+    // the counter on entry, a cold path reached only when a partition chain exhausts the
+    // depth budget. Tests read it on the thread that ran the selection and assert on deltas.
+    private static long heapSortCallCount;
+
+    /**
+     * Returns the number of selection heapsort-fallback activations since class load. The
+     * counter is monotonic: capture it before a selection and assert on the delta afterwards.
+     *
+     * @return count of heapsort-fallback activations
+     */
+    @TestOnly
+    public static long getHeapSortCallCountForTesting() {
+        return heapSortCallCount;
+    }
+
+    /**
+     * Selects the k-th smallest element of the range. After this method returns, the
+     * element at index k is in its final sorted position, all elements before it are
+     * less than or equal to it, and all elements after it are greater than or equal to it.
+     * O(N) on average, O(N log N) worst case.
+     *
+     * @param ptr native address of element[0]
+     * @param lo  the index of the first element, inclusive
+     * @param hi  the index of the last element, inclusive
+     * @param k   the index of the element to select, within {@code [lo, hi]}
+     */
+    public static void quickSelect(long ptr, long lo, long hi, long k) {
+        int depth = depthBudget(hi - lo + 1);
+        while (lo < hi) {
+            if (depth == 0) {
+                heapSort(ptr, lo, hi);
+                return;
+            }
+            depth--;
+            long lt = partition(ptr, lo, hi);
+            long gt = equalRunEnd(ptr, lt, hi);
+            if (k < lt) {
+                hi = lt - 1;
+            } else if (k > gt) {
+                lo = gt + 1;
+            } else {
+                return; // k is in the equal partition
+            }
+        }
+    }
+
+    /**
+     * Selects several order statistics at once. Partitions only the ranges that contain
+     * a requested index. After this method returns, the elements at all requested
+     * indices are in their final sorted positions.
+     *
+     * @param ptr     native address of element[0]
+     * @param lo      the index of the first element, inclusive
+     * @param hi      the index of the last element, inclusive
+     * @param indices indices to select, sorted in ascending order, each within {@code [lo, hi]}
+     * @param from    start position in the indices array, inclusive
+     * @param to      end position in the indices array, exclusive
+     */
+    public static void quickSelectMultiple(long ptr, long lo, long hi, int[] indices, int from, int to) {
+        quickSelectMultiple(ptr, lo, hi, indices, from, to, depthBudget(hi - lo + 1));
+    }
 
     /**
      * Sorts the specified range of the array.
@@ -150,8 +229,178 @@ public class LongSort {
         }
     }
 
+    // 2 * (floor(log2(length)) + 1) partition levels before the heapsort fallback
+    private static int depthBudget(long length) {
+        return length > 0 ? 2 * (64 - Long.numberOfLeadingZeros(length)) : 0;
+    }
+
+    // Returns the last index of the run of pivot-equal elements that partition() left
+    // at [lt, ...]. Nothing right of lt is less than the pivot, so the run ends at the
+    // first element greater than the pivot.
+    private static long equalRunEnd(long ptr, long lt, long hi) {
+        final long pivot = getLong(ptr, lt);
+        long gt = lt;
+        while (gt < hi && getLong(ptr, gt + 1) <= pivot) {
+            gt++;
+        }
+        return gt;
+    }
+
+    private static long getLong(long ptr, long index) {
+        return Unsafe.getUnsafe().getLong(ptr + index * 8L);
+    }
+
+    private static void heapSort(long ptr, long lo, long hi) {
+        heapSortCallCount++;
+        final long count = hi - lo + 1;
+        for (long i = (count >> 1) - 1; i >= 0; i--) {
+            siftDown(ptr, lo, i, count);
+        }
+        for (long end = count - 1; end > 0; end--) {
+            swap(ptr, lo, lo + end);
+            siftDown(ptr, lo, 0, end);
+        }
+    }
+
     private static void let(LongVec vec, int a, int b) {
         vec.setQuick(a, vec.getQuick(b));
+    }
+
+    private static long medianOfThree(long ptr, long a, long b, long c) {
+        long va = getLong(ptr, a);
+        long vb = getLong(ptr, b);
+        long vc = getLong(ptr, c);
+        if (va <= vb) {
+            if (vb <= vc) {
+                return b;
+            }
+            return va <= vc ? c : a;
+        }
+        if (va <= vc) {
+            return a;
+        }
+        return vb <= vc ? c : b;
+    }
+
+    /**
+     * Dutch National Flag three-way partition of {@code [lo, hi]} (lo < hi) around a
+     * sampled pivot. Afterwards {@code [lo, lt)} is less than the pivot, the pivot-equal
+     * run starts at lt and ends at {@link #equalRunEnd}, and the rest is greater.
+     *
+     * @return lt, the index of the first pivot-equal element
+     */
+    private static long partition(long ptr, long lo, long hi) {
+        final long mid = lo + (hi - lo) / 2;
+        final long length = hi - lo + 1;
+        final long pivotIndex;
+        if (length > NINTHER_THRESHOLD) {
+            final long eps = length / 8;
+            pivotIndex = medianOfThree(
+                    ptr,
+                    medianOfThree(ptr, lo, lo + eps, lo + 2 * eps),
+                    medianOfThree(ptr, mid - eps, mid, mid + eps),
+                    medianOfThree(ptr, hi - 2 * eps, hi - eps, hi)
+            );
+        } else {
+            pivotIndex = medianOfThree(ptr, lo, mid, hi);
+        }
+        final long pivot = getLong(ptr, pivotIndex);
+
+        //   [lo, lt)   < pivot
+        //   [lt, i)   == pivot
+        //   (gt, hi]   > pivot
+        //   [i, gt]      unexamined
+        long lt = lo;
+        long gt = hi;
+        long i = lo;
+        while (i <= gt) {
+            long val = getLong(ptr, i);
+            if (val < pivot) {
+                swap(ptr, i, lt);
+                lt++;
+                i++;
+            } else if (val > pivot) {
+                swap(ptr, i, gt);
+                gt--;
+            } else {
+                i++;
+            }
+        }
+        return lt;
+    }
+
+    private static void putLong(long ptr, long index, long value) {
+        Unsafe.getUnsafe().putLong(ptr + index * 8L, value);
+    }
+
+    private static void quickSelectMultiple(long ptr, long lo, long hi, int[] indices, int from, int to, int depth) {
+        while (from < to && lo < hi) {
+            if (depth == 0) {
+                // sorting the range places every requested index in it
+                heapSort(ptr, lo, hi);
+                return;
+            }
+            depth--;
+            long lt = partition(ptr, lo, hi);
+            long gt = equalRunEnd(ptr, lt, hi);
+
+            // Find which indices fall into each region: <lt, [lt..gt], >gt
+            int splitLeft = from;
+            while (splitLeft < to && indices[splitLeft] < lt) {
+                splitLeft++;
+            }
+
+            // Skip indices in the equal partition [lt..gt], they are already in place
+            int splitRight = splitLeft;
+            while (splitRight < to && indices[splitRight] <= gt) {
+                splitRight++;
+            }
+
+            boolean hasLeft = splitLeft > from;
+            boolean hasRight = splitRight < to;
+
+            if (hasLeft && hasRight) {
+                // recurse into the smaller side, iterate on the larger to limit stack depth
+                if ((lt - lo) <= (hi - gt)) {
+                    quickSelectMultiple(ptr, lo, lt - 1, indices, from, splitLeft, depth);
+                    lo = gt + 1;
+                    from = splitRight;
+                } else {
+                    quickSelectMultiple(ptr, gt + 1, hi, indices, splitRight, to, depth);
+                    hi = lt - 1;
+                    to = splitLeft;
+                }
+            } else if (hasLeft) {
+                hi = lt - 1;
+                to = splitLeft;
+            } else if (hasRight) {
+                lo = gt + 1;
+                from = splitRight;
+            } else {
+                break;
+            }
+        }
+    }
+
+    private static void siftDown(long ptr, long lo, long root, long count) {
+        final long value = getLong(ptr, lo + root);
+        for (; ; ) {
+            long child = 2 * root + 1;
+            if (child >= count) {
+                break;
+            }
+            if (child + 1 < count && getLong(ptr, lo + child) < getLong(ptr, lo + child + 1)) {
+                child++;
+            }
+            final long childValue = getLong(ptr, lo + child);
+            if (value < childValue) {
+                putLong(ptr, lo + root, childValue);
+                root = child;
+            } else {
+                break;
+            }
+        }
+        putLong(ptr, lo + root, value);
     }
 
     /**
@@ -525,5 +774,11 @@ public class LongSort {
         long tmp = vec.getQuick(a);
         vec.setQuick(a, vec.getQuick(b));
         vec.setQuick(b, tmp);
+    }
+
+    private static void swap(long ptr, long i, long j) {
+        long tmp = getLong(ptr, i);
+        putLong(ptr, i, getLong(ptr, j));
+        putLong(ptr, j, tmp);
     }
 }

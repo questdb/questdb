@@ -138,6 +138,10 @@ public class QueryModel implements IQueryModel {
     private boolean distinct = false;
     private ExpressionNode expiryViewNameExpr;
     private boolean explicitTimestamp;
+    // The timestamp_floor_utc bucket key node that SqlOptimiser.rewriteSampleBy creates.
+    // SqlCodeGenerator.generateFill locates the bucket column by this node's identity,
+    // so alias renames in SqlOptimiser.rewriteSelectClause0 need no bookkeeping here.
+    private ExpressionNode fillBucketKey;
     private ExpressionNode fillFrom;
     private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
@@ -500,6 +504,7 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
         sampleByFrom = null;
+        fillBucketKey = null;
         fillFrom = null;
         fillOffset = null;
         fillTo = null;
@@ -790,6 +795,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
+    }
+
+    @Override
+    public ExpressionNode getFillBucketKey() {
+        return fillBucketKey;
     }
 
     @Override
@@ -1597,6 +1607,7 @@ public class QueryModel implements IQueryModel {
         // and clears sampleBy in the same block, so the gate `sampleBy != null` at the caller
         // (SqlOptimiser.rewriteSelectClause0) is mutually exclusive with fill* being set.
         assert model.getFillStride() == null
+                && model.getFillBucketKey() == null
                 && model.getFillOffset() == null
                 && model.getFillTimezoneName() == null
                 && model.getFillFrom() == null
@@ -1806,6 +1817,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setExpiryWindowBarrier(boolean isExpiryWindowBarrier) {
         this.isExpiryWindowBarrier = isExpiryWindowBarrier;
+    }
+
+    @Override
+    public void setFillBucketKey(ExpressionNode fillBucketKey) {
+        this.fillBucketKey = fillBucketKey;
     }
 
     @Override

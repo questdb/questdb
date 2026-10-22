@@ -42,6 +42,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private long metadataVersion;
     private long o3MaxLag;
     private int partitionBy;
+    private int storageVersion;
     private int symbolMapCount;
     private int tableFormat;
     private int tableId;
@@ -113,6 +114,15 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return columnMetadata.get(columnIndex).getReplacingIndex();
     }
 
+    /**
+     * The storage version stamped into {@code _meta} at {@link TableUtils#META_OFFSET_VERSION}.
+     * {@link ColumnType#VERSION} for an ordinary table, {@link ColumnType#MAX_STORAGE_VERSION}
+     * while the table holds composite partitions.
+     */
+    public int getStorageVersion() {
+        return storageVersion;
+    }
+
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolCacheFlag();
@@ -173,6 +183,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
+        this.storageVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.expiryPredicate = null;
@@ -269,6 +280,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
+    }
+
+    public void setStorageVersion(int storageVersion) {
+        this.storageVersion = storageVersion;
     }
 
     public void setTableFormat(int tableFormat) {

@@ -296,6 +296,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<ExpressionNode> getExpressionModels();
 
+    ExpressionNode getFillBucketKey();
+
     ExpressionNode getFillFrom();
 
     ExpressionNode getFillOffset();
@@ -636,6 +638,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr);
 
     void setExpiryWindowBarrier(boolean isExpiryWindowBarrier);
+
+    void setFillBucketKey(ExpressionNode fillBucketKey);
 
     void setFillFrom(ExpressionNode fillFrom);
 

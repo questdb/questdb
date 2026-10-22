@@ -1,0 +1,192 @@
+# name: test/sql/test_quantile_types.test
+# description: Test the median as QUANTILE_CONT(x, 0.5) over every numeric type, and type extremes
+# group: [aggregates]
+#
+# Ported from DuckDB test/sql/aggregate/aggregates/test_median.test and
+# test/sql/aggregate/aggregates/quantile_test_all_types.test_slow.
+# QuestDB has no median(); DuckDB's median is quantile_cont(x, 0.5).
+# QuestDB has no LIST, STRUCT, VARCHAR, DECIMAL, TIME or INTERVAL quantiles,
+# so those cases are left out.
+
+# scalar quantiles
+query II
+SELECT quantile_cont(NULL, 0.5), quantile_cont(1, 0.5)
+----
+NULL 1.000000
+
+query II
+SELECT quantile_cont(NULL, 0.5), quantile_cont(1, 0.5) FROM long_sequence(2000)
+----
+NULL 1.000000
+
+statement ok
+CREATE TABLE quantile AS (
+    SELECT * FROM (
+        SELECT x - 1 r, rnd_double() q FROM long_sequence(10_000)
+        UNION ALL
+        SELECT NULL, 0.1
+        UNION ALL
+        SELECT NULL, 0.5
+        UNION ALL
+        SELECT NULL, 0.9
+    )
+    ORDER BY 2
+);
+
+query R
+SELECT quantile_cont(r, 0.5) FROM quantile
+----
+4999.500000
+
+query R
+SELECT quantile_cont(r::float, 0.5) FROM quantile
+----
+4999.500000
+
+query R
+SELECT quantile_cont(r::double, 0.5) FROM quantile
+----
+4999.500000
+
+query R
+SELECT quantile_cont(r::byte, 0.5) FROM quantile WHERE r < 100
+----
+49.500000
+
+# SHORT has no NULL: NULL::short is 0, so the filter keeps the three NULL rows out
+query R
+SELECT quantile_cont(r::short, 0.5) FROM quantile WHERE r IS NOT NULL
+----
+4999.500000
+
+query R
+SELECT quantile_cont(r::int, 0.5) FROM quantile
+----
+4999.500000
+
+query R
+SELECT quantile_cont(r::long, 0.5) FROM quantile
+----
+4999.500000
+
+query R
+SELECT quantile_cont(NULL, 0.5) FROM quantile
+----
+NULL
+
+query R
+SELECT quantile_cont(42, 0.5) FROM quantile
+----
+42.000000
+
+# Validate even number of values for all types: interpolated
+
+query R
+SELECT quantile_cont((x - 1)::byte, 0.5) FROM long_sequence(10)
+----
+4.500000
+
+query R
+SELECT quantile_cont((x - 1)::short, 0.5) FROM long_sequence(10)
+----
+4.500000
+
+query R
+SELECT quantile_cont((x - 1)::int, 0.5) FROM long_sequence(10)
+----
+4.500000
+
+query R
+SELECT quantile_cont(x - 1, 0.5) FROM long_sequence(10)
+----
+4.500000
+
+query R
+SELECT quantile_cont((x - 1)::float, 0.5) FROM long_sequence(10)
+----
+4.500000
+
+query R
+SELECT quantile_cont((x - 1)::double, 0.5) FROM long_sequence(10)
+----
+4.500000
+
+query I
+SELECT quantile_cont(dateadd('d', (x - 1)::int, '2024-01-01'::timestamp)::long, 0.5)::long::timestamp FROM long_sequence(10)
+----
+2024-01-05 12:00:00
+
+# the same values as window functions over the whole result set
+query RR
+SELECT quantile_cont((x - 1)::int, 0.5) OVER (), quantile_cont((x - 1)::double, ARRAY[0.5]) OVER () FROM long_sequence(10) LIMIT 1
+----
+4.500000 {4.500000}
+
+#
+# Type extremes. DuckDB checks that the 0.2 and 0.8 discrete quantiles of
+# (min, max, NULL) are the minimum and the maximum. QuestDB's INT and LONG
+# minimums sit one above the type minimum, which QuestDB reserves for NULL.
+# BYTE and SHORT have no NULL.
+#
+
+statement ok
+CREATE TABLE all_types (b BYTE, s SHORT, i INT, l LONG, f FLOAT, d DOUBLE);
+
+statement ok
+INSERT INTO all_types VALUES
+    (-128, -32768, -2147483647, -9223372036854775807, -3.4028234663852886E38, -1.7976931348623157E308),
+    (127, 32767, 2147483647, 9223372036854775807, 3.4028234663852886E38, 1.7976931348623157E308),
+    (0, 0, NULL, NULL, NULL, NULL);
+
+query IIIIII
+SELECT quantile_disc(b, 0.2) = min(b), quantile_disc(s, 0.2) = min(s), quantile_disc(i, 0.2) = min(i),
+       quantile_disc(l, 0.2) = min(l), quantile_disc(f, 0.2) = min(f), quantile_disc(d, 0.2) = min(d)
+FROM all_types
+----
+true true true true true true
+
+query IIIIII
+SELECT quantile_disc(b, 0.8) = max(b), quantile_disc(s, 0.8) = max(s), quantile_disc(i, 0.8) = max(i),
+       quantile_disc(l, 0.8) = max(l), quantile_disc(f, 0.8) = max(f), quantile_disc(d, 0.8) = max(d)
+FROM all_types
+----
+true true true true true true
+
+query IIIIII
+SELECT quantile_disc(l, 0.2), quantile_disc(l, 0.8), quantile_disc(i, 0.2), quantile_disc(i, 0.8), quantile_disc(b, 0.5), quantile_disc(s, 0.5)
+FROM all_types
+----
+-9223372036854775807 9223372036854775807 -2147483647 2147483647 0 0
+
+query IIIIII
+SELECT a[1] = hi_b, a[2] = lo_b, c[1] = hi_l::double, c[2] = lo_l::double, e[1] = hi_d, e[2] = lo_d
+FROM (
+    SELECT quantile_disc(b, ARRAY[0.8, 0.2]) a, min(b) lo_b, max(b) hi_b,
+           quantile_disc(l, ARRAY[0.8, 0.2]) c, min(l) lo_l, max(l) hi_l,
+           quantile_disc(d, ARRAY[0.8, 0.2]) e, min(d) lo_d, max(d) hi_d
+    FROM all_types
+)
+----
+true true true true true true
+
+# DuckDB only runs the median of each extreme pair; this checks that it
+# stays between the minimum and the maximum
+query IIIII
+SELECT (mb >= lb AND mb <= hb), (ms >= ls AND ms <= hs), (mi >= li AND mi <= hi),
+       (ml >= ll AND ml <= hl), (mf >= lf AND mf <= hf)
+FROM (
+    SELECT quantile_cont(b, 0.5) mb, min(b) lb, max(b) hb,
+           quantile_cont(s, 0.5) ms, min(s) ls, max(s) hs,
+           quantile_cont(i, 0.5) mi, min(i) li, max(i) hi,
+           quantile_cont(l, 0.5) ml, min(l) ll, max(l) hl,
+           quantile_cont(f, 0.5) mf, min(f) lf, max(f) hf
+    FROM all_types
+)
+----
+true true true true true
+
+query RRRRR
+SELECT quantile_cont(b, 0.5), quantile_cont(s, 0.5), quantile_cont(i, 0.5), quantile_cont(l, 0.5), quantile_cont(f, 0.5)
+FROM all_types
+----
+0.000000 0.000000 0.000000 0.000000 0.000000

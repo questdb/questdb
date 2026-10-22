@@ -296,6 +296,7 @@ public class MutableModelsTest {
         model.setFillTo(newExpressionNode());
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());
+        model.setFillBucketKey(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
         model.getAliasSequenceMap().put("foobar", 1);
         model.setScalarExpiryRead(true);

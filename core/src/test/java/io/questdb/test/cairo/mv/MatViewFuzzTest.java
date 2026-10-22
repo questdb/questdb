@@ -27,12 +27,14 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -373,6 +375,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     writesFinished.set(true);
                 }
             });
@@ -504,6 +507,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     writesFinished.set(true);
                 }
             });
@@ -521,6 +525,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             refresher.start();
@@ -963,6 +968,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.error().$("Refresh job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-job" + workerId
@@ -1011,6 +1017,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.error().$("Refresh job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-interval-job" + workerId
