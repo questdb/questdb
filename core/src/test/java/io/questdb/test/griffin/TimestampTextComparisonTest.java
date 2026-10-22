@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.BindVariableTestSetter;
 import org.junit.Test;
 
 /**
@@ -42,6 +48,14 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
             5
             """;
     private static final String[] TABLES = {"x", "xn"};
+    private static final String[] TEMPORAL_COLUMNS = {"t2", "tn", "d"};
+    private static final String TEXT_COMPARISONS = """
+            SELECT v, ? < :s lt, ? <= :s le, ? > :s gt, ? >= :s ge, ? = :s eq, ? != :s ne, :s < ? rlt, :s >= ? rge,
+                ? BETWEEN :s AND :e bt
+            FROM t
+            """;
+    private static final String[] TEXT_PREDICATES = {"? < :s", "? <= :s", "? > :s", "? >= :s", "? = :s", "? != :s", ":s < ?", "? BETWEEN :s AND :s"};
+    private static final String[] TEXT_TYPES = {"STRING", "VARCHAR"};
 
     private static void createTables() throws Exception {
         for (String table : TABLES) {
@@ -336,6 +350,94 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                         """);
             }
         });
+    }
+
+    @Test
+    public void testRuntimeConstantInvalidTextFailsOnEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (t2 TIMESTAMP, tn TIMESTAMP_NS, d DATE, v INT)");
+            for (String column : TEMPORAL_COLUMNS) {
+                for (String textType : TEXT_TYPES) {
+                    for (String predicate : TEXT_PREDICATES) {
+                        final String targetType = column.equals("d") && !predicate.contains("BETWEEN") ? "DATE" : "TIMESTAMP_NS";
+                        final ObjList<BindVarTuple> cases = new ObjList<>();
+                        cases.add(BindVarTuple.ok("valid text", "v\n", texts(textType, "2024-01-02", null)));
+                        cases.add(BindVarTuple.fails("invalid text", 0, "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
+                                texts(textType, "abc", null)));
+                        assertQuery("SELECT v FROM t WHERE " + predicate.replace("?", column)).noLeakCheck().assertBinds(cases);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantTextMatchesConstantText() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (t2 TIMESTAMP, tn TIMESTAMP_NS, d DATE, v INT)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T23:59:59.999999Z', '2024-01-01T23:59:59.999999999Z', '2024-01-01T23:59:59.999Z', 1),
+                        ('2024-01-02T00:00:00.000000Z', '2024-01-02T00:00:00.000000000Z', '2024-01-02T00:00:00.000Z', 2),
+                        ('2024-01-02T00:00:00.000001Z', '2024-01-02T00:00:00.000000001Z', '2024-01-02T00:00:00.001Z', 3),
+                        (NULL, NULL, NULL, 4)
+                    """);
+            final String atBoundary = """
+                    v	lt	le	gt	ge	eq	ne	rlt	rge	bt
+                    1	true	true	false	false	false	true	false	true	false
+                    2	false	true	false	true	true	false	false	true	true
+                    3	false	false	true	true	false	true	true	false	true
+                    4	false	false	false	false	false	true	false	false	false
+                    """;
+            final String belowAll = """
+                    v	lt	le	gt	ge	eq	ne	rlt	rge	bt
+                    1	false	false	true	true	false	true	true	false	true
+                    2	false	false	true	true	false	true	true	false	true
+                    3	false	false	true	true	false	true	true	false	false
+                    4	false	false	false	false	false	true	false	false	false
+                    """;
+            final String nullText = """
+                    v	lt	le	gt	ge	eq	ne	rlt	rge	bt
+                    1	false	false	false	false	false	true	false	false	false
+                    2	false	false	false	false	false	true	false	false	false
+                    3	false	false	false	false	false	true	false	false	false
+                    4	false	true	false	true	true	false	false	true	false
+                    """;
+            for (String column : TEMPORAL_COLUMNS) {
+                final String query = TEXT_COMPARISONS.replace("?", column);
+                assertQuery(query.replace(":s", "'2024-01-02'").replace(":e", "'2024-01-03'"))
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(atBoundary);
+                final String targetType = column.equals("d") ? "DATE" : "TIMESTAMP_NS";
+                for (String textType : TEXT_TYPES) {
+                    final ObjList<BindVarTuple> cases = new ObjList<>();
+                    cases.add(BindVarTuple.ok("text at boundary", atBoundary, texts(textType, "2024-01-02", "2024-01-03")));
+                    cases.add(BindVarTuple.ok("text rebound below all rows", belowAll, texts(textType, "2024-01-01", "2024-01-02")));
+                    cases.add(BindVarTuple.ok("null text", nullText, texts(textType, null, "2024-01-03")));
+                    cases.add(BindVarTuple.fails("invalid text", 0, "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
+                            texts(textType, "abc", "2024-01-03")));
+                    assertQuery(query).noLeakCheck().expectSize().assertBinds(cases);
+                }
+            }
+        });
+    }
+
+    private static void bindText(BindVariableService bindVariableService, String textType, String name, String value) throws SqlException {
+        if (textType.equals("STRING")) {
+            bindVariableService.setStr(name, value);
+        } else {
+            bindVariableService.setVarchar(name, value != null ? new Utf8String(value) : null);
+        }
+    }
+
+    private static BindVariableTestSetter texts(String textType, String start, String end) {
+        return bindVariableService -> {
+            bindText(bindVariableService, textType, "s", start);
+            if (end != null) {
+                bindText(bindVariableService, textType, "e", end);
+            }
+        };
     }
 
     private void assertError(String table, String predicate, int offset, String message) throws Exception {

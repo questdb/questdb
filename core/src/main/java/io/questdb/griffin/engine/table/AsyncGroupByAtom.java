@@ -222,6 +222,12 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
 
     @Override
     public void clear() {
+        if (ownerKeyFunctions != null) {
+            Function.cursorClosed(ownerKeyFunctions);
+        }
+        Function.cursorClosed(ownerGroupByFunctions);
+        cursorClosedPerWorkerFunctions(perWorkerKeyFunctions);
+        cursorClosedPerWorkerFunctions(perWorkerGroupByFunctions);
         shardingCtx.clear();
         Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
@@ -287,6 +293,14 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             }
         }
         return cleanupFailure;
+    }
+
+    private static void cursorClosedPerWorkerFunctions(ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
+        if (perWorkerFunctions != null) {
+            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                PerWorkerFunctionList.cursorClosed(perWorkerFunctions.getQuick(i));
+            }
+        }
     }
 
     public DirectLongList getBatchList(int slotId) {

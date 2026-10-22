@@ -138,6 +138,14 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
         }
 
         @Override
+        public void close() {
+            if (masterCursor != null) {
+                filter.cursorClosed();
+            }
+            super.close();
+        }
+
+        @Override
         public Record getRecord() {
             return record;
         }

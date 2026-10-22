@@ -157,9 +157,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
             ownerFunctionUpdater.updateEmpty(value);
             value.setNew(true);
         }
+        Function.cursorClosed(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                PerWorkerFunctionList.cursorClosed(functions);
+                PerWorkerFunctionList.clear(functions);
             }
         }
         Misc.clear(ownerAllocator);

@@ -338,11 +338,17 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         }
         if (isSlaveFilterInitialized) {
             isSlaveFilterInitialized = false;
-            cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, ownerSlaveFilter);
+            cleanupFailure = Function.cursorClosed(cleanupFailure, ownerSlaveFilter);
             if (perWorkerSlaveFilters != null) {
                 for (int i = 0, n = perWorkerSlaveFilters.size(); i < n; i++) {
-                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, perWorkerSlaveFilters.getQuick(i));
+                    cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerSlaveFilters.getQuick(i));
                 }
+            }
+        }
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerGroupByFunctions.getQuick(i));
             }
         }
         memoryTracker = null;

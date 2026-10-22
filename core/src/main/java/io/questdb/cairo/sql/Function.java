@@ -36,6 +36,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -70,8 +71,26 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     static void cursorClosed(ObjList<? extends Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).cursorClosed();
+            final Function function = functions.getQuick(i);
+            if (function != null) {
+                function.cursorClosed();
+            }
         }
+    }
+
+    /**
+     * Best-effort variant of {@link #cursorClosed()} for cleanup paths that keep going past a
+     * failure: it folds a failure of {@code function} into {@code failure} and returns the result.
+     */
+    static Throwable cursorClosed(@Nullable Throwable failure, @Nullable Function function) {
+        if (function != null) {
+            try {
+                function.cursorClosed();
+            } catch (Throwable th) {
+                return Misc.foldCleanupFailure(failure, th);
+            }
+        }
+        return failure;
     }
 
     /**

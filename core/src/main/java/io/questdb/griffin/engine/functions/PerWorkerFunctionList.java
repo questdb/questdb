@@ -41,7 +41,8 @@ import java.util.Comparator;
 /**
  * An aligned per-worker function list that shares thread-safe owner functions and owns only the
  * marked worker-local clones. Callers use the list normally during execution and use the static
- * lifecycle helpers to avoid initializing, clearing, rewinding, or closing shared owner references.
+ * lifecycle helpers so that initializing, clearing, rewinding, cursor-close notification and closing
+ * never reach a shared owner reference.
  * <p>
  * Ownership follows positional bits, so the class rejects every inherited structural mutator that
  * would reorder or replace elements without updating the bits. Callers grow the list only through
@@ -205,6 +206,34 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
                 primary.addSuppressed(th);
             }
         }
+    }
+
+    public static void cursorClosed(ObjList<? extends Function> functions) {
+        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
+            for (int i = perWorkerFunctions.ownedFunctions.nextSetBit(0); i > -1; i = perWorkerFunctions.ownedFunctions.nextSetBit(i + 1)) {
+                final Function function = perWorkerFunctions.getQuick(i);
+                if (function != null) {
+                    function.cursorClosed();
+                }
+            }
+        } else {
+            Function.cursorClosed(functions);
+        }
+    }
+
+    /**
+     * Best-effort variant of {@link #cursorClosed(ObjList)} for cleanup paths that keep going past a
+     * failure: it notifies every owned slot and folds each failure into the one it returns.
+     */
+    public static Throwable cursorClosed(@Nullable Throwable failure, @Nullable ObjList<? extends Function> functions) {
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                if (isOwned(functions, i)) {
+                    failure = Function.cursorClosed(failure, functions.getQuick(i));
+                }
+            }
+        }
+        return failure;
     }
 
     public static void init(

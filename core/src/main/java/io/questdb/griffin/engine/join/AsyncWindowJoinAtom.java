@@ -353,6 +353,21 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     @Override
     public final void clear() {
         Throwable cleanupFailure = null;
+        cleanupFailure = Function.cursorClosed(cleanupFailure, ownerMasterFilter);
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerMasterFilters);
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, bindVarFunctions);
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
+        cleanupFailure = Function.cursorClosed(cleanupFailure, ownerJoinFilter);
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerJoinFilters);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, ownerWindowLoFunc);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, ownerWindowHiFunc);
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerWindowLoFuncs);
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerWindowHiFuncs);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
         cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
         cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerFunctionAllocator);

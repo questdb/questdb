@@ -277,18 +277,15 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillConstLong256ValueRejectedAgainstLongTarget() throws Exception {
         assertMemoryLeak(() -> {
-            // first(LONG256) silently resolves to first(L) (no first(H) factory
-            // exists), so the aggregate output type is LONG. A LONG256 fill
-            // expression is not formally convertible to LONG via
-            // ColumnType.isConvertibleFrom even though Long256Function.getLong()
-            // happens to return the low 64 bits at runtime. The upfront type
-            // check correctly rejects this so the user sees a clean error
-            // rather than relying on an undocumented narrowing path.
+            // A LONG256 fill expression is not convertible to the LONG output of
+            // count() via ColumnType.isConvertibleFrom, so the upfront type check
+            // rejects it with a clean error. first(val) no longer provides a LONG
+            // target: it returns the LONG256 value instead of its low 64 bits.
             execute("CREATE TABLE x (val LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(cast('0x01' AS LONG256), '2024-01-01T00:00:00.000000Z')," +
                     "(cast('0x03' AS LONG256), '2024-01-01T02:00:00.000000Z')");
-            String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR";
+            String sql = "SELECT count(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR";
             assertQuery(sql)
                     .noLeakCheck()
                     .fails(sql.indexOf("cast('0x42'"), "fill value of type LONG256 cannot fill column of type LONG");
@@ -2420,6 +2417,28 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tnull\tnull
                             2024-01-01T03:00:00.000000Z\t1\t20.0
                             2024-01-01T04:00:00.000000Z\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevLong256First() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (0x8000000000000000000000000000000000000000000000000000000000000001, '2024-01-01T00:00:00.000000Z'),
+                        (0x03, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tts
+                            0x8000000000000000000000000000000000000000000000000000000000000001\t2024-01-01T00:00:00.000000Z
+                            0x8000000000000000000000000000000000000000000000000000000000000001\t2024-01-01T01:00:00.000000Z
+                            0x03\t2024-01-01T02:00:00.000000Z
                             """);
         });
     }

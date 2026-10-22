@@ -286,6 +286,9 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             super.close();
             mapCursor = Misc.free(mapCursor);
+            if (filter != null) {
+                filter.cursorClosed();
+            }
         }
 
         @Override
@@ -472,6 +475,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         }
 
         @Override
+        public void close() {
+            super.close();
+            if (filter != null) {
+                filter.cursorClosed();
+            }
+        }
+
+        @Override
         public Record getRecord() {
             return record;
         }
@@ -565,6 +576,9 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             super.close();
             mapCursor = Misc.free(mapCursor);
+            if (filter != null) {
+                filter.cursorClosed();
+            }
         }
 
         @Override

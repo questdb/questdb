@@ -156,6 +156,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public void close() {
             if (isOpen) {
+                filter.cursorClosed();
                 super.close();
                 Misc.free(matchedSlaveRows);
                 isOpen = false;

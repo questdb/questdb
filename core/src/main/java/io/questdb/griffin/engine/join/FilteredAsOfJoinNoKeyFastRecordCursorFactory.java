@@ -181,6 +181,14 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         }
 
         @Override
+        public void close() {
+            super.close();
+            if (slaveRecordFilter != null) {
+                slaveRecordFilter.cursorClosed();
+            }
+        }
+
+        @Override
         public boolean hasNext() {
             if (!masterCursor.hasNext()) {
                 return false;

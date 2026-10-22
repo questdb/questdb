@@ -357,6 +357,10 @@ final class PivotBinder implements Mutable {
         return function;
     }
 
+    private ExpressionNode castToInt(ExpressionNode value, int position) {
+        return ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, value, ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "int", 0, position), position);
+    }
+
     /**
      * Advances the IN value index of each FOR column to the next combination, the last column fastest.
      */
@@ -429,7 +433,9 @@ final class PivotBinder implements Mutable {
             choice.args.add(value);
             choice.args.add(condition);
         }
-        final ExpressionNode aggregate = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, isZeroOnEmpty ? "sum" : "first_not_null", 0, position);
+        // A cell matches at most one row; BOOLEAN has no NULL for first_not_null to skip, and bool_or reads an absent cell as false.
+        final CharSequence merge = isZeroOnEmpty ? "sum" : ColumnType.isBoolean(measuredType) ? "bool_or" : "first_not_null";
+        final ExpressionNode aggregate = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, merge, 0, position);
         aggregate.paramCount = 1;
         aggregate.rhs = choice;
         return aggregate;
@@ -541,8 +547,7 @@ final class PivotBinder implements Mutable {
      */
     private ExpressionNode widenNarrowMeasure(ExpressionNode measure, int type, int position) {
         return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BYTE, ColumnType.SHORT -> ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, measure,
-                    ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "int", 0, position), position);
+            case ColumnType.BYTE, ColumnType.SHORT -> castToInt(measure, position);
             default -> measure;
         };
     }
@@ -555,11 +560,13 @@ final class PivotBinder implements Mutable {
     }
 
     /**
-     * The window value a first or last measure merges; a widened BYTE or SHORT value reads NULL for an empty window.
+     * The window value a first or last measure merges; a BYTE, SHORT or BOOLEAN value widens to INT, which reads NULL
+     * for an empty window.
      */
     private ExpressionNode windowJoinPivotFirstLastValue(WindowJoinPivotAggregate aggregate, int position) {
         final ExpressionNode value = windowJoinPivotPlaceholder(aggregate.value, position);
-        final ExpressionNode widened = widenNarrowMeasure(value, aggregate.value.getDataType(), position);
+        final int type = aggregate.value.getDataType();
+        final ExpressionNode widened = ColumnType.isBoolean(type) ? castToInt(value, position) : widenNarrowMeasure(value, type, position);
         if (widened == value) {
             return value;
         }
@@ -640,7 +647,9 @@ final class PivotBinder implements Mutable {
                 choice.args.add(value);
                 choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position));
                 choice.args.add(isNull);
-                return choice;
+                // A BOOLEAN merges as INT; "= 1" reads it back, and the NULL of all-empty windows as false.
+                return ColumnType.isBoolean(aggregate.value.getDataType()) ? ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, choice,
+                        ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "1", 0, position), position) : choice;
             }
             default -> {
                 return value;
@@ -776,10 +785,13 @@ final class PivotBinder implements Mutable {
                 final int position = measure.getAst().position;
                 scope.substitutionNodes.clear();
                 scope.substitutionColumns.clear();
-                final ExpressionNode value = windowJoin != null && isDirect
-                        ? windowJoinPivotValue(scope.windowJoinPivotAggregates.getQuick(k), measuredOutput, measureIndex, position)
+                final WindowJoinPivotAggregate aggregate = windowJoin != null && isDirect ? scope.windowJoinPivotAggregates.getQuick(k) : null;
+                final ExpressionNode value = aggregate != null
+                        ? windowJoinPivotValue(aggregate, measuredOutput, measureIndex, position)
                         : ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(measuredOutput.getColumnName(measureIndex)), 0, position);
-                final ExpressionNode call = pivotMeasure(forColumns, measure, value, measuredOutput.getColumnType(measureIndex));
+                final int valueType = aggregate != null && ColumnType.isBoolean(aggregate.value.getDataType())
+                        ? ColumnType.BOOLEAN : measuredOutput.getColumnType(measureIndex);
+                final ExpressionNode call = pivotMeasure(forColumns, measure, value, valueType);
                 final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, measuredOutput, scope.substitutionNodes, scope.substitutionColumns, executionContext);
                 pivoted.getAggregates().add((FunctionExpression) bound);
             }

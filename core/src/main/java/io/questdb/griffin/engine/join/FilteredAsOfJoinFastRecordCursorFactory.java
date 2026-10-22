@@ -233,6 +233,9 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             masterSinkTarget.close();
             slaveSinkTarget.close();
             Misc.free(symbolTranslatingRecord);
+            if (slaveRecordFilter != null) {
+                slaveRecordFilter.cursorClosed();
+            }
         }
 
         @Override

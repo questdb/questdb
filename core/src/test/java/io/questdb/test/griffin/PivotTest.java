@@ -392,6 +392,51 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotBooleanMeasure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, g INT, b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 0, true, 1_000_000), ('b', 0, false, 2_000_000), ('a', 0, false, 3_000_000), ('b', 0, true, 4_000_000),
+                        ('a', 1, false, 5_000_000), ('c', 1, true, 6_000_000), ('a', 1, true, 7_000_000)
+                    """);
+            // BOOLEAN has no NULL: an absent cell reads false, as a NULL BOOLEAN does elsewhere.
+            assertQuery("SELECT * FROM t PIVOT (first(b) f, last(b) l FOR k IN ('a', 'b', 'c', 'd') GROUP BY g) ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ta_f\ta_l\tb_f\tb_l\tc_f\tc_l\td_f\td_l
+                            0\ttrue\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\tfalse
+                            1\tfalse\ttrue\tfalse\tfalse\ttrue\ttrue\tfalse\tfalse
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (first(b) f, last(b) l FOR k IN ('a', 'b', 'c'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_f\ta_l\tb_f\tb_l\tc_f\tc_l
+                            true\ttrue\tfalse\ttrue\ttrue\ttrue
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (last(b) FOR k IN ('a', 'b') g IN (0, 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_0\ta_1\tb_0\tb_1
+                            false\ttrue\ttrue\tfalse
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (bool_and(b) ba, bool_or(b) bo, count() > 1 cm FOR k IN ('a', 'c', 'd'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_ba\ta_bo\ta_cm\tc_ba\tc_bo\tc_cm\td_ba\td_bo\td_cm
+                            false\ttrue\ttrue\ttrue\ttrue\tfalse\tfalse\tfalse\tfalse
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotCastOfSubQueryFailsCleanly() throws Exception {
         // Regression: PIVOT names its IN values, FOR expressions, GROUP BY keys and aggregates
         // through ExpressionNode.toSink(), whose cast branch read the token of a sub-query operand,
@@ -769,6 +814,42 @@ public class PivotTest extends AbstractSqlParserTest {
                             US\t8579\t8783
                             NL\t1005\t1065
                             US\t8579\t8783
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotLong256Measures() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (grp SYMBOL, k SYMBOL, l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', 'a', 0x8000000000000000000000000000000000000000000000000000000000000001, 1_000_000),
+                        ('A', 'a', 0x02, 2_000_000),
+                        ('A', 'b', NULL, 3_000_000),
+                        ('B', 'b', 0x018000000000000000, 4_000_000),
+                        ('B', 'c', 0x03, 5_000_000)
+                    """);
+            assertQuery("SELECT * FROM t PIVOT (sum(l) s, first(l) f, last(l) la FOR k IN ('a', 'b') GROUP BY grp) ORDER BY grp")
+                    .expectSize()
+                    .returns("""
+                            grp\ta_s\ta_f\ta_la\tb_s\tb_f\tb_la
+                            A\t0x8000000000000000000000000000000000000000000000000000000000000003\t0x8000000000000000000000000000000000000000000000000000000000000001\t0x02\t\t\t
+                            B\t\t\t\t0x018000000000000000\t0x018000000000000000\t0x018000000000000000
+                            """);
+            assertQuery("""
+                    SELECT * FROM t
+                    PIVOT (
+                        sum(l) s, first(l) f, last(l) la
+                        FOR k IN ('a', 'b')
+                            grp IN ('A', 'B')
+                    )
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_A_s\ta_A_f\ta_A_la\ta_B_s\ta_B_f\ta_B_la\tb_A_s\tb_A_f\tb_A_la\tb_B_s\tb_B_f\tb_B_la
+                            0x8000000000000000000000000000000000000000000000000000000000000003\t0x8000000000000000000000000000000000000000000000000000000000000001\t0x02\t\t\t\t\t\t\t0x018000000000000000\t0x018000000000000000\t0x018000000000000000
                             """);
         });
     }
@@ -2567,6 +2648,56 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWindowJoinBooleanMeasure() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            execute("CREATE TABLE qb (sym SYMBOL, bp BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO qb VALUES ('a', false, 1_000_000), ('a', true, 2_500_000), ('b', true, 3_500_000)");
+            // The windows of v = 2 and v = 5 are empty: first and last skip them, and a cell with no rows reads false.
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN qb ON (t.s = qb.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (first(bp) f, last(bp) l FOR s IN ('a', 'b', 'c'))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_f\ta_l\tb_f\tb_l\tc_f\tc_l
+                            false\ttrue\ttrue\ttrue\tfalse\tfalse
+                            """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN qb ON (t.s = qb.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (first(bp) f, last(bp) l FOR s IN ('a', 'b') GROUP BY v)
+                    ORDER BY v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ta_f\ta_l\tb_f\tb_l
+                            1\tfalse\tfalse\tfalse\tfalse
+                            2\tfalse\tfalse\tfalse\tfalse
+                            3\ttrue\ttrue\tfalse\tfalse
+                            4\tfalse\tfalse\ttrue\ttrue
+                            5\tfalse\tfalse\tfalse\tfalse
+                            """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN qb ON (t.s = qb.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (count() > 1 FOR s IN ('a', 'b', 'c'))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            true\tfalse\tfalse
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotWindowJoinErrors() throws Exception {
         assertMemoryLeak(() -> {
             createWindowJoinTables();
@@ -2592,6 +2723,47 @@ public class PivotTest extends AbstractSqlParserTest {
                             3\t140.0\tnull
                             4\tnull\t25.0
                             5\t100.0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinLong256Measures() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            execute("CREATE TABLE ql (sym SYMBOL, l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ql VALUES
+                        ('a', 0x8000000000000000000000000000000000000000000000000000000000000001, 1_000_000),
+                        ('b', 0x018000000000000000, 2_000_000),
+                        ('a', NULL, 3_000_000),
+                        ('a', 0x02, 5_000_000)
+                    """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN ql ON (t.s = ql.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (sum(l) tot, first(l) f, last(l) la FOR s IN ('a', 'b') GROUP BY v)
+                    ORDER BY v
+                    """)
+                    .expectSize()
+                    .returns("""
+                            v\ta_tot\ta_f\ta_la\tb_tot\tb_f\tb_la
+                            1\t0x8000000000000000000000000000000000000000000000000000000000000001\t0x8000000000000000000000000000000000000000000000000000000000000001\t0x8000000000000000000000000000000000000000000000000000000000000001\t\t\t
+                            2\t\t\t\t0x018000000000000000\t0x018000000000000000\t0x018000000000000000
+                            3\t\t\t\t\t\t
+                            4\t\t\t\t\t\t
+                            5\t0x02\t0x02\t0x02\t\t\t
+                            """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN ql ON (t.s = ql.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (sum(l) tot, first(l) f, last(l) la FOR s IN ('a', 'b'))
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_tot\ta_f\ta_la\tb_tot\tb_f\tb_la
+                            0x8000000000000000000000000000000000000000000000000000000000000003\t0x8000000000000000000000000000000000000000000000000000000000000001\t0x02\t0x018000000000000000\t0x018000000000000000\t0x018000000000000000
                             """);
         });
     }

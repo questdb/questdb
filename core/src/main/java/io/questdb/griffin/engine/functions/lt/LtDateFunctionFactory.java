@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ComparisonFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -55,7 +56,10 @@ public class LtDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LtDateFunctionFactory.LtDateFunction(args.getQuick(0), args.getQuick(1));
+        return new LtDateFunction(
+                RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.DATE),
+                RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.DATE)
+        );
     }
 
     private static class LtDateFunction extends ComparisonFunction implements BinaryFunction {

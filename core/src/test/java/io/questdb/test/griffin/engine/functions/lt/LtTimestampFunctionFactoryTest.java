@@ -25,13 +25,19 @@
 package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -217,8 +223,65 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
         });
     }
 
+    @Test
+    public void testRuntimeConstantTextParsesOnce() throws Exception {
+        final long value = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        for (int textIndex = 0; textIndex < 2; textIndex++) {
+            final CountingTextFunction text = new CountingTextFunction("2021-01-01T00:00:00.000000Z");
+            final ObjList<Function> args = new ObjList<>();
+            args.add(textIndex == 0 ? text : new ColumnFunction(timestampType.getTimestampType(), value));
+            args.add(textIndex == 0 ? new ColumnFunction(timestampType.getTimestampType(), value) : text);
+            try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+                function.init(null, sqlExecutionContext);
+                for (int i = 0; i < 1_000; i++) {
+                    Assert.assertEquals(textIndex == 1, function.getBool(null));
+                }
+                Assert.assertEquals(1, text.getStrACalls);
+            }
+        }
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LtTimestampFunctionFactory();
+    }
+
+    private static class ColumnFunction extends TimestampFunction {
+        private final long value;
+
+        private ColumnFunction(int timestampType, long value) {
+            super(timestampType);
+            this.value = value;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+    }
+
+    private static class CountingTextFunction extends StrFunction {
+        private final String value;
+        private int getStrACalls;
+
+        private CountingTextFunction(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            getStrACalls++;
+            return value;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStrA(rec);
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
     }
 }

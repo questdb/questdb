@@ -386,6 +386,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         for (int s = 0; s < count; s++) {
             cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
         }
+        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }

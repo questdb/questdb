@@ -118,6 +118,7 @@ public class CountTest extends AbstractCairoTest {
 
     @Test
     public void testCountLong256() throws Exception {
+        // first() and last() keep all 256 bits; they used to bind to their LONG overloads and return the low 64 bits.
         assertQuery("select count(l256), first(l256), last(l256) from x where id % 2 = 0")
                 .ddl("create table x as (" +
                         "select" +
@@ -130,7 +131,7 @@ public class CountTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         count\tfirst\tlast
-                        5000\t8260188555232587029\t6825995141825164433
+                        5000\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\t0x743e7dbf13663d6983a17c3fe164255e9d31c3f1c126b48f5ebace6a7307f491
                         """);
     }
 

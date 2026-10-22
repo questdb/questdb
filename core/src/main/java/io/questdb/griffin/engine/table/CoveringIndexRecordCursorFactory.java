@@ -762,6 +762,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // still holds it), so the cursor re-pools into a live reader rather than a
             // stale/closed one. Mirrors CoveringPageFrameCursor.close() (closePendingCursor
             // before freeing frameCursor).
+            if (latestByFilter != null && frameCursor != null) {
+                latestByFilter.cursorClosed();
+            }
             this.currentRowCursor = Misc.free(currentRowCursor);
             frameCursor = Misc.free(frameCursor);
         }

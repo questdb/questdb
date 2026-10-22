@@ -133,6 +133,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -153,6 +154,25 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
         assertEquals(7, ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE));
+    }
+
+    @Test
+    public void overloadFromIntegerToLong256IsTheWidestConversion() {
+        for (short from : new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG}) {
+            final int toLong256 = ColumnType.overloadDistance(from, ColumnType.LONG256);
+            assertNotEquals(OVERLOAD_NONE, toLong256);
+            for (short to = ColumnType.BOOLEAN; to <= ColumnType.NULL; to++) {
+                final int distance = ColumnType.overloadDistance(from, to);
+                if (to != ColumnType.LONG256 && distance != OVERLOAD_NONE) {
+                    assertTrue(distance < toLong256);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void overloadFromLong256ToLongDoesNotExist() {
+        assertEquals(OVERLOAD_NONE, ColumnType.overloadDistance(ColumnType.LONG256, ColumnType.LONG));
     }
 
     @Test
@@ -269,6 +289,34 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testArgMinResolvesLikeArgMax() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("k", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
+            metadata.add(new TableColumnMetadata("s", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("c", ColumnType.CHAR));
+            metadata.add(new TableColumnMetadata("d", ColumnType.DOUBLE));
+            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            final FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (String value : new String[]{"k", "s", "v", "c", "null"}) {
+                for (String key : new String[]{"d", "i", "l", "ts"}) {
+                    final String args = "(" + value + ", " + key + ")";
+                    expected.put(args).put(" -> ")
+                            .put(describeResolution("arg_max" + args, metadata, functionParser).replace("ArgMax", "ArgMin"))
+                            .put('\n');
+                    actual.put(args).put(" -> ").put(describeResolution("arg_min" + args, metadata, functionParser)).put('\n');
+                }
+            }
+            TestUtils.assertEquals(expected, actual);
         });
     }
 
@@ -2781,6 +2829,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 return BooleanConstant.TRUE;
             }
         };
+    }
+
+    private static String describeResolution(String call, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
+        try (Function function = parseFunction(call, metadata, functionParser)) {
+            return function.getClass().getSimpleName() + ' ' + ColumnType.nameOf(function.getType());
+        }
     }
 
     // A parent factory that matches on signature but must never have newInstance() invoked, used for

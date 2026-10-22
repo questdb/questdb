@@ -162,18 +162,18 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
      * Release execution state after draining slots and finishing output, also after failed init.
      */
     public void cursorClosed() {
-        Throwable failure = cursorClosed(null, keyFunctions);
-        failure = cursorClosed(failure, groupByFunctions);
-        failure = cursorClosed(failure, outputOnlyFunctions);
+        Throwable failure = PerWorkerFunctionList.cursorClosed(null, keyFunctions);
+        failure = PerWorkerFunctionList.cursorClosed(failure, groupByFunctions);
+        failure = PerWorkerFunctionList.cursorClosed(failure, outputOnlyFunctions);
         for (int i = 0; i < workerCount; i++) {
             if (workerKeyFunctions != null) {
-                failure = cursorClosed(failure, workerKeyFunctions.getQuick(i));
+                failure = PerWorkerFunctionList.cursorClosed(failure, workerKeyFunctions.getQuick(i));
             }
             if (workerGroupByFunctions != null) {
-                failure = cursorClosed(failure, workerGroupByFunctions.getQuick(i));
+                failure = PerWorkerFunctionList.cursorClosed(failure, workerGroupByFunctions.getQuick(i));
             }
         }
-        failure = cursorClosed(failure, workerFilters);
+        failure = PerWorkerFunctionList.cursorClosed(failure, workerFilters);
         if (filter != null) {
             try {
                 filter.cursorClosed();
@@ -307,21 +307,6 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 }
             }
             workers.clear();
-        }
-        return failure;
-    }
-
-    private static Throwable cursorClosed(Throwable failure, ObjList<? extends Function> functions) {
-        if (functions != null) {
-            for (int i = 0; i < functions.size(); i++) {
-                if (PerWorkerFunctionList.isOwned(functions, i)) {
-                    try {
-                        functions.getQuick(i).cursorClosed();
-                    } catch (Throwable th) {
-                        failure = addFailure(failure, th);
-                    }
-                }
-            }
         }
         return failure;
     }

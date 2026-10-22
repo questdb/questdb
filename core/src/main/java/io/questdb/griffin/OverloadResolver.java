@@ -117,6 +117,10 @@ final class OverloadResolver {
             IntList distancesB
     ) {
         final int argCount = argTypes.size();
+        boolean hasLong256Argument = false;
+        for (int i = 0; i < argCount; i++) {
+            hasLong256Argument |= ColumnType.tagOf(argTypes.getQuick(i)) == ColumnType.LONG256;
+        }
         IntList distances = distancesA;
         IntList candidateDistances = distancesB;
         FunctionFactoryDescriptor candidate = null;
@@ -234,6 +238,10 @@ final class OverloadResolver {
                                 overloadDistance = 2 * overloadDistance;
                             }
                         } else if (argTypeTag == ColumnType.CHAR && sigArgTypeTag == ColumnType.STRING && !factory.supportImplicitCastCharToStr()) {
+                            overloadDistance = ColumnType.OVERLOAD_NONE;
+                        } else if (sigArgTypeTag == ColumnType.LONG256 && argTypeTag != ColumnType.NULL && !hasLong256Argument) {
+                            // An integer widens to LONG256 only to meet a LONG256 operand: byte = 'abc'
+                            // must keep binding to =(BB), not to =(HS).
                             overloadDistance = ColumnType.OVERLOAD_NONE;
                         }
 

@@ -42,14 +42,18 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastByteToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
@@ -611,6 +615,18 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                     assert argPositions != null;
                     args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
                     implicitConversions.setQuick(k, CastByteToDecimalFunctionFactory.class);
+                } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.LONG256) {
+                    args.setQuick(k, new CastIntToLong256FunctionFactory.Func(arg));
+                    implicitConversions.setQuick(k, CastIntToLong256FunctionFactory.class);
+                } else if (argTypeTag == ColumnType.LONG && sigArgTypeTag == ColumnType.LONG256) {
+                    args.setQuick(k, new CastLongToLong256FunctionFactory.Func(arg));
+                    implicitConversions.setQuick(k, CastLongToLong256FunctionFactory.class);
+                } else if (argTypeTag == ColumnType.SHORT && sigArgTypeTag == ColumnType.LONG256) {
+                    args.setQuick(k, new CastShortToLong256FunctionFactory.Func(arg));
+                    implicitConversions.setQuick(k, CastShortToLong256FunctionFactory.class);
+                } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.LONG256) {
+                    args.setQuick(k, new CastByteToLong256FunctionFactory.Func(arg));
+                    implicitConversions.setQuick(k, CastByteToLong256FunctionFactory.class);
                 }
                 if (hasCursorParameter && implicitConversions.getQuick(k) != null) {
                     assert argPositions != null;

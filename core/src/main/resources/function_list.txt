@@ -101,6 +101,7 @@ io.questdb.griffin.engine.functions.conditional.NullIfVarcharFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIPv4FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfIntFunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfLong256FunctionFactory
 io.questdb.griffin.engine.functions.conditional.NullIfDoubleFunctionFactory
 
 # '<' operator
@@ -578,6 +579,7 @@ io.questdb.griffin.engine.functions.bool.BetweenTimestampCursorFunctionFactory
 io.questdb.griffin.engine.functions.bool.BetweenTimestampCursorLoFunctionFactory
 io.questdb.griffin.engine.functions.bool.BetweenTimestampCursorHiFunctionFactory
 io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory
+io.questdb.griffin.engine.functions.bool.InLong256FunctionFactory
 io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory
 
 # 'all'
@@ -618,6 +620,7 @@ io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.LastLong256GroupByFunctionFactory
 
 # 'last_not_null' group by function
 io.questdb.griffin.engine.functions.groupby.LastNotNullCharGroupByFunctionFactory
@@ -633,6 +636,7 @@ io.questdb.griffin.engine.functions.groupby.LastNotNullVarcharGroupByFunctionFac
 io.questdb.griffin.engine.functions.groupby.LastNotNullSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastNotNullTimestampGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastNotNullUuidGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.LastNotNullLong256GroupByFunctionFactory
 
 # 'first' group by function
 io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory
@@ -648,6 +652,7 @@ io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstUuidGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.FirstLong256GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstVarcharGroupByFunctionFactory
 
 # 'first_not_null' group by function
@@ -664,6 +669,7 @@ io.questdb.griffin.engine.functions.groupby.FirstNotNullVarcharGroupByFunctionFa
 io.questdb.griffin.engine.functions.groupby.FirstNotNullSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstNotNullTimestampGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstNotNullUuidGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.FirstNotNullLong256GroupByFunctionFactory
 
 # 'max' group
 io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory

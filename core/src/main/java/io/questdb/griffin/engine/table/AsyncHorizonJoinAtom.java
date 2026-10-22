@@ -277,6 +277,14 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
 
     @Override
     protected void clearAggregationState() {
+        if (ownerKeyFunctions != null) {
+            Function.cursorClosed(ownerKeyFunctions);
+        }
+        if (perWorkerKeyFunctions != null) {
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                PerWorkerFunctionList.cursorClosed(perWorkerKeyFunctions.getQuick(i));
+            }
+        }
         shardingCtx.clear();
     }
 

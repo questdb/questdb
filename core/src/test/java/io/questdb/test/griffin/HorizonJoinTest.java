@@ -1370,9 +1370,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // symbol with no ASOF match used to NPE in the reduce path: the combined
         // HorizonJoinRecord returned a Java-null Long256 for the absent slave row,
         // so count(p.val) tripped Long256Impl.isNull(null) (NULL_LONG256.equals(null)
-        // dereferencing the null arg), and first/last(p.val) - which fall back to
-        // the LONG overload and read the low 64-bit word via getLong256A(rec).getLong0()
-        // - tripped getLong256A(null).getLong0(). The record now returns the
+        // dereferencing the null arg), and first/last(p.val) dereferenced the same
+        // Java-null Long256. The record now returns the
         // NULL_LONG256 sentinel, matching the contract a real record honours, so the
         // absent slave LONG256 reads as null. Run both the parallel and the
         // single-threaded factories explicitly so the fix is pinned on both paths.
@@ -1422,9 +1421,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         .expectSize()
                         .returns("""
                                 sym\tn\tfst\tlst\ts
-                                A\t2\t16\t21\t0x25
-                                B\t0\tnull\tnull\t
-                                C\t1\t53\t53\t0x35
+                                A\t2\t0x10\t0x15\t0x25
+                                B\t0\t\t\t
+                                C\t1\t0x35\t0x35\t0x35
                                 """);
             }
         });
@@ -8500,9 +8499,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         .expectSize()
                         .returns("""
                                 sym\tn\tfst\tlst\ts\tqb
-                                A\t2\t16\t21\t0x25\t2.5
-                                B\t0\tnull\tnull\t\tnull
-                                C\t1\t53\t53\t0x35\t3.5
+                                A\t2\t0x10\t0x15\t0x25\t2.5
+                                B\t0\t\t\t\tnull
+                                C\t1\t0x35\t0x35\t0x35\t3.5
                                 """);
             }
         });

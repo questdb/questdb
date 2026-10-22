@@ -119,7 +119,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             @Transient RecordMetadata metadata,
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
-            // this cursor owns "toTop()" lifecycle of filter
+            // this cursor owns the "toTop()" and "cursorClosed()" lifecycle of filter
             @Nullable Function filter
     ) {
         super(configuration, metadata);
@@ -194,6 +194,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void close() {
+        if (filter != null && frameCursor != null) {
+            filter.cursorClosed();
+        }
         rowCursor = Misc.free(rowCursor);
         Misc.free(gatheredRows);
         Misc.free(keyRowCounts);

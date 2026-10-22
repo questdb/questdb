@@ -123,6 +123,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 }
             } finally {
                 mapCursor = Misc.free(mapCursor);
+                Function.cursorClosed(nonGroupByFunctions);
                 isOpen = false;
             }
         }

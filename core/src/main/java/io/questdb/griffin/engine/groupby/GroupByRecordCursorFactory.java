@@ -387,6 +387,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 super.close();
+                if (keyFunctions != null) {
+                    Function.cursorClosed(keyFunctions);
+                }
             }
         }
 

@@ -30,6 +30,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -57,17 +58,6 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     private RecordCursorFactory factory;
     private @Nullable Function filter;
     private @Nullable ObjList<Function> perWorkerFilters;
-
-    static Throwable cursorClosed(Throwable cleanupFailure, @Nullable Function filter) {
-        if (filter != null) {
-            try {
-                filter.cursorClosed();
-            } catch (Throwable th) {
-                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-            }
-        }
-        return cleanupFailure;
-    }
 
     public HorizonJoinSlaveState(
             RecordCursorFactory factory,
@@ -108,13 +98,8 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     }
 
     Throwable cursorClosed(Throwable cleanupFailure) {
-        cleanupFailure = cursorClosed(cleanupFailure, filter);
-        if (perWorkerFilters != null) {
-            for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
-                cleanupFailure = cursorClosed(cleanupFailure, perWorkerFilters.getQuick(i));
-            }
-        }
-        return cleanupFailure;
+        cleanupFailure = Function.cursorClosed(cleanupFailure, filter);
+        return PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerFilters);
     }
 
     void detachFactory() {

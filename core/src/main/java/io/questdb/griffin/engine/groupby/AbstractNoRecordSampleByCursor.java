@@ -109,6 +109,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseCursor = Misc.free(baseCursor);
         Misc.free(allocator);
         Misc.clearObjList(groupByFunctions);
+        Function.cursorClosed(recordFunctions);
         circuitBreaker = null;
     }
 

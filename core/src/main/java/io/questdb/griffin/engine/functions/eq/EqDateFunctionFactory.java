@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -51,7 +52,10 @@ public class EqDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
+        return new EqDateFunction(
+                RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.DATE),
+                RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.DATE)
+        );
     }
 
     private static class EqDateFunction extends AbstractEqBinaryFunction {

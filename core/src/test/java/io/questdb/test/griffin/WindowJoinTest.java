@@ -7434,16 +7434,16 @@ public class WindowJoinTest extends AbstractCairoTest {
             executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        // v is LONG256, whose first/last are thread-unsafe, so the planner builds
+                        // v is CHAR, whose first/last are thread-unsafe, so the planner builds
                         // per-worker group-by function copies - the path the bug lives on. n is INT for
                         // the second, distinct column slot.
                         engine.execute(
-                                "create table trades (ts timestamp, sym symbol, v long256, n int) " +
+                                "create table trades (ts timestamp, sym symbol, v char, n int) " +
                                         "timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "create table prices (ts timestamp, sym symbol, v long256, n int) " +
+                                "create table prices (ts timestamp, sym symbol, v char, n int) " +
                                         "timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
@@ -7452,14 +7452,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                         engine.execute(
                                 "insert into trades select " +
                                         "'2023-01-01T00:00:00.000000Z'::timestamp + (1_000_000 * x), " +
-                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_char(), rnd_int() " +
                                         "from long_sequence(4000)",
                                 sqlExecutionContext
                         );
                         engine.execute(
                                 "insert into prices select " +
                                         "'2023-01-01T00:00:00.000000Z'::timestamp + (100_000 * x), " +
-                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_char(), rnd_int() " +
                                         "from long_sequence(40_000)",
                                 sqlExecutionContext
                         );
@@ -7502,7 +7502,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         // same [M-5s, M+5s] window computes count(p.n) through a different code path than
                         // the WINDOW JOIN reduce, so a miscompute shared by the single-threaded and parallel
                         // window-join paths (which the cross-check above would not catch) is caught here.
-                        // Only count is checked: first/last over LONG256 are order-dependent and have no
+                        // Only count is checked: first/last over CHAR are order-dependent and have no
                         // simple plain-SQL oracle. INCLUDE PREVAILING adds the carried prevailing row and
                         // has no plain-SQL oracle either, so it relies on the cross-check above.
                         if (!includePrevailing) {

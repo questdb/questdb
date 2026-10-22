@@ -928,18 +928,18 @@ public final class ColumnType {
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN    */, {BOOLEAN}
-                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
-                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
+                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL, LONG256}
+                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL, LONG256}
                 /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
+                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL, LONG256}
+                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL, LONG256}
                 /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
                 /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
                 /* 9  FLOAT      */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE     */, {DOUBLE}
                 /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
                 /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256    */, {LONG256, LONG}
+                /* 13 LONG256    */, {LONG256}
                 /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}

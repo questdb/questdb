@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ComparisonFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -68,16 +69,18 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int leftType = ColumnType.getTimestampType(args.getQuick(0).getType());
-        int rightType = ColumnType.getTimestampType(args.getQuick(1).getType());
+        final Function left = RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.TIMESTAMP);
+        final Function right = RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.TIMESTAMP);
+        int leftType = ColumnType.getTimestampType(left.getType());
+        int rightType = ColumnType.getTimestampType(right.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
         assert ColumnType.isTimestamp(timestampType);
         if (leftType == rightType) {
-            return new Func(args.getQuick(0), args.getQuick(1));
+            return new Func(left, right);
         } else if (leftType != timestampType) {
-            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), leftType);
+            return new LeftConvertFunc(left, right, ColumnType.getTimestampDriver(timestampType), leftType);
         } else {
-            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), rightType);
+            return new RightConvertFunc(left, right, ColumnType.getTimestampDriver(timestampType), rightType);
         }
     }
 

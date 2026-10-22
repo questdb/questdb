@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
@@ -163,6 +164,9 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         for (int s = 0; s < count; s++) {
             failure = slaveStates.getQuick(s).cursorClosed(failure);
         }
+        failure = Function.cursorClosed(failure, ownerFilter);
+        failure = PerWorkerFunctionList.cursorClosed(failure, perWorkerFilters);
+        failure = PerWorkerFunctionList.cursorClosed(failure, bindVarFunctions);
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
     }

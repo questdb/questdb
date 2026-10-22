@@ -122,6 +122,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                 mapCursor = Misc.free(mapCursor);
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameState);
+                Function.cursorClosed(nonGroupByFunctions);
                 isOpen = false;
             }
         }

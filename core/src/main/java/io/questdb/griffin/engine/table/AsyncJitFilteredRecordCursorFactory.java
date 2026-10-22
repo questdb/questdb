@@ -545,6 +545,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
+        public void clear() {
+            Function.cursorClosed(bindVarFunctions);
+            super.clear();
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
