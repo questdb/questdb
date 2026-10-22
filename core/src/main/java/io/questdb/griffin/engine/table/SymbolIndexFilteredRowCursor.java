@@ -98,8 +98,8 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
                 .getIndexReader(columnIndex, indexDirection)
                 .getCursor(
                         symbolKey,
-                        pageFrame.getPartitionLo(),
-                        pageFrame.getPartitionHi() - 1,
+                        pageFrame.getIndexRowLo(),
+                        pageFrame.getIndexRowHi() - 1,
                         null,
                         pageFrameMemory.getSourceRowResolver()
                 );

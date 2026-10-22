@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
@@ -48,6 +49,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
+    private final CompositeAwarePartitionFrameCursor compositeFrameCursor = new CompositeAwarePartitionFrameCursor();
 
     private final DistinctCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
@@ -69,15 +71,19 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     @Override
     public void close() {
         Misc.free(dfcFactory);
+        Misc.free(compositeFrameCursor);
         Misc.free(cursor);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                false
         );
         try {
             cursor.of(frameCursor, executionContext.getCircuitBreaker());
@@ -241,8 +247,9 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 );
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi();
-                // Delta frame bounds count logical rows; the reader's partition count covers only the base.
+                // Only a flat base frame spans the complete persisted index.
                 boolean isFullPartition = frame.getPartitionFrameState() == 0
+                        && !tableReader.getTxFile().isPartitionComposite(partitionIndex)
                         && rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
                 foundCount += isFullPartition
                         ? indexReader.collectDistinctKeys(foundKeys)

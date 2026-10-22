@@ -135,22 +135,24 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             int symbolKey,
             IndexReader indexReader,
             int invertedFrameIndex,
-            long partitionLo,
-            long partitionHi,
+            long indexRowLo,
+            long indexRowHi,
             PageFrameMemory frameMemory
     ) {
         try (RowCursor cursor = indexReader.getCursor(
                 symbolKey,
-                partitionLo,
-                partitionHi,
+                indexRowLo,
+                indexRowHi,
                 null,
                 frameMemory.getSourceRowResolver()
         )) {
             while (cursor.hasNext()) {
                 // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
-                // already relative to minValue == partitionLo here, so cursor.next() is already
-                // frame-relative. Do not subtract partitionLo again, or the record is positioned
-                // partitionLo rows too early when partitionLo > 0.
+                // already relative to minValue == indexRowLo here, so cursor.next() is already
+                // frame-relative. Do not subtract indexRowLo again, or the record is positioned
+                // indexRowLo rows too early when indexRowLo > 0. For a COMPOSITE partition indexRowLo
+                // carries the piece's file-row shift, which is exactly the shift the frame's page
+                // addresses carry, so the un-subtracted row lines up there too.
                 final long row = cursor.next();
                 recordA.setRowIndex(row);
                 if (filter.getBool(recordA)) {
@@ -173,8 +175,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
             frameAddressCache.add(frameIndex, frame);
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
@@ -191,8 +193,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
                         symbolKey,
                         indexReader,
                         invertedFrameIndex,
-                        partitionLo,
-                        partitionHi,
+                        indexRowLo,
+                        indexRowHi,
                         frameMemory
                 )) {
                     int last = remainingKeys.size() - 1;

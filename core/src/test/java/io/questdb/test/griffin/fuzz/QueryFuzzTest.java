@@ -50,7 +50,7 @@ import org.junit.Test;
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
  * SELECT / GROUP BY / SAMPLE BY / LATEST ON / ASOF-LT-SPLICE / HORIZON /
- * WINDOW JOIN
+ * WINDOW JOIN / equi-join GROUP BY
  * queries and
  * materializes every result row, additionally re-iterating each cursor
  * after {@code toTop()} and cross-checking {@code size()} /
@@ -130,13 +130,33 @@ import org.junit.Test;
  *         temporal-only and draws the original rnd stream. Their WHERE is
  *         master-side only, so the FUNCTION fault is woven there like the
  *         other shapes.</li>
+ *     <li>{@code -Dquestdb.fuzz.hashjoin=true|false} &mdash; generate
+ *         equi-join GROUP BY shapes (an INNER, LEFT or RIGHT join on the INT
+ *         or SYMBOL key under a keyed or scalar aggregate), the shape the fused
+ *         hash join GROUP BY replaces (default true). Their band is carved from
+ *         the GROUP BY range, so the other shapes' frequencies are unchanged;
+ *         pass {@code false} to give the band back to GROUP BY.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.fused=true|false} &mdash; run every
+ *         equi-join GROUP BY query a second time with the fused hash join
+ *         GROUP BY disabled and compare the two materializations (default
+ *         true). The JIT, storage and bind axes run the fused plan on both of
+ *         their sides, so only this axis sees a fused plan that returns wrong
+ *         rows. The run asserts that the fused plan actually ran on a minimum
+ *         share of the comparisons whose query compiled.</li>
+ *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
+ *         every fused hash join GROUP BY to read its build's payload columns
+ *         where they live, or from the copy its build makes (default: neither,
+ *         the operator's own rule, which copies over the fuzz tables' equal
+ *         row counts unless an interval leaves the probe under half the
+ *         build).</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
  * </ul>
  * <p>
  * Each query also has a small chance of running with parallel SQL
- * execution disabled (parallel filter, GROUP BY, top-K, parquet read), so
+ * execution disabled (parallel filter, GROUP BY, fused hash join GROUP BY,
+ * top-K, parquet read), so
  * the serial code paths get exercised alongside the parallel ones. The
  * coin flip pulls from the seeded rnd, so replaying with the same seeds
  * reproduces the same on/off pattern.
@@ -176,7 +196,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -200,6 +220,31 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertFalse(okResult.isSkipped());
             Assert.assertFalse(okResult.isFailed());
         });
+    }
+
+    @Test
+    public void testSeparatorCellsKeepFpToleranceAligned() {
+        // Found by the fused on/off axis: in SELECT (l.lk)::CHAR e0, count(*), stddev_samp(...),
+        // count(), count(r.k) FROM l LEFT JOIN r ON l.vk = r.vk, one group's CHAR key was code 9. Printed raw, the tab split its row into one more cell, so
+        // the stddev_samp cell met the count column's exact rule, and its reduction-order drift
+        // failed the query. The materialized cells escape their separators, so the drift is tolerated.
+        final boolean[] fpMask = {false, false, true, false, false};
+        for (String key : new String[]{"\t", "\n", "\r", "\\", "\t\n", "a"}) {
+            Assert.assertTrue(key, QueryRunner.rowEqualsWithFpTolerance(
+                    line(key, "74", "35.52387071528208", "74", "71"),
+                    line(key, "74", "35.52387071528207", "74", "71"),
+                    fpMask
+            ));
+            // The count cells still compare exactly.
+            Assert.assertFalse(key, QueryRunner.rowEqualsWithFpTolerance(
+                    line(key, "74", "35.52387071528208", "74", "71"),
+                    line(key, "74", "35.52387071528208", "74", "72"),
+                    fpMask
+            ));
+        }
+        // An escaped separator stays distinct from the text of its escape.
+        Assert.assertNotEquals(line("\t"), line("\\t"));
+        Assert.assertNotEquals(line("\\", "t"), line("\t"));
     }
 
     @Test
@@ -398,8 +443,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // Wire the storage diff to rewrite master_p -> master_s, slave_p -> slave_s.
                 final FuzzTable masterShadow = new FuzzTable("master_s", new ObjList<>(), "ts");
                 final FuzzTable slaveShadow = new FuzzTable("slave_s", new ObjList<>(), "ts");
-                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, masterShadow);
-                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, slaveShadow);
+                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, masterShadow);
+                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, slaveShadow);
                 final ObjList<FuzzTable> tables = new ObjList<>();
                 tables.add(master);
                 tables.add(slave);
@@ -410,7 +455,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -439,7 +484,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -572,10 +617,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
             execute("CREATE TABLE skip_shadow (i INT)");
             ObjList<FuzzTable> tables = new ObjList<>();
             tables.add(new FuzzTable("skip_primary", new ObjList<>(), null,
-                    FuzzTableFactory.ParquetMode.NONE, null,
+                    FuzzTableFactory.ParquetMode.NONE, null, null,
                     new FuzzTable("skip_shadow", new ObjList<>(), null)));
             QueryRunner runner = new QueryRunner(engine, sqlExecutionContext,
-                    false, true, true, tables, QUERY_POOL_NAME + '_');
+                    false, true, false, true, tables, QUERY_POOL_NAME + '_');
             QueryRunner.Result result = runner.run(new GeneratedQuery(
                     "SELECT missing_column FROM skip_primary", true));
             Assert.assertTrue("rejected storage comparisons must not count as coverage", result.isSkipped());
@@ -598,6 +643,16 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // One materialized row, as QueryRunner.materialize() writes it, without its newline.
+    private static String line(String... cells) {
+        final StringSink sink = new StringSink();
+        for (String cell : cells) {
+            QueryRunner.appendCell(sink, cell);
+            sink.put('\t');
+        }
+        return sink.toString();
+    }
+
     private static void runFuzz(SqlExecutionContext sqlExecutionContext, WorkerPool writerPool, String queryWorkerNamePrefix) throws Exception {
         Long s0 = Long.getLong("questdb.fuzz.s0");
         Long s1 = Long.getLong("questdb.fuzz.s1");
@@ -605,6 +660,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 ? TestUtils.generateRandom(LOG, s0, s1)
                 : TestUtils.generateRandom(LOG);
         FuzzConfig config = new FuzzConfig(rnd);
+
+        // Composite partitions ship OFF; the test defaults (Overrides) turn them ON. A per-run coin
+        // here keeps both configurations fuzzed rather than pinning ON every run: on the runs that
+        // draw false the suite exercises the shipped default write path - the OFF branches in
+        // TableWriter and O3PartitionJob - and FuzzTableFactory's per-table backdate lands as an
+        // ordinary O3 overlap rather than a composite one (its outcome feeds only diagnostics, so the
+        // diff-shadow oracle holds either way). The draw comes from the same seed logged above, so a
+        // red run replays it.
+        boolean mergeAppendEnabled = rnd.nextBoolean();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())
@@ -619,7 +685,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", latestOn=").$(config.isLatestOnEnabled())
                 .$(", horizonJoin=").$(config.isHorizonJoinEnabled())
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
+                .$(", hashJoin=").$(config.isHashJoinEnabled())
+                .$(", diffFused=").$(config.isDiffFusedEnabled())
+                .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
+                .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
                 .$();
+        if (config.getHashJoinPayloadLayout() != null) {
+            config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
+        }
+        config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
         ObjList<FuzzTable> tables = new ObjList<>();

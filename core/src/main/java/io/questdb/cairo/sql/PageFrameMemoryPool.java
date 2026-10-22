@@ -88,6 +88,10 @@ import org.jetbrains.annotations.TestOnly;
  * of it. Hints come in via {@link #of(PageFrameAddressCache, ParquetDecodeHint)}
  * or {@link #setParquetDecodeHint(ParquetDecodeHint)} and default to MONOTONIC.
  * <p>
+ * An owner that reads only some columns of every Parquet frame binds them as the pool's
+ * projection, see {@link #of(PageFrameAddressCache, ParquetDecodeHint, IntHashSet)}, and the pool
+ * then decodes only those columns, so the cache budget holds more frames.
+ * <p>
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
@@ -188,6 +192,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Bound to a partition frame state while a custom (cold-delta) frame is navigated;
     // owns the native partition-frame decoder and base-view lease. Null for pure parquet.
     private PartitionFrameWindowContext partitionFrameWindowContext;
+    // The query columns that a Parquet frame resolves and decodes, or null for every column; see
+    // of(PageFrameAddressCache, ParquetDecodeHint, IntHashSet). Borrowed from the owner, never changed.
+    @Nullable
+    private IntHashSet projection;
     private DirectLongList recordAtRows;
 
     public PageFrameMemoryPool(CairoConfiguration configuration, long maxCacheBytes) {
@@ -228,6 +236,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtSlices.clear();
         releaseCoveringBuffers();
         memoryTracker = null;
+        projection = null;
     }
 
     @Override
@@ -245,6 +254,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.freeObjListAndClear(freeDecodedFrameBufferShells);
         addressCache = null;
         memoryTracker = null;
+        projection = null;
     }
 
     public long getBindGeneration() {
@@ -279,6 +289,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @TestOnly
     public long getEffectiveBudgetBytes() {
         return effectiveBudgetBytes;
+    }
+
+    @TestOnly
+    @Nullable
+    public IntHashSet getProjection() {
+        return projection;
     }
 
     /**
@@ -644,12 +660,34 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint) {
+        of(addressCache, hint, null);
+    }
+
+    /**
+     * Binds the pool to the address cache of a query, as
+     * {@link #of(PageFrameAddressCache, ParquetDecodeHint)} does, and limits what a Parquet frame
+     * decodes to the query columns of the projection. Every navigation resolves and decodes only
+     * those columns of a Parquet frame, with their lazy type conversions and column tops, and
+     * publishes address 0 for the others: the record path, the windowed and full-frame paths, the
+     * column subset of {@link #navigateTo(int, IntHashSet)} and
+     * {@link PageFrameMemory#populateRemainingColumns}. A record reads a column outside the
+     * projection as NULL, and {@link PageFrameMemory#hasColumnTops()} reports a column top for it.
+     * Native and covered frames publish every column, as they do without a projection. A null
+     * projection decodes every column, and an empty one none.
+     * <p>
+     * The projection stays fixed until the next {@code of()}, {@link #releaseQueryResources()},
+     * {@link #clear()} or {@link #close()}, all of which drop it, so every buffer that the pool caches
+     * for the query holds the same columns. The pool only reads the set: the owner keeps it unchanged
+     * while any pool holds it, and may share it between pools.
+     */
+    public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint, @Nullable IntHashSet projection) {
         releaseDecodedFrameBuffers();
         // A new query (or the same query's next address cache) invalidates any
         // covered buffers retained for stable-string aggregates of the prior one.
         releaseCoveringBuffers();
         this.addressCache = addressCache;
         this.decodeHint = hint;
+        this.projection = projection;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
         Misc.free(parquetMetaDecoder);
         // A later query can reuse the same addresses for different partition mappings.
@@ -746,6 +784,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         activeDecoder = null;
         addressCache = null;
         memoryTracker = null;
+        projection = null;
         hasFullProjectionMap = false;
         hasTypeCasts = false;
         decodeColumns.clear();
@@ -1365,8 +1404,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // hasTypeCasts set by the prior isInclude=true call so that lazy conversion metadata for
         // filter columns survives. Without this, PageFrameMemoryRecord re-snapshots a stale -1 for
         // filter columns and reads VARCHAR_SLICE bytes as the target fixed type.
+        final IntHashSet projection = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET
+                ? this.projection
+                : null;
         for (int i = 0; i < queryColumnCount; i++) {
-            if (columnIndexes != null && columnIndexes.contains(i) != isInclude) {
+            if ((columnIndexes != null && columnIndexes.contains(i) != isInclude)
+                    || (projection != null && !projection.contains(i))) {
                 continue;
             }
             if (customFrame) {

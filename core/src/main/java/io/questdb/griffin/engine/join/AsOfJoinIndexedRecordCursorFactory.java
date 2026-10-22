@@ -191,11 +191,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                         slaveSymbolColumnIndex,
                         IndexReader.DIR_BACKWARD
                 );
-                // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
-                // the first row within the BETWEEN ... AND ... range selected by the query.
-                // Use Record.getUpdateRowId() to get the absolute row ID.
-                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
-                final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
+                final long rowLo = slaveTimeFrameCursor.getIndexRowLoForCurrentFrame();
                 final SourceRowCursor sourceCursor = indexReader.getSourceRowCursor(
                         symbolKey,
                         null,

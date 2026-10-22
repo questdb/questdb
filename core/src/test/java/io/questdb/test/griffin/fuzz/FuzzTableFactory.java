@@ -31,8 +31,11 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
+import io.questdb.test.griffin.fuzz.types.IntKeyType;
+import io.questdb.test.griffin.fuzz.types.LongKeyType;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 import io.questdb.test.griffin.fuzz.types.TimestampType;
+import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -42,9 +45,15 @@ import java.time.format.DateTimeFormatter;
  * data but with independently random storage settings. Timestamps step
  * forward so a configurable chunk of rows spans multiple DAY partitions.
  * <p>
- * Every table carries at least one SYMBOL column named {@code sym} so a
- * join fuzzer has a predictable key to target. The designated timestamp
- * column is always the last column and is named {@code ts}.
+ * Every table carries four join-key columns over small domains, so a join
+ * fuzzer has a predictable key of each shape the fused hash join GROUP BY
+ * takes: the SYMBOL column {@code sym} and the INT column {@code k}, which
+ * the narrow INT layout reads, plus the LONG column {@code lk} (see
+ * {@link LongKeyType}) and the VARCHAR column {@code vk} (see
+ * {@link VarcharKeyType}), which reach the map-backed build through the key
+ * sinks. {@code vk} holds {@code sym}'s texts, so the two also join each
+ * other. The designated timestamp column is always the last column and is
+ * named {@code ts}.
  * <p>
  * Each of the two siblings independently picks one of three parquet
  * modes uniformly at random: {@link ParquetMode#NONE} keeps every
@@ -58,9 +67,22 @@ import java.time.format.DateTimeFormatter;
  * from the primary (random storage) and the same query rewritten to
  * read from the shadow (different random storage) must agree -- any
  * silent storage divergence surfaces as a row-set mismatch.
+ * <p>
+ * With {@link #COMPOSITE_PARTITION_CHANCE} probability the primary backdates
+ * a handful of rows into one of its own non-active days, landing between
+ * that day's existing timestamps. With merge-append enabled (see
+ * {@code QueryFuzzTest#runFuzz}) this leaves the day a real composite
+ * partition -- a relocated piece and dead space, not a simulated one. This
+ * runs only on the primary, before the shadow copies its data across: both
+ * siblings end up with identical rows, so the always-plain shadow gives the
+ * diff-shadow oracle a genuine composite-vs-plain contrast for free, the
+ * same way it already contrasts parquet-vs-native and indexed-vs-not.
  */
 public final class FuzzTableFactory {
     private static final long DAY_MICROS = 24L * 60L * 60L * 1_000_000L;
+    // Per-table chance that the primary gets a merge-append-driven composite
+    // partition (see the class javadoc).
+    private static final double COMPOSITE_PARTITION_CHANCE = 0.5;
     // SYMBOL columns are relatively rare and there are four index kinds
     // (bitmap plus three posting variants), so a higher rate keeps every kind,
     // and the primary-vs-shadow index contrast, well represented.
@@ -68,12 +90,15 @@ public final class FuzzTableFactory {
     // Drawn uniformly when a SYMBOL column gets indexed, so bitmap and the
     // three posting variants all get exercised over a run.
     private static final FuzzIndex.Kind[] INDEX_KINDS = FuzzIndex.Kind.values();
+    private static final String INT_JOIN_KEY_COLUMN = "k";
     private static final String JOIN_KEY_COLUMN = "sym";
+    private static final String LONG_JOIN_KEY_COLUMN = "lk";
     private static final double PARTIAL_PARQUET_PARTITION_CHANCE = 0.5;
     // Per-posting-index chance of attaching a covering INCLUDE list.
     private static final double POSTING_COVERING_CHANCE = 0.5;
     private static final int POSTING_MAX_COVERING_COLUMNS = 3;
     private static final String TS_COLUMN = "ts";
+    private static final String VARCHAR_JOIN_KEY_COLUMN = "vk";
 
     private final FuzzConfig config;
     // One shuffled deck for the whole run, dealt across every table the run
@@ -110,6 +135,14 @@ public final class FuzzTableFactory {
         // random sequences and break the row-set comparison.
         executor.execute(buildInsertDml(primaryName, primaryColumns));
         drainWal.run();
+
+        // Composite-partition backdate, primary only and before the shadow copy
+        // (see the class javadoc) -- both siblings still end up with identical rows.
+        String compositeDay = applyCompositePartition(rnd, primaryName, primaryColumns, executor);
+        if (compositeDay != null) {
+            drainWal.run();
+        }
+
         executor.execute("INSERT INTO " + shadowName + " SELECT * FROM " + primaryName);
 
         // Convert statements are queued behind the shadow insert in the WAL
@@ -119,9 +152,37 @@ public final class FuzzTableFactory {
         drainWal.run();
 
         FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
-                shadowParquet.mode, shadowParquet.partitions, null);
+                shadowParquet.mode, shadowParquet.partitions, null, null);
         return new FuzzTable(primaryName, primaryColumns, TS_COLUMN,
-                primaryParquet.mode, primaryParquet.partitions, shadow);
+                primaryParquet.mode, primaryParquet.partitions, compositeDay, shadow);
+    }
+
+    /**
+     * With {@link #COMPOSITE_PARTITION_CHANCE} probability, backdates a few rows
+     * into one non-active day the table already holds, landing between that day's
+     * own existing timestamps ({@link #config}'s step evenly divides a day, so a
+     * day boundary is always a row boundary too). With merge-append enabled
+     * this relocates the overlapping stride to the tail as its own piece and
+     * leaves the superseded copy dead, making the day a genuine composite
+     * partition. Returns the backdated day (ISO date), or {@code null} if the
+     * coin missed or the table has no non-active day to target.
+     */
+    private String applyCompositePartition(Rnd rnd, String tableName, ObjList<FuzzColumn> columns, SqlExecutor executor) throws SqlException {
+        if (rnd.nextDouble() >= COMPOSITE_PARTITION_CHANCE) {
+            return null;
+        }
+        long totalMicros = config.getStepMicros() * (long) config.getRowsPerTable();
+        int numPartitions = (int) (totalMicros / DAY_MICROS) + 1;
+        if (numPartitions <= 1) {
+            // Only the active day exists - nothing non-active to backdate into.
+            return null;
+        }
+        LocalDate start = LocalDate.parse(config.getTsStart(), DateTimeFormatter.ISO_LOCAL_DATE);
+        String day = start.plusDays(rnd.nextInt(numPartitions - 1)).toString();
+        int rowsPerDay = (int) (DAY_MICROS / config.getStepMicros());
+        int overlapRows = 1 + rnd.nextInt(Math.min(3, rowsPerDay));
+        executor.execute(buildOverlapInsertDml(tableName, columns, day, overlapRows));
+        return day;
     }
 
     private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, SqlExecutor executor) throws SqlException {
@@ -170,6 +231,12 @@ public final class FuzzTableFactory {
 
         // Shared join key. Always SYMBOL so ASOF/LT/SPLICE on (sym) has a target.
         columns.add(new FuzzColumn(JOIN_KEY_COLUMN, SymbolType.INSTANCE));
+        // Shared INT join key over a small domain, so an INT equi-join matches rows.
+        columns.add(new FuzzColumn(INT_JOIN_KEY_COLUMN, IntKeyType.INSTANCE));
+        // Shared LONG and VARCHAR join keys over the same domains, so an equi-join over
+        // either matches rows and takes the fused plan's staged-key route.
+        columns.add(new FuzzColumn(LONG_JOIN_KEY_COLUMN, LongKeyType.INSTANCE));
+        columns.add(new FuzzColumn(VARCHAR_JOIN_KEY_COLUMN, VarcharKeyType.INSTANCE));
 
         for (int i = 0; i < numExtra; i++) {
             columns.add(new FuzzColumn("c" + i, dealType(rnd)));
@@ -236,6 +303,38 @@ public final class FuzzTableFactory {
             dml.put(' ').put(c.getName());
         }
         dml.put(" FROM long_sequence(").put(config.getRowsPerTable()).put(')');
+        return dml.toString();
+    }
+
+    /**
+     * Same shape as {@link #buildInsertDml}, but landing INSIDE one day's own existing rows: half a
+     * step above the day's start, so every backdated row falls between two rows the day already holds.
+     * Half a step and not zero, because a row landing exactly on an existing timestamp would give the
+     * table a tied pair, and the order a query returns a tie in is not decided by any storage layer -
+     * a cursor reading through a symbol index emits rows grouped by symbol key rather than in physical
+     * order, so a tie-sensitive projection such as {@code row_number() OVER (ORDER BY ts DESC)}
+     * numbers the pair differently on the indexed primary than on its non-indexed shadow, and the
+     * diff-shadow oracle reads that as storage divergence. Equal-timestamp merge order is covered
+     * directly instead, by {@code CompositeEqualTimestampOrderTest}.
+     */
+    private String buildOverlapInsertDml(String tableName, ObjList<FuzzColumn> columns, String day, int rowCount) {
+        StringSink dml = new StringSink();
+        dml.put("INSERT INTO ").put(tableName).put(" SELECT ");
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (i > 0) {
+                dml.put(", ");
+            }
+            FuzzColumn c = columns.getQuick(i);
+            if (c.getName().equals(TS_COLUMN)) {
+                dml.put("timestamp_sequence(to_timestamp('").put(day)
+                        .put("', 'yyyy-MM-dd') + ").put(config.getStepMicros() / 2).put("L, ")
+                        .put(config.getStepMicros()).put("L)");
+            } else {
+                dml.put(c.getType().getRndCall());
+            }
+            dml.put(' ').put(c.getName());
+        }
+        dml.put(" FROM long_sequence(").put(rowCount).put(')');
         return dml.toString();
     }
 

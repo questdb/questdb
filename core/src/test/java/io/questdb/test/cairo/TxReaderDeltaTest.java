@@ -43,6 +43,8 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.getPartitionTableSizeOffset;
 
 public class TxReaderDeltaTest extends AbstractCairoTest {
+    private static final long LEGACY_HAS_DELTA_BIT = 1L << 61;
+
     @Test
     public void testAppendAndActiveFlag() throws Exception {
         withTxn((writer, reader, path) -> {
@@ -101,6 +103,20 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
                 copy.clear();
                 Assert.assertFalse(copy.hasAnyDelta());
             }
+        });
+    }
+
+    @Test
+    public void testCompositeFlagIsNotDelta() throws Exception {
+        withTxn((writer, reader, path) -> {
+            appendPartition(writer, 0);
+            writer.setPartitionGeometryRef(0, TxReader.packGeometryRef(0, 0));
+            commit(writer);
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertTrue(reader.isPartitionComposite(0));
+            Assert.assertFalse(reader.getPartitionHasDelta(0));
+            Assert.assertFalse(reader.hasAnyDelta());
+            Assert.assertFalse(reader.hasAnyDeltaActive());
         });
     }
 
@@ -222,6 +238,52 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
             Assert.assertTrue(reader.unsafeLoadAll());
             Assert.assertFalse(reader.getPartitionHasDelta(0));
             Assert.assertFalse(reader.hasAnyDelta());
+        });
+    }
+
+    @Test
+    public void testLegacyDeltaFlags() throws Exception {
+        withTxn((writer, reader, path) -> {
+            appendPartition(writer, 0);
+            appendPartition(writer, Micros.DAY_MICROS);
+            writer.setPartitionParquet(Micros.DAY_MICROS, 128);
+            commit(writer);
+            Assert.assertTrue(reader.unsafeLoadAll());
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                final long nativeWord = TxReader.PARTITION_SEQ_TXN_VALID_BIT
+                        | TxReader.PARTITION_DELTA_WRITE_BIT | LEGACY_HAS_DELTA_BIT | 7;
+                final long parquetWord = TxReader.PARTITION_REMOTE_BIT
+                        | TxReader.PARTITION_DELTA_WRITE_BIT | LEGACY_HAS_DELTA_BIT | 128;
+                mem.putLong(reader.getPartitionVersionOffset(), nativeWord);
+                mem.putLong(reader.getPartitionVersionOffset() + 4L * Long.BYTES, parquetWord);
+                mem.close(false);
+            }
+
+            // Refreshing the last partition without a version change must also translate the old flag.
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertTrue(reader.getPartitionHasDelta(1));
+            Assert.assertFalse(reader.getPartitionHasDelta(0));
+            reader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue(reader.unsafeLoadAll());
+            for (int i = 0; i < 2; i++) {
+                Assert.assertTrue(reader.getPartitionHasDelta(i));
+                Assert.assertTrue(reader.isPartitionDeltaActive(i));
+                Assert.assertFalse(reader.isPartitionComposite(i));
+            }
+            Assert.assertEquals(7, reader.getNativePartitionSeqTxn(0));
+            Assert.assertEquals(128, reader.getPartitionParquetFileSize(1));
+            Assert.assertTrue(reader.isPartitionRemote(1));
+
+            // A writer reload and commit must retain the catalogs under the new flag.
+            Assert.assertTrue(writer.unsafeLoadAll());
+            writer.setPartitionParquetFileSize(1, 256);
+            commit(writer);
+            reader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue(reader.unsafeLoadAll());
+            Assert.assertTrue(reader.getPartitionHasDelta(0));
+            Assert.assertTrue(reader.getPartitionHasDelta(1));
+            Assert.assertEquals(256, reader.getPartitionParquetFileSize(1));
         });
     }
 

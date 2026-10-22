@@ -39,6 +39,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -49,9 +50,9 @@ public class TxReader implements Closeable, Mutable {
     // bit 60 within the offset-3 reserved flag region: delta-write mode
     public static final long PARTITION_DELTA_WRITE_BIT = 1L << 60;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
-    // Bit 61 routes reads through the local Delta catalog after publication.
+    // Bit 59 routes reads through the local Delta catalog after publication.
     // It is independent of delta-write mode; catalog purge does not clear this bit.
-    public static final long PARTITION_HAS_DELTA_BIT = 1L << 61;
+    public static final long PARTITION_HAS_DELTA_BIT = 1L << 59;
     // Flag in the high byte of the offset-3 partition-version word: a remote copy of the
     // partition's parquet data exists. Set on parquet partitions and on native partitions
     // uploaded while native (upload-while-native keeps the format bit 0).
@@ -68,6 +69,15 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_VERSION_FLAGS_MASK = 0xFFL << 56;
     public static final long PARTITION_VERSION_VALUE_MASK = ~PARTITION_VERSION_FLAGS_MASK;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // COMPOSITE re-reads the offset-3 word's VALUE field (the 56 bits under PARTITION_VERSION_VALUE_MASK) as a pointer
+    // into the partition's own _geometry.<generation> file.
+    protected static final long PARTITION_COMPOSITE_FLAG = 1L << 61;
+    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 24;
+    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x0F000000L; // bits 24-27 (4 bits)
+    protected static final int PARTITION_GEOMETRY_MAX_GENERATION = 15;
+    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00FFFFFFL; // bits 0-23 (24 bits, 8-byte units)
+    // Every packed offset is this many bits narrower than the byte offset it represents.
+    protected static final int PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT = 3;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
@@ -90,9 +100,9 @@ public class TxReader implements Closeable, Mutable {
     // the last long (PARTITION_VERSION_OFFSET) holds, for a parquet partition the parquet file
     // size, for a native one its last-modifying seqTxn:
     //
-    // | remote | valid | has_delta | delta-write | reserved | parquet size / native seqTxn |
-    // +--------+-------+-----------+-------------+----------+------------------------------+
-    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |  4 bits  |           56 bits            |
+    // | remote | valid | composite | delta-write | has_delta | reserved | parquet size / native seqTxn |
+    // +--------+-------+-----------+-------------+-----------+----------+------------------------------+
+    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |   1 bit   |  3 bits  |           56 bits            |
     //
     // remote is cleared by the value writes that supersede the bytes (setPartitionParquetFileSize, setPartitionSeqTxn),
     // so it can't outlive them; setPartitionFormat preserves it, leaving REMOTE to caller discipline on a format flip.
@@ -100,7 +110,7 @@ public class TxReader implements Closeable, Mutable {
     // untrusted and reads as -1 (quarantines the released-binary file-size poison). A 0 stamp writes the cleared word,
     // so "valid with value 0" is unrepresentable. setPartitionFormat sets it flipping to native, clears it flipping to
     // parquet (a parquet word is valid without it).
-    // has_delta (PARTITION_HAS_DELTA_BIT, bit 61) selects the initialized catalog, which may contain no Delta rows.
+    // has_delta (PARTITION_HAS_DELTA_BIT, bit 59) selects the initialized catalog, which may contain no Delta rows.
     // delta-write (PARTITION_DELTA_WRITE_BIT, bit 60) is the replicated mode gate, set before any Delta data exists.
     // Value writes preserve both flags across file-size/seqTxn rewrites.
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().
@@ -113,6 +123,7 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected int geometryVersion;
     protected long lagMaxTimestamp;
     protected long lagMinTimestamp;
     protected boolean lagOrdered;
@@ -185,6 +196,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
@@ -222,7 +234,11 @@ public class TxReader implements Closeable, Mutable {
                 // hold the file size and are valid without the bit; leave them. The cleared 0L/-1L
                 // sentinels scrub to the canonical 0L, a no-op in meaning.
                 final int partitionIndex = i / LONGS_PER_TX_ATTACHED_PARTITION;
+                // A COMPOSITE word legitimately lacks the VALID bit - it spends the value field on
+                // its geometry pointer, not on a stamp - and scrubbing it would strand the partition's
+                // _geometry record, losing its piece layout for good. Its seqTxn lives in that record.
                 if (!isPartitionParquet(partitionIndex)
+                        && !isPartitionCompositeByRawIndex(i - PARTITION_VERSION_OFFSET)
                         && (isPartitionOffset3Cleared(value) || (value & PARTITION_SEQ_TXN_VALID_BIT) == 0)) {
                     value = 0L;
                 }
@@ -347,6 +363,10 @@ public class TxReader implements Closeable, Mutable {
     public long getNativePartitionSeqTxn(int partitionIndex) {
         assert !isPartitionParquet(partitionIndex);
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (isPartitionCompositeByRawIndex(rawIndex)) {
+            // The value field is this partition's geometry pointer, not a stamp.
+            return -1L;
+        }
         // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0 before the bit test;
         // the legacy all-ones word has bit 62 set and must not read as a valid stamp.
         if ((getPartitionOffset3(rawIndex) & PARTITION_SEQ_TXN_VALID_BIT) == 0) {
@@ -489,6 +509,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public int getGeometryVersion() {
+        return geometryVersion;
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -562,6 +586,15 @@ public class TxReader implements Closeable, Mutable {
         return partitionDeltaActiveCount > 0;
     }
 
+    public boolean hasCompositePartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionCompositeByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Returns whether any partition is Delta-active or contains Delta data.
      */
@@ -623,6 +656,62 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isPartitionDeltaActiveByRawIndex(int indexRaw) {
         return (getPartitionOffset3(indexRaw) & PARTITION_DELTA_WRITE_BIT) != 0;
+    }
+
+    /**
+     * The {@code _geometry.<generation>} file a slot-3 geometry pointer names.
+     */
+    public static int geometryGeneration(long geometryRef) {
+        return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
+    }
+
+    public static long geometryOffset(long geometryRef) {
+        return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+    }
+
+    /**
+     * Packs a slot-3 geometry pointer from its components.
+     *
+     * @param byteOffset must be 8-byte aligned, as every real geometry record start is
+     */
+    @TestOnly
+    public static long packGeometryRef(int generation, long byteOffset) {
+        assert generation >= 0 && generation <= PARTITION_GEOMETRY_MAX_GENERATION : "generation out of range";
+        assert (byteOffset & ((1L << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0 : "byteOffset must be 8-byte aligned";
+        final long packedOffset = byteOffset >>> PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+        assert (packedOffset & ~PARTITION_GEOMETRY_OFFSET_MASK) == 0 : "byteOffset out of range";
+        return PARTITION_COMPOSITE_FLAG
+                | ((long) generation << PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
+                | packedOffset;
+    }
+
+    public long getGeometryRef(int partitionIndex) {
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!isPartitionCompositeByRawIndex(rawIndex)) {
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at offset 0 of the first
+            // generation with no file in the directory - see PartitionGeometry#publish.
+            return -1L;
+        }
+        // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only
+        // ever carries COMPOSITE, its generation and its offset.
+        return getPartitionOffset3(rawIndex)
+                & (PARTITION_COMPOSITE_FLAG | PARTITION_GEOMETRY_GENERATION_MASK | PARTITION_GEOMETRY_OFFSET_MASK);
+    }
+
+    /**
+     * Whether the partition is composite - has a {@code _geometry} record to resolve.
+     */
+    public boolean isPartitionComposite(int partitionIndex) {
+        return isPartitionCompositeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionCompositeByRawIndex(int indexRaw) {
+        if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
+            return false;
+        }
+        // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0, so a legacy all-ones word
+        // (which has bit 61 set) never reads as composite.
+        return (getPartitionOffset3(indexRaw) & PARTITION_COMPOSITE_FLAG) != 0;
     }
 
     public boolean isPartitionParquet(int i) {
@@ -707,6 +796,7 @@ public class TxReader implements Closeable, Mutable {
         this.structureVersion = srcReader.structureVersion;
         this.dataVersion = srcReader.dataVersion;
         this.partitionTableVersion = srcReader.partitionTableVersion;
+        this.geometryVersion = srcReader.geometryVersion;
         this.columnVersion = srcReader.columnVersion;
         this.truncateVersion = srcReader.truncateVersion;
         this.seqTxn = srcReader.seqTxn;
@@ -782,6 +872,7 @@ public class TxReader implements Closeable, Mutable {
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
+        sink.put(", geometryVersion: ").put(geometryVersion);
         sink.put(", columnVersion: ").put(columnVersion);
         sink.put(", truncateVersion: ").put(truncateVersion);
         sink.put(", seqTxn: ").put(seqTxn);
@@ -816,6 +907,7 @@ public class TxReader implements Closeable, Mutable {
             columnVersion = unsafeReadColumnVersion();
             truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+            geometryVersion = getInt(TX_OFFSET_GEOMETRY_VERSION_32);
             symbolColumnCount = symbolsSize / Long.BYTES;
             lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
             lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
@@ -952,6 +1044,16 @@ public class TxReader implements Closeable, Mutable {
                 .put(']');
     }
 
+    private static long normalizePartitionVersion(long word) {
+        // Earlier Delta builds used bit 61, now reserved for composite geometry. The delta-write
+        // gate distinguishes those catalogs from composite partitions without changing either payload.
+        final long legacyDeltaFlags = PARTITION_DELTA_WRITE_BIT | PARTITION_COMPOSITE_FLAG;
+        if (isPartitionOffset3Cleared(word) || (word & legacyDeltaFlags) != legacyDeltaFlags) {
+            return word;
+        }
+        return (word & ~PARTITION_COMPOSITE_FLAG) | PARTITION_HAS_DELTA_BIT;
+    }
+
     private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             int txAttachedPartitionsSize = partitionTableSize / Long.BYTES;
@@ -984,7 +1086,7 @@ public class TxReader implements Closeable, Mutable {
                 partitionDeltaActiveCount -= isPartitionDeltaActiveByRawIndex(lastPartitionRawIndex) ? 1 : 0;
                 attachedPartitions.setQuick(
                         lastPartitionRawIndex + PARTITION_VERSION_OFFSET,
-                        getLong(partitionTableOffset + (lastPartitionRawIndex + PARTITION_VERSION_OFFSET) * Long.BYTES)
+                        normalizePartitionVersion(getLong(partitionTableOffset + (lastPartitionRawIndex + PARTITION_VERSION_OFFSET) * Long.BYTES))
                 );
                 partitionDeltaCount += getPartitionHasDeltaByRawIndex(lastPartitionRawIndex) ? 1 : 0;
                 partitionDeltaActiveCount += isPartitionDeltaActiveByRawIndex(lastPartitionRawIndex) ? 1 : 0;
@@ -1025,7 +1127,7 @@ public class TxReader implements Closeable, Mutable {
             attachedPartitions.setQuick(i + PARTITION_TS_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_TS_OFFSET));
             attachedPartitions.setQuick(i + PARTITION_MASKED_SIZE_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_MASKED_SIZE_OFFSET));
             attachedPartitions.setQuick(i + PARTITION_NAME_TX_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_NAME_TX_OFFSET));
-            attachedPartitions.setQuick(i + PARTITION_VERSION_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_VERSION_OFFSET));
+            attachedPartitions.setQuick(i + PARTITION_VERSION_OFFSET, normalizePartitionVersion(getLong(partitionOffset + Long.BYTES * PARTITION_VERSION_OFFSET)));
             partitionDeltaCount += getPartitionHasDeltaByRawIndex(i) ? 1 : 0;
             partitionDeltaActiveCount += isPartitionDeltaActiveByRawIndex(i) ? 1 : 0;
         }
@@ -1061,6 +1163,7 @@ public class TxReader implements Closeable, Mutable {
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
+        geometryVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
         partitionDeltaCount = 0;

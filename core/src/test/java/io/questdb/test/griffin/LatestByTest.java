@@ -1064,6 +1064,53 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByAllIndexedNullIntervalBelowColumnTop() throws Exception {
+        // The interval ends below the column top, so the frame's index row hi must clamp
+        // NULL's latest implicit row; the directory-wide top would answer a row past the interval.
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"indexed", "plain"}) {
+                execute("CREATE TABLE " + table + " (ts " + timestampType.getTypeName() + ", price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " SELECT timestamp_sequence('2020-01-01', 60 * 1_000_000L), x * 1.0 FROM long_sequence(100)");
+                execute("ALTER TABLE " + table + " ADD COLUMN s SYMBOL" + (table.equals("indexed") ? " INDEX" : ""));
+                execute("INSERT INTO " + table + " VALUES ('2020-01-01T02:00:00', 500.0, 'A')");
+            }
+            final String query = "SELECT s, ts, price FROM %s WHERE ts < '2020-01-01T00:50' LATEST ON ts PARTITION BY s ORDER BY s";
+            final String expected = "s\tts\tprice\n" +
+                    "\t2020-01-01T00:49:00.000000" + getTimestampSuffix(timestampType.getTypeName()) + "\t50.0\n";
+            assertQuery(String.format(query, "plain")).expectSize().returns(expected);
+            assertQuery(String.format(query, "indexed"))
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedNullPageFramesBelowColumnTop() throws Exception {
+        // Without an interval the backward frames are contiguous, so the first frame at or below the
+        // column top holds NULL's latest implicit row and the frame clamp must leave it unchanged.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(10, 10);
+            try {
+                execute("CREATE TABLE indexed (ts " + timestampType.getTypeName() + ", price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO indexed SELECT timestamp_sequence('2020-01-01', 60 * 1_000_000L), x * 1.0 FROM long_sequence(100)");
+                execute("ALTER TABLE indexed ADD COLUMN s SYMBOL INDEX");
+                execute("INSERT INTO indexed SELECT timestamp_sequence('2020-01-01T02:00', 60 * 1_000_000L), 500.0 + x, 'A' FROM long_sequence(35)");
+                final String suffix = getTimestampSuffix(timestampType.getTypeName());
+                assertQuery("SELECT s, ts, price FROM indexed LATEST ON ts PARTITION BY s ORDER BY s")
+                        .expectSize()
+                        .withPlanContaining("LatestByAllIndexed")
+                        .returns("s\tts\tprice\n" +
+                                "\t2020-01-01T01:39:00.000000" + suffix + "\t100.0\n" +
+                                "A\t2020-01-01T02:34:00.000000" + suffix + "\t535.0\n");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
 
@@ -1114,6 +1161,61 @@ public class LatestByTest extends AbstractCairoTest {
         // EXPLAIN leaves WITHIN prefixes in the pooled generator. Later tests disable the
         // setting, so discard these compilers before they can reuse that scratch state.
         engine.getSqlCompilerPool().releaseAll();
+    }
+
+    @Test
+    public void testLatestByAllIndexedWithPrefixesAndSubQueryBound() throws Exception {
+        // extractWithin() fills the outer query's WITHIN prefixes before WhereClauseParser compiles
+        // the scalar sub-query bound. The sub-query runs a LATEST ON ... WITHIN of its own, which
+        // must not replace the prefixes the outer LatestByAllIndexed factory filters by.
+        setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            Assert.assertTrue(configuration.useWithinLatestByOptimisation());
+            execute("CREATE TABLE geo (s SYMBOL INDEX, v DOUBLE, g GEOHASH(8c), ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO geo VALUES
+                    ('a', 1, #46swgj10, '2024-01-02'),
+                    ('b', 2, #u33d8b12, '2024-01-02'),
+                    ('c', 3, #46swgj10, '2023-12-30')
+                    """);
+            execute("CREATE TABLE geo2 (s SYMBOL INDEX, v DOUBLE, g GEOHASH(8c), ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO geo2 VALUES
+                    ('x', 5, #u33d8b12, '2024-01-01'),
+                    ('y', 6, #46swgj10, '2023-12-01')
+                    """);
+            // The sub-query returns 2024-01-01, the latest row of geo2 within #u33d8b12. Of the
+            // two geo rows after it, only 'a' lies within #46swgj10.
+            final String bound = "ts > (SELECT ts FROM geo2 WHERE g WITHIN (#u33d8b12) LATEST ON ts PARTITION BY s)";
+            // the prefix of #46swgj10
+            final String outerPrefixFilter = "filter: g within(\"0010000110110001110001111100010000100000\")";
+            final String expected = """
+                    s\tv
+                    a\t1.0
+                    """;
+            // This test switches configuration and the generator keeps WITHIN prefixes between
+            // compilations; keep this compiler local, as assertLatestKeyWithinFallback() does.
+            try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+                final String withinFirst = "SELECT s, v FROM geo WHERE g WITHIN (#46swgj10) AND " + bound + " LATEST ON ts PARTITION BY s";
+                assertQuery(withinFirst).withCompiler(compiler).noLeakCheck().expectSize().returns(expected);
+                assertQuery(withinFirst).withCompiler(compiler).noLeakCheck().assertsPlanContaining(outerPrefixFilter);
+                final String boundFirst = "SELECT s, v FROM geo WHERE " + bound + " AND g WITHIN (#46swgj10) LATEST ON ts PARTITION BY s";
+                assertQuery(boundFirst).withCompiler(compiler).noLeakCheck().expectSize().returns(expected);
+                assertQuery(boundFirst).withCompiler(compiler).noLeakCheck().assertsPlanContaining(outerPrefixFilter);
+                // without a WITHIN of its own, the outer query must not filter by the sub-query's prefixes
+                assertQuery("SELECT s, v FROM geo WHERE " + bound + " LATEST ON ts PARTITION BY s")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s\tv
+                                a\t1.0
+                                b\t2.0
+                                """);
+            }
+        });
     }
 
     @Test

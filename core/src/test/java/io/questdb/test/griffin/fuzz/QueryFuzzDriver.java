@@ -78,6 +78,8 @@ public final class QueryFuzzDriver {
     // injection takes its cut, so CI always guards. This floor is about the budget only: a shape
     // whose per-run precondition the run never met is exempt whatever the budget, which
     // describeUngeneratableShape decides.
+    // Minimum share of completed fused-plan comparisons that must select the fused plan.
+    private static final int MIN_FUSED_SELECTED_PCT = 15;
     private static final int MIN_QUERIES_FOR_ZERO_GUARD = 500;
     // Differential queries a shape needs before runFuzz holds it to MIN_ACCEPTED_PCT_PER_SHAPE.
     // Below this count the accepted rate is too noisy to assert on. FuzzConfig's default budget is
@@ -105,7 +107,7 @@ public final class QueryFuzzDriver {
                 logSchema(tables.getQuick(i).getShadow());
             }
         }
-        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
+        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isDiffFusedEnabled(), config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
         // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
@@ -114,6 +116,7 @@ public final class QueryFuzzDriver {
         // determinism the serial arm exists to provide.
         final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
+        final boolean savedParallelHashJoinGroupBy = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
         final boolean savedParallelHorizonJoin = sqlExecutionContext.isParallelHorizonJoinEnabled();
         final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
         final boolean savedParallelTopK = sqlExecutionContext.isParallelTopKEnabled();
@@ -144,7 +147,7 @@ public final class QueryFuzzDriver {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -163,6 +166,7 @@ public final class QueryFuzzDriver {
                     if (!runFaultParallel) {
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
                         sqlExecutionContext.setParallelTopKEnabled(false);
@@ -174,6 +178,7 @@ public final class QueryFuzzDriver {
                         if (!runFaultParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHashJoinGroupByEnabled(savedParallelHashJoinGroupBy);
                             sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
                             sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
@@ -202,7 +207,7 @@ public final class QueryFuzzDriver {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -215,6 +220,7 @@ public final class QueryFuzzDriver {
                         serial++;
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
                         sqlExecutionContext.setParallelTopKEnabled(false);
@@ -227,6 +233,7 @@ public final class QueryFuzzDriver {
                         if (disableParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHashJoinGroupByEnabled(savedParallelHashJoinGroupBy);
                             sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
                             sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
@@ -272,6 +279,12 @@ public final class QueryFuzzDriver {
                     .$(generated - skippedByShape[shape.ordinal()]).$('/').$(generated).$(' ');
         }
         shapeLog.$();
+        LOG.info().$("fuzz fused axis: ").$(runner.getFusedAxisSelected()).$(" of ")
+                .$(runner.getFusedAxisCompletedRuns()).$(" completed comparisons used the fused plan; ")
+                .$(runner.getFusedAxisRuns()).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
+                .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
+                .$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
@@ -329,6 +342,27 @@ public final class QueryFuzzDriver {
                             + " queries; the rest were skipped on expected errors, so it looks out of step with the engine",
                     100L * accepted >= (long) MIN_ACCEPTED_PCT_PER_SHAPE * generated
             );
+        }
+        // Guard the fused on/off axis against going vacuous. It compares two different plans only
+        // when the pivot selected the fused hash join GROUP BY, and a planner change that stops
+        // selecting it leaves every comparison ordinary against ordinary. The share counts only
+        // completed comparisons: the serial arm and the fault branch never run the axis, and a
+        // query that fails to compile fails in both plans. It is held to the same sample floor as
+        // the accepted rate above, and logged below it.
+        final int fusedCompleted = runner.getFusedAxisCompletedRuns();
+        if (config.isDiffFusedEnabled() && generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()] > 0) {
+            if (fusedCompleted < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+                LOG.info().$("fuzz fused axis below the sample size, NOT guarded this run: ")
+                        .$(fusedCompleted).$('/').$(MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR)
+                        .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
+                        .$();
+            } else {
+                Assert.assertTrue(
+                        "the fused hash join GROUP BY ran on only " + runner.getFusedAxisSelected() + " of "
+                                + fusedCompleted + " completed comparisons; the fused on/off axis looks vacuous",
+                        100L * runner.getFusedAxisSelected() >= (long) MIN_FUSED_SELECTED_PCT * fusedCompleted
+                );
+            }
         }
         // Guard the fault injector against a silent disarm. It has several ways to stop biting while
         // the run stays green and tests nothing but the happy path: dev mode off (test_fault() folds
@@ -411,6 +445,9 @@ public final class QueryFuzzDriver {
     private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
         return switch (shape) {
             case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
+            case HASH_JOIN_GROUP_BY -> config.isHashJoinEnabled()
+                    ? describeMissingJoinTables(tables)
+                    : "-D" + FuzzConfig.HASH_JOIN_PROP + "=false";
             case HORIZON_JOIN -> config.isHorizonJoinEnabled()
                     ? describeMissingJoinTables(tables)
                     : "-D" + FuzzConfig.HORIZON_JOIN_PROP + "=false";
@@ -495,6 +532,9 @@ public final class QueryFuzzDriver {
                 .append(" (parquet=").append(t.getParquetMode());
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
+        }
+        if (t.getCompositeDay() != null) {
+            sb.append(" composite=").append(t.getCompositeDay());
         }
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {

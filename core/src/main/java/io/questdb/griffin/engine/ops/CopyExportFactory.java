@@ -119,24 +119,23 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         long copyID = entry.getId();
         RecordCursorFactory selectFactory = null;
         CreateTableOperationImpl createOp = null;
+        int exportPartitionBy = partitionBy;
         try {
             if (this.tableName != null) {
                 TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                 if (tableToken == null) {
                     throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
                 }
-                if (partitionBy != -1) {
+                // Composite pieces and Delta runs require a logical scan rather than a flat base-file export.
+                final boolean isLogicalScanRequired = isLogicalScanRequired(executionContext, tableToken);
+                if (partitionBy != -1 || isLogicalScanRequired) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         int tablePartitionBy = meta.getPartitionBy();
-                        if (tablePartitionBy != partitionBy) {
-                            this.selectText = this.tableName;
-                        }
-                    }
-                } else {
-                    try (TableReader reader = executionContext.getCairoEngine().getReader(tableToken)) {
-                        if (hasDeltaActivePartition(reader.getTxFile())) {
-                            this.partitionBy = reader.getPartitionedBy();
-                            this.selectText = this.tableName;
+                        if (partitionBy == -1) {
+                            exportPartitionBy = tablePartitionBy;
+                            this.selectText = CopyExportRequestTask.selectAllText(this.tableName);
+                        } else if (tablePartitionBy != partitionBy || isLogicalScanRequired) {
+                            this.selectText = CopyExportRequestTask.selectAllText(this.tableName);
                         }
                     }
                 }
@@ -162,7 +161,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     }
                     RecordCursorFactory rcf = selectQuery.getRecordCursorFactory();
                     try {
-                        int resolvedPartitionBy = partitionBy == -1 ? PartitionBy.NONE : partitionBy;
+                        int resolvedPartitionBy = exportPartitionBy == -1 ? PartitionBy.NONE : exportPartitionBy;
                         if (resolvedPartitionBy == PartitionBy.NONE) {
                             exportMode = ParquetExportMode.determineExportMode(rcf, false, executionContext);
                         } else {
@@ -315,13 +314,11 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         sink.type("Copy");
     }
 
-    private static boolean hasDeltaActivePartition(TxReader txFile) {
-        for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
-            if (txFile.isPartitionDeltaActive(i)) {
-                return true;
-            }
+    private static boolean isLogicalScanRequired(SqlExecutionContext executionContext, TableToken tableToken) {
+        try (TableReader reader = executionContext.getCairoEngine().getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            return txFile.hasCompositePartitions() || txFile.hasAnyDeltaActive();
         }
-        return false;
     }
 
     private void of(

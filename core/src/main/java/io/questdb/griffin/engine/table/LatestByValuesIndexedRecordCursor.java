@@ -122,14 +122,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int symbolKey,
             IndexReader indexReader,
             int invertedFrameIndex,
-            long partitionLo,
-            long partitionHi,
+            long indexRowLo,
+            long indexRowHi,
             PageFrameMemory frameMemory
     ) {
         try (RowCursor cursor = indexReader.getCursor(
                 symbolKey,
-                partitionLo,
-                partitionHi,
+                indexRowLo,
+                indexRowHi,
                 null,
                 frameMemory.getSourceRowResolver()
         )) {
@@ -152,8 +152,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
             frameAddressCache.add(frameIndex, frame);
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
@@ -170,8 +170,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         symbolKey,
                         indexReader,
                         invertedFrameIndex,
-                        partitionLo,
-                        partitionHi,
+                        indexRowLo,
+                        indexRowHi,
                         frameMemory
                 )) {
                     int last = remainingKeys.size() - 1;
