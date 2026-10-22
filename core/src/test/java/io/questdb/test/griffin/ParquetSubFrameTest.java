@@ -62,19 +62,21 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01', 1) FROM long_sequence(1050)");
             try (RecordCursorFactory factory = select("x")) {
                 sqlExecutionContext.changePageFrameSizes(100, 1000);
-                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                    long total = 0;
-                    int frameCount = 0;
-                    PageFrame frame;
-                    while ((frame = cursor.next()) != null) {
-                        final long size = frame.getPartitionHi() - frame.getPartitionLo();
-                        Assert.assertTrue("frame exceeds max rows: " + size, size <= 1000);
-                        total += size;
-                        frameCount++;
+                for (int order : new int[]{ORDER_ASC, ORDER_DESC}) {
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                        long total = 0;
+                        int frameCount = 0;
+                        PageFrame frame;
+                        while ((frame = cursor.next()) != null) {
+                            final long size = frame.getPartitionHi() - frame.getPartitionLo();
+                            Assert.assertTrue("frame exceeds max rows: " + size, size <= 1000);
+                            total += size;
+                            frameCount++;
+                        }
+                        Assert.assertEquals(1050, total);
+                        // 1000 + 50, so two frames, not one oversized frame
+                        Assert.assertEquals(2, frameCount);
                     }
-                    Assert.assertEquals(1050, total);
-                    // 1000 + 50, so two frames, not one oversized frame
-                    Assert.assertEquals(2, frameCount);
                 }
             }
         });

@@ -790,20 +790,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             long pageFrameMaxRows,
             int sharedQueryWorkerCount
     ) {
-        final int workerCount = Math.max(sharedQueryWorkerCount, 1);
-        long rowsPerFrame = Math.min(pageFrameMaxRows, Math.max(pageFrameMinRows, (partitionHi - partitionLo) / workerCount));
-        final long lastFrameSize = (partitionHi - partitionLo) % rowsPerFrame;
-        if (lastFrameSize > 0 && lastFrameSize < pageFrameMinRows) {
-            // Adjust the limit, so that we don't have tiny trailing frames.
-            final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
-            rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
-        }
-        // The tiny-trailing-frame adjustment above can push rowsPerFrame past pageFrameMaxRows. That cap is
-        // not merely a preference: pageFrameMaxRows is validated <= Map.BATCH_ROW_INDEX_MASK + 1, and a frame
-        // larger than it overflows the 24-bit frame-relative row index packed into every batched GROUP BY
-        // entry (silent result corruption). A possibly-tiny trailing frame is strictly safer than a frame
-        // that exceeds the cap, so clamp back down. Shared by the native and parquet branches.
-        return Math.min(pageFrameMaxRows, rowsPerFrame);
+        return NativeFrameBoundaries.calculatePageFrameRowLimit(
+                partitionLo,
+                partitionHi,
+                pageFrameMinRows,
+                pageFrameMaxRows,
+                sharedQueryWorkerCount
+        );
     }
 
     /**
