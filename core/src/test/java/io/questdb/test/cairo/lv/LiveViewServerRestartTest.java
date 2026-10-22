@@ -363,77 +363,26 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
         // in-order rows read restored rows in their frames, and late rows after them still
         // repair. The QWP query client reads every result back.
         //
-        // Every value is a whole number far below 2^53, so each running sum is exact in whatever
-        // order a repair re-accumulates it, and a view row equals its recompute bit for bit.
-        assertMemoryLeak(() -> {
-            final StatWorkload workload = new StatWorkload();
-            final String rowsBeforeRestart;
-            final String rangeBeforeRestart;
-            try (TestServerMain serverMain = startServer(); Connection conn = connect()) {
-                execute(conn, "CREATE TABLE " + STAT_BASE + " (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty DOUBLE)"
-                        + " TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute(conn, createStatView(STAT_ROWS_VIEW, STAT_ROWS_QUERY));
-                execute(conn, createStatView(STAT_RANGE_VIEW, STAT_RANGE_QUERY));
-                try (Sender streamer = newStreamer(); Sender backfiller = newBackfiller()) {
-                    for (int round = 0; round < STAT_REPAIR_ROUNDS; round++) {
-                        streamStatRound(serverMain, conn, workload, streamer);
-                        backfillStatRound(serverMain, conn, workload, backfiller);
-                    }
-                    // A late row moves every later ROWS frame of its symbol, so the ROWS view
-                    // repairs it with a full replay from the applied base, which leaves it a
-                    // single root. In-order rounds with no late rows let both views seal a ladder
-                    // for the restart to pick from.
-                    for (int round = 0; round < STAT_TAIL_ROUNDS; round++) {
-                        streamStatRound(serverMain, conn, workload, streamer);
-                    }
-                }
+        // Every value here is a whole number far below 2^53, so each running sum is exact
+        // whatever order it is summed in, and a view row equals its recompute bit for bit on any
+        // route. testBoundedFrameStatViewsFedBySendersRestoreBitExactlyOnFractionalData sends
+        // fractional values, where only the order the plain query slides its frames in gives
+        // its bits.
+        assertBoundedFrameStatViewsRestoreAcrossARestart(false);
+    }
 
-                assertStatPremises(conn, STAT_ROWS_VIEW, "vol", "cv", "vp", "sx", "cr");
-                assertStatPremises(conn, STAT_RANGE_VIEW, "c", "sp", "ks", "cvl", "vsx", "cx");
-                assertLadder(conn, STAT_ROWS_VIEW);
-                assertLadder(conn, STAT_RANGE_VIEW);
-                assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
-                assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
-                assertActive(conn, STAT_ROWS_VIEW);
-                assertActive(conn, STAT_RANGE_VIEW);
-                assertNoRefreshFaults(serverMain, STAT_ROWS_VIEW);
-                assertNoRefreshFaults(serverMain, STAT_RANGE_VIEW);
-                rowsBeforeRestart = readRowsOverQwp(statViewRowsSql(STAT_ROWS_VIEW, STAT_ROWS_COLUMNS));
-                rangeBeforeRestart = readRowsOverQwp(statViewRowsSql(STAT_RANGE_VIEW, STAT_RANGE_COLUMNS));
-            }
-
-            try (TestServerMain serverMain = startServer(); Connection conn = connect()) {
-                assertRestartRestoredFromTimeline(serverMain, conn, STAT_ROWS_VIEW);
-                assertRestartRestoredFromTimeline(serverMain, conn, STAT_RANGE_VIEW);
-                TestUtils.assertEquals(
-                        STAT_ROWS_VIEW + " must come back with the rows it had",
-                        rowsBeforeRestart,
-                        readRowsOverQwp(statViewRowsSql(STAT_ROWS_VIEW, STAT_ROWS_COLUMNS))
-                );
-                TestUtils.assertEquals(
-                        STAT_RANGE_VIEW + " must come back with the rows it had",
-                        rangeBeforeRestart,
-                        readRowsOverQwp(statViewRowsSql(STAT_RANGE_VIEW, STAT_RANGE_COLUMNS))
-                );
-
-                // Fresh connections after the restart, one more round each. In-order rows first:
-                // every frame of the first ones reaches back into rows from before the restart,
-                // which only the restored state holds. Then late rows, which the views repair on
-                // top of it.
-                try (Sender streamer = newStreamer(); Sender backfiller = newBackfiller()) {
-                    streamStatRound(serverMain, conn, workload, streamer);
-                    assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
-                    assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
-                    backfillStatRound(serverMain, conn, workload, backfiller);
-                }
-                assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
-                assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
-                assertActive(conn, STAT_ROWS_VIEW);
-                assertActive(conn, STAT_RANGE_VIEW);
-                assertNoRefreshFaults(serverMain, STAT_ROWS_VIEW);
-                assertNoRefreshFaults(serverMain, STAT_RANGE_VIEW);
-            }
-        });
+    @Test
+    public void testBoundedFrameStatViewsFedBySendersRestoreBitExactlyOnFractionalData() throws Exception {
+        // testBoundedFrameStatViewsFedBySendersRestoreAcrossARestart with prices in cents near
+        // a level per symbol and sizes in thousandths, the late rows included, so every add to
+        // and drop from a running sum rounds. Each view holds a function whose formula subtracts
+        // nearly equal sums, which declines the localized repair for the whole view: every late
+        // row resumes from a sealed root or rebuilds from the view's boundary, sliding the
+        // frames in the order the plain query slides them, and the restart restores the sums the
+        // previous process sealed verbatim. A route that re-summed a frame would leave its sums
+        // a few ULPs off, which the cancelling formulas scale into differing digits, so the QWP
+        // read-back must still equal the recompute's line for line.
+        assertBoundedFrameStatViewsRestoreAcrossARestart(true);
     }
 
     @Test
@@ -851,6 +800,92 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Feeds both bounded-frame views through the real senders, in-order rounds and backfills of
+     * late rows, restarts the server, and asserts each view comes back on its timeline and keeps
+     * equal to a from-base recompute, read back over QWP, through more rounds. With
+     * {@code isFractional} every value the senders write has a fractional part.
+     */
+    private void assertBoundedFrameStatViewsRestoreAcrossARestart(boolean isFractional) throws Exception {
+        assertMemoryLeak(() -> {
+            final StatWorkload workload = new StatWorkload(isFractional);
+            final String rowsBeforeRestart;
+            final String rangeBeforeRestart;
+            try (TestServerMain serverMain = startServer(); Connection conn = connect()) {
+                execute(conn, "CREATE TABLE " + STAT_BASE + " (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty DOUBLE)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute(conn, createStatView(STAT_ROWS_VIEW, STAT_ROWS_QUERY));
+                execute(conn, createStatView(STAT_RANGE_VIEW, STAT_RANGE_QUERY));
+                try (Sender streamer = newStreamer(); Sender backfiller = newBackfiller()) {
+                    for (int round = 0; round < STAT_REPAIR_ROUNDS; round++) {
+                        streamStatRound(serverMain, conn, workload, streamer);
+                        backfillStatRound(serverMain, conn, workload, backfiller);
+                    }
+                    // A late row moves every later ROWS frame of its symbol, so the ROWS view
+                    // repairs it with a full replay from the applied base, which leaves it a
+                    // single root. In-order rounds with no late rows let both views seal a ladder
+                    // for the restart to pick from.
+                    for (int round = 0; round < STAT_TAIL_ROUNDS; round++) {
+                        streamStatRound(serverMain, conn, workload, streamer);
+                    }
+                }
+
+                assertStatPremises(conn, STAT_ROWS_VIEW, "vol", "cv", "vp", "sx", "cr");
+                assertStatPremises(conn, STAT_RANGE_VIEW, "c", "sp", "ks", "cvl", "vsx", "cx");
+                if (isFractional) {
+                    Assert.assertEquals(
+                            "every px and qty the senders wrote must have a fractional part",
+                            0,
+                            queryLong(conn, "SELECT count() FROM " + STAT_BASE
+                                    + " WHERE (px IS NOT NULL AND px = round(px, 0)) OR (qty IS NOT NULL AND qty = round(qty, 0))")
+                    );
+                }
+                assertLadder(conn, STAT_ROWS_VIEW);
+                assertLadder(conn, STAT_RANGE_VIEW);
+                assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
+                assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
+                assertActive(conn, STAT_ROWS_VIEW);
+                assertActive(conn, STAT_RANGE_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_ROWS_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_RANGE_VIEW);
+                rowsBeforeRestart = readRowsOverQwp(statViewRowsSql(STAT_ROWS_VIEW, STAT_ROWS_COLUMNS));
+                rangeBeforeRestart = readRowsOverQwp(statViewRowsSql(STAT_RANGE_VIEW, STAT_RANGE_COLUMNS));
+            }
+
+            try (TestServerMain serverMain = startServer(); Connection conn = connect()) {
+                assertRestartRestoredFromTimeline(serverMain, conn, STAT_ROWS_VIEW);
+                assertRestartRestoredFromTimeline(serverMain, conn, STAT_RANGE_VIEW);
+                TestUtils.assertEquals(
+                        STAT_ROWS_VIEW + " must come back with the rows it had",
+                        rowsBeforeRestart,
+                        readRowsOverQwp(statViewRowsSql(STAT_ROWS_VIEW, STAT_ROWS_COLUMNS))
+                );
+                TestUtils.assertEquals(
+                        STAT_RANGE_VIEW + " must come back with the rows it had",
+                        rangeBeforeRestart,
+                        readRowsOverQwp(statViewRowsSql(STAT_RANGE_VIEW, STAT_RANGE_COLUMNS))
+                );
+
+                // Fresh connections after the restart, one more round each. In-order rows first:
+                // every frame of the first ones reaches back into rows from before the restart,
+                // which only the restored state holds. Then late rows, which the views repair on
+                // top of it.
+                try (Sender streamer = newStreamer(); Sender backfiller = newBackfiller()) {
+                    streamStatRound(serverMain, conn, workload, streamer);
+                    assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
+                    assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
+                    backfillStatRound(serverMain, conn, workload, backfiller);
+                }
+                assertStatViewMatchesRecompute(STAT_ROWS_VIEW, STAT_ROWS_QUERY, STAT_ROWS_COLUMNS);
+                assertStatViewMatchesRecompute(STAT_RANGE_VIEW, STAT_RANGE_QUERY, STAT_RANGE_COLUMNS);
+                assertActive(conn, STAT_ROWS_VIEW);
+                assertActive(conn, STAT_RANGE_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_ROWS_VIEW);
+                assertNoRefreshFaults(serverMain, STAT_RANGE_VIEW);
+            }
+        });
+    }
+
+    /**
      * Compares the view against a from-base recompute of the query it was created with, row for
      * row, both read through the client's QWP query client.
      */
@@ -1033,7 +1068,9 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
 
     /**
      * The rows the bounded-frame case writes, and the count the base must reach. Deterministic, so
-     * a failure replays as it ran. Every value is a whole number.
+     * a failure replays as it ran. Every value is a whole number, unless the workload is
+     * fractional: then every price is a level per symbol plus an odd number of half cents, and
+     * every size one plus a whole number of thousandths short of two, so no value is whole.
      * <p>
      * The streamer writes one row per {@code (tick, symbol)}, in tick order, the symbols of a tick
      * in turn, {@link #STAT_TICKS_PER_ROUND} ticks a round. Some rows leave px out and others qty,
@@ -1045,10 +1082,26 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
      * {@code (sym, ts)} with any other row. Every fourth late row leaves px out.
      */
     private static class StatWorkload {
+        private final boolean isFractional;
         private int backfillSerial;
         private int nextTick;
         private int round;
         private long rowCount;
+
+        private StatWorkload(boolean isFractional) {
+            this.isFractional = isFractional;
+        }
+
+        // A price within two units of its symbol's level, in cents plus half a cent, so the
+        // frame's mean dwarfs its spread and the variance formulas cancel most of their digits.
+        private static double fractionalPx(int symbol, int cents) {
+            return 1000.005 + symbol * 250 + cents % 200 * 0.01;
+        }
+
+        // One plus a whole number of thousandths short of two.
+        private static double fractionalQty(int thousandths) {
+            return 1 + (thousandths % 999 + 1) * 0.001;
+        }
 
         private static boolean isPxNull(int tick, int symbol) {
             return (tick + 2 * symbol) % 7 == 3;
@@ -1056,14 +1109,6 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
 
         private static boolean isQtyNull(int tick, int symbol) {
             return (tick + symbol) % 9 == 5;
-        }
-
-        private static double px(int tick, int symbol) {
-            return (tick * 31 + symbol * 7) % 97 + 1;
-        }
-
-        private static double qty(int tick, int symbol) {
-            return (tick * 17 + symbol * 11) % 89 + 1;
         }
 
         private static String statSymbol(int symbol) {
@@ -1083,9 +1128,9 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
                 backfillSerial++;
                 backfiller.table(STAT_BASE).symbol("sym", statSymbol(symbol));
                 if (backfillSerial % 4 != 0) {
-                    backfiller.doubleColumn("px", 100 + backfillSerial % 50);
+                    backfiller.doubleColumn("px", backfillPx(symbol));
                 }
-                backfiller.doubleColumn("qty", 50 + backfillSerial % 30);
+                backfiller.doubleColumn("qty", backfillQty());
                 backfiller.at(
                         tickTs(tick) + Micros.SECOND_MICROS + backfillSerial * Micros.MILLI_MICROS,
                         ChronoUnit.MICROS
@@ -1094,6 +1139,22 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
             }
             backfiller.flush();
             round++;
+        }
+
+        private double backfillPx(int symbol) {
+            return isFractional ? fractionalPx(symbol, backfillSerial * 7) : 100 + backfillSerial % 50;
+        }
+
+        private double backfillQty() {
+            return isFractional ? fractionalQty(backfillSerial * 13) : 50 + backfillSerial % 30;
+        }
+
+        private double px(int tick, int symbol) {
+            return isFractional ? fractionalPx(symbol, tick * 37 + symbol * 11) : (tick * 31 + symbol * 7) % 97 + 1;
+        }
+
+        private double qty(int tick, int symbol) {
+            return isFractional ? fractionalQty(tick * 17 + symbol * 11) : (tick * 17 + symbol * 11) % 89 + 1;
         }
 
         private void stream(Sender streamer) {

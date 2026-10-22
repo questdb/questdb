@@ -860,18 +860,6 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
         assertNoRefreshFaults(viewName);
     }
 
-    // Prints the plain query and asserts the view prints the same text. Unlike the
-    // assertSqlCursors comparison, which allows a small tolerance on doubles, equal shortest
-    // round-trip text means equal bits.
-    private void assertViewPrintsLikePlain(String viewQuery, String plainQuery) throws Exception {
-        printSql(plainQuery);
-        final String expected = sink.toString();
-        assertQuery(viewQuery)
-                .noLeakCheck()
-                .expectSize()
-                .returns(expected);
-    }
-
     private void assertViewsMatchRecompute(String[] views) throws Exception {
         for (String view : views) {
             if ("lv_issue".equals(view)) {

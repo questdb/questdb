@@ -25,11 +25,13 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
@@ -43,7 +45,10 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
@@ -53,12 +58,14 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -601,6 +608,17 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         }
     }
 
+    // The text of column 1, the partition key, whichever string type the record carries it as;
+    // null for a NULL key.
+    private static String keyText(Record record, int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.SYMBOL -> Chars.toString(record.getSymA(1));
+            case ColumnType.STRING -> Chars.toString(record.getStrA(1));
+            case ColumnType.VARCHAR -> Utf8s.toString(record.getVarcharA(1));
+            default -> throw new AssertionError("unsupported key column type: " + ColumnType.nameOf(columnType));
+        };
+    }
+
     // A stalled stdout backs the async log ring up, and a full ring drops every record that
     // does not wait for a slot. Hosted CI agents stall it for seconds at a time, which dropped
     // the refresh job lines tests assert through LogCapture. A guaranteed logger waits instead.
@@ -646,6 +664,98 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             // time, so raising it would trade a 5s reader-side "Transaction read timeout" naming the
             // stalled table for the 20-minute class timeout - 240x coarser, with no reader diagnostic.
             spinLockTimeout = 365L * 24 * 60 * 60 * 1000; // a simulated year
+        }
+    }
+
+    /**
+     * Walks the view and the plain query in step and checks every DOUBLE cell of every row
+     * against the floating ceiling {@link LiveViewCheckpointContracts} documents for a localized
+     * replay. Column 0 must be the designated timestamp and column 1 the partition key; both
+     * must match exactly, whether the key reads as a SYMBOL, a STRING or a VARCHAR on either
+     * side. Every later column must be a DOUBLE. Both-NULL cells agree; a NULL or a non-finite
+     * value against anything else breaches, and is counted apart from finite drift. Reports
+     * every breaching column at once, with the worst finite relative error and the first
+     * breaching row, so a failure shows which outputs drift and by how much. Returns the number
+     * of rows compared, which a caller whose data cannot be empty asserts on.
+     */
+    protected long assertAllRowsWithinFloatingCeiling(String viewQuery, String plainQuery) throws Exception {
+        try (
+                RecordCursorFactory viewFactory = select(viewQuery);
+                RecordCursorFactory plainFactory = select(plainQuery);
+                RecordCursor viewCursor = viewFactory.getCursor(sqlExecutionContext);
+                RecordCursor plainCursor = plainFactory.getCursor(sqlExecutionContext)
+        ) {
+            final RecordMetadata metadata = plainFactory.getMetadata();
+            final RecordMetadata viewMetadata = viewFactory.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            Assert.assertEquals("column count", columnCount, viewMetadata.getColumnCount());
+            for (int col = 2; col < columnCount; col++) {
+                Assert.assertEquals(
+                        "plain column " + metadata.getColumnName(col) + " must be a DOUBLE",
+                        ColumnType.DOUBLE,
+                        metadata.getColumnType(col)
+                );
+                Assert.assertEquals(
+                        "view column " + viewMetadata.getColumnName(col) + " must be a DOUBLE",
+                        ColumnType.DOUBLE,
+                        viewMetadata.getColumnType(col)
+                );
+            }
+            final int plainKeyType = metadata.getColumnType(1);
+            final int viewKeyType = viewMetadata.getColumnType(1);
+            final long[] breaches = new long[columnCount];
+            final long[] nonFiniteBreaches = new long[columnCount];
+            final double[] worstRelative = new double[columnCount];
+            final String[] firstBreach = new String[columnCount];
+            final Record viewRecord = viewCursor.getRecord();
+            final Record plainRecord = plainCursor.getRecord();
+            long rows = 0;
+            while (plainCursor.hasNext()) {
+                Assert.assertTrue("the view ends after " + rows + " rows, before the plain query", viewCursor.hasNext());
+                final long ts = plainRecord.getTimestamp(0);
+                Assert.assertEquals("ts at row " + rows, ts, viewRecord.getTimestamp(0));
+                final String key = keyText(plainRecord, plainKeyType);
+                final String viewKey = keyText(viewRecord, viewKeyType);
+                Assert.assertEquals("key at row " + rows, key, viewKey);
+                for (int col = 2; col < columnCount; col++) {
+                    final double expected = plainRecord.getDouble(col);
+                    final double actual = viewRecord.getDouble(col);
+                    if (Double.isNaN(expected) && Double.isNaN(actual)) {
+                        continue;
+                    }
+                    if (!LiveViewCheckpointContracts.isWithinFloatingTolerance(expected, actual)) {
+                        breaches[col]++;
+                        if (Double.isFinite(expected) && Double.isFinite(actual)) {
+                            final double relative = Math.abs(expected - actual) / Math.max(Math.abs(expected), Math.abs(actual));
+                            worstRelative[col] = Math.max(worstRelative[col], relative);
+                        } else {
+                            nonFiniteBreaches[col]++;
+                        }
+                        if (firstBreach[col] == null) {
+                            firstBreach[col] = "row " + rows + " [key=" + key + ", ts=" + ts
+                                    + ", plain=" + expected + ", view=" + actual + ']';
+                        }
+                    }
+                }
+                rows++;
+            }
+            Assert.assertFalse("the view has more rows than the plain query's " + rows, viewCursor.hasNext());
+
+            final StringSink report = new StringSink();
+            for (int col = 2; col < columnCount; col++) {
+                if (breaches[col] > 0) {
+                    report.put("\n  ").put(metadata.getColumnName(col)).put(": ").put(breaches[col])
+                            .put(" of ").put(rows).put(" rows over the ceiling (").put(nonFiniteBreaches[col])
+                            .put(" NULL or non-finite on one side only), worst finite relative error ")
+                            .put(worstRelative[col]).put(", first at ").put(firstBreach[col]);
+                }
+            }
+            if (report.length() > 0) {
+                Assert.fail("the view's outputs exceed the documented floating ceiling ("
+                        + LiveViewCheckpointContracts.FLOATING_RELATIVE_TOLERANCE + " relative, "
+                        + LiveViewCheckpointContracts.FLOATING_ABSOLUTE_TOLERANCE + " absolute):" + report);
+            }
+            return rows;
         }
     }
 
@@ -760,6 +870,28 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected void assertRestoredFromTimeline(String viewName) {
         assertRestoredFromTimeline(viewName, restoreWitnessInstance(viewName));
+    }
+
+    /**
+     * Prints the plain query and asserts the view prints the same text. Unlike a cursor
+     * comparison with a tolerance on doubles, equal shortest round-trip text means equal bits.
+     */
+    protected void assertViewPrintsLikePlain(String viewQuery, String plainQuery) throws Exception {
+        assertViewPrintsLikePlain(viewQuery, plainQuery, null);
+    }
+
+    /**
+     * As {@link #assertViewPrintsLikePlain(String, String)}, for a view query ordered by its
+     * designated timestamp {@code timestampColumn} first, which keeps it designated.
+     */
+    protected void assertViewPrintsLikePlain(String viewQuery, String plainQuery, String timestampColumn) throws Exception {
+        printSql(plainQuery);
+        final String expected = sink.toString();
+        assertQuery(viewQuery)
+                .noLeakCheck()
+                .timestamp(timestampColumn)
+                .expectSize()
+                .returns(expected);
     }
 
     /**

@@ -29,13 +29,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.StringSink;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -72,8 +66,52 @@ import org.junit.Test;
  * a sealed root, and prints exactly what the plain query prints. Pathological data stays out
  * of those cases: after an extreme value leaves a sliding frame the plain query's own sums
  * stay corrupted, so any re-accumulation departs from it, the released {@code avg} included.
+ * <p>
+ * Resuming is one of the two routes left to such a view. A late row below every sealed root
+ * rebuilds the view from its START FROM boundary, which
+ * {@link #testBoundaryRebuildsStayBitExactFromBeginningAndFromALiteral()} pins from the beginning
+ * and from a literal boundary. {@link #testViewMixingEveryFamilyAndRingWidthRepairsBitExactly()}
+ * puts every family a live view checkpoints over a bounded frame into one view next to the
+ * cancelling functions, and takes it through a restart and both routes.
  */
 public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
+
+    // The four cancelling functions, each over a frame of its own: a RANGE frame ending at the
+    // current row, a lagged RANGE frame, a ROWS frame ending at the current row and a lagged
+    // ROWS frame. %s is where a view whose START FROM is a literal restates it for its plain
+    // query.
+    private static final String CANCELLING_PROJECTION = """
+            stddev_samp(px) OVER wr AS sd,
+            corr(px, qty) OVER wl AS c,
+            var_pop(px) OVER ww AS vr,
+            covar_samp(px, qty) OVER wwl AS cv
+            FROM fx%s
+            WINDOW wr AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '20' SECOND PRECEDING AND CURRENT ROW),
+                   wl AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING),
+                   ww AS (PARTITION BY sym ORDER BY ts ROWS 19 PRECEDING),
+                   wwl AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 12 PRECEDING AND 3 PRECEDING)""";
+    private static final int MIXED_COMMITS = 4;
+    private static final int MIXED_COMMIT_SECONDS = 40;
+    // Every window family a live view checkpoints over a bounded frame, and every scalar width
+    // the RANGE ring seals: avg over DOUBLE (one word), avg over DECIMAL(20, 4) (four words),
+    // stddev_samp and ksum (two words), corr and covar_pop (five words), plus the deque of max,
+    // first_value, and the ROWS whole-state images of var_pop and avg.
+    private static final String MIXED_SELECT = """
+            SELECT ts, sym,
+                   avg(px) OVER wr AS a1,
+                   avg(d) OVER wr AS a4,
+                   stddev_samp(px) OVER wr AS sd2,
+                   ksum(px) OVER wr AS k2,
+                   corr(px, qty) OVER wr AS c5,
+                   covar_pop(px, qty) OVER wl AS cv5,
+                   first_value(px) OVER wr AS fv,
+                   max(px) OVER wr AS mx,
+                   var_pop(px) OVER ww AS vr,
+                   avg(px) OVER ww AS ar
+            FROM fx
+            WINDOW wr AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW),
+                   wl AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '20' SECOND PRECEDING AND '5' SECOND PRECEDING),
+                   ww AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)""";
 
     // A frame ending at the current row and a lagged one.
     private static final String[] RANGE_FRAMES = {
@@ -118,6 +156,90 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         // One logical root per commit, the densest cadence the view can seal.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
+    }
+
+    @Test
+    public void testBoundaryRebuildsStayBitExactFromBeginningAndFromALiteral() throws Exception {
+        // A late row below every sealed root leaves a resume nothing to stand on, so the view
+        // rebuilds from its START FROM boundary. The cancelling functions decline frame-local
+        // state, so that rebuild is the only route such a row has: it replays the frames from
+        // the boundary on the primary runtime, in the order the plain query slides them, and
+        // must print exactly what the plain query prints. `lv` starts from the beginning and
+        // `lvs` from a literal 100 seconds in, so `lvs`'s plain query restates the boundary.
+        //
+        // A rebuild leaves no root below the rebuilt head either, so each later late row
+        // rebuilds from the boundary again, until in-order commits seal new roots above it.
+        // The restart then restores both views from the roots those commits sealed.
+        final String startFrom = "2026-01-01T00:01:40.000000Z";
+        final String plain = "(SELECT ts, sym, " + CANCELLING_PROJECTION.formatted("") + ") ORDER BY sym, ts";
+        final String literalPlain = "(SELECT ts, sym, "
+                + CANCELLING_PROJECTION.formatted(" WHERE ts >= '" + startFrom + "'") + ") ORDER BY sym, ts";
+        final String view = "SELECT * FROM lv ORDER BY sym, ts";
+        final String literalView = "SELECT * FROM lvs ORDER BY sym, ts";
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, "
+                    + CANCELLING_PROJECTION.formatted(""));
+            execute("CREATE LIVE VIEW lvs FLUSH EVERY 100ms START FROM '" + startFrom + "' AS SELECT ts, sym, "
+                    + CANCELLING_PROJECTION.formatted(""));
+            final Rnd rnd = new Rnd(42, 4242);
+            final double[] prices = {65_000.0, 3_100.0};
+            int second = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int c = 0; c < TICK_COMMITS; c++) {
+                    commitTicks(job, rnd, prices, second);
+                    second += TICK_COMMIT_SECONDS;
+                    driveRefreshToQuiescence(job);
+                }
+                assertViewPrintsLikePlain(view, plain);
+                assertViewPrintsLikePlain(literalView, literalPlain);
+
+                // 0.5s sits below every root of `lv`, whose first root seals at 59s, and below
+                // `lvs`'s boundary; 30.5s sits below every root of `lv` again, now that the
+                // first rebuild left none; 101.5s sits just above `lvs`'s boundary, which seals
+                // its first root at 119s.
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final LiveViewInstance literalInstance = engine.getLiveViewRegistry().getViewInstance("lvs");
+                Assert.assertNotNull(literalInstance);
+                final int[] lateSeconds = {0, 30, 101};
+                final String[] lateSymbols = {"btc", "eth", "btc"};
+                final double[] latePrices = {65_001.37, 3_100.07, 64_999.99};
+                final double[] lateSizes = {1.234, 2.5, 0.5};
+                for (int k = 0; k < lateSeconds.length; k++) {
+                    final long boundaryRows = instance.getO3BoundaryReplayRows();
+                    final long literalBoundaryRows = literalInstance.getO3BoundaryReplayRows();
+                    commitLateRow(job, lateSeconds[k], lateSymbols[k], latePrices[k], lateSizes[k]);
+                    driveRefreshToQuiescence(job);
+                    assertBoundaryRebuild(instance, boundaryRows);
+                    assertBoundaryRebuild(literalInstance, literalBoundaryRows);
+                    assertViewPrintsLikePlain(view, plain);
+                    assertViewPrintsLikePlain(literalView, literalPlain);
+                }
+
+                for (int c = 0; c < 2; c++) {
+                    commitTicks(job, rnd, prices, second);
+                    second += TICK_COMMIT_SECONDS;
+                    driveRefreshToQuiescence(job);
+                }
+                assertViewPrintsLikePlain(view, plain);
+                assertViewPrintsLikePlain(literalView, literalPlain);
+                assertNoRefreshFaults("lv");
+                assertNoRefreshFaults("lvs");
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitTicks(job, rnd, prices, second);
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                assertRestoredFromTimeline("lvs");
+                assertNoRefreshFaults("lv");
+                assertNoRefreshFaults("lvs");
+                assertViewPrintsLikePlain(view, plain);
+                assertViewPrintsLikePlain(literalView, literalPlain);
+            }
+        });
     }
 
     @Test
@@ -228,6 +350,64 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         assertLocalizedRepairStaysWithinFloatingCeiling(ROWS_FRAMES, ROWS_REPAIR_FUNCTIONS, ROWS_CONTROL_FUNCTIONS, ROWS_LATE_SECOND, true);
     }
 
+    @Test
+    public void testViewMixingEveryFamilyAndRingWidthRepairsBitExactly() throws Exception {
+        // One view holds every window family a live view checkpoints over a bounded frame, at
+        // every scalar width the RANGE ring seals, so one root switches widths between
+        // functions. The cancelling functions take the localized plan away from the whole view,
+        // the deque, first_value and DECIMAL functions included: a late row near the head
+        // resumes from a sealed root, and one below every root rebuilds from the boundary.
+        // Every function rides that route, so the view must print exactly what the plain
+        // query prints after the restart and after each repair.
+        final String plain = "(" + MIXED_SELECT + ") ORDER BY sym, ts";
+        final String view = "SELECT * FROM lv ORDER BY sym, ts";
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE fx (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty DOUBLE, d DECIMAL(20, 4))
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + MIXED_SELECT);
+            final Rnd rnd = new Rnd(11, 1111);
+            final double[] prices = {65_000.0, 3_100.0};
+            int second = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int c = 0; c < MIXED_COMMITS; c++) {
+                    commitTicks(job, rnd, prices, second, MIXED_COMMIT_SECONDS, true);
+                    second += MIXED_COMMIT_SECONDS;
+                    driveRefreshToQuiescence(job);
+                }
+                assertViewPrintsLikePlain(view, plain);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitTicks(job, rnd, prices, second, MIXED_COMMIT_SECONDS, true);
+                second += MIXED_COMMIT_SECONDS;
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                assertViewPrintsLikePlain(view, plain);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                // Three seconds below the head: the root sealed one commit back stands below it.
+                commitDecimalLateRow(job, second - 3, "btc");
+                driveRefreshToQuiescence(job);
+                assertRepairDisposition(instance, "resume from anchor");
+                assertViewPrintsLikePlain(view, plain);
+
+                // Below every root: the first one sealed at 39s.
+                commitDecimalLateRow(job, 20, "eth");
+                driveRefreshToQuiescence(job);
+                assertRepairDisposition(instance, "boundary rebuild");
+                assertViewPrintsLikePlain(view, plain);
+
+                commitTicks(job, rnd, prices, second, MIXED_COMMIT_SECONDS, true);
+                driveRefreshToQuiescence(job);
+                assertViewPrintsLikePlain(view, plain);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
     // Each function over each frame, as columns named <function>_w<frame index>.
     private static String columnName(String function, int frame) {
         return function.substring(0, function.indexOf('(')) + "_w" + frame;
@@ -259,6 +439,11 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         return sb.toString();
     }
 
+    // Half a second past `second`: a fresh designated timestamp, which ties with no in-order row.
+    private static String lateTimestamp(int second) {
+        return timestamp(second).replace(".000000Z", ".500000Z");
+    }
+
     private static String timestamp(int second) {
         return String.format(
                 "2026-01-%02dT%02d:%02d:%02d.000000Z",
@@ -267,79 +452,6 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
                 (second % 3600) / 60,
                 second % 60
         );
-    }
-
-    // Walks the view and the plain query in step and checks every DOUBLE column of every row
-    // against the contract's floating ceiling. Both-NULL cells agree; a NULL or a non-finite
-    // value against anything else breaches, and is counted apart from finite drift. Reports
-    // every breaching column at once, with the worst finite relative error and the first
-    // breaching row, so a failure shows which families drift and by how much.
-    private void assertAllRowsWithinFloatingCeiling(String viewQuery, String plainQuery) throws Exception {
-        try (
-                RecordCursorFactory viewFactory = select(viewQuery);
-                RecordCursorFactory plainFactory = select(plainQuery);
-                RecordCursor viewCursor = viewFactory.getCursor(sqlExecutionContext);
-                RecordCursor plainCursor = plainFactory.getCursor(sqlExecutionContext)
-        ) {
-            final RecordMetadata metadata = plainFactory.getMetadata();
-            final int columnCount = metadata.getColumnCount();
-            Assert.assertEquals("column count", columnCount, viewFactory.getMetadata().getColumnCount());
-            final long[] breaches = new long[columnCount];
-            final long[] nonFiniteBreaches = new long[columnCount];
-            final double[] worstRelative = new double[columnCount];
-            final String[] firstBreach = new String[columnCount];
-            final Record viewRecord = viewCursor.getRecord();
-            final Record plainRecord = plainCursor.getRecord();
-            long rows = 0;
-            while (plainCursor.hasNext()) {
-                Assert.assertTrue("the view ends after " + rows + " rows, before the plain query", viewCursor.hasNext());
-                final long ts = plainRecord.getTimestamp(0);
-                Assert.assertEquals("ts at row " + rows, ts, viewRecord.getTimestamp(0));
-                final CharSequence sym = plainRecord.getSymA(1);
-                Assert.assertTrue(
-                        "sym at row " + rows + " [plain=" + sym + ", view=" + viewRecord.getSymA(1) + ']',
-                        Chars.equals(sym, viewRecord.getSymA(1))
-                );
-                for (int col = 2; col < columnCount; col++) {
-                    final double expected = plainRecord.getDouble(col);
-                    final double actual = viewRecord.getDouble(col);
-                    if (Double.isNaN(expected) && Double.isNaN(actual)) {
-                        continue;
-                    }
-                    if (!LiveViewCheckpointContracts.isWithinFloatingTolerance(expected, actual)) {
-                        breaches[col]++;
-                        if (Double.isFinite(expected) && Double.isFinite(actual)) {
-                            final double relative = Math.abs(expected - actual) / Math.max(Math.abs(expected), Math.abs(actual));
-                            worstRelative[col] = Math.max(worstRelative[col], relative);
-                        } else {
-                            nonFiniteBreaches[col]++;
-                        }
-                        if (firstBreach[col] == null) {
-                            firstBreach[col] = "row " + rows + " [sym=" + sym + ", ts=" + ts
-                                    + ", plain=" + expected + ", view=" + actual + ']';
-                        }
-                    }
-                }
-                rows++;
-            }
-            Assert.assertFalse("the view has more rows than the plain query's " + rows, viewCursor.hasNext());
-            Assert.assertTrue("nothing compared", rows > 0);
-
-            final StringSink report = new StringSink();
-            for (int col = 2; col < columnCount; col++) {
-                if (breaches[col] > 0) {
-                    report.put("\n  ").put(metadata.getColumnName(col)).put(": ").put(breaches[col])
-                            .put(" of ").put(rows).put(" rows over the ceiling (").put(nonFiniteBreaches[col])
-                            .put(" NULL or non-finite on one side only), worst finite relative error ")
-                            .put(worstRelative[col]).put(", first at ").put(firstBreach[col]);
-                }
-            }
-            if (report.length() > 0) {
-                Assert.fail("after a localized repair, outputs exceed the documented floating ceiling ("
-                        + LiveViewCheckpointContracts.FLOATING_RELATIVE_TOLERANCE + " relative, "
-                        + LiveViewCheckpointContracts.FLOATING_ABSOLUTE_TOLERANCE + " absolute):" + report);
-            }
-        }
     }
 
     // Lays down five 60-second commits of tick-like data under two views over the same frames:
@@ -451,7 +563,7 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
                             .noRandomAccess()
                             .returns("view_status\nactive\n");
                 }
-                assertAllRowsWithinFloatingCeiling(controlView, controlPlain);
+                Assert.assertTrue("nothing compared", assertAllRowsWithinFloatingCeiling(controlView, controlPlain) > 0);
                 // Equal shortest round-trip text is equal bits: the resumed view carries the
                 // plain query's rounding history through the repair and after it.
                 assertViewPrintsLikePlain(view, plain);
@@ -459,15 +571,30 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         });
     }
 
-    // Prints the plain query and asserts the view prints the same text. Unlike a cursor
-    // comparison with a tolerance on doubles, equal shortest round-trip text means equal bits.
-    private void assertViewPrintsLikePlain(String viewQuery, String plainQuery) throws Exception {
-        printSql(plainQuery);
-        final String expected = sink.toString();
-        assertQuery(viewQuery)
-                .noLeakCheck()
-                .expectSize()
-                .returns(expected);
+    // The late row the view last repaired for took the boundary rebuild, and the rebuild
+    // re-emitted rows since `boundaryRowsBefore` was read, so the disposition is this row's.
+    private static void assertBoundaryRebuild(LiveViewInstance instance, long boundaryRowsBefore) {
+        assertRepairDisposition(instance, "boundary rebuild");
+        Assert.assertTrue(
+                "the boundary rebuild must have re-emitted the view's rows from its START FROM boundary",
+                instance.getO3BoundaryReplayRows() > boundaryRowsBefore
+        );
+    }
+
+    // The cancelling functions deny the view its localized plan, so its last repair must name
+    // that denial next to the route it took instead.
+    private static void assertRepairDisposition(LiveViewInstance instance, String expectedDisposition) {
+        final int denial = instance.getCheckpointRepairLastDenialReason();
+        Assert.assertEquals(
+                "the cancelling functions must deny the view its localized plan",
+                "incomplete dependency",
+                LiveViewCheckpointRepairPlan.denialReasonName(denial)
+        );
+        Assert.assertEquals(
+                "the late row took the wrong repair route",
+                expectedDisposition,
+                LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
+        );
     }
 
     private void commit(LiveViewRefreshJob job, String insert) throws Exception {
@@ -482,9 +609,25 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
     // timestamp, so it ties with no existing row and both orderings stay deterministic - and,
     // given a job, gives it a turn.
     private void commitLateRow(LiveViewRefreshJob job, int second) throws Exception {
+        commitLateRow(job, second, "btc", 65_001.37, 1.234);
+    }
+
+    // Commits one trade for `sym` half a second past an in-order second, as above.
+    private void commitLateRow(LiveViewRefreshJob job, int second, String sym, double px, double qty) throws Exception {
+        commitLate(job, "INSERT INTO fx (ts, sym, px, qty) VALUES ('" + lateTimestamp(second) + "', '" + sym + "', "
+                + px + ", " + qty + ")");
+    }
+
+    // Commits one trade for `sym`, with a DECIMAL as well, half a second past an in-order
+    // second, as above.
+    private void commitDecimalLateRow(LiveViewRefreshJob job, int second, String sym) throws Exception {
+        commitLate(job, "INSERT INTO fx (ts, sym, px, qty, d) VALUES ('" + lateTimestamp(second) + "', '" + sym
+                + "', 3333.37, 1.111, 12.5m)");
+    }
+
+    private void commitLate(LiveViewRefreshJob job, String insert) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-        final String ts = timestamp(second).replace(".000000Z", ".500000Z");
-        execute("INSERT INTO fx (ts, sym, px, qty) VALUES ('" + ts + "', 'btc', 65001.37, 1.234)");
+        execute(insert);
         drainWalQueue();
         if (job != null) {
             drainJob(job);
@@ -498,9 +641,23 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
     // integer. Every eleventh 'btc' second has a NULL price and every thirteenth 'eth' second a
     // NULL size.
     private void commitTicks(LiveViewRefreshJob job, Rnd rnd, double[] prices, int firstSecond) throws Exception {
+        commitTicks(job, rnd, prices, firstSecond, TICK_COMMIT_SECONDS, false);
+    }
+
+    // As above, over `seconds` seconds. With `hasDecimal`, each trade also carries a DECIMAL
+    // with one fractional digit, NULL on every seventeenth 'eth' second.
+    private void commitTicks(
+            LiveViewRefreshJob job,
+            Rnd rnd,
+            double[] prices,
+            int firstSecond,
+            int seconds,
+            boolean hasDecimal
+    ) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-        final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty) VALUES ");
-        for (int i = 0; i < TICK_COMMIT_SECONDS; i++) {
+        final StringBuilder sql = new StringBuilder("INSERT INTO fx (ts, sym, px, qty")
+                .append(hasDecimal ? ", d) VALUES " : ") VALUES ");
+        for (int i = 0; i < seconds; i++) {
             final int second = firstSecond + i;
             final String ts = timestamp(second);
             for (int s = 0; s < 2; s++) {
@@ -513,7 +670,18 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
                 }
                 sql.append("('").append(ts).append("', '").append(s == 0 ? "btc" : "eth").append("', ")
                         .append(isPxNull ? "null" : Double.toString(prices[s])).append(", ")
-                        .append(isQtyNull ? "null" : Double.toString(qty)).append(')');
+                        .append(isQtyNull ? "null" : Double.toString(qty));
+                if (hasDecimal) {
+                    final int units = rnd.nextInt(100_000) - 50_000;
+                    final int tenths = rnd.nextInt(10);
+                    sql.append(", ");
+                    if (s == 1 && second % 17 == 3) {
+                        sql.append("null");
+                    } else {
+                        sql.append(units).append('.').append(tenths).append('m');
+                    }
+                }
+                sql.append(')');
             }
         }
         execute(sql.toString());

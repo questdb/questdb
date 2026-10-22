@@ -228,6 +228,43 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // The bivariate shapes' second argument: exact, small, NULL exactly where i is NULL, and
     // not a linear function of i, so corr stays off +/-1 on most frames.
     private static final String STAT_Y = "(i * 7) % 13";
+    // The same statistical families over the DOUBLE column x (see testFuzzStatNonIntegerBitExact),
+    // a full-precision value in [0, 1000) or NULL, so every add to and drop from a running sum
+    // rounds, and a frame's sums carry the rounding history of the order they slid in. The
+    // bivariate shapes pair x with the LONG i, whose NULLs fall elsewhere, so a pair can be
+    // half NULL. Values are contiguous past RANGE_STDDEV_SAMP_EXCLUDED_VARIANT so projection()
+    // can switch on them.
+    private static final int X_STDDEV_SAMP_ROWS_VARIANT = 32;
+    private static final int X_VAR_POP_ROWS_LAGGED_VARIANT = 33;
+    private static final int X_COVAR_SAMP_ROWS_EXCLUDED_VARIANT = 34;
+    private static final int X_CORR_ROWS_VARIANT = 35;
+    private static final int X_RANGE_STDDEV_POP_VARIANT = 36;
+    private static final int X_RANGE_VAR_SAMP_LAGGED_VARIANT = 37;
+    private static final int X_RANGE_COVAR_POP_VARIANT = 38;
+    private static final int X_RANGE_CORR_LAGGED_VARIANT = 39;
+    private static final int X_RANGE_STDDEV_SAMP_EXCLUDED_VARIANT = 40;
+    private static final int X_RANGE_KSUM_VARIANT = 41;
+    private static final int X_RANGE_KSUM_LAGGED_VARIANT = 42;
+    // The x shapes whose formulas subtract nearly equal sums. They decline frame-local state, so
+    // every repair resumes from a sealed root or rebuilds from the START FROM boundary, and a
+    // restore carries their sums verbatim: the view must print exactly what the recompute prints.
+    private static final int[] STAT_X_BIT_EXACT_VARIANTS = {
+            X_STDDEV_SAMP_ROWS_VARIANT, X_VAR_POP_ROWS_LAGGED_VARIANT, X_COVAR_SAMP_ROWS_EXCLUDED_VARIANT,
+            X_CORR_ROWS_VARIANT, X_RANGE_STDDEV_POP_VARIANT, X_RANGE_VAR_SAMP_LAGGED_VARIANT,
+            X_RANGE_COVAR_POP_VARIANT, X_RANGE_CORR_LAGGED_VARIANT, X_RANGE_STDDEV_SAMP_EXCLUDED_VARIANT
+    };
+    // The x shapes of ksum, which keeps the localized repair: its warm-up re-accumulates a frame
+    // from the lower edge, so the view must stay within the documented floating ceiling of the
+    // recompute rather than match its bits.
+    private static final int[] STAT_X_CEILING_VARIANTS = {
+            X_RANGE_KSUM_VARIANT, X_RANGE_KSUM_LAGGED_VARIANT
+    };
+    // How runFuzz compares a variant's view with its recompute: assertSqlCursors, which allows a
+    // small tolerance on doubles; printed text, which is equal bits; or the documented floating
+    // ceiling, cell by cell.
+    private static final int ORACLE_BIT_EXACT = 1;
+    private static final int ORACLE_CURSORS = 0;
+    private static final int ORACLE_FLOATING_CEILING = 2;
     // Window shapes driven over concurrent multi-WalWriter base ingestion by
     // runConcurrentWriterFuzz. Every shape here reads the (ts, sym, i, x) base the
     // writer threads populate (so the DECIMAL variant, which needs a d column, is
@@ -935,6 +972,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzStatNonIntegerBitExact() throws Exception {
+        // The statistical families over the full-precision DOUBLE column x, where the order a
+        // running sum adds and drops values decides its bits. stddev/variance and covar/corr
+        // decline frame-local state, so every repair resumes from a sealed root or rebuilds from
+        // the START FROM boundary, sliding the frames in the order the recompute slides them, and
+        // every restore carries the sums verbatim: the view must print exactly what the recompute
+        // prints, under O3, restarts, seed, IN MEMORY and every START FROM mode. A route that
+        // re-summed a frame instead would leave the sums a few ULPs off, which the cancelling
+        // formulas scale up past any fixed tolerance. ksum keeps the localized repair, so its
+        // shapes must stay within the documented floating ceiling instead.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < STAT_X_BIT_EXACT_VARIANTS.length; i++) {
+                runStatFuzz(rnd, STAT_X_BIT_EXACT_VARIANTS[i]);
+            }
+            for (int i = 0; i < STAT_X_CEILING_VARIANTS.length; i++) {
+                runStatFuzz(rnd, STAT_X_CEILING_VARIANTS[i]);
+            }
+        });
+    }
+
+    @Test
     public void testFuzzStatRowsFrame() throws Exception {
         // stddev/variance and covar/corr over bounded ROWS frames: the whole-state codec, the
         // running sums plus the partition's raw ring, NULL placeholders included. Covers a
@@ -1351,6 +1411,21 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return k;
     }
 
+    // How runFuzz compares the variant's view with its recompute.
+    private static int oracleOf(int variant) {
+        for (int v : STAT_X_BIT_EXACT_VARIANTS) {
+            if (v == variant) {
+                return ORACLE_BIT_EXACT;
+            }
+        }
+        for (int v : STAT_X_CEILING_VARIANTS) {
+            if (v == variant) {
+                return ORACLE_FLOATING_CEILING;
+            }
+        }
+        return ORACLE_CURSORS;
+    }
+
     // Returns the projection (SELECT list) for the given non-decimal window-query
     // variant (the decimal variant routes to decimalProjection instead). Every
     // shape is grammar-legal in a live view and deterministic under a
@@ -1421,6 +1496,21 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case RANGE_KSUM_LAGGED_VARIANT -> "ts, sym, i, ksum(i) OVER (" + laggedRangeFrame + ") AS v";
             case RANGE_STDDEV_SAMP_EXCLUDED_VARIANT ->
                     "ts, sym, i, stddev_samp(i) OVER (" + rangeFrame + " EXCLUDE CURRENT ROW) AS v";
+            // Statistical families over the full-precision DOUBLE column x.
+            case X_STDDEV_SAMP_ROWS_VARIANT -> "ts, sym, x, stddev_samp(x) OVER (" + frame + ") AS v";
+            case X_VAR_POP_ROWS_LAGGED_VARIANT ->
+                    "ts, sym, x, var_pop(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN " + (n + 2) + " PRECEDING AND 2 PRECEDING) AS v";
+            case X_COVAR_SAMP_ROWS_EXCLUDED_VARIANT ->
+                    "ts, sym, x, covar_samp(x, i) OVER (" + frame + " EXCLUDE CURRENT ROW) AS v";
+            case X_CORR_ROWS_VARIANT -> "ts, sym, x, corr(x, i) OVER (" + frame + ") AS v";
+            case X_RANGE_STDDEV_POP_VARIANT -> "ts, sym, x, stddev_pop(x) OVER (" + rangeFrame + ") AS v";
+            case X_RANGE_VAR_SAMP_LAGGED_VARIANT -> "ts, sym, x, var_samp(x) OVER (" + laggedRangeFrame + ") AS v";
+            case X_RANGE_COVAR_POP_VARIANT -> "ts, sym, x, covar_pop(x, i) OVER (" + rangeFrame + ") AS v";
+            case X_RANGE_CORR_LAGGED_VARIANT -> "ts, sym, x, corr(x, i) OVER (" + laggedRangeFrame + ") AS v";
+            case X_RANGE_STDDEV_SAMP_EXCLUDED_VARIANT ->
+                    "ts, sym, x, stddev_samp(x) OVER (" + rangeFrame + " EXCLUDE CURRENT ROW) AS v";
+            case X_RANGE_KSUM_VARIANT -> "ts, sym, x, ksum(x) OVER (" + rangeFrame + ") AS v";
+            case X_RANGE_KSUM_LAGGED_VARIANT -> "ts, sym, x, ksum(x) OVER (" + laggedRangeFrame + ") AS v";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }
@@ -1917,6 +2007,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             sink.put(')');
         }
         execute(sink);
+    }
+
+    // Whether the run's view is registered and ACTIVE: neither seeding nor gone.
+    private boolean isViewActive() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        return instance != null && instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE;
     }
 
     // Inserts the full logical dataset into the named table in ts order, in
@@ -3464,8 +3560,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
-    // One run of a statistical-family variant. Every run restarts, since restoring the state
-    // codecs is what these runs are for. A quarter ingest in order, so a restored state meets
+    // One run of a statistical-family variant. Every run restarts at least once, since restoring
+    // the state codecs is what these runs are for: on top of the random restarts runFuzz draws
+    // after a commit, it forces one after a commit drawn short of the last, so in-order and late
+    // rows still meet the restored state. A quarter ingest in order, so a restored state meets
     // only forward rows; the rest ingest out of order, half of them with a bounded lateness,
     // which keeps a commit's late rows near the frontier so a repair resumes from a sealed root
     // of the checkpoint ring rather than rebuilding the frame's reach.
@@ -3473,7 +3571,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final boolean o3 = rnd.nextInt(4) > 0;
         final int maxLateness = o3 && rnd.nextBoolean() ? 1 + rnd.nextInt(20) : 0;
         runFuzz(rnd, variant, 120 + rnd.nextInt(160), o3, true, rnd.nextBoolean(), rnd.nextBoolean(),
-                false, false, maxLateness);
+                false, false, maxLateness, true);
     }
 
     private void runFuzz(
@@ -3512,9 +3610,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean inMemReadBack,
             boolean leadReadBack
     ) throws Exception {
-        runFuzz(rnd, variant, rowCount, o3, restart, seed, inMemory, inMemReadBack, leadReadBack, 0);
+        runFuzz(rnd, variant, rowCount, o3, restart, seed, inMemory, inMemReadBack, leadReadBack, 0, false);
     }
 
+    // isRestartForced restarts the view at least once after a post-CREATE commit that leaves it
+    // ACTIVE, on top of the restarts drawn at random; see runStatFuzz. The view is compared with
+    // its recompute under the oracle oracleOf names for the variant.
     private void runFuzz(
             Rnd rnd,
             int variant,
@@ -3525,7 +3626,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean inMemory,
             boolean inMemReadBack,
             boolean leadReadBack,
-            int maxLateness
+            int maxLateness,
+            boolean isRestartForced
     ) throws Exception {
         // Drive a controllable clock so FLUSH EVERY flush gating is deterministic.
         // Pin "now" a day BEFORE the data start (2026-01-01). A non-seed
@@ -3646,6 +3748,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
+        int restarts = 0;
         try {
             // Pre-CREATE history: earliest segment [0, preCount), inserted in
             // random commit order for O3.
@@ -3674,6 +3777,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             if (preCount < rowCount) {
                 final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3, maxLateness);
                 final int[] cb = commitBounds(rnd, postOrder.length);
+                final int commitCount = cb.length - 1;
+                // The first commit a forced restart may follow: one short of the last when there
+                // are two or more, so later commits still meet the restored state.
+                final int forcedRestartCommit = isRestartForced
+                        ? (commitCount > 1 ? rnd.nextInt(commitCount - 1) : 0)
+                        : Integer.MAX_VALUE;
                 for (int c = 0; c + 1 < cb.length; c++) {
                     insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, dLit);
                     drainWalQueue();
@@ -3686,17 +3795,28 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     }
 
                     // Simulate a restart (ACTIVE state only), a resident lead included.
-                    if (restart && rnd.nextInt(3) == 0) {
-                        LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
-                        if (inst != null
-                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
-                            job = Misc.free(job);
-                            engine.getLiveViewRegistry().clear();
-                            engine.buildViewGraphs();
-                            job = new LiveViewRefreshJob(0, engine, 1);
-                        }
+                    final boolean isRandomRestart = restart && rnd.nextInt(3) == 0;
+                    if ((isRandomRestart || (restarts == 0 && c >= forcedRestartCommit)) && isViewActive()) {
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                        restarts++;
                     }
                 }
+            }
+            if (isRestartForced && restarts == 0 && isViewActive()) {
+                // No post-CREATE commit left the view ACTIVE, or there was none: the seed took
+                // every row. Restart over what the seed left.
+                job = Misc.free(job);
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                job = new LiveViewRefreshJob(0, engine, 1);
+                restarts++;
+            }
+            LOG.info().$("LV fuzz restarts: variant=").$(variant).$(", restarts=").$(restarts).$();
+            if (isRestartForced) {
+                Assert.assertTrue("a run that forces a restart must have restarted", restarts > 0);
             }
 
             driveRefreshToQuiescence(job);
@@ -3772,15 +3892,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // The oracle: the live view must equal its own window query recomputed over the
             // base table under the run's START FROM boundary. ORDER BY 1, 2 - (ts, sym), unique
             // even over timestamp ties - gives both sides a total order; genericStringMatch
-            // tolerates SYMBOL-vs-STRING on passthrough.
-            TestUtils.assertSqlCursors(
-                    engine,
-                    sqlExecutionContext,
-                    "(" + oracleSql + ") ORDER BY 1, 2",
-                    "(lv) ORDER BY 1, 2",
-                    LOG,
-                    true
-            );
+            // tolerates SYMBOL-vs-STRING on passthrough. The variant's oracle decides how close
+            // its doubles must come.
+            switch (inMemReadBack ? ORACLE_CURSORS : oracleOf(variant)) {
+                case ORACLE_BIT_EXACT ->
+                        assertViewPrintsLikePlain("(lv) ORDER BY 1, 2", "(" + oracleSql + ") ORDER BY 1, 2", "ts");
+                case ORACLE_FLOATING_CEILING ->
+                        assertAllRowsWithinFloatingCeiling("(lv) ORDER BY 1, 2", "(" + oracleSql + ") ORDER BY 1, 2");
+                default -> TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + oracleSql + ") ORDER BY 1, 2",
+                        "(lv) ORDER BY 1, 2",
+                        LOG,
+                        true
+                );
+            }
             assertNoRefreshFaults("lv");
 
             if (inMemReadBack) {
