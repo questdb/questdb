@@ -2237,7 +2237,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!executionContext.getSecurityContext().isTableVisible(tt)) {
                 throw CairoException.tableDoesNotExist(tableName);
             }
-            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
+            // COPY <table> TO exports every column, so every column must be readable
+            try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                executionContext.getSecurityContext().authorizeSelect(tt, columnNames);
+            }
         }
     }
 

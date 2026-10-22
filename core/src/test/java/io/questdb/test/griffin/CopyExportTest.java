@@ -34,12 +34,15 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -47,6 +50,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -64,6 +68,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -2678,6 +2683,16 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyTableAuthorizesSelectOnAllColumns() throws Exception {
+        assertCopyAuthorizesSelectOnAllColumns("copy t to 't' with format parquet");
+    }
+
+    @Test
+    public void testCopyTableFunctionSyntaxAuthorizesSelectOnAllColumns() throws Exception {
+        assertCopyAuthorizesSelectOnAllColumns("copy t() to 't' with format parquet");
+    }
+
+    @Test
     public void testCopyTableToParquetBasicSyntax() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y long, z string)");
@@ -4433,6 +4448,41 @@ public class CopyExportTest extends AbstractCairoTest {
         testCopyExport(statement, test, true, 1);
     }
 
+    private void assertCopyAuthorizesSelectOnAllColumns(String copySql) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int, y string) timestamp(ts) partition by day");
+            execute("insert into t values ('2023-01-01T10:00:00.000Z', 1, 'a')");
+            final ColumnRecordingSecurityContext securityContext = new ColumnRecordingSecurityContext();
+            try (
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+                            .with(securityContext, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                    RecordCursorFactory factory = select(copySql, context)
+            ) {
+                // every exported column is authorized at compile time
+                Assert.assertEquals("[ts,x,y]", securityContext.selectColumns.toString());
+
+                // and again when the export runs, since the factory can be executed long after compilation
+                securityContext.selectColumns.clear();
+                securityContext.denySelect = true;
+                CopyExportRunnable stmt = () -> {
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                };
+                CopyExportRunnable test = () ->
+                        assertEventually(() -> assertQuery("select status, message from \"sys.copy_export_log\" limit -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        status\tmessage
+                                        failed\tpermission denied [table=t]
+                                        """));
+                testCopyExport(stmt, test);
+                Assert.assertEquals("[ts,x,y]", securityContext.selectColumns.toString());
+            }
+        });
+    }
+
     private void assertCopyOfFusedJoinGroupByAfterBuildTableGrowth(
             String keyType,
             String keyExpr,
@@ -4603,6 +4653,21 @@ public class CopyExportTest extends AbstractCairoTest {
             long exportId = engine.getCopyExportContext().getActiveExportId();
             Assert.assertNotEquals("No active export found", -1L, exportId);
         }, 5, exceptionTypesToCatch);
+    }
+
+    private static final class ColumnRecordingSecurityContext extends AllowAllSecurityContext {
+        final ObjList<CharSequence> selectColumns = new ObjList<>();
+        volatile boolean denySelect;
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                selectColumns.add(Chars.toString(columnNames.getQuick(i)));
+            }
+            if (denySelect) {
+                throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
+            }
+        }
     }
 
     @FunctionalInterface

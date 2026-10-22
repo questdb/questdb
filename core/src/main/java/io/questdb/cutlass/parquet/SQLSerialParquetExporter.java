@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
@@ -58,6 +59,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -73,6 +75,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
     private final DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
@@ -184,8 +187,13 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 // export would report success over stale data. Resolve the mode on the very reader that will be
                 // read, and materialize through a temp table when this snapshot is composite.
                 tableToken = cairoEngine.verifyTableName(exportTableName);
-                sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
                 sourceReader = cairoEngine.getReader(tableToken);
+                final TableReaderMetadata metadata = sourceReader.getMetadata();
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                sqlExecutionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
                 if (sourceReader.getTxFile().hasCompositePartitions()) {
                     final int sourcePartitionBy = sourceReader.getPartitionedBy();
                     sourceReader = Misc.free(sourceReader);
