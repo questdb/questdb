@@ -14231,13 +14231,16 @@ create table tab as (
 
         @Override
         public void onRegister(CharSequence query, long queryId, SqlExecutionContext context) {
+            // The thread of the awaited query clears the field while other connections register
+            // their queries, so the method reads it once.
+            final CharSequence queryText = this.queryText;
             if (queryText == null) {
                 return;
             }
 
             if (Chars.equalsNc(queryText, query)) {
                 queryFound.await();
-                queryText = null;
+                this.queryText = null;
             }
         }
     }

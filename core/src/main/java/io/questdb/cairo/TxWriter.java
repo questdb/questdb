@@ -178,6 +178,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void commit(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        commit(configuration.getCommitMode(), symbolCountProviders);
+    }
+
+    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         if (prevRecordStructureVersion == recordStructureVersion && prevRecordBaseOffset > 0) {
             // Optimisation for the case where commit appends rows to the last partition only
             // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
@@ -204,13 +208,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
             prevPartitionTableVersion = partitionTableVersion;
-            int commitMode = configuration.getCommitMode();
             if (commitMode != CommitMode.NOSYNC) {
                 txMemBase.sync(commitMode == CommitMode.ASYNC);
             }
         } else {
             // Slow path, record structure changed
-            commitFullRecord(configuration.getCommitMode(), symbolCountProviders);
+            commitFullRecord(commitMode, symbolCountProviders);
         }
     }
 
@@ -429,6 +432,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Publishes a partition's geometry pointer into its {@code _txn} record - the offset-3 word, whose VALUE field a
+     * composite NATIVE partition spends on the pointer instead of on a seqTxn stamp.
+     */
+    public void setPartitionGeometryRef(long timestamp, long geometryRef) {
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
+        if (indexRaw > -1) {
+            assert !isPartitionParquetByRawIndex(indexRaw) : "slot 3 of a parquet partition is its file size";
+            assert (geometryRef & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_COMPOSITE_FLAG) == 0
+                    : "a geometry ref must not carry foreign flag bits";
+            final long oldOffset3 = getPartitionOffset3(indexRaw);
+            final long flags = oldOffset3 & PARTITION_VERSION_FLAGS_MASK
+                    & ~(PARTITION_COMPOSITE_FLAG | PARTITION_SEQ_TXN_VALID_BIT);
+            if ((geometryRef & PARTITION_COMPOSITE_FLAG) != 0
+                    && ((oldOffset3 & PARTITION_COMPOSITE_FLAG) == 0
+                    || TxReader.geometryGeneration(oldOffset3) != TxReader.geometryGeneration(geometryRef))) {
+                geometryVersion++;
+            }
+            attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, flags | geometryRef);
+            recordStructureVersion++;
+            partitionTableVersion++;
+        }
+    }
+
     public void setPartitionNative(long timestamp, long seqTxn) {
         setPartitionFormat(timestamp, false, seqTxn);
     }
@@ -462,6 +489,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        // Symmetric with setPartitionGeometryRef's !parquet assert. isPartitionCompositeByRawIndex reads false
+        // as soon as this bit is set, while the geometry pointer stays in offset 3 untouched: the partition would
+        // resolve as a flat [0, liveRows) range over a multi-piece layout - wrong rows, no error - and the next
+        // setPartitionSeqTxnByRawIndex would no longer take its composite early-out and would overwrite the
+        // pointer. Fold the partition to the ordinary shape before generating a parquet copy for it.
+        assert !parquetGenerated || !isPartitionCompositeByRawIndex(indexRaw)
+                : "parquet_generated would mask a composite partition's geometry pointer";
         int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         attachedPartitions.setQuick(offset, updatePartitionHasParquetGenerated(maskedSize, parquetGenerated));
@@ -492,6 +526,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        // A composite partition spends the offset-3 value field on its geometry pointer, so it carries no version
+        // for REMOTE to sit on top of (setPartitionSeqTxnByRawIndex skips it), and nothing can clear the bit again
+        // while the partition stays composite - setPartitionGeometryRef preserves the flag bits. UPLOADED would
+        // then outlive the bytes it claims are in the bucket. Clearing is always allowed.
+        assert !isRemote || !isPartitionCompositeByRawIndex(indexRaw)
+                : "UPLOADED cannot be set on a composite partition, which records no version";
         final long word = getPartitionOffset3(indexRaw);
         final long updated = isRemote
                 ? word | PARTITION_REMOTE_BIT
@@ -503,8 +543,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionRemoteByRawIndex(findAttachedPartitionRawIndex(timestamp), isRemote);
     }
 
-    public void setPartitionSeqTxn(int partitionIndex, long seqTxn) {
-        setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
+    public boolean setPartitionSeqTxn(int partitionIndex, long seqTxn) {
+        return setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
     }
 
     /**
@@ -514,12 +554,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * carries {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT}, marking the word a trusted seqTxn
      * (untrusted legacy words read as -1). The non-WAL path stamps 0, the cleared word, which
      * reads back as the -1 "no version" sentinel.
+     *
+     * @return false when the partition is composite and the stamp was skipped, so a caller whose next step assumes
+     * a recorded version (setting UPLOADED, say) can tell instead of committing over a word with none
      */
-    public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+    public boolean setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        if (isPartitionCompositeByRawIndex(indexRaw)) {
+            // A composite partition spends the offset-3 value field on its geometry pointer, so there is nowhere here
+            // to put a stamp; its seqTxn goes into the _geometry record instead.
+            return false;
+        }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
-        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
+        return true;
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -565,6 +615,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
+                geometryVersion,
                 structureVersion,
                 columnVersion,
                 truncateVersion
@@ -684,6 +735,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
+        putInt(TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         putLagValues();
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
         putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));
@@ -808,7 +860,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setQuick(offset, maskedSize);
 
-        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_SEQ_TXN_VALID_BIT;
+        // A parquet partition is materialized whole and is never composite; the value field it is
+        // about to take is its file size, not a geometry pointer.
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                & ~(PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
         if (!isParquetFormat && version > 0) {
             flags |= PARTITION_SEQ_TXN_VALID_BIT;
         }

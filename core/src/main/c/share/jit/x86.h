@@ -118,6 +118,20 @@ namespace questdb::x86 {
         return {Mem(vars_ptr, 16 * idx, type_size), type, data_kind_t::kMemory};
     }
 
+    jit_value_t
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr, const ColumnValueCache &var_cache) {
+        Gp cached_gp;
+        Vec cached_xmm;
+        if (type == data_type_t::f32 || type == data_type_t::f64 || type == data_type_t::i128) {
+            if (var_cache.findXmm(idx, type, cached_xmm)) {
+                return {cached_xmm, type, data_kind_t::kMemory};
+            }
+        } else if (var_cache.find(idx, type, cached_gp)) {
+            return {cached_gp, type, data_kind_t::kMemory};
+        }
+        return read_vars_mem(c, type, idx, vars_ptr);
+    }
+
     // Reads length of variable size column with header stored in data vector (string, binary).
     jit_value_t read_mem_varsize(Compiler &c,
                                  uint32_t header_size,
@@ -347,6 +361,44 @@ namespace questdb::x86 {
         }
     }
 
+    void preload_vars(Compiler &c,
+                      const instruction_t *istream,
+                      size_t size,
+                      const Gp &vars_ptr,
+                      ColumnValueCache &cache) {
+        for (size_t i = 0; i < size && cache.size() < ColumnValueCache::MAX_VALUES; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode != opcodes::Var) {
+                continue;
+            }
+            auto type = static_cast<data_type_t>(instr.options);
+            auto idx = static_cast<int32_t>(instr.ipayload.lo);
+            switch (type) {
+                case data_type_t::i8:
+                case data_type_t::i16:
+                case data_type_t::i32:
+                case data_type_t::i64: {
+                    Gp dummy;
+                    if (!cache.find(idx, type, dummy)) {
+                        cache.add(idx, type, mem2reg(c, read_vars_mem(c, type, idx, vars_ptr)).gp());
+                    }
+                    break;
+                }
+                case data_type_t::i128:
+                case data_type_t::f32:
+                case data_type_t::f64: {
+                    Vec dummy;
+                    if (!cache.findXmm(idx, type, dummy)) {
+                        cache.addXmm(idx, type, mem2reg(c, read_vars_mem(c, type, idx, vars_ptr)).vec());
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
     jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCache &cache) {
         auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
@@ -467,12 +519,33 @@ namespace questdb::x86 {
         return {l, r};
     }
 
+    // Negates a BYTE or SHORT column or bind variable within its own width, as the Java filter does:
+    // NegByteFunctionFactory returns (byte) -b and NegShortFunctionFactory (short) -s, so -(-128) is
+    // -128 and -(-32768) is -32768. read_mem and mem2reg hand an i8 / i16 value over sign-extended
+    // into a 32-bit register, and every consumer reads that register whole - the comparisons,
+    // convert(), the arithmetic helpers and SX_I64 alike - so int32_neg's +128 / +32768 reached them
+    // all. The movsx restores the sign extension and costs one instruction per narrow negation.
+    //
+    // An immediate keeps int32_neg's 32-bit result. It is a literal the serializer typed at the
+    // predicate's width (kConst), and the Java filter negates it as the INT it is: `s < -(-32768)`
+    // compares against 32768. So does narrow arithmetic, which is a Java INT and carries the i32 tag
+    // (see add()).
     jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = lhs.dkind();
         switch (dt) {
             case data_type_t::i8:
-            case data_type_t::i16:
+            case data_type_t::i16: {
+                Gp r = int32_neg(c, lhs.gp().r32(), null_check);
+                if (dk == data_kind_t::kMemory) {
+                    if (dt == data_type_t::i8) {
+                        c.movsx(r, r.r8());
+                    } else {
+                        c.movsx(r, r.r16());
+                    }
+                }
+                return {r, dt, dk};
+            }
             case data_type_t::i32:
                 return {int32_neg(c, lhs.gp().r32(), null_check), dt, dk};
             case data_type_t::i64:
@@ -722,15 +795,13 @@ namespace questdb::x86 {
         }
     }
 
-    // Narrow int arithmetic always runs at i32 width via int32_*. With
-    // null_check on, the result can carry INT_NULL (e.g. INT operand was
-    // INT_NULL, or division by zero), so it must be tagged i32 -- otherwise
-    // a downstream f32/f64 conversion would skip the null check via
-    // cvt_null_check(i8) / cvt_null_check(i16) and miss the NaN substitution.
-    inline data_type_t narrow_arith_result(data_type_t dt, bool null_check) {
-        return null_check ? data_type_t::i32 : dt;
-    }
-
+    // Narrow int arithmetic always runs at i32 width via int32_*, and its result is a Java INT:
+    // AddIntFunctionFactory and its siblings take BYTE and SHORT operands widened to INT. So the
+    // result is tagged i32 whether or not null checks are on. With null_check on, it can carry
+    // INT_NULL (an INT operand was INT_NULL, or division by zero), and a downstream f32 / f64
+    // conversion substitutes NaN for it only on an i32 operand - cvt_null_check(i8) and
+    // cvt_null_check(i16) skip the check. neg() narrows an i8 / i16 operand to its own width, so
+    // a narrow tag here would make it wrap an INT result.
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -739,7 +810,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -759,7 +830,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -779,7 +850,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -799,7 +870,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -1138,6 +1209,7 @@ namespace questdb::x86 {
               LabelArray &labels,
               const ColumnAddressCache &addr_cache,
               const ConstantCache &const_cache,
+              const ColumnValueCache &var_cache,
               ColumnValueCache &value_cache) {
 
         // Snapshot of value_cache.size() taken at BEGIN_SC. Restored at
@@ -1170,7 +1242,7 @@ namespace questdb::x86 {
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr));
+                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr, var_cache));
                 }
                     break;
                 case opcodes::Mem: {

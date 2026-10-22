@@ -227,6 +227,10 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(PG_INSERT_CACHE_ENABLED + "=false");
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
+            // The metrics job creates sys.metrics in the background at an arbitrary point after
+            // start(), which makes any test that lists tables, takes a backup or injects file
+            // faults nondeterministic. Tests that exercise persistence opt in explicitly.
+            writer.println(METRICS_PERSIST_ENABLED + "=false");
             writer.println(MEMORY_USAGE_LOG_ENABLED + "=false");
             writer.println(TELEMETRY_ENABLED + "=" + telemetryEnable);
             writer.println(TELEMETRY_DISABLE_COMPLETELY + "=" + !telemetryEnable);
@@ -239,6 +243,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(LINE_UDP_BIND_TO + "=0.0.0.0:" + ilpPort);
             writer.println(LINE_UDP_RECEIVE_BUFFER_SIZE + "=" + ILP_BUFFER_SIZE);
             writer.println(HTTP_FROZEN_CLOCK + "=true");
+            // TESTS ONLY: writer invariant checks, see Overrides
+            writer.println(DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED + "=true");
 
             // Do not configure worker pools, use default values, e.g. 3 shared pools
             writer.println(SHARED_WORKER_COUNT + "=2");

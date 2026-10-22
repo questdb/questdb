@@ -54,10 +54,14 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
@@ -84,6 +88,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -132,6 +137,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
@@ -153,6 +160,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
+    // Keeps WAL apply block row counts, and the look-ahead txn estimates derived from them, within int range
+    private static final long MAX_WAL_APPLY_BLOCK_MAX_ROWS = 2_000_000_000L;
     // Minimum heap page sizes: a page must hold one fixed-size block or it corrupts the heap.
     // sort.key also feeds RecordTreeChain's MemoryPages (41-byte node -> 64-byte page); window.tree
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
@@ -241,6 +250,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
+    private final int debugWalApplyMaxTxnBlockSize;
+    private final boolean debugWriterInvariantCheckEnabled;
     private final int decimalAdapterPoolCapacity;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
@@ -412,6 +423,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
+    private final String metricsPersistExclude;
+    private final boolean metricsPersistEnabled;
+    private final long metricsPersistIntervalMicros;
+    private final boolean metricsPersistParquetEnabled;
+    private final long metricsPersistSyncIntervalMicros;
+    private final String metricsPersistTtl;
+    private final long metricsPersistVirtualIntervalMicros;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
@@ -421,9 +439,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3LastPartitionMaxSplits;
     private final long o3MaxLagUs;
     private final int o3MidPartitionMaxSplits;
+    private final long o3PartitionClusterBinWidth;
+    private final int o3PartitionClusterMaxBins;
+    private final int o3PartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
+    private final boolean o3PartitionMergeAppendEnabled;
+    private final int o3PartitionMergeAppendFrameCacheSize;
     private final boolean o3PartitionOverwriteControlEnabled;
+    private final int o3PartitionPreSplitMaxCuts;
+    private final int o3PartitionPreSplitMinPieceMultiple;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
     private final long o3PartitionSplitMinSize;
@@ -442,6 +467,31 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean parquetExportStatisticsEnabled;
     private final CharSequence parquetExportTableNamePrefix;
     private final int parquetExportVersion;
+    private final long partitionCompactionAvgRowsPieceLim;
+    private final long partitionCompactionCheckInterval;
+    private final long partitionCompactionDeadMinSize;
+    private final double partitionCompactionDeadRowsRatio;
+    private final long partitionCompactionDeclineBackoffMax;
+    private final long partitionCompactionDeclineBackoffMin;
+    private final int partitionCompactionDeclineBackoffMultiplier;
+    private final int partitionCompactionHotCommits;
+    private final long partitionCompactionIdleTimeout;
+    private final long partitionCompactionIoBudget;
+    private final int partitionCompactionIoCostMultiplier;
+    private final long partitionCompactionSquashIdleTimeout;
+    private final int partitionCompactionMoveTailDeadRowsPercent;
+    private final int partitionCompactionMoveTailPieceThreshold;
+    private final int partitionCompactionMoveTailPrefixMultiple;
+    private final int partitionCompactionPieceThreshold;
+    private final int partitionCompactionSquashTargetSizeMultiple;
+    private final long partitionCompactionSwapTimeout;
+    private final int partitionCompactionTableDeadStopPercent;
+    private final int partitionCompactionTableDeadStopTriggerPercent;
+    private final long partitionCompactionTableDeadThreshold;
+    private final int partitionCompactionTableDeadThresholdPercent;
+    private final long partitionCompactionTableDeadTrigger;
+    private final double partitionCompactionTablePressureDeadRatio;
+    private final long partitionCompactionTimeBudgetMs;
     private final double partitionEncoderParquetBloomFilterFpp;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
@@ -472,6 +522,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -501,6 +552,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final long sequencerCheckInterval;
+    private final long sequencerCheckMinInterval;
     private final PropWorkerPoolConfiguration sharedWorkerPoolNetworkConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
     private final PropWorkerPoolConfiguration sharedWorkerPoolWriteConfiguration = new PropWorkerPoolConfiguration("shared-write");
@@ -555,6 +607,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
     private final int sqlJoinSymbolTranslationCacheCapacity;
+    private final boolean sqlLatestByJitEnabled;
     private final long sqlLatestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
@@ -570,6 +623,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
+    private final long sqlParallelHashJoinGroupByBuildParallelMinRows;
+    private final long sqlParallelHashJoinGroupByBuildRowsPerPartition;
+    private final boolean sqlParallelHashJoinGroupByEnabled;
+    private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
+    private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
+    private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
     private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
@@ -652,6 +711,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long viewCompilerWorkerYieldThreshold;
     private final int viewWalWriterPoolMaxSegments;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final long walApplyBlockMaxRows;
+    private final int walApplyBlockMemoryPercent;
+    private final long walApplyBlockSize;
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
@@ -906,7 +968,76 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-        this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
+        this.metricsPersistEnabled = getBoolean(properties, env, PropertyKey.METRICS_PERSIST_ENABLED, true);
+        this.metricsPersistExclude = getString(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_EXCLUDE,
+                MetricsConfiguration.DEFAULT_PERSIST_EXCLUDE
+        );
+        this.metricsPersistIntervalMicros = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_INTERVAL,
+                1_000
+        ) * 1_000;
+        this.metricsPersistParquetEnabled = getBoolean(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_PARQUET_ENABLED,
+                true
+        );
+        final long metricsPersistSyncIntervalMillis = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_SYNC_INTERVAL,
+                -1
+        );
+        this.metricsPersistSyncIntervalMicros = metricsPersistSyncIntervalMillis < 0 ? -1 : metricsPersistSyncIntervalMillis * 1_000;
+        this.metricsPersistTtl = getString(properties, env, PropertyKey.METRICS_PERSIST_TTL, "1 WEEK");
+        this.metricsPersistVirtualIntervalMicros = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL,
+                60_000
+        ) * 1_000;
+        if (metricsPersistIntervalMicros <= 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_INTERVAL.getPropertyPath(),
+                    Long.toString(metricsPersistIntervalMicros / 1_000)
+            );
+        }
+        if (metricsPersistVirtualIntervalMicros <= 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL.getPropertyPath(),
+                    Long.toString(metricsPersistVirtualIntervalMicros / 1_000)
+            );
+        }
+        final GenericLexer metricsPersistTtlLexer = new GenericLexer(4);
+        metricsPersistTtlLexer.of(metricsPersistTtl);
+        try {
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(metricsPersistTtlLexer);
+            PartitionBy.validateTtlGranularity(PartitionBy.DAY, ttlHoursOrMonths, 0);
+            if (SqlUtil.fetchNext(metricsPersistTtlLexer) != null) {
+                throw SqlException.$(metricsPersistTtlLexer.lastTokenPosition(), "unexpected token");
+            }
+        } catch (SqlException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(),
+                    metricsPersistTtl
+            );
+        }
+        try {
+            Pattern.compile(metricsPersistExclude);
+        } catch (PatternSyntaxException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(),
+                    metricsPersistExclude
+            );
+        }
+        this.metrics = metricsEnabled || metricsPersistEnabled
+                ? new Metrics(true, metricsEnabled, new MetricsRegistryImpl())
+                : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
@@ -979,10 +1110,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
+        this.debugWalApplyMaxTxnBlockSize = getInt(properties, env, PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, Integer.MAX_VALUE);
+        this.debugWriterInvariantCheckEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED, false);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
+        this.walApplyBlockSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 75 * Numbers.SIZE_1MB, 0);
+        this.walApplyBlockMemoryPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MEMORY_PERCENT, 25);
+        this.walApplyBlockMaxRows = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, 100_000_000L);
+        if (walApplyBlockMaxRows < 1 || walApplyBlockMaxRows > MAX_WAL_APPLY_BLOCK_MAX_ROWS) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS.getPropertyPath()
+                    + " must be between 1 and " + MAX_WAL_APPLY_BLOCK_MAX_ROWS);
+        }
         final String walApplySuspendedTablesValue = getString(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
         if (walApplySuspendedTablesValue != null) {
             for (String entry : walApplySuspendedTablesValue.split(",")) {
@@ -996,6 +1136,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
         this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
         this.sequencerCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 10_000);
+        this.sequencerCheckMinInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_MIN_INTERVAL, 500);
         if (tempRenamePendingTablePrefix.length() > maxFileNameLength - 4) {
             throw CairoException.critical(0).put("Temp pending table prefix is too long [")
                     .put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString()).put("=")
@@ -1707,6 +1848,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlLatestByJitEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, true);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, this.sqlHashJoinLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
@@ -1889,6 +2031,63 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
+            this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 10_000));
+            this.o3PartitionClusterBinWidth = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_O3_PARTITION_CLUSTER_BIN_WIDTH, Micros.MINUTE_MICROS));
+            this.o3PartitionClusterMaxBins = Math.max(1, Math.min(1 << 20, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS, 4096)));
+            this.o3PartitionPreSplitMinPieceMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE, 2));
+            this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+            this.o3PartitionMergeAppendFrameCacheSize = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE, 2));
+            this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
+            // Defaults below the waste ratio, so lowering dead.rows.ratio on its own never leaves an invalid pair.
+            this.partitionCompactionTablePressureDeadRatio = getDouble(
+                    properties,
+                    env,
+                    PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO,
+                    Double.toString(Math.min(0.5, partitionCompactionDeadRowsRatio / 2.0))
+            );
+            if (!Double.isFinite(partitionCompactionTablePressureDeadRatio)
+                    || partitionCompactionTablePressureDeadRatio <= 0
+                    || !(partitionCompactionTablePressureDeadRatio < partitionCompactionDeadRowsRatio)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath()
+                        + " must be positive and below " + PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath());
+            }
+            this.partitionCompactionDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);
+            this.partitionCompactionIdleTimeout = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, 60 * Micros.MINUTE_MICROS);
+            // The squash threshold can never sit above the single-folder one: a logical partition whose
+            // folders are all idle past the single threshold must squash rather than compact its folders
+            // one by one, and raising only the squash timeout would otherwise turn squashing off.
+            this.partitionCompactionSquashIdleTimeout = Math.min(
+                    this.partitionCompactionIdleTimeout,
+                    getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, 30 * Micros.MINUTE_MICROS)
+            );
+            this.partitionCompactionIoBudget = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_BUDGET, Numbers.SIZE_1GB);
+            this.partitionCompactionTableDeadThresholdPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, 50);
+            // The off-threshold can never sit above the on-threshold: the rule would then turn itself off
+            // on the very pass that turned it on, and lowering only table.dead.threshold.percent - which
+            // is the natural way to make the rule more eager - would silently disable it.
+            this.partitionCompactionTableDeadStopPercent = Math.min(
+                    this.partitionCompactionTableDeadThresholdPercent,
+                    getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT, 10)
+            );
+            this.partitionCompactionTableDeadTrigger = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_TRIGGER, 10 * Numbers.SIZE_1GB);
+            this.partitionCompactionTableDeadThreshold = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, 50 * Numbers.SIZE_1MB);
+            this.partitionCompactionPieceThreshold = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 20));
+            // 0 turns the hot-partition exclusion off entirely, restoring the pre-existing behaviour.
+            this.partitionCompactionHotCommits = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10));
+            // A merge triggers MOVE-TAIL once its projected dead rows exceed this percentage of the
+            // projected live rows. 0 triggers on any dead space above cairo.o3.partition.split.min.size.
+            this.partitionCompactionMoveTailDeadRowsPercent = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT, 10));
+            this.partitionCompactionAvgRowsPieceLim = Math.max(1, getLong(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4096));
+            this.partitionCompactionTimeBudgetMs = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 1000);
+            this.partitionCompactionDeclineBackoffMax = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX, 60 * Micros.MINUTE_MICROS);
+            this.partitionCompactionDeclineBackoffMin = Math.max(0, Math.min(partitionCompactionDeclineBackoffMax, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN, Micros.MINUTE_MICROS)));
+            this.partitionCompactionDeclineBackoffMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER, 2));
+            this.partitionCompactionIoCostMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER, 2));
+            this.partitionCompactionMoveTailPieceThreshold = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD, 1_000));
+            this.partitionCompactionMoveTailPrefixMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE, 2));
+            this.partitionCompactionSquashTargetSizeMultiple = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE, 4));
+            this.partitionCompactionSwapTimeout = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT, 30 * Micros.MINUTE_MICROS));
+            this.partitionCompactionTableDeadStopTriggerPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT, 50);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
@@ -1999,6 +2198,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
+            this.o3PartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, o3LastPartitionMaxSplits));
             this.o3MidPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
@@ -2031,6 +2231,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            try {
+                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
+            }
             this.qwpBrowserTlsTerminationEnabled = getBoolean(
                     properties,
                     env,
@@ -2403,6 +2610,26 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinGroupByBuildParallelMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 300_000);
+            if (sqlParallelHashJoinGroupByBuildParallelMinRows < 0) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelHashJoinGroupByBuildParallelMinRows));
+            }
+            this.sqlParallelHashJoinGroupByBuildRowsPerPartition = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 32_768);
+            if (sqlParallelHashJoinGroupByBuildRowsPerPartition < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION.getPropertyPath(),
+                        Long.toString(sqlParallelHashJoinGroupByBuildRowsPerPartition));
+            }
+            this.sqlParallelHashJoinGroupByPayloadCopyMaxSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 128 * Numbers.SIZE_1MB, 0);
+            this.sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0.4");
+            if (sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio < 0 || !Double.isFinite(sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
+            }
+            this.sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.125");
+            if (sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio < 0 || !Double.isFinite(sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
+            }
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
                     && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
@@ -2457,6 +2684,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetMinCompressionRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO, "1.2");
         this.partitionEncoderParquetO3RewriteUnusedMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1024 * 1024 * 1024L);
         this.partitionEncoderParquetO3RewriteUnusedRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.5");
+        this.partitionCompactionCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, 120_000);
 
         // compatibility switch, to be removed in future
         this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
@@ -3802,6 +4030,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
                     PropertyKey.LINE_DEFAULT_PARTITION_BY
             );
+            registerDeprecated(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS);
             registerDeprecated(
                     PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
                     PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE
@@ -4302,6 +4531,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDebugWalApplyMaxTxnBlockSize() {
+            return debugWalApplyMaxTxnBlockSize;
+        }
+
+        @Override
         public @NotNull DateLocale getDefaultDateLocale() {
             return locale;
         }
@@ -4727,6 +4961,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3PartitionMergeAppendFrameCacheSize() {
+            return o3PartitionMergeAppendFrameCacheSize;
+        }
+
+        @Override
         public long getO3MaxLag() {
             return o3MaxLagUs;
         }
@@ -4742,6 +4981,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getO3PartitionClusterBinWidth() {
+            return o3PartitionClusterBinWidth;
+        }
+
+        @Override
+        public int getO3PartitionClusterMaxBins() {
+            return o3PartitionClusterMaxBins;
+        }
+
+        @Override
+        public int getO3PartitionMaxSplits() {
+            return o3PartitionMaxSplits;
+        }
+
+        @Override
         public long getO3MinLag() {
             return o3MinLagUs;
         }
@@ -4749,6 +5003,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3OpenColumnQueueCapacity() {
             return o3OpenColumnQueueCapacity;
+        }
+
+        @Override
+        public int getO3PartitionPreSplitMaxCuts() {
+            return o3PartitionPreSplitMaxCuts;
+        }
+
+        @Override
+        public int getO3PartitionPreSplitMinPieceMultiple() {
+            return o3PartitionPreSplitMinPieceMultiple;
         }
 
         @Override
@@ -4829,6 +5093,131 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportVersion() {
             return parquetExportVersion;
+        }
+
+        @Override
+        public long getPartitionCompactionAvgRowsPieceLim() {
+            return partitionCompactionAvgRowsPieceLim;
+        }
+
+        @Override
+        public long getPartitionCompactionCheckInterval() {
+            return partitionCompactionCheckInterval;
+        }
+
+        @Override
+        public long getPartitionCompactionDeadMinSize() {
+            return partitionCompactionDeadMinSize;
+        }
+
+        @Override
+        public double getPartitionCompactionDeadRowsRatio() {
+            return partitionCompactionDeadRowsRatio;
+        }
+
+        @Override
+        public long getPartitionCompactionDeclineBackoffMax() {
+            return partitionCompactionDeclineBackoffMax;
+        }
+
+        @Override
+        public long getPartitionCompactionDeclineBackoffMin() {
+            return partitionCompactionDeclineBackoffMin;
+        }
+
+        @Override
+        public int getPartitionCompactionDeclineBackoffMultiplier() {
+            return partitionCompactionDeclineBackoffMultiplier;
+        }
+
+        @Override
+        public int getPartitionCompactionHotCommits() {
+            return partitionCompactionHotCommits;
+        }
+
+        @Override
+        public long getPartitionCompactionIdleTimeout() {
+            return partitionCompactionIdleTimeout;
+        }
+
+        @Override
+        public long getPartitionCompactionIoBudget() {
+            return partitionCompactionIoBudget;
+        }
+
+        @Override
+        public int getPartitionCompactionIoCostMultiplier() {
+            return partitionCompactionIoCostMultiplier;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailDeadRowsPercent() {
+            return partitionCompactionMoveTailDeadRowsPercent;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailPieceThreshold() {
+            return partitionCompactionMoveTailPieceThreshold;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailPrefixMultiple() {
+            return partitionCompactionMoveTailPrefixMultiple;
+        }
+
+        @Override
+        public int getPartitionCompactionPieceThreshold() {
+            return partitionCompactionPieceThreshold;
+        }
+
+        @Override
+        public long getPartitionCompactionSquashIdleTimeout() {
+            return partitionCompactionSquashIdleTimeout;
+        }
+
+        @Override
+        public int getPartitionCompactionSquashTargetSizeMultiple() {
+            return partitionCompactionSquashTargetSizeMultiple;
+        }
+
+        @Override
+        public long getPartitionCompactionSwapTimeout() {
+            return partitionCompactionSwapTimeout;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadStopPercent() {
+            return partitionCompactionTableDeadStopPercent;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadStopTriggerPercent() {
+            return partitionCompactionTableDeadStopTriggerPercent;
+        }
+
+        @Override
+        public long getPartitionCompactionTableDeadThreshold() {
+            return partitionCompactionTableDeadThreshold;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadThresholdPercent() {
+            return partitionCompactionTableDeadThresholdPercent;
+        }
+
+        @Override
+        public long getPartitionCompactionTableDeadTrigger() {
+            return partitionCompactionTableDeadTrigger;
+        }
+
+        @Override
+        public double getPartitionCompactionTablePressureDeadRatio() {
+            return partitionCompactionTablePressureDeadRatio;
+        }
+
+        @Override
+        public long getPartitionCompactionTimeBudgetMs() {
+            return partitionCompactionTimeBudgetMs;
         }
 
         @Override
@@ -4999,6 +5388,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sqlSampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public long getSequencerCheckMinInterval() {
+            return sequencerCheckMinInterval;
         }
 
         @Override
@@ -5267,6 +5661,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlParallelHashJoinGroupByBuildParallelMinRows() {
+            return sqlParallelHashJoinGroupByBuildParallelMinRows;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinGroupByBuildRowsPerPartition() {
+            return sqlParallelHashJoinGroupByBuildRowsPerPartition;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+            return sqlParallelHashJoinGroupByPayloadCopyMaxSize;
+        }
+
+        @Override
+        public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
+            return sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
+        }
+
+        @Override
+        public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
+            return sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
+        }
+
+        @Override
         public long getSqlParallelWorkStealingSpinTimeout() {
             return sqlParallelWorkStealingSpinTimeout;
         }
@@ -5517,6 +5936,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWalApplyBlockMaxRows() {
+            return walApplyBlockMaxRows;
+        }
+
+        @Override
+        public int getWalApplyBlockMemoryPercent() {
+            return walApplyBlockMemoryPercent;
+        }
+
+        @Override
+        public long getWalApplyBlockSize() {
+            return walApplyBlockSize;
+        }
+
+        @Override
         public int getWalApplyLookAheadTransactionCount() {
             return walApplyLookAheadTransactionCount;
         }
@@ -5534,6 +5968,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalApplyTableTimeQuota() {
             return walApplyTableTimeQuota;
+        }
+
+        @Override
+        public int getWalApplyWorkerCount() {
+            // No dedicated pool: ServerMain runs WAL apply on the shared write pool
+            return Math.max(1, walApplyWorkerCount > 0 ? walApplyWorkerCount : sharedWorkerPoolWriteConfiguration.getWorkerCount());
         }
 
         @Override
@@ -5692,6 +6132,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isDebugWriterInvariantCheckEnabled() {
+            return debugWriterInvariantCheckEnabled;
+        }
+
+        @Override
         public boolean isDevModeEnabled() {
             return devModeEnabled;
         }
@@ -5739,6 +6184,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMultiKeyDedupEnabled() {
             return false;
+        }
+
+        @Override
+        public boolean isO3PartitionMergeAppendEnabled() {
+            return o3PartitionMergeAppendEnabled;
         }
 
         @Override
@@ -5805,6 +6255,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlLatestByJitEnabled() {
+            return sqlLatestByJitEnabled;
+        }
+
+        @Override
         public boolean isSqlOrderBySortEnabled() {
             return sqlOrderBySortEnabled;
         }
@@ -5817,6 +6272,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelHashJoinGroupByEnabled() {
+            return sqlParallelHashJoinGroupByEnabled;
         }
 
         @Override
@@ -6362,6 +6822,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQueueTimeout() {
             return httpNetConnectionQueueTimeout;
+        }
+
+        @Override
+        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+            return qwpBrowserAllowedOrigins;
         }
 
         @Override
@@ -7195,8 +7660,43 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropMetricsConfiguration implements MetricsConfiguration {
 
         @Override
+        public CharSequence getPersistExclude() {
+            return metricsPersistExclude;
+        }
+
+        @Override
+        public long getPersistIntervalMicros() {
+            return metricsPersistIntervalMicros;
+        }
+
+        @Override
+        public long getPersistSyncIntervalMicros() {
+            return metricsPersistSyncIntervalMicros;
+        }
+
+        @Override
+        public CharSequence getPersistTtl() {
+            return metricsPersistTtl;
+        }
+
+        @Override
+        public long getPersistVirtualIntervalMicros() {
+            return metricsPersistVirtualIntervalMicros;
+        }
+
+        @Override
         public boolean isEnabled() {
             return metricsEnabled;
+        }
+
+        @Override
+        public boolean isPersistEnabled() {
+            return metricsPersistEnabled;
+        }
+
+        @Override
+        public boolean isPersistParquetEnabled() {
+            return metricsPersistParquetEnabled;
         }
     }
 

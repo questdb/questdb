@@ -315,6 +315,12 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelTopKEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        Assert.assertEquals(300_000, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildParallelMinRows());
+        Assert.assertEquals(32_768, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildRowsPerPartition());
+        Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
+        Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0.125, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
@@ -335,6 +341,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlLatestByJitEnabled());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
@@ -431,6 +438,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(-1, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
+        Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        TestUtils.assertEquals("1 WEEK", configuration.getMetricsConfiguration().getPersistTtl());
         Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
@@ -498,6 +512,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(25, configuration.getCairoConfiguration().getWalApplyBlockMemoryPercent());
+        Assert.assertEquals(configuration.getWalApplyPoolConfiguration().getWorkerCount(), configuration.getCairoConfiguration().getWalApplyWorkerCount());
+        Assert.assertEquals(75 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getWalApplyBlockSize());
+        Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getWalApplyBlockMaxRows());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalLagRowsMultiplier(), 0.00001);
@@ -510,6 +528,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getO3PartitionMaxSplits());
+        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
@@ -1653,11 +1673,55 @@ public class PropServerConfigurationTest {
         }
     }
 
+    @Test
+    public void testInvalidWalApplyBlockMaxRows() throws Exception {
+        for (String value : new String[]{"0", "-1", "2_000_000_001", "abc"}) {
+            Properties properties = new Properties();
+            properties.setProperty("cairo.wal.apply.block.max.rows", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected failure for " + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.wal.apply.block.max.rows");
+            }
+        }
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.apply.block.max.rows", "2_000_000_000");
+        Assert.assertEquals(2_000_000_000L, newPropServerConfiguration(properties).getCairoConfiguration().getWalApplyBlockMaxRows());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalApplyBlockMemoryPercent() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.apply.block.memory.percent", "101");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalApplyBlockSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.apply.block.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidWalMaxLagSizeNegative() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.wal.max.lag.size", "-1");
         newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWalApplyWorkerCountFallsBackToSharedWritePool() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("wal.apply.worker.count", "0");
+        properties.setProperty("shared.worker.count", "5");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getWalApplyPoolConfiguration().isEnabled());
+        Assert.assertEquals(configuration.getSharedWorkerPoolWriteConfiguration().getWorkerCount(), configuration.getCairoConfiguration().getWalApplyWorkerCount());
+
+        properties.setProperty("wal.apply.worker.count", "3");
+        Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getWalApplyWorkerCount());
     }
 
     @Test
@@ -1939,6 +2003,146 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testO3UnifiedSplitCapAndLegacyAliases() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS.getPropertyPath(), "7");
+            Assert.assertEquals(7, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS.getPropertyPath(), "3");
+            Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+            // The mid cap is independent of the unified cap: it applies only to non-WAL tables.
+            Assert.assertEquals(1, newPropServerConfiguration(properties).getCairoConfiguration().getO3MidPartitionMaxSplits());
+            properties.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS.getPropertyPath(), "1000");
+            Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+            Assert.assertEquals(1000, newPropServerConfiguration(properties).getCairoConfiguration().getO3MidPartitionMaxSplits());
+        });
+    }
+
+    @Test
+    public void testPartitionCompactionPressureRatio() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "0.2");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath(), "0.1");
+            Assert.assertEquals(0.1, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+        });
+    }
+
+    @Test
+    public void testPartitionCompactionPressureRatioDefaultsBelowDeadRowsRatio() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            Assert.assertEquals(0.5, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+            // Only the waste ratio is set: the pressure ratio follows it down rather than failing startup.
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "0.5");
+            Assert.assertEquals(0.25, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "0.2");
+            Assert.assertEquals(0.1, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "3");
+            Assert.assertEquals(0.5, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+        });
+    }
+
+    @Test
+    public void testPartitionCompactionPressureRatioRejectsInvalidValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            for (String value : new String[]{"0", "-0.1", "NaN", "Infinity", "1", "1.1"}) {
+                properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath(), value);
+                try {
+                    newPropServerConfiguration(properties);
+                    Assert.fail("accepted invalid pressure ratio: " + value);
+                } catch (ServerConfigurationException e) {
+                    TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath());
+                }
+            }
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath(), "0.5");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "NaN");
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("a pressure ratio cannot be below NaN");
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath());
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionCompactionTuning() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            CairoConfiguration cfg = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(Micros.MINUTE_MICROS, cfg.getO3PartitionClusterBinWidth());
+            Assert.assertEquals(4096, cfg.getO3PartitionClusterMaxBins());
+            Assert.assertEquals(2, cfg.getO3PartitionPreSplitMinPieceMultiple());
+            Assert.assertEquals(Micros.MINUTE_MICROS, cfg.getPartitionCompactionDeclineBackoffMin());
+            Assert.assertEquals(2, cfg.getPartitionCompactionDeclineBackoffMultiplier());
+            Assert.assertEquals(2, cfg.getPartitionCompactionIoCostMultiplier());
+            Assert.assertEquals(10, cfg.getPartitionCompactionMoveTailDeadRowsPercent());
+            Assert.assertEquals(1_000, cfg.getPartitionCompactionMoveTailPieceThreshold());
+            Assert.assertEquals(2, cfg.getPartitionCompactionMoveTailPrefixMultiple());
+            Assert.assertEquals(4, cfg.getPartitionCompactionSquashTargetSizeMultiple());
+            Assert.assertEquals(30 * Micros.MINUTE_MICROS, cfg.getPartitionCompactionSwapTimeout());
+            Assert.assertEquals(50, cfg.getPartitionCompactionTableDeadStopTriggerPercent());
+
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_CLUSTER_BIN_WIDTH.getPropertyPath(), "5s");
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS.getPropertyPath(), "100");
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE.getPropertyPath(), "3");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN.getPropertyPath(), "10s");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER.getPropertyPath(), "4");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER.getPropertyPath(), "3");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT.getPropertyPath(), "25");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD.getPropertyPath(), "500");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE.getPropertyPath(), "5");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE.getPropertyPath(), "8");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT.getPropertyPath(), "5m");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT.getPropertyPath(), "25");
+            cfg = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(5 * Micros.SECOND_MICROS, cfg.getO3PartitionClusterBinWidth());
+            Assert.assertEquals(100, cfg.getO3PartitionClusterMaxBins());
+            Assert.assertEquals(3, cfg.getO3PartitionPreSplitMinPieceMultiple());
+            Assert.assertEquals(10 * Micros.SECOND_MICROS, cfg.getPartitionCompactionDeclineBackoffMin());
+            Assert.assertEquals(4, cfg.getPartitionCompactionDeclineBackoffMultiplier());
+            Assert.assertEquals(3, cfg.getPartitionCompactionIoCostMultiplier());
+            Assert.assertEquals(25, cfg.getPartitionCompactionMoveTailDeadRowsPercent());
+            Assert.assertEquals(500, cfg.getPartitionCompactionMoveTailPieceThreshold());
+            Assert.assertEquals(5, cfg.getPartitionCompactionMoveTailPrefixMultiple());
+            Assert.assertEquals(8, cfg.getPartitionCompactionSquashTargetSizeMultiple());
+            Assert.assertEquals(5 * Micros.MINUTE_MICROS, cfg.getPartitionCompactionSwapTimeout());
+            Assert.assertEquals(25, cfg.getPartitionCompactionTableDeadStopTriggerPercent());
+
+            // Out-of-range values are clamped rather than rejected...
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS.getPropertyPath(), "100000000");
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE.getPropertyPath(), "0");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN.getPropertyPath(), "2h");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER.getPropertyPath(), "0");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER.getPropertyPath(), "-1");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD.getPropertyPath(), "-1");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE.getPropertyPath(), "0");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE.getPropertyPath(), "-1");
+            cfg = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(1 << 20, cfg.getO3PartitionClusterMaxBins());
+            Assert.assertEquals(1, cfg.getO3PartitionPreSplitMinPieceMultiple());
+            // The minimum back-off never exceeds the maximum.
+            Assert.assertEquals(cfg.getPartitionCompactionDeclineBackoffMax(), cfg.getPartitionCompactionDeclineBackoffMin());
+            Assert.assertEquals(1, cfg.getPartitionCompactionDeclineBackoffMultiplier());
+            Assert.assertEquals(1, cfg.getPartitionCompactionIoCostMultiplier());
+            Assert.assertEquals(0, cfg.getPartitionCompactionMoveTailPieceThreshold());
+            Assert.assertEquals(1, cfg.getPartitionCompactionMoveTailPrefixMultiple());
+            Assert.assertEquals(0, cfg.getPartitionCompactionSquashTargetSizeMultiple());
+
+            // ...except the stop-trigger percentage, which must be a percentage.
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT.getPropertyPath(), "101");
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("accepted a stop-trigger percentage above 100");
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT.getPropertyPath());
+            }
+        });
+    }
+
+    @Test
     public void testPartitionBy() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -1970,6 +2174,26 @@ public class PropServerConfigurationTest {
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+    }
+
+    @Test
+    public void testQwpBrowserAllowedOrigins() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+
+        properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/*");
+        newPropServerConfiguration(properties);
     }
 
     @Test
@@ -2044,6 +2268,100 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMetricsPersistenceConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("metrics.persist.enabled", "true");
+        properties.setProperty("metrics.persist.exclude", "foo.*");
+        properties.setProperty("metrics.persist.interval", "2s");
+        properties.setProperty("metrics.persist.parquet.enabled", "false");
+        properties.setProperty("metrics.persist.sync.interval", "5m");
+        properties.setProperty("metrics.persist.ttl", "2 DAYS");
+        properties.setProperty("metrics.persist.virtual.interval", "3m");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetrics().isEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        Assert.assertEquals(2_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(300_000_000, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
+        Assert.assertEquals(180_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        TestUtils.assertEquals("foo.*", configuration.getMetricsConfiguration().getPersistExclude());
+        TestUtils.assertEquals("2 DAYS", configuration.getMetricsConfiguration().getPersistTtl());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeAcceptsEmptyValue() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("", configuration.getMetricsConfiguration().getPersistExclude());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_EXCLUDE.getEnvVarName(), "worker_pool_fiber_(");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "worker_pool_fiber_(");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "[");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "*foo");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+    }
+
+    @Test
+    public void testMetricsPersistenceSyncInterval() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "-5s");
+        Assert.assertEquals(-1, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "5m");
+        Assert.assertEquals(300_000_000, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_TTL.getEnvVarName(), "7 DAYZ");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_TTL.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "7 DAYZ");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 HOUR");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 DAY extra");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+    }
+
+    @Test
     public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
@@ -2078,6 +2396,70 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");
         assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_COMMIT_INTERVAL);
+    }
+
+    @Test
+    public void testParallelHashJoinGroupByPropertyAndEnvironment() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "true");
+        Assert.assertTrue(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        properties.clear();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "false");
+        Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+    }
+
+    @Test
+    public void testParallelHashJoinGroupByBuild() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows", "250000");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.build.rows.per.partition", "4096");
+        CairoConfiguration configuration = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(250_000, configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows());
+        Assert.assertEquals(4096, configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS", "0");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION", "1");
+        configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder()).getCairoConfiguration();
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows());
+        Assert.assertEquals(1, configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition());
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows", "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows", "250000");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.build.rows.per.partition", "0");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION);
+    }
+
+    @Test
+    public void testParallelHashJoinGroupByPayloadCopy() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "8M");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "1.5");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio", "0.25");
+        CairoConfiguration configuration = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(8 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
+        Assert.assertEquals(1.5, configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0.25, configuration.getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE", "0");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO", "0");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO", "0");
+        configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder()).getCairoConfiguration();
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "8M");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "-0.5");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "1.5");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio", "NaN");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO);
     }
 
     @Test
@@ -2298,6 +2680,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
@@ -2516,6 +2899,15 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.sql.jit.mode", "foobar");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
+    }
+
+    @Test
+    public void testSqlLatestByJitEnabled() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
     }
 
     @Test
@@ -3366,6 +3758,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getWalEnabledDefault());
         Assert.assertFalse(configuration.isWalApplyEnabled());
         Assert.assertEquals(23, configuration.getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(33, configuration.getWalApplyBlockMemoryPercent());
+        Assert.assertEquals(2 * Numbers.SIZE_1GB, configuration.getWalApplyBlockSize());
+        Assert.assertEquals(5_000_000, configuration.getWalApplyBlockMaxRows());
         Assert.assertFalse(configuration.isTableTypeConversionEnabled());
         Assert.assertEquals(Files.POSIX_MADV_RANDOM, configuration.getWalWriterMadviseMode());
         Assert.assertEquals(100, configuration.getWalWriterPoolMaxSegments());

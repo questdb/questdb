@@ -291,7 +291,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final CharSequence tableName,
             TableStructure structure,
             int tableId,
-            SecurityContext securityContext
+            SecurityContext securityContext,
+            int commitMode
     ) {
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableDir)) {
@@ -317,7 +318,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 tableDir,
                                 structure,
                                 ColumnType.VERSION,
-                                tableId
+                                tableId,
+                                commitMode
                         );
                     }
                     break;
@@ -395,6 +397,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
+        // Always non-WAL, matching TableStructureAdapter.isWalEnabled(): see the comment there.
         this.tableToken = cairoEngine.lockTableName(tableName);
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
@@ -1467,7 +1470,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             targetTableStructure.getTableName(),
                             targetTableStructure,
                             tableToken.getTableId(),
-                            securityContext
+                            securityContext,
+                            configuration.getCommitMode()
                     );
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
@@ -1698,7 +1702,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         @Override
         public boolean isWalEnabled() {
-            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
+            // Parallel COPY attaches whole partitions through TableWriter.attachPartition(), bypassing the WAL.
+            // A WAL target would register a sequencer and replicate the table without the imported rows, so the
+            // replica would report itself caught up while missing them. Create the target, and the per-partition
+            // staging tables that share this structure, as non-WAL regardless of cairo.wal.enabled.default.
+            return false;
         }
 
         public void of(

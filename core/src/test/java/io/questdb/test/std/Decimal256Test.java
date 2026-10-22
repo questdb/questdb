@@ -3183,6 +3183,18 @@ public class Decimal256Test {
         Assert.assertEquals(0L, result.getLl());
     }
 
+    @Test
+    public void testZeroOperandRejectsOutOfRangeValue() {
+        // Adding or subtracting zero must not let an out-of-range accumulator through unchecked.
+        // of() skips range validation.
+        Decimal256 value = new Decimal256();
+        value.of(Decimal256.MIN_VALUE.getHh() - 1, 0, 0, 0, 0);
+        assertZeroOperandRejects(value);
+        value = new Decimal256();
+        value.of(Decimal256.MAX_VALUE.getHh() + 1, 0, 0, 0, 0);
+        assertZeroOperandRejects(value);
+    }
+
     private static void assertParsedZero(
             String value,
             int precision,
@@ -3199,6 +3211,23 @@ public class Decimal256Test {
         Assert.assertEquals(value, expectedString, decimal.toString());
         Assert.assertEquals(value + " precision", expectedPrecision, Numbers.decodeLowInt(metadata));
         Assert.assertEquals(value + " scale", expectedScale, Numbers.decodeHighInt(metadata));
+    }
+
+    private static void assertZeroOperandRejects(Decimal256 value) {
+        Assert.assertTrue(value.hasOverflowed());
+        for (int zeroScale = 0; zeroScale <= 3; zeroScale += 3) {
+            final Decimal256 zero = new Decimal256(0, 0, 0, 0, zeroScale);
+            Assert.assertThrows(NumericException.class, () -> {
+                Decimal256 sink = new Decimal256();
+                sink.copyFrom(value);
+                sink.add(zero);
+            });
+            Assert.assertThrows(NumericException.class, () -> {
+                Decimal256 sink = new Decimal256();
+                sink.copyFrom(value);
+                sink.subtract(zero);
+            });
+        }
     }
 
     // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can

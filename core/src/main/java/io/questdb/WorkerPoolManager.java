@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -76,7 +77,8 @@ public abstract class WorkerPoolManager implements Target {
             sharedPoolWrite = writePool;
 
             configureWorkerPools(queryPool != null ? queryPool : networkPool, writePool);
-            config.getMetrics().addScrapable(this);
+            final Metrics metrics = config.getMetrics();
+            metrics.addScrapable(this, metrics.isEnabled() ? this::updateWorkerMetrics : null);
         } catch (Throwable th) {
             rollbackConstruction(networkPool, queryPool, writePool, th);
             throw th;
@@ -217,15 +219,11 @@ public abstract class WorkerPoolManager implements Target {
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        sharedPoolNetwork.updateWorkerMetrics();
-        if (sharedPoolQuery != null) {
-            sharedPoolQuery.updateWorkerMetrics();
-        }
-        sharedPoolWrite.updateWorkerMetrics();
-        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
-        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
-        }
+        updateWorkerMetrics();
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
     }
 
     public void start(Log sharedPoolLog) {
@@ -376,6 +374,18 @@ public abstract class WorkerPoolManager implements Target {
         Misc.free(writePool, primary);
     }
 
+    private void updateWorkerMetrics() {
+        sharedPoolNetwork.updateWorkerMetrics();
+        if (sharedPoolQuery != null) {
+            sharedPoolQuery.updateWorkerMetrics();
+        }
+        sharedPoolWrite.updateWorkerMetrics();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
+        }
+    }
+
     /**
      * @param sharedPoolQuery A reference to the QUERY SHARED pool
      * @param sharedPoolWrite A reference to the WRITE SHARED pool
@@ -401,6 +411,7 @@ public abstract class WorkerPoolManager implements Target {
         VIEW_COMPILER("view-compiler"),
         MAT_VIEW_REFRESH("mat-view-refresh"),
         LIVE_VIEW_REFRESH("live-view-refresh"),
+        PARTITION_COMPACTION("partition-compaction"),
         EXPORT("export");
 
         private final String requester;
