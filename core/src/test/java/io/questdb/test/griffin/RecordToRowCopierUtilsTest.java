@@ -854,6 +854,51 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         };
     }
 
+    @Test
+    public void testSymbolToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (s SYMBOL)");
+            execute("INSERT INTO src VALUES ('2024-09-10T12:01:02.123456789Z'), (NULL)");
+            for (int copierType : COPIER_TYPES) {
+                setCopierType(copierType);
+                execute("CREATE TABLE dst (us TIMESTAMP, ns TIMESTAMP_NS)");
+                execute("INSERT INTO dst SELECT s, s FROM src");
+                assertQuery("dst").expectSize().noLeakCheck().returns("""
+                        us\tns
+                        2024-09-10T12:01:02.123456Z\t2024-09-10T12:01:02.123456789Z
+                        \t
+                        """);
+                execute("DROP TABLE dst");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolToTimestampMalformed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (s SYMBOL)");
+            execute("INSERT INTO src VALUES ('not-a-timestamp')");
+            final StringBuilder expectedMessages = new StringBuilder();
+            final StringBuilder actualMessages = new StringBuilder();
+            for (int copierType : COPIER_TYPES) {
+                setCopierType(copierType);
+                for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                    execute("CREATE TABLE dst (at " + ColumnType.nameOf(type) + ")");
+                    try {
+                        execute("INSERT INTO dst SELECT s FROM src");
+                        Assert.fail("expected timestamp conversion failure");
+                    } catch (ImplicitCastException e) {
+                        expectedMessages.append(copierType).append(": inconvertible value: `not-a-timestamp` [SYMBOL -> ").append(ColumnType.nameOf(type)).append("]\n");
+                        actualMessages.append(copierType).append(": ").append(e.getFlyweightMessage()).append('\n');
+                    }
+                    assertQuery("SELECT count(*) FROM dst").expectSize().noRandomAccess().noLeakCheck().returns("count\n0\n");
+                    execute("DROP TABLE dst");
+                }
+            }
+            Assert.assertEquals(expectedMessages.toString(), actualMessages.toString());
+        });
+    }
+
     private static int randomCopierType(Rnd rnd) {
         return COPIER_TYPES[rnd.nextInt(COPIER_TYPES.length)];
     }

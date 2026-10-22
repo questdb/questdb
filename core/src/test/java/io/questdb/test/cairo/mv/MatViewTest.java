@@ -2456,6 +2456,56 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshAfterBaseColumnTypeChange() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("VARCHAR", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("VARCHAR", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToSymbol() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("SYMBOL", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToSymbolRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("SYMBOL", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterIncompatibleBaseColumnTypeChange() throws Exception {
+        assertFullRefreshAfterIncompatibleBaseColumnTypeChange(false);
+    }
+
+    @Test
+    public void testFullRefreshAfterIncompatibleBaseColumnTypeChangeRehydrated() throws Exception {
+        assertFullRefreshAfterIncompatibleBaseColumnTypeChange(true);
+    }
+
+    @Test
+    public void testFullRefreshAfterLongBaseColumnTypeChangeToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(ColumnType.isConvertibleFrom(ColumnType.SYMBOL, ColumnType.LONG));
+            execute("CREATE TABLE base_price (sym VARCHAR, at LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', 42, '2024-09-10T12:01')");
+            drainQueues();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE SYMBOL");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[0]: inconvertible types: SYMBOL -> LONG [from=at, to=at]
+                            """);
+        });
+    }
+
+    @Test
     public void testBaseTableTimestampTypeChangeThrowError() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         assertMemoryLeak(() -> {
@@ -10482,6 +10532,110 @@ public class MatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertFullRefreshAfterBaseColumnTypeChange(String type, boolean isRehydrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTimestampMatViewForTypeChange();
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            final var copier = state.getRecordToRowCopier();
+            Assert.assertNotNull(copier);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainQueues();
+            Assert.assertSame(copier, state.getRecordToRowCopier());
+            assertTimestampMatViewAfterTypeChange();
+
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE " + type);
+            drainQueues();
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+            if (isRehydrated) {
+                rehydrateTimestampMatViewForTypeChange();
+            }
+            for (int i = 0; i < 2; i++) {
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                drainQueues();
+                assertTimestampMatViewAfterTypeChange();
+            }
+            if (!isRehydrated) {
+                Assert.assertNotSame(copier, state.getRecordToRowCopier());
+            }
+            // The rebuilt copier also handles ordinary incremental refreshes and NULLs.
+            final MatViewState refreshedState = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            final var refreshedCopier = refreshedState.getRecordToRowCopier();
+            execute("INSERT INTO base_price VALUES ('gbpusd', '2024-09-10T12:25:06.654321Z', '2024-09-10T12:30')");
+            drainQueues();
+            Assert.assertSame(refreshedCopier, refreshedState.getRecordToRowCopier());
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tat\tts
+                    gbpusd\t2024-09-10T12:25:06.654321Z\t2024-09-10T12:00:00.000000Z
+                    null\t\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    private void assertFullRefreshAfterIncompatibleBaseColumnTypeChange(boolean isRehydrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTimestampMatViewForTypeChange();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE BOOLEAN");
+            drainQueues();
+            if (isRehydrated) {
+                rehydrateTimestampMatViewForTypeChange();
+            }
+            for (int i = 0; i < 2; i++) {
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                drainQueues();
+                assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                        .noRandomAccess().noLeakCheck().returns("""
+                                view_status\tinvalidation_reason
+                                invalid\t[0]: inconvertible types: BOOLEAN -> TIMESTAMP [from=at, to=at]
+                                """);
+            }
+            // Reload the on-disk failure state, then recover using the original result type.
+            rehydrateTimestampMatViewForTypeChange();
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE TIMESTAMP");
+            drainQueues();
+            execute("UPDATE base_price SET at = '2024-09-10T12:01:02.123456Z'::TIMESTAMP WHERE sym = 'gbpusd'");
+            execute("UPDATE base_price SET at = NULL WHERE sym = 'null'");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertTimestampMatViewAfterTypeChange();
+        });
+    }
+
+    private void assertTimestampMatViewAfterTypeChange() throws Exception {
+        assertQuery("SELECT view_status FROM materialized_views")
+                .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
+        assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                sym\tat\tts
+                gbpusd\t2024-09-10T12:01:02.123456Z\t2024-09-10T12:00:00.000000Z
+                null\t\t2024-09-10T12:00:00.000000Z
+                """);
+    }
+
+    private void createTimestampMatViewForTypeChange() throws Exception {
+        execute("CREATE TABLE base_price (sym VARCHAR, at TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+        execute("""
+                INSERT INTO base_price VALUES
+                ('gbpusd', '2024-09-10T12:01:02.123456Z', '2024-09-10T12:01'),
+                ('null', NULL, '2024-09-10T12:02')
+                """);
+        drainQueues();
+        assertTimestampMatViewAfterTypeChange();
+    }
+
+    private void rehydrateTimestampMatViewForTypeChange() {
+        // Reopen persisted view state with empty factory/copier caches, as on restart.
+        engine.getMatViewStateStore().clear();
+        engine.hydrateMatViewStateStore();
+        final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+        Assert.assertNull(state.getRecordToRowCopier());
     }
 
     private String copySql(int from, int count) {
