@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -151,6 +152,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     LOG.error().$("Unexpected error in test insert thread: ").$(e).$();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
 
@@ -321,6 +323,21 @@ public class CopyExportTest extends AbstractCairoTest {
 
             testCopyExport(statement, test, callback);
         });
+    }
+
+    @Test
+    public void testCopyFusedInnerJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
+        assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("INT", "(x % 5)::INT", "", "fused_inner_growth"));
+    }
+
+    @Test
+    public void testCopyFusedLeftJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
+        assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("INT", "(x % 5)::INT", "LEFT ", "fused_left_growth"));
+    }
+
+    @Test
+    public void testCopyFusedSymbolKeyJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
+        assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("SYMBOL", "('k' || (x % 5))::SYMBOL", "", "fused_symbol_growth"));
     }
 
     @Test
@@ -4221,6 +4238,262 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A composite partition keeps dead rows between (or before) its live pieces, so its live row count is
+     * no longer its file extent. {@code COPY <table> TO ... FORMAT PARQUET} used to take the
+     * {@code TABLE_READER} path, which hands {@code PartitionEncoder} file rows {@code [0, liveRows)} -
+     * the right NUMBER of rows read from the wrong PLACE, so the export silently held stale data while
+     * its row count still matched. The export now routes a composite table through a SELECT, whose
+     * page-frame cursors walk the partition piece by piece.
+     */
+    @Test
+    public void testCopyToParquetExportsCompositePartitionCorrectly() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ct AS (SELECT x::INT i," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO ct VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+            // Lands only inside 2024-01-01 and makes it composite.
+            execute("INSERT INTO ct SELECT x::INT + 70_000 i," +
+                    " timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L) ts FROM long_sequence(40)");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ct"))) {
+                Assert.assertTrue("2024-01-01 must be composite for this test to mean anything",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("COPY ct TO 'composite_export' WITH FORMAT parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("status\nfinished\n");
+                        assertParquetMatchesQuery(
+                                "SELECT * FROM ct WHERE ts IN '2024-01-01'",
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-01.parquet"
+                        );
+                        assertParquetMatchesQuery(
+                                "SELECT * FROM ct WHERE ts IN '2024-01-03'",
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-03.parquet"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    /**
+     * The enqueue-time composite check in {@code CopyExportFactory} runs on a transient reader that the
+     * factory closes straight away, while the export worker opens its own, later reader. When WAL apply turns
+     * a partition composite in between, that partition no longer spans file rows {@code [0, liveRows)}, so the
+     * partition-by-partition encoder reads the right NUMBER of rows from the wrong PLACE: the export reports
+     * {@code finished} while dropping every relocated live row. The worker re-resolves the export mode on the
+     * very reader it reads from, so the transition routes the export through the materializing path.
+     */
+    @Test
+    public void testCopyToParquetExportsPartitionTurnedCompositeAfterEnqueue() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            execute("TRUNCATE TABLE IF EXISTS \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
+            execute("CREATE TABLE ct AS (SELECT x::INT i," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO ct VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ct"))) {
+                Assert.assertFalse("the table must be plain when COPY is enqueued",
+                        reader.getTxFile().hasCompositePartitions());
+            }
+            engine.releaseAllReaders();
+
+            // No export job runs yet, so the task waits in the queue. That orders the transition below
+            // strictly after the enqueue-time mode decision and strictly before the worker's own snapshot.
+            runAndFetchCopyExportID("COPY ct TO 'transition_export' WITH FORMAT parquet", sqlExecutionContext);
+
+            // Lands only inside 2024-01-01 and makes it composite.
+            execute("INSERT INTO ct SELECT x::INT + 70_000 i," +
+                    " timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L) ts FROM long_sequence(40)");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ct"))) {
+                Assert.assertTrue("2024-01-01 must be composite for this test to mean anything",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+
+            assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
+            assertParquetMatchesQuery(
+                    "SELECT * FROM ct WHERE ts IN '2024-01-01'",
+                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-01.parquet"
+            );
+            assertParquetMatchesQuery(
+                    "SELECT * FROM ct WHERE ts IN '2024-01-03'",
+                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-03.parquet"
+            );
+        });
+    }
+
+    /**
+     * A table name that needs quoting, exported through the temp table {@code CopyExportFactory} builds at
+     * enqueue time. The source table name doubles as the select text, and an unquoted {@code src ct} parses as
+     * table {@code src} aliased {@code ct}: with a table named {@code src} around, the export then silently
+     * materializes THAT table and reports success over another table's data.
+     */
+    @Test
+    public void testCopyToParquetExportsCompositeTableWhoseNameNeedsQuoting() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            execute("TRUNCATE TABLE IF EXISTS \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
+            createDecoyTableAndCompositeTableNeedingQuotes();
+
+            runAndFetchCopyExportID("COPY \"src ct\" TO 'quoted_enqueue_export' WITH FORMAT parquet", sqlExecutionContext);
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+
+            assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
+            assertParquetMatchesQuery(
+                    "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-01'",
+                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-01.parquet"
+            );
+            assertParquetMatchesQuery(
+                    "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-03'",
+                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-03.parquet"
+            );
+        });
+    }
+
+    /**
+     * The same quoting, on the worker-side materializing fallback: the table is still plain when COPY is
+     * enqueued, so the select text is built by {@code SQLSerialParquetExporter.materializingOp()} instead. Both
+     * routes have to spell the source table the same way, or this one exports the decoy table.
+     */
+    @Test
+    public void testCopyToParquetExportsTableTurnedCompositeAfterEnqueueWhoseNameNeedsQuoting() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            execute("TRUNCATE TABLE IF EXISTS \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
+            createDecoyTable();
+            createTableNeedingQuotes();
+
+            // Enqueued while plain, so the export is a direct table read and carries no create operation.
+            runAndFetchCopyExportID("COPY \"src ct\" TO 'quoted_transition_export' WITH FORMAT parquet", sqlExecutionContext);
+
+            makeFirstPartitionComposite();
+
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+
+            assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
+            assertParquetMatchesQuery(
+                    "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-01'",
+                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-01.parquet"
+            );
+            assertParquetMatchesQuery(
+                    "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-03'",
+                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-03.parquet"
+            );
+        });
+    }
+
+    /**
+     * The worker-side materializing fallback keeps the USER's table name on the task - only the temp table name
+     * the exporter hands to {@code dropTempTable()} names the temp table. A temp table creation that fails
+     * before the token is resolved leaves {@code dropTempTable()} to resolve the name it was given, so a
+     * signature that resolved {@code task.getTableName()} instead would resolve, and drop, the very table the
+     * user asked to export.
+     */
+    @Test
+    public void testCopyToParquetKeepsSourceTableWhenTempTableCreationFails() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                // The temp table's own directory, which is named after the "copy.<id>" table. The export's
+                // temp FILE directory is "tmp_<id>", so only the table creation fails here.
+                if (Utf8s.containsAscii(path, File.separator + "copy.")) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("TRUNCATE TABLE IF EXISTS \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
+            execute("CREATE TABLE ct AS (SELECT x::INT i," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO ct VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Enqueued while plain, so the export is a direct table read: the task carries the user's own
+            // table name and the worker is the one that builds the temp table.
+            runAndFetchCopyExportID("COPY ct TO 'drop_guard_export' WITH FORMAT parquet", sqlExecutionContext);
+
+            execute("INSERT INTO ct SELECT x::INT + 70_000 i," +
+                    " timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L) ts FROM long_sequence(40)");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ct"))) {
+                Assert.assertTrue("2024-01-01 must be composite for this test to mean anything",
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+
+            assertQuery("SELECT phase, status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            phase	status
+                            wait_to_run	started
+                            wait_to_run	finished
+                            populating_data_to_temp_table	started
+                            dropping_temp_table	started
+                            dropping_temp_table	finished
+                            populating_data_to_temp_table	failed
+                            """);
+
+            Assert.assertNotNull("the user's own table must survive a failed temp table creation",
+                    engine.getTableTokenIfExists("ct"));
+            assertQuery("SELECT count() FROM ct").noLeakCheck().noRandomAccess().expectSize().returns("count\n2041\n");
+        });
+    }
+
     private static Thread createJobThread(Job job, CountDownLatch workCount, AtomicBoolean stop, int workerId) {
         return new Thread(() -> {
             try {
@@ -4290,6 +4563,58 @@ public class CopyExportTest extends AbstractCairoTest {
         testCopyExport(statement, test, true, 1);
     }
 
+    private void assertCopyOfFusedJoinGroupByAfterBuildTableGrowth(
+            String keyType,
+            String keyExpr,
+            String joinType,
+            String fileName
+    ) throws Exception {
+        // f holds 10 rows and d holds 5, so the fused GROUP BY builds d and presizes its key table
+        // by d's rows. COPY compiles the SELECT when it queues the export, and the export job runs
+        // that factory later with no way to compile it again. The callback grows d to 21 rows,
+        // past twice f's rows, after the export is queued and before it starts.
+        execute("CREATE TABLE f (k " + keyType + ", v LONG)");
+        execute("CREATE TABLE d (k " + keyType + ", g SYMBOL)");
+        execute("INSERT INTO f SELECT " + keyExpr + ", x FROM long_sequence(10)");
+        final String insertIntoD = "INSERT INTO d SELECT " + keyExpr + ", ('g' || (x % 2))::SYMBOL FROM long_sequence(";
+        execute(insertIntoD + "5)");
+        final String selectSql = "SELECT d.g, sum(f.v) FROM f " + joinType + "JOIN d ON f.k = d.k GROUP BY d.g";
+        assertQuery(selectSql)
+                .noLeakCheck()
+                .assertsPlanContaining("Async Hash Join Group By", "inputSwapped: false");
+
+        final String expected = """
+                g\tsum
+                g0\t106
+                g1\t121
+                """;
+        CopyExportRunnable statement = () -> runAndFetchCopyExportID(
+                "COPY (" + selectSql + ") TO '" + fileName + "' WITH FORMAT PARQUET",
+                sqlExecutionContext
+        );
+        Callable<Exception> callback = () -> {
+            execute(insertIntoD + "16)");
+            return null;
+        };
+        CopyExportRunnable test = () -> assertEventually(() -> {
+            assertQuery("SELECT num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("num_exported_files\tstatus\n1\tfinished\n");
+            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + fileName + ".parquet') ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+        testCopyExport(statement, test, callback);
+
+        // A new compile of the same SELECT returns the rows that the export wrote.
+        assertQuery(selectSql + " ORDER BY g")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+    }
+
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
     }
@@ -4346,6 +4671,44 @@ public class CopyExportTest extends AbstractCairoTest {
                 });
 
         testCopyExport(stmt, test);
+    }
+
+    /**
+     * A table {@code src}, which an unquoted {@code src ct} select text resolves to - the export that takes
+     * that text reports success over THIS table's rows. Its columns differ from {@code "src ct"}'s, so the
+     * parquet comparison names the confusion rather than just failing on values.
+     */
+    private void createDecoyTable() throws Exception {
+        execute("CREATE TABLE src AS (SELECT 'decoy' s," +
+                " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(3))" +
+                " TIMESTAMP(ts) PARTITION BY DAY");
+    }
+
+    private void createDecoyTableAndCompositeTableNeedingQuotes() throws Exception {
+        createDecoyTable();
+        createTableNeedingQuotes();
+        makeFirstPartitionComposite();
+    }
+
+    private void createTableNeedingQuotes() throws Exception {
+        execute("CREATE TABLE \"src ct\" AS (SELECT x::INT i," +
+                " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
+        execute("INSERT INTO \"src ct\" VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+        drainWalQueue();
+    }
+
+    private void makeFirstPartitionComposite() throws Exception {
+        // Lands only inside 2024-01-01 and makes it composite.
+        execute("INSERT INTO \"src ct\" SELECT x::INT + 70_000 i," +
+                " timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L) ts FROM long_sequence(40)");
+        drainWalQueue();
+        try (TableReader reader = engine.getReader(engine.verifyTableName("src ct"))) {
+            Assert.assertTrue("2024-01-01 must be composite for this test to mean anything",
+                    reader.getTxFile().isPartitionComposite(0));
+        }
+        engine.releaseAllReaders();
     }
 
     private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {

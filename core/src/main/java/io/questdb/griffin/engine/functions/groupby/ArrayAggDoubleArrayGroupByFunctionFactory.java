@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -64,6 +65,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactor
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        SqlUtil.checkArrayDimensionsKnown(args.getQuick(0).getType(), argPositions.getQuick(0));
         final Function arg = args.getQuick(0);
         if (ColumnType.decodeWeakArrayDimensionality(arg.getType()) != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");

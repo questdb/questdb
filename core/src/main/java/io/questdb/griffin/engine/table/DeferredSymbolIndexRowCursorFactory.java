@@ -70,7 +70,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1);
     }
 
     @Override
@@ -79,10 +79,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
             return EmptyRowCursor.INSTANCE;
         }
         final IndexReader reader = pageFrame.getIndexReader(columnIndex, indexDirection);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
         if (indexDirection == IndexReader.DIR_BACKWARD) {
-            return reader.getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getPartitionLo(), firstRow);
+            return reader.getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getIndexRowLo(), firstRow + indexShift);
         }
-        return shiftedCursor.of(reader.getCursor(TableUtils.toIndexKey(symbolKey), firstRow, pageFrame.getPartitionHi() - 1), firstRow - pageFrame.getPartitionLo());
+        return shiftedCursor.of(reader.getCursor(TableUtils.toIndexKey(symbolKey), firstRow + indexShift, pageFrame.getIndexRowHi() - 1), firstRow - pageFrame.getPartitionLo());
     }
 
     @Override
@@ -93,7 +94,8 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     @Override
     public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
         final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
-        return reader.getRow(TableUtils.toIndexKey(symbolKey), rowLo, rowHi, indexDirection, rowIndex);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.getRow(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, indexDirection, rowIndex) - indexShift;
     }
 
     @Override
@@ -104,7 +106,8 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
             return -1;
         }
-        return reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo, rowHi, maxCount);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, maxCount);
     }
 
     @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
@@ -657,6 +658,39 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testGetPercentileDiscIndexMatchesCumeDist() {
+        // the index of the first value whose cumulative distribution k / n, computed in double
+        // precision as cume_dist() does, reaches the percentile
+        final double[] percentiles = {
+                0, 0.001, 0.01, 0.07, 0.1, 0.14, 0.25, 0.28, 0.29, 0.3, 0.333, 0.5,
+                0.55, 0.56, 0.57, 0.6, 0.667, 0.7, 0.75, 0.9, 0.95, 0.99, 0.999, 1
+        };
+        for (int n = 1; n <= 300; n++) {
+            for (double p : percentiles) {
+                Assert.assertEquals("n=" + n + ", p=" + p, cumeDistIndex(p, n), SqlUtil.getPercentileDiscIndex(p, n));
+            }
+            // every cumulative distribution value and its neighbours
+            for (int k = 0; k <= n; k++) {
+                final double cumeDist = (double) k / n;
+                for (double p : new double[]{Math.nextDown(cumeDist), cumeDist, Math.nextUp(cumeDist)}) {
+                    if (p >= 0 && p <= 1) {
+                        Assert.assertEquals("n=" + n + ", p=" + p, cumeDistIndex(p, n), SqlUtil.getPercentileDiscIndex(p, n));
+                    }
+                }
+            }
+        }
+        // 0.07 * 100 evaluates to 7.000000000000001, yet 7 / 100 == 0.07: the 7th value, index 6
+        Assert.assertEquals(6, SqlUtil.getPercentileDiscIndex(0.07, 100));
+        Assert.assertEquals(54, SqlUtil.getPercentileDiscIndex(0.55, 100));
+        Assert.assertEquals(0, SqlUtil.getPercentileDiscIndex(0, 100));
+        Assert.assertEquals(0, SqlUtil.getPercentileDiscIndex(-0.0, 100));
+        Assert.assertEquals(99, SqlUtil.getPercentileDiscIndex(1, 100));
+        Assert.assertEquals(0, SqlUtil.getPercentileDiscIndex(0.5, 1));
+        Assert.assertEquals(2_999_999_999L, SqlUtil.getPercentileDiscIndex(1, 3_000_000_000L));
+        Assert.assertEquals(209_999_999L, SqlUtil.getPercentileDiscIndex(0.07, 3_000_000_000L));
+    }
+
+    @Test
     public void testImplicitCastCharAsGeoHash() {
         int bits = 5;
         long hash = SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
@@ -763,6 +797,41 @@ public class SqlUtilTest {
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("invalid IPv4 format: hello", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testInterpolatePercentile() {
+        // when hi - lo is finite, the result is lo + (hi - lo) * fraction, bit for bit
+        final double[] values = {-1e300, -12.5, -1, -0.1, 0, 1e-300, 0.1, 1, 7, 42, 1e15, 1e300};
+        final double[] fractions = {0, 1e-9, 0.1, 0.25, 0.3999999999999995, 0.5, 0.75, 0.9999999};
+        for (double lo : values) {
+            for (double hi : values) {
+                if (hi < lo) {
+                    continue;
+                }
+                for (double f : fractions) {
+                    Assert.assertEquals(lo + (hi - lo) * f, SqlUtil.interpolatePercentile(lo, hi, f), 0.0);
+                }
+            }
+        }
+
+        // hi - lo overflows: the result still lies between lo and hi
+        final double max = Double.MAX_VALUE;
+        Assert.assertEquals(0.0, SqlUtil.interpolatePercentile(-max, max, 0.5), 0.0);
+        Assert.assertEquals(-max / 2, SqlUtil.interpolatePercentile(-max, max, 0.25), 0.0);
+        // 0.75 * (hi - lo) rounds, as it does when hi - lo is finite; DuckDB returns the same
+        Assert.assertEquals(Math.nextDown(max / 2), SqlUtil.interpolatePercentile(-max, max, 0.75), 0.0);
+        Assert.assertEquals(-max, SqlUtil.interpolatePercentile(-max, max, 0), 0.0);
+        Assert.assertEquals(max, SqlUtil.interpolatePercentile(-max, max, 1), 0.0);
+        Assert.assertEquals(5e307, SqlUtil.interpolatePercentile(-1e308, 1.5e308, 0.6), 1e292);
+        final Rnd rnd = new Rnd();
+        for (int i = 0; i < 10_000; i++) {
+            final double lo = -max * rnd.nextDouble();
+            final double hi = max * rnd.nextDouble();
+            final double f = rnd.nextDouble();
+            final double result = SqlUtil.interpolatePercentile(lo, hi, f);
+            Assert.assertTrue("lo=" + lo + ", hi=" + hi + ", f=" + f + ", result=" + result, result >= lo && result <= hi);
         }
     }
 
@@ -1347,6 +1416,33 @@ public class SqlUtilTest {
         Assert.assertEquals("in", SqlUtil.toColumnName(SqlUtil.protectColumnAlias(store, "in")));
         Assert.assertEquals("a.b", SqlUtil.toColumnName(SqlUtil.protectColumnAlias(store, "a.b")));
         Assert.assertEquals(".", SqlUtil.toColumnName(SqlUtil.protectColumnAlias(store, ".")));
+    }
+
+    @Test
+    public void testValidatePercentile() {
+        Assert.assertEquals(0.0, SqlUtil.validatePercentile(0, 5), 0.0);
+        Assert.assertEquals(0.07, SqlUtil.validatePercentile(0.07, 5), 0.0);
+        Assert.assertEquals(1.0, SqlUtil.validatePercentile(1, 5), 0.0);
+        // negative zero passes as zero
+        Assert.assertEquals(0.0, SqlUtil.validatePercentile(-0.0, 5), 0.0);
+        for (double p : new double[]{-0.5, -1, -Double.MIN_VALUE, Math.nextUp(1.0), 1.5, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            try {
+                SqlUtil.validatePercentile(p, 5);
+                Assert.fail("percentile " + p + " should be rejected");
+            } catch (CairoException e) {
+                Assert.assertEquals(5, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid percentile [expected=range(0.0, 1.0), actual=");
+            }
+        }
+    }
+
+    private static long cumeDistIndex(double percentile, long n) {
+        for (long k = 1; k < n; k++) {
+            if ((double) k / n >= percentile) {
+                return k - 1;
+            }
+        }
+        return n - 1;
     }
 
     private void testImplicitCastCharAsGeoHashInvalidChar0(char c) {

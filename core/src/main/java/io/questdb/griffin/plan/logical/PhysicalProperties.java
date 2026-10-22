@@ -258,6 +258,7 @@ public final class PhysicalProperties {
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
             case PARALLEL -> direction(input);
             case PARALLEL_STOLEN_FILTER -> stolenFilterDirection(aggregate.getChild(), input);
+            case HASH_JOIN -> ScanDirection.OTHER;
             case VECTORISED, SERIAL -> ScanDirection.FORWARD;
             case null -> ScanDirection.UNKNOWN;
         };
@@ -273,6 +274,7 @@ public final class PhysicalProperties {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
+            case HASH_JOIN -> Capability.NO;
             case VECTORISED -> Capability.YES;
             case PARALLEL, PARALLEL_STOLEN_FILTER ->
                     Capability.of(aggregate.getGroupingExpressions().size() > 0 || aggregate.getSharedConsumerCount() > 0);
@@ -879,6 +881,7 @@ public final class PhysicalProperties {
         return switch (plan) {
             case AggregatePlan aggregate -> {
                 if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY
+                        || aggregate.getAlgorithm() == AggregatePlan.Algorithm.HASH_JOIN
                         || aggregate.getGroupingExpressions().size() == 0) {
                     yield Capability.NO;
                 }

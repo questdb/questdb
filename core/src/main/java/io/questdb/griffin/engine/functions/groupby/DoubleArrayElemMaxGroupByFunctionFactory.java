@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -61,6 +62,7 @@ public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        SqlUtil.checkArrayDimensionsKnown(args.getQuick(0).getType(), argPositions.getQuick(0));
         return new DoubleArrayElemMaxGroupByFunction(args.getQuick(0), configuration);
     }
 

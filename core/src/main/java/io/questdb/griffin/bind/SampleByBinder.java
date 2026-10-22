@@ -32,6 +32,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.FunctionResolver;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -64,6 +65,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -490,6 +492,7 @@ final class SampleByBinder {
     }
 
     private void validateSampleByQuery(QueryModel model, QueryModel source, OutputSchema input, boolean isBucket) throws SqlException {
+        final int timestampIndex = sampleByTimestampIndex(input);
         final ExpressionNode sampleBy = source.getSampleBy();
         if (source.getSampleByFrom() != null || source.getSampleByTo() != null) {
             boolean hasRangeTimestamp = source.getTimestamp() != null || source.getTableNameExpr() != null;
@@ -501,7 +504,7 @@ final class SampleByBinder {
                     }
                 }
             }
-            if (input.getTimestampIndex() < 0 || !hasRangeTimestamp) {
+            if (timestampIndex < 0 || !hasRangeTimestamp) {
                 throw SqlException.$(sampleBy.position, "Sample by requires a designated TIMESTAMP");
             }
         }
@@ -518,13 +521,13 @@ final class SampleByBinder {
             hasAggregate |= ctx.hasAggregate(expression) || isBucket && expression.type == ExpressionNode.FUNCTION
                     && ctx.functionFactoryCache.isGroupBy(expression.token);
         }
-        if (wildcard != null && input.getTimestampIndex() > -1 && !requiresSampleByCursorAlignment(source)) {
+        if (wildcard != null && timestampIndex > -1 && !requiresSampleByCursorAlignment(source)) {
             throw SqlException.$(wildcard.position, "wildcard column select is not allowed in sample-by queries");
         }
         if (!hasAggregate) {
             throw SqlException.$(sampleBy.position, "at least one aggregation function must be present in 'select' clause");
         }
-        if (input.getTimestampIndex() < 0) {
+        if (timestampIndex < 0) {
             throw SqlException.$(source.getModelPosition(), source.getJoinModels().size() > 1
                     ? "TIMESTAMP column is required but not provided"
                     : "base query does not provide designated TIMESTAMP column");
@@ -720,7 +723,7 @@ final class SampleByBinder {
     ) throws SqlException {
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input.getOutput(), false);
-        final int timestampIndex = input.getOutput().getTimestampIndex();
+        final int timestampIndex = sampleByTimestampIndex(input.getOutput());
         final int timestampType = input.getOutput().getColumnType(timestampIndex);
         markTimestampSubqueries(source, timestampType);
 
@@ -760,7 +763,7 @@ final class SampleByBinder {
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input, true);
         final ExpressionNode from = source.getSampleByFrom();
-        final int timestampType = input.getColumnType(input.getTimestampIndex());
+        final int timestampType = input.getColumnType(sampleByTimestampIndex(input));
         markTimestampSubqueries(source, timestampType);
         bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
         bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
@@ -847,7 +850,7 @@ final class SampleByBinder {
             return input;
         }
         final ExpressionNode timezone = sampleByTimezone(source);
-        final int timestampType = input.getOutput().getColumnType(input.getOutput().getTimestampIndex());
+        final int timestampType = input.getOutput().getColumnType(sampleByTimestampIndex(input.getOutput()));
         final BoundExpression predicate;
         if (timezone == null) {
             final ExpressionNode lo = from == null ? null : sampleByComparison(input.getOutput(), ">=", from);
@@ -862,6 +865,15 @@ final class SampleByBinder {
             predicate = lo == null ? hi : ctx.expressionRewriter.combineConjunction(lo, hi, hi.getPosition());
         }
         return ctx.planNodes.filters.next().of(input, predicate, predicate.getPosition());
+    }
+
+    void bindSampleByTimestamp(LogicalPlan input, boolean isBucket) {
+        int timestampId = input.getOutput().getTimestampColumnId();
+        if (timestampId < 0 && isBucket && LogicalPlans.skipRenames(input) instanceof JoinPlan join) {
+            // Bucketing can group a null-extended master timestamp without promising ordered join output.
+            timestampId = join.getInputs().getQuick(0).getSourceOutput().getTimestampColumnId();
+        }
+        ctx.scope().sampleByTimestampColumnId = timestampId;
     }
 
     LogicalPlan bindSubsample(
@@ -989,7 +1001,7 @@ final class SampleByBinder {
             return false;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            return ctx.bindColumnIndex(expression, input, source) == input.getTimestampIndex();
+            return ctx.bindColumnIndex(expression, input, source) == sampleByTimestampIndex(input);
         }
         if (expression.paramCount < 3) {
             return referencesSampleByTimestamp(expression.lhs, input, source) || referencesSampleByTimestamp(expression.rhs, input, source);
@@ -1003,7 +1015,7 @@ final class SampleByBinder {
     }
 
     ExpressionNode sampleByTimestamp(OutputSchema input, int position) {
-        final int index = input.getTimestampIndex();
+        final int index = sampleByTimestampIndex(input);
         final CharSequence qualifier = input.getColumnQualifier(index);
         CharSequence name = input.getColumnName(index);
         if (qualifier != null) {
@@ -1012,6 +1024,10 @@ final class SampleByBinder {
             name = token.toImmutable();
         }
         return ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, name, 0, position);
+    }
+
+    int sampleByTimestampIndex(OutputSchema input) {
+        return input.getColumnIndexById(ctx.scope().sampleByTimestampColumnId);
     }
 
     SqlException subsampleTimestampMissing(QueryModel source, LogicalPlan sourcePlan) {

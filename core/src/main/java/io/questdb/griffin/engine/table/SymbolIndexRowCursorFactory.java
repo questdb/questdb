@@ -57,16 +57,17 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(symbolKey, pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1);
     }
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
         final IndexReader reader = pageFrame.getIndexReader(columnIndex, indexDirection);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
         if (indexDirection == IndexReader.DIR_BACKWARD) {
-            return reader.getCursor(symbolKey, pageFrame.getPartitionLo(), firstRow);
+            return reader.getCursor(symbolKey, pageFrame.getIndexRowLo(), firstRow + indexShift);
         }
-        return shiftedCursor.of(reader.getCursor(symbolKey, firstRow, pageFrame.getPartitionHi() - 1), firstRow - pageFrame.getPartitionLo());
+        return shiftedCursor.of(reader.getCursor(symbolKey, firstRow + indexShift, pageFrame.getIndexRowHi() - 1), firstRow - pageFrame.getPartitionLo());
     }
 
     @Override
@@ -77,7 +78,8 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     @Override
     public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
         final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
-        return reader.getRow(symbolKey, rowLo, rowHi, indexDirection, rowIndex);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.getRow(symbolKey, rowLo + indexShift, rowHi + indexShift, indexDirection, rowIndex) - indexShift;
     }
 
     @Override
@@ -85,7 +87,8 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
         if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
             return -1;
         }
-        return reader.countRows(symbolKey, rowLo, rowHi, maxCount);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.countRows(symbolKey, rowLo + indexShift, rowHi + indexShift, maxCount);
     }
 
     public int getSymbolKey() {

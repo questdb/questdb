@@ -341,6 +341,22 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindNullPercentiles() throws Exception {
+        // a NULL percentile list fails like a NULL percentile does, rather than yielding {}
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE IF NOT EXISTS t AS (SELECT x::DOUBLE x FROM long_sequence(10))");
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT percentile_disc(x, ?) p FROM t")) {
+                stmt.setNull(1, Types.ARRAY, "_float8");
+                try (ResultSet ignore = stmt.executeQuery()) {
+                    fail("expected 'percentile array must not be NULL'");
+                }
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "percentile array must not be NULL");
+            }
+        });
+    }
+
+    @Test
     public void testArrayBindVarEdgeCases() throws Exception {
         // we want bind vars, hence extended mode
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -469,7 +485,6 @@ public class PGArraysTest extends BasePGTest {
                     lastArray = element;
                 }
                 java.lang.reflect.Array.set(lastArray, 0, 1.0);
-
 
                 PGConnection pgConnection = connection.unwrap(PGConnection.class);
                 statement.setArray(1, pgConnection.createArrayOf("float8", arr));
@@ -1253,4 +1268,5 @@ public class PGArraysTest extends BasePGTest {
         }
         b.append("}");
     }
+
 }

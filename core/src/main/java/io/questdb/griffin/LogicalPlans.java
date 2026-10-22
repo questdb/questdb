@@ -94,14 +94,13 @@ public final class LogicalPlans {
 
     /**
      * Whether a filter of the columns of the join step at {@code position} alone can evaluate on its input before the
-     * step at {@code lastPosition}: the step is not the outer or temporal side of its join, and no RIGHT or FULL join
-     * up to that step joins after it.
+     * step at {@code lastPosition}: neither its join nor a later join up to that position NULL-extends its columns.
      */
     public static boolean canPushJoinFilter(ObjList<JoinInput> steps, int position, int lastPosition) {
         if (position < 0 || position > lastPosition || steps.getQuick(position).getInput() == null) {
             return false;
         }
-        if (position > 0 && steps.getQuick(position).getJoinType().isNulling()) {
+        if (position > 0 && steps.getQuick(position).getJoinType().isSlaveNulling()) {
             return false;
         }
         for (int i = position + 1; i <= lastPosition; i++) {

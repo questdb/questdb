@@ -44,6 +44,7 @@ final class OverloadResolver {
      * The argument is a constant STRING longer than one character.
      */
     static final int ARG_MULTI_CHAR = 4;
+    static final int ARG_UNTYPED_EMPTY_ARRAY = 8;
     private static final int MATCH_EXACT_MATCH = 3;
     private static final int MATCH_FUZZY_MATCH = 1;
     // order of values matters here, partial match must have greater value than fuzzy match
@@ -149,7 +150,8 @@ final class OverloadResolver {
                         continue;
                     }
                     if (argIsArray) { // given the above checks, implies that sigIsArray is also true
-                        if (sigArgTypeTag == ColumnType.decodeArrayElementType(argType)) {
+                        if (sigArgTypeTag == ColumnType.decodeArrayElementType(argType)
+                                || (sigArgTypeTag == ColumnType.DOUBLE && (argTraitBits & ARG_UNTYPED_EMPTY_ARRAY) != 0)) {
                             match = mergeWithExactMatch(match);
                             continue;
                         }

@@ -288,7 +288,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         if (offset == NO_ENTRY_VALUE) {
             return null;
         }
-        int len = Unsafe.getUnsafe().getInt(bufPtr + offset);
+        int len = Unsafe.getInt(bufPtr + offset);
         if (len < 0) {
             return null;
         }
@@ -299,7 +299,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         if (value == null) {
             ensureCapacity(bufSize + Integer.BYTES);
             long offset = bufSize;
-            Unsafe.getUnsafe().putInt(bufPtr + offset, -1);
+            Unsafe.putInt(bufPtr + offset, -1);
             bufSize += Integer.BYTES;
             return offset;
         }
@@ -308,7 +308,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         ensureCapacity(bufSize + required);
         long offset = bufSize;
         long base = bufPtr + offset;
-        Unsafe.getUnsafe().putInt(base, len);
+        Unsafe.putInt(base, len);
         long charsBase = base + Integer.BYTES;
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putChar(charsBase + ((long) i << 1), value.charAt(i));
@@ -337,7 +337,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             if (key != NO_ENTRY_KEY) {
                 final int offset = keyToOffset.get(key);
                 // Null symbols have no string key and are deliberately absent.
-                if (Unsafe.getUnsafe().getInt(bufPtr + offset) >= 0) {
+                if (Unsafe.getInt(bufPtr + offset) >= 0) {
                     explicitValueToKey.insertExplicit(offset, key);
                 }
             }
@@ -432,8 +432,8 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
          */
         public void insertAt(long idx, int offsetInBuf, int symbolKey) {
             long p = slotsPtr + (idx << 3);
-            Unsafe.getUnsafe().putInt(p, offsetInBuf);
-            Unsafe.getUnsafe().putInt(p + 4, symbolKey);
+            Unsafe.putInt(p, offsetInBuf);
+            Unsafe.putInt(p + 4, symbolKey);
             if (--free == 0) {
                 try {
                     rehash();
@@ -454,7 +454,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
          */
         public void insertExplicit(int offsetInBuf, int symbolKey) {
             long index = hashBytes(offsetInBuf) & mask;
-            while (Unsafe.getUnsafe().getInt(slotsPtr + (index << 3)) != EMPTY_OFFSET) {
+            while (Unsafe.getInt(slotsPtr + (index << 3)) != EMPTY_OFFSET) {
                 index = (index + 1) & mask;
             }
             insertAt(index, offsetInBuf, symbolKey);
@@ -468,11 +468,11 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             long index = Chars.hashCode(value) & mask;
             while (true) {
                 final long p = slotsPtr + (index << 3);
-                final int slotOffset = Unsafe.getUnsafe().getInt(p);
+                final int slotOffset = Unsafe.getInt(p);
                 if (slotOffset == EMPTY_OFFSET) {
                     return -1;
                 }
-                final int symbolKey = Unsafe.getUnsafe().getInt(p + 4);
+                final int symbolKey = Unsafe.getInt(p + 4);
                 if (symbolKey >= loInclusive && symbolKey < hiExclusive && matches(slotOffset, value)) {
                     return symbolKey;
                 }
@@ -489,7 +489,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             long index = Chars.hashCode(value) & mask;
             while (true) {
                 long p = slotsPtr + (index << 3);
-                int slotOffset = Unsafe.getUnsafe().getInt(p);
+                int slotOffset = Unsafe.getInt(p);
                 if (slotOffset == EMPTY_OFFSET) {
                     return index;
                 }
@@ -515,12 +515,12 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
          * {@code idx} from {@link #keyIndex}.
          */
         public int valueAt(long idx) {
-            return Unsafe.getUnsafe().getInt(slotsPtr + ((-idx - 1) << 3) + 4);
+            return Unsafe.getInt(slotsPtr + ((-idx - 1) << 3) + 4);
         }
 
         private int hashBytes(int offsetInBuf) {
             long addr = bufPtr + offsetInBuf;
-            int len = Unsafe.getUnsafe().getInt(addr);
+            int len = Unsafe.getInt(addr);
             // Null entries (len == -1) should never be reverse-indexed; intern()
             // rejects null and the WAL put() paths do not touch valueToKey. Guard
             // anyway to keep the fallback behavior explicit.
@@ -537,7 +537,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
 
         private boolean matches(int slotOffset, CharSequence value) {
             long addr = bufPtr + slotOffset;
-            int storedLen = Unsafe.getUnsafe().getInt(addr);
+            int storedLen = Unsafe.getInt(addr);
             int valueLen = value.length();
             if (storedLen != valueLen) {
                 return false;
@@ -564,18 +564,18 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
 
             for (int i = 0; i < oldCapacity; i++) {
                 long src = oldSlotsPtr + ((long) i << 3);
-                int slotOffset = Unsafe.getUnsafe().getInt(src);
+                int slotOffset = Unsafe.getInt(src);
                 if (slotOffset == EMPTY_OFFSET) {
                     continue;
                 }
-                int symbolKey = Unsafe.getUnsafe().getInt(src + 4);
+                int symbolKey = Unsafe.getInt(src + 4);
                 long index = hashBytes(slotOffset) & newMask;
-                while (Unsafe.getUnsafe().getInt(newSlotsPtr + (index << 3)) != EMPTY_OFFSET) {
+                while (Unsafe.getInt(newSlotsPtr + (index << 3)) != EMPTY_OFFSET) {
                     index = (index + 1) & newMask;
                 }
                 long dst = newSlotsPtr + (index << 3);
-                Unsafe.getUnsafe().putInt(dst, slotOffset);
-                Unsafe.getUnsafe().putInt(dst + 4, symbolKey);
+                Unsafe.putInt(dst, slotOffset);
+                Unsafe.putInt(dst + 4, symbolKey);
             }
 
             Unsafe.free(oldSlotsPtr, (long) SLOT_BYTES * oldCapacity, memoryTagLocal);

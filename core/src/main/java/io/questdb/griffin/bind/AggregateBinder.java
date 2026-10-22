@@ -781,7 +781,7 @@ final class AggregateBinder implements Mutable {
                 final ExpressionNode timestamp = timestampIndex < 0 ? sampleByBinder.sampleByTimestamp(input, source.getSampleBy().position)
                         : scope.aggregateSelectExpressions.getQuick(timestampIndex);
                 final CharSequence name = timestampIndex < 0
-                        ? SqlUtil.createColumnAlias(ctx.characterStore, input.getColumnName(input.getTimestampIndex()), -1,
+                        ? SqlUtil.createColumnAlias(ctx.characterStore, input.getColumnName(sampleByBinder.sampleByTimestampIndex(input)), -1,
                         model.getAliasToColumnMap(), scope.aliasSequences, false)
                         : model.getBottomUpColumns().getQuick(timestampIndex).getName();
                 scope.groupingNodes.add(timestamp);
@@ -1036,7 +1036,7 @@ final class AggregateBinder implements Mutable {
      */
     private boolean isDistinctGroupingSelected(QueryModel model, QueryModel source, OutputSchema input) throws SqlException {
         if (source.getSampleBy() != null) {
-            final int timestampIndex = input.getTimestampIndex();
+            final int timestampIndex = sampleByBinder.sampleByTimestampIndex(input);
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n && timestampIndex >= 0; i++) {
                 final ExpressionNode column = model.getBottomUpColumns().getQuick(i).getAst();
                 if (column.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(column, input, sourceAlias(source)) == timestampIndex) {
@@ -1338,7 +1338,7 @@ final class AggregateBinder implements Mutable {
     private int sampleByTimestampAliasIndex(QueryModel source, GroupingPlan aggregate, ProjectPlan project, int visibleCount) throws SqlException {
         final BindScope scope = ctx.scope();
         final OutputSchema input = aggregate.getChild().getOutput();
-        final int inputTimestampIndex = input.getTimestampIndex();
+        final int inputTimestampIndex = sampleByBinder.sampleByTimestampIndex(input);
         if (inputTimestampIndex < 0) {
             return -1;
         }

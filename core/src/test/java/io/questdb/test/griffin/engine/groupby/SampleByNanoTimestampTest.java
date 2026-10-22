@@ -147,6 +147,35 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketRenameKeepsConcatKeyNano() throws Exception {
+        // Nanosecond variant of the chained alias rename: avg(val) claims avg, the bucket
+        // is renamed avg1 and the concat key avg1 is renamed avg11. The fill must key on
+        // the bucket and print the TIMESTAMP_NS grid with nine fractional digits.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (k SYMBOL, val DOUBLE, ets TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('a', 1.0, '2024-01-01T05:00:00.000000000Z', '2024-01-01T00:00:00.000000000Z'),
+                        ('b', 2.0, '2024-01-01T04:00:00.000000000Z', '2024-01-01T01:15:00.000000000Z'),
+                        ('a', 3.0, '2024-01-01T03:00:00.000000000Z', '2024-01-01T03:00:00.000000000Z'),
+                        ('b', 4.0, '2024-01-01T02:00:00.000000000Z', '2024-01-01T03:30:00.000000000Z')""");
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM tn SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000000Z\tax
+                            4.0\t2024-01-01T01:00:00.000000000Z\tbx
+                            6.0\t2024-01-01T03:00:00.000000000Z\tax
+                            8.0\t2024-01-01T03:00:00.000000000Z\tbx
+                            null\t2024-01-01T00:00:00.000000000Z\tbx
+                            null\t2024-01-01T01:00:00.000000000Z\tax
+                            null\t2024-01-01T02:00:00.000000000Z\tax
+                            null\t2024-01-01T02:00:00.000000000Z\tbx
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevConsistency() throws Exception {
         execute("create table telem (created timestamp_ns, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 

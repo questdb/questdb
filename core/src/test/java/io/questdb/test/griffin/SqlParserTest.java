@@ -1102,13 +1102,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (ty.a=1 or ty.b=2)
-                                    Hash Right Outer Join Light
-                                      condition: yid=xid
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: yid=xid
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: (a=1 or b=2)
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
@@ -2503,19 +2504,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select c.customerId, count() from customers c left join orders o on c.customerId = o.customerId  where o.customerId = NaN")
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
+                            Async Hash Join Group By workers: 1
+                              logicalJoinType: left outer
+                              physicalJoinType: left outer
+                              inputSwapped: false
+                              condition: c.customerId=o.customerId
+                              buildStrategy: shared
+                              buildPayload: copied when the probe is large enough
                               keys: [customerId]
                               values: [count(*)]
-                                Filter filter: o.customerId=null
-                                    Hash Left Outer Join Light
-                                      condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: orders
+                              postJoinFilter: o.customerId=null
+                                Probe
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: customers
+                                Build
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: orders
                             """);
             assertColumnNames("select c.customerId, count() from customers c left join orders o on c.customerId = o.customerId  where o.customerId = NaN", "customerId", "count");
             assertQuery("select c.customerId, count() from customers c right join orders o on c.customerId = o.customerId  where o.customerId = NaN")
@@ -2524,13 +2530,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [customerId]
                               values: [count(*)]
-                                Filter filter: o.customerId=null
-                                    Hash Right Outer Join Light
-                                      condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: o.customerId=c.customerId
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: customers
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=null
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: orders
@@ -7338,7 +7345,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             Encode sort
                               keys: [customerId]
                                 SelectedRecord
-                                    Filter filter: (o.orderId=null and 400<c.customerId and c.customerId<1200 and 1<c.count)
+                                    Filter filter: (400<c.customerId and c.customerId<1200 and 1<c.count)
                                         Hash Right Outer Join Light
                                           condition: o.customerId=c.customerId
                                             Async Group By workers: 1
@@ -7349,9 +7356,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                     Row forward scan
                                                     Frame forward scan on: customers
                                             Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
+                                                Async JIT Filter workers: 1
+                                                  filter: orderId=null
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: orders
                             """)
                     .returns("customerId\tcustomerName\tcount\torderId\tcustomerId1\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "full"))
@@ -8746,20 +8755,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                GroupBy vectorized: false
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: c.customerId=o.customerId
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Hash Join Light
-                                      condition: o.customerId=c.customerId
+                                  buildJitFilter: customerId=null
+                                    Probe
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: customers
-                                        Hash
-                                            Async JIT Filter workers: 1
-                                              filter: customerId=null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
                             """)
                     .returns("customerId\tkk\tcount\n");
         });
@@ -10233,14 +10246,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Filter filter: 20<b.m
-                                    Hash Right Outer Join Light
-                                      condition: b.id=a.id
-                                      filter: b.c=2
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: b.id=a.id
+                                  filter: b.c=2
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: 20<m
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: b
@@ -10318,14 +10332,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Filter filter: 20<b.m
-                                    Hash Right Outer Join Light
-                                      condition: b.id=a.id
-                                      filter: (b.c=2 or b.c=10)
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: b.id=a.id
+                                  filter: (b.c=2 or b.c=10)
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: 20<m
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: b
@@ -10381,14 +10396,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Filter filter: 20<b.m
-                                    Hash Right Outer Join Light
-                                      condition: b.id=a.id
-                                      filter: 0<b.c
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: b.id=a.id
+                                  filter: 0<b.c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: 20<m
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: b
@@ -11333,21 +11349,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 SelectedRecord
-                                    Filter filter: ord.customerId!=null
-                                        Hash Right Outer Join Light
-                                          condition: ord.customerId=cust.customerId
-                                            Async Filter workers: 1
-                                              filter: name ~ X
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: customers
-                                            Hash
-                                                SelectedRecord
-                                                    Async JIT Filter workers: 1
-                                                      filter: 100<amount
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: orders
+                                    Hash Right Outer Join Light
+                                      condition: ord.customerId=cust.customerId
+                                        Async Filter workers: 1
+                                          filter: name ~ X
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
+                                        Hash
+                                            SelectedRecord
+                                                Async JIT Filter workers: 1
+                                                  filter: (100<amount and customerId!=null)
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: orders
                             """)
                     .returns("customerId\tname\tcustomerId1\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "full"))
@@ -11416,21 +11431,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 SelectedRecord
-                                    Filter filter: o.customerId!=null
-                                        Hash Right Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            Async Filter workers: 1
-                                              filter: name ~ X
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: customers
-                                            Hash
-                                                SelectedRecord
-                                                    Async JIT Filter workers: 1
-                                                      filter: 100<amount
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: orders
+                                    Hash Right Outer Join Light
+                                      condition: o.customerId=c.customerId
+                                        Async Filter workers: 1
+                                          filter: name ~ X
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
+                                        Hash
+                                            SelectedRecord
+                                                Async JIT Filter workers: 1
+                                                  filter: (100<amount and customerId!=null)
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: orders
                             """)
                     .returns("customerId\tname\tcustomerId1\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "full"))
@@ -14123,19 +14137,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                GroupBy vectorized: false
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: left outer
+                                  physicalJoinType: left outer
+                                  inputSwapped: false
+                                  condition: c.customerId=o.customerId
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Filter filter: o.customerId=null
-                                        Hash Left Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
+                                  postJoinFilter: o.customerId=null
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: customers
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
                             """)
                     .returns("customerId\tkk\tcount\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "right"))
@@ -14145,13 +14164,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Filter filter: o.customerId=null
-                                        Hash Right Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
-                                            Hash
+                                    Hash Right Outer Join Light
+                                      condition: o.customerId=c.customerId
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: customers
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=null
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: orders
@@ -14193,19 +14213,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                GroupBy vectorized: false
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: left outer
+                                  physicalJoinType: left outer
+                                  inputSwapped: false
+                                  condition: c.customerId=o.customerId
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Filter filter: o.customerId=10
-                                        Hash Left Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
+                                  postJoinFilter: o.customerId=10
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: customers
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
                             """)
                     .returns("customerId\tkk\tcount\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "right"))
@@ -14215,13 +14240,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Filter filter: o.customerId=10
-                                        Hash Right Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
-                                            Hash
+                                    Hash Right Outer Join Light
+                                      condition: o.customerId=c.customerId
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: customers
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=10
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: orders
@@ -14261,19 +14287,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                GroupBy vectorized: false
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: left outer
+                                  physicalJoinType: left outer
+                                  inputSwapped: false
+                                  condition: c.customerId=o.customerId
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Filter filter: o.customerId=null
-                                        Hash Left Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
+                                  postJoinFilter: o.customerId=null
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: customers
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
                             """)
                     .returns("customerId\tkk\tcount\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "right"))
@@ -14283,13 +14314,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [customerId,kk]
                                   values: [count(*)]
-                                    Filter filter: o.customerId=null
-                                        Hash Right Outer Join Light
-                                          condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
-                                            Hash
+                                    Hash Right Outer Join Light
+                                      condition: o.customerId=c.customerId
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: customers
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=null
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: orders
@@ -14348,13 +14380,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Filter filter: 0<r.y
-                                    Hash Right Outer Join Light
-                                      condition: r.y=l.x
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: l
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: r.y=l.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: l
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: 0<y
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: r
@@ -14411,13 +14444,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Filter filter: (0<r.y or 10<r.y)
-                                    Hash Right Outer Join Light
-                                      condition: r.y=l.x
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: l
-                                        Hash
+                                Hash Right Outer Join Light
+                                  condition: r.y=l.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: l
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: (0<y or 10<y)
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: r
@@ -14534,12 +14568,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [Schema, Name]
                                 VirtualRecord
                                   functions: [n.nspname,c.relname,case(['table','view','materialized view','index','sequence','special','foreign table','table','index',null,c.relkind]),'public']
-                                    Filter filter: (c.relkind in [114,112,118,109,83,102,0] and n.nspname!='pg_catalog' and n.nspname!='information_schema' and n.nspname !~ ^pg_toast)
+                                    Filter filter: c.relkind in [114,112,118,109,83,102,0]
                                         Hash Right Outer Join
                                           condition: n.oid=c.relnamespace
                                             pg_class
                                             Hash
-                                                GenericRecord
+                                                Filter filter: (nspname!='pg_catalog' and nspname!='information_schema' and nspname !~ ^pg_toast)
+                                                    GenericRecord
                             """)
                     .returns("""
                             Schema\tName\tType\tOwner
@@ -17666,12 +17701,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                   keys: [Schema, Name]
                                     VirtualRecord
                                       functions: [n.nspname,c.relname]
-                                        Filter filter: (c.relkind in [114,112,118,109,83,102,0] and n.nspname!='pg_catalog' and n.nspname!='information_schema' and n.nspname !~ ^pg_toast)
+                                        Filter filter: c.relkind in [114,112,118,109,83,102,0]
                                             Hash Right Outer Join
                                               condition: n.oid=c.relnamespace
                                                 pg_class
                                                 Hash
-                                                    GenericRecord
+                                                    Filter filter: (nspname!='pg_catalog' and nspname!='information_schema' and nspname !~ ^pg_toast)
+                                                        GenericRecord
                             """);
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "full"))
                     .noLeakCheck()
@@ -22535,8 +22571,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     // query that carries a master-side predicate therefore optimises to a different model
     // for LEFT than for RIGHT/FULL, so the two are asserted separately.
     private void assertQueryWithOuterJoinType(String expectedLeft, String expectedRightFull, String query, TableModel... tableModels) throws SqlException {
+        assertQueryWithOuterJoinType(expectedLeft, expectedRightFull, expectedRightFull, query, tableModels);
+    }
+
+    // RIGHT OUTER keeps every slave (right) row, so a slave-side WHERE predicate pushes down
+    // into the slave sub-query, while LEFT and FULL OUTER NULL-extend the slave and keep it a
+    // post-join filter. A query that carries a slave-side predicate therefore optimises to a
+    // different model for RIGHT than for LEFT/FULL, and one that carries predicates on both
+    // sides to three different models.
+    private void assertQueryWithOuterJoinType(String expectedLeft, String expectedRight, String expectedFull, String query, TableModel... tableModels) throws SqlException {
         for (String outerJoinType : outerJoinTypes) {
-            final String expected = "left".equals(outerJoinType) ? expectedLeft : expectedRightFull;
+            final String expected = switch (outerJoinType) {
+                case "left" -> expectedLeft;
+                case "right" -> expectedRight;
+                default -> expectedFull;
+            };
             assertQuery(
                     expected.replaceAll("#OUTER_JOIN_TYPE", outerJoinType),
                     query.replaceAll("#OUTER_JOIN_TYPE", outerJoinType),

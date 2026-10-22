@@ -30,6 +30,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -602,6 +603,18 @@ final class OperatorPlanning implements Mutable {
                 case PARALLEL_STOLEN_FILTER -> AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER;
             });
             return;
+        }
+        if (context.getExecutionContext().isParallelHashJoinGroupByEnabled()
+                && (factory == PlanToFactoryRules.AggregateFactory.GROUP_BY || factory == PlanToFactoryRules.AggregateFactory.COUNT)) {
+            final HashJoinGroupByCandidate candidate = HashJoinGroupByCandidate.analyse(aggregate, context.getInstantiator(), context.getExecutionContext());
+            if (candidate != null) {
+                if (candidate.getLogicalJoinType() == JoinKind.INNER && !candidate.getKeys().hasTranslatedSymbol()) {
+                    candidate.setAlternate(HashJoinGroupByCandidate.analyse(aggregate, context.getInstantiator(), context.getExecutionContext(), true));
+                }
+                aggregate.setHashJoinGroupBy(candidate);
+                aggregate.setAlgorithm(AggregatePlan.Algorithm.HASH_JOIN);
+                return;
+            }
         }
         if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
             return;

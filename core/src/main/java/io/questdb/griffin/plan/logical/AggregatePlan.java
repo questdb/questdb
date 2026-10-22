@@ -25,6 +25,7 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.std.IntList;
+import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.std.ObjectFactory;
 
 /**
@@ -35,6 +36,7 @@ public final class AggregatePlan extends GroupingPlan {
     private final IntList sharedInputIds = new IntList();
     private final IntList sharedSourceIds = new IntList();
     private Algorithm algorithm;
+    private HashJoinGroupByCandidate hashJoinGroupBy;
     private int sharedConsumerCount;
     private LogicalPlan sharedHead;
     private SetOperationPlan sharedOperation;
@@ -47,6 +49,7 @@ public final class AggregatePlan extends GroupingPlan {
         sharedInputIds.clear();
         sharedSourceIds.clear();
         algorithm = null;
+        hashJoinGroupBy = null;
         sharedConsumerCount = 0;
         sharedHead = null;
         sharedOperation = null;
@@ -60,6 +63,14 @@ public final class AggregatePlan extends GroupingPlan {
      */
     public Algorithm getAlgorithm() {
         return algorithm;
+    }
+
+    public HashJoinGroupByCandidate getHashJoinGroupBy() {
+        return hashJoinGroupBy;
+    }
+
+    public void setHashJoinGroupBy(HashJoinGroupByCandidate hashJoinGroupBy) {
+        this.hashJoinGroupBy = hashJoinGroupBy;
     }
 
     /**
@@ -152,7 +163,7 @@ public final class AggregatePlan extends GroupingPlan {
      * planning never picks over a table whose parquet partitions store a column under a converted type.
      */
     public enum Algorithm {
-        PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL, VECTORISED
+        HASH_JOIN, PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL, VECTORISED
     }
 
     /**

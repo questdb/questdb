@@ -53,6 +53,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
         }
     }
 
+    public static void checkPercentileArray(@NotNull Function percentileFunc, int percentilePos) throws SqlException {
+        checkPercentile(percentileFunc, percentilePos);
+        // a bind variable may carry weak dimensionality; SqlUtil.getPercentileCount() checks it at runtime
+        if (ColumnType.decodeWeakArrayDimensionality(percentileFunc.getType()) > 1) {
+            throw SqlException.$(percentilePos, "array is not one-dimensional");
+        }
+    }
+
     @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.DOUBLE;

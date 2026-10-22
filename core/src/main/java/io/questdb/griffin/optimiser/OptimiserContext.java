@@ -101,6 +101,10 @@ final class OptimiserContext implements Mutable {
         return executionContext;
     }
 
+    FunctionInstantiator getInstantiator() {
+        return instantiator;
+    }
+
     TableFunctionSources getFunctionSources() {
         return functionSources;
     }

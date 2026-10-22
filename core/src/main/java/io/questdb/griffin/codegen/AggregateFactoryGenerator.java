@@ -111,6 +111,7 @@ final class AggregateFactoryGenerator {
     private final FunctionInstantiator functionInstantiator;
     private final ObjList<JoinKeyLayout> horizonKeys = new ObjList<>();
     private final IntList masterSymbolColumns;
+    private final HashJoinGroupByFactoryGenerator hashJoinGroupByGenerator;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
     private final IntList slaveSymbolColumns;
     private final IntList symbolKeyFlags;
@@ -128,6 +129,7 @@ final class AggregateFactoryGenerator {
             PageFrameReduceTaskFactory reduceTaskFactory
     ) {
         this.codeGenerator = codeGenerator;
+        this.hashJoinGroupByGenerator = new HashJoinGroupByFactoryGenerator(configuration, codeGenerator, filterGenerator, functionInstantiator, asm);
         this.filterGenerator = filterGenerator;
         this.functionInstantiator = functionInstantiator;
         this.configuration = configuration;
@@ -638,6 +640,9 @@ final class AggregateFactoryGenerator {
     }
 
     RecordCursorFactory generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext) throws SqlException {
+        if (aggregate.getAlgorithm() == AggregatePlan.Algorithm.HASH_JOIN) {
+            return hashJoinGroupByGenerator.generate(frame, aggregate.getHashJoinGroupBy(), executionContext);
+        }
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
             return generateHorizonJoin(frame, aggregate, (HorizonJoinPlan) aggregate.getChild(), executionContext);

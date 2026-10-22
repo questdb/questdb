@@ -467,9 +467,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -1088,7 +1088,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     for (int i = 0; i < columnCount; i++) {
                         var funcArg = groupByFuncArgs.getQuick(i);
                         if (funcArg != null) {
-                            long ptr = slaveColumnSinkPtrs.get(i);
+                            long ptr = slaveColumnSinkPtrs.getQuick(i);
                             columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                             slaveColumnSinkPtrs.set(i, columnSink.ptr());
                         }
@@ -1123,15 +1123,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         final int mapIndex = mapIndexes.getQuick(i);
-                        final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                        final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                         if (ptr != 0) {
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                             groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
@@ -1213,7 +1213,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     for (int i = 0; i < columnCount; i++) {
                         var funcArg = groupByFuncArgs.getQuick(i);
                         if (funcArg != null) {
-                            long ptr = slaveColumnSinkPtrs.get(i);
+                            long ptr = slaveColumnSinkPtrs.getQuick(i);
                             columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                             slaveColumnSinkPtrs.set(i, columnSink.ptr());
                         }
@@ -1248,15 +1248,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 if (slaveTimestamps.size() > 0) {
                     IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                            final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
@@ -1359,9 +1359,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -1475,9 +1475,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 boolean needToFindPrevailing = true;
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -1711,9 +1711,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                     if (slaveTimestamps.size() > 0) {
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
@@ -2464,7 +2464,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         for (int i = 0; i < columnCount; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
-                                long ptr = slaveColumnSinkPtrs.get(i);
+                                long ptr = slaveColumnSinkPtrs.getQuick(i);
                                 columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                 slaveColumnSinkPtrs.set(i, columnSink.ptr());
                             }
@@ -2501,15 +2501,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     if (slaveTimestamps.size() > 0) {
                         // Use binary search to find the range of slave rows for this master row
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                            final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
@@ -2623,7 +2623,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         for (int i = 0; i < columnCount; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
-                                long ptr = slaveColumnSinkPtrs.get(i);
+                                long ptr = slaveColumnSinkPtrs.getQuick(i);
                                 columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                 slaveColumnSinkPtrs.set(i, columnSink.ptr());
                             }
@@ -2659,15 +2659,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     if (slaveTimestamps.size() > 0) {
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
                             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                                 final int mapIndex = mapIndexes.getQuick(i);
-                                final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                                final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                                 if (ptr != 0) {
                                     final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                     groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
@@ -2807,9 +2807,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                     if (slaveTimestamps.size() > 0) {
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
@@ -2959,9 +2959,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     boolean needToFindPrevailing = true;
                     if (slaveTimestamps.size() > 0) {
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {

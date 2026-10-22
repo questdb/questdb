@@ -253,6 +253,7 @@ final class PhysicalChoiceVerifier {
             return isPlanned && hasChoice ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final boolean isValid = hasChoice && switch (algorithm) {
+            case HASH_JOIN -> !isHorizon && aggregate.getHashJoinGroupBy() != null;
             case VECTORISED -> !isHorizon && PlanToFactoryRules.hasVectorShape(aggregate);
             case PARALLEL, PARALLEL_STOLEN_FILTER -> isParallelAggregate(aggregate, algorithm, isHorizon, isPlanned);
             case SERIAL -> true;

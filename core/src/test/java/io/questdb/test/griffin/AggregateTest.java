@@ -965,7 +965,6 @@ public class AggregateTest extends AbstractCairoTest {
                     s3\tnull
                     """;
 
-
             assertQuery("select s1, nsum(val) from tab order by s1")
                     .noLeakCheck()
                     .expectSize()

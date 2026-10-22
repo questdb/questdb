@@ -68,6 +68,9 @@ public final class PlanToFactoryRules {
      * The factory the generator builds for the aggregate.
      */
     public static AggregateFactory aggregateFactory(AggregatePlan aggregate) {
+        if (aggregate.getHashJoinGroupBy() != null) {
+            return AggregateFactory.GROUP_BY;
+        }
         if (postingDistinctScan(aggregate) != null) {
             return AggregateFactory.POSTING_DISTINCT;
         }

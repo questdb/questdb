@@ -458,6 +458,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getIndexRowHi() {
+            return baseFrame.getIndexRowHi();
+        }
+
+        @Override
+        public long getIndexRowLo() {
+            return baseFrame.getIndexRowLo();
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             return baseFrame.getPageAddress(columnCrossIndex.getQuick(columnIndex));
         }
@@ -500,6 +510,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
+        }
+
+        @Override
+        public boolean isSkipSkeleton() {
+            return baseFrame.isSkipSkeleton();
         }
 
         public SelectedPageFrame of(PageFrame basePageFrame) {
@@ -691,6 +706,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return baseCursor.getIndexReaderForCurrentFrame(columnCrossIndex.getQuick(columnIndex), direction);
+        }
+
+        @Override
+        public long getIndexRowLoForCurrentFrame() {
+            return baseCursor.getIndexRowLoForCurrentFrame();
         }
 
         @Override

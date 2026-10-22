@@ -62,6 +62,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -452,18 +453,13 @@ final class JoinFactoryGenerator {
                     repeated.setParquetEncodingConfig(m.getParquetEncodingConfig());
                     m = repeated;
                 }
-                // Slave SYMBOL key paired with a non-SYMBOL master, or stored as VARCHAR
-                // because the slave column also pairs with a VARCHAR key. The full-fat
-                // join's SymbolWrapOverJoinRecord wraps slave-key reads over the master,
-                // which has no matching symbol table here, so expose the column with the
-                // map key type and read it from the map (where the slave key is stored).
-                // slaveTypes must follow the rewritten type as well: it feeds
-                // NullRecordFactory, and a SymbolConstant.NULL slot would throw from
-                // getVarcharSize / getVarcharB on the outer-join no-match path.
+                // Widened keys are read from the map; SYMBOL keys with a SYMBOL partner
+                // use the master's symbol table. The null record must use the same types.
                 final int masterKeyColIdx = masterTableKeyColumns.getColumnIndexFactored(i);
                 final int keyType = keyTypes.getColumnType(i);
-                if (ColumnType.tagOf(m.getColumnType()) == ColumnType.SYMBOL
-                        && (ColumnType.tagOf(masterMetadata.getColumnType(masterKeyColIdx)) != ColumnType.SYMBOL || keyType == VARCHAR)) {
+                if ((ColumnType.isSymbol(m.getColumnType()) && !ColumnType.isSymbol(masterMetadata.getColumnType(masterKeyColIdx)))
+                        || (keyType == VARCHAR && m.getColumnType() != VARCHAR)
+                        || (ColumnType.isTimestampNano(keyType) && !ColumnType.isTimestampNano(m.getColumnType()))) {
                     metadata.add(slaveAlias, new TableColumnMetadata(
                             m.getColumnName(), keyType, IndexType.NONE, 0, false, m.getMetadata()));
                     slaveTypes.add(keyType);
@@ -643,8 +639,8 @@ final class JoinFactoryGenerator {
 
     /**
      * Consumes the raw factory, including failure. Maps the bound output onto the full-fat layout: master
-     * columns, slave value columns, then slave keys. The full-fat map exposes a slave key with its master
-     * key's type, so a SYMBOL key paired with a STRING or VARCHAR master key is cast back to SYMBOL.
+     * columns, slave value columns, then slave keys. The full-fat map exposes normalized key types,
+     * so widened text and timestamp keys are cast back to their bound types.
      */
     private RecordCursorFactory restoreTemporalOutput(
             RecordCursorFactory base,
@@ -684,7 +680,8 @@ final class JoinFactoryGenerator {
                 if (rawType != outputType) {
                     // A full-fat join exposes a shared slave key with the type of its first map key slot.
                     if (!(ColumnType.isSymbol(outputType) && (rawType == ColumnType.STRING || rawType == ColumnType.VARCHAR))
-                            && !(outputType == ColumnType.STRING && (rawType == ColumnType.VARCHAR || ColumnType.isSymbol(rawType)))) {
+                            && !(outputType == ColumnType.STRING && (rawType == ColumnType.VARCHAR || ColumnType.isSymbol(rawType)))
+                            && !(ColumnType.isTimestampMicro(outputType) && ColumnType.isTimestampNano(rawType))) {
                         throw new IllegalStateException("temporal join output type differs from its factory");
                     }
                     isTypeRestored = true;
@@ -700,6 +697,9 @@ final class JoinFactoryGenerator {
                     if (rawType == output.getColumnType(i)) {
                         functions.add(column);
                         metadata.add(raw.getColumnMetadata(rawIndex));
+                    } else if (ColumnType.isTimestamp(rawType)) {
+                        functions.add(new CastTimestampToTimestampFunctionFactory.Func(column, rawType, output.getColumnType(i)));
+                        metadata.add(new TableColumnMetadata(raw.getColumnName(rawIndex), output.getColumnType(i)));
                     } else if (output.getColumnType(i) == ColumnType.STRING) {
                         functions.add(ColumnType.isSymbol(rawType)
                                 ? new CastSymbolToStrFunctionFactory.Func(column)

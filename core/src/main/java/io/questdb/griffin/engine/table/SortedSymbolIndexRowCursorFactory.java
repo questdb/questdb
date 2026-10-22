@@ -35,11 +35,11 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.CarrierLocal;
 
 import java.util.Comparator;
 
@@ -91,7 +91,8 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     @Override
     public long getRow(PageFrame pageFrame, int keyIndex, long rowLo, long rowHi, long rowIndex) {
         final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
-        return reader.getRow(symbolKeys.getQuick(keyIndex), rowLo, rowHi, indexDirection, rowIndex);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.getRow(symbolKeys.getQuick(keyIndex), rowLo + indexShift, rowHi + indexShift, indexDirection, rowIndex) - indexShift;
     }
 
     @Override
@@ -99,9 +100,10 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
         if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
             return -1;
         }
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
         long count = 0;
         for (int i = keyLo; i < keyHi && count <= maxCount; i++) {
-            count += reader.countRows(symbolKeys.getQuick(i), rowLo, rowHi, maxCount - count);
+            count += reader.countRows(symbolKeys.getQuick(i), rowLo + indexShift, rowHi + indexShift, maxCount - count);
         }
         return count;
     }
@@ -233,9 +235,10 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
                     }
                 }
                 shift = rowLo - partitionLo;
+                final long indexShift = pageFrame.getIndexRowLo() - partitionLo;
                 current = pageFrame
                         .getIndexReader(columnIndex, indexDirection)
-                        .getCursor(symbolKeys.getQuick(index++), rowLo, rowHi);
+                        .getCursor(symbolKeys.getQuick(index++), rowLo + indexShift, rowHi + indexShift);
 
                 if (current.hasNext()) {
                     return true;

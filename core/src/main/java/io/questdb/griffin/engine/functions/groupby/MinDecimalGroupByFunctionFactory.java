@@ -80,7 +80,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class Decimal128Func extends MinMaxDecimal128Func {
+    static class Decimal128Func extends MinMaxDecimal128Func {
 
         public Decimal128Func(Function arg) {
             super(arg);
@@ -97,7 +97,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal16Func extends MinMaxDecimal16Func {
+    static class Decimal16Func extends MinMaxDecimal16Func {
 
         public Decimal16Func(Function arg) {
             super(arg);
@@ -114,7 +114,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal256Func extends MinMaxDecimal256Func {
+    static class Decimal256Func extends MinMaxDecimal256Func {
 
         public Decimal256Func(Function arg) {
             super(arg);
@@ -131,7 +131,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal32Func extends MinMaxDecimal32Func {
+    static class Decimal32Func extends MinMaxDecimal32Func {
 
         public Decimal32Func(Function arg) {
             super(arg);
@@ -148,7 +148,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal64Func extends MinMaxDecimal64Func {
+    static class Decimal64Func extends MinMaxDecimal64Func {
 
         public Decimal64Func(Function arg) {
             super(arg);
@@ -165,7 +165,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal8Func extends MinMaxDecimal8Func {
+    static class Decimal8Func extends MinMaxDecimal8Func {
 
         public Decimal8Func(Function arg) {
             super(arg);

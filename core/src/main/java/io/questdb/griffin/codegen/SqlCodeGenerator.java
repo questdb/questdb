@@ -544,6 +544,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 : generate(frame, source, executionContext);
     }
 
+    RecordCursorFactory generateFilteredScan(GenerationFrame frame, ScanPlan scan, PreparedFilter filter,
+                                             SqlExecutionContext executionContext) throws SqlException {
+        return scanGenerator.generateFiltered(frame, scan, scan.getResidual(), filter, executionContext);
+    }
+
     /**
      * Builds the factory under {@code filter}, the node the plan records a parallel consumer steals, without the
      * filter, and prepares the filter over it in {@code target}, which owns the filter function from then on, also on

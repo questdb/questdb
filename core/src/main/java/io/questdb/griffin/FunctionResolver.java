@@ -554,7 +554,12 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                 final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
                 final short argTypeTag = ColumnType.tagOf(arg.getType());
 
-                if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
+                if (isUntypedEmptyArrayLiteral(arg) && FunctionFactoryDescriptor.isArray(sigArgType)) {
+                    arg.assignType(
+                            ColumnType.encodeArrayType(sigArgTypeTag, ColumnType.decodeArrayDimensionality(arg.getType())),
+                            sqlExecutionContext.getBindVariableService()
+                    );
+                } else if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
                     // substitute NaNs with appropriate types
                     if (sigArgTypeTag == ColumnType.LONG) {
                         args.setQuick(k, LongConstant.NULL);
@@ -804,9 +809,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                     .$(" -> ").$safe(factory.getSignature())
                     .$("[factory=").$(factory)
                     .I$();
-            if (factory.isGroupBy()) {
-                rejectWeakDimsArrayArguments(args, argPositions);
-            }
             function = overload.isSwitch()
                     ? ((SwitchFunctionFactory) factory).newInstance(position, args, argPositions, configuration, equalityFactory(), executionContext)
                     : factory.newInstance(position, args, argPositions, configuration, executionContext);
@@ -1139,6 +1141,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             argTypes.add(type);
             argTraits.add((isConstant ? OverloadResolver.ARG_CONSTANT : 0)
                     | (arg == CharTypeConstant.INSTANCE ? OverloadResolver.ARG_CHAR_TYPE : 0)
+                    | (isUntypedEmptyArrayLiteral(arg) ? OverloadResolver.ARG_UNTYPED_EMPTY_ARRAY : 0)
                     | (isConstant && ColumnType.tagOf(type) == ColumnType.STRING && arg.getStrLen(null) > 1 ? OverloadResolver.ARG_MULTI_CHAR : 0));
         }
         final FunctionFactoryDescriptor candidateDescriptor = OverloadResolver.resolve(
@@ -1323,6 +1326,10 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         ex.setPosition(argPositions.getQuick(i));
     }
 
+    private static boolean isUntypedEmptyArrayLiteral(Function function) {
+        return function instanceof ArrayConstant && ColumnType.decodeArrayElementType(function.getType()) == ColumnType.UNDEFINED;
+    }
+
     private static SqlException invalidArgument(
             CharSequence name,
             int position,
@@ -1489,17 +1496,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     private static void putArgType(ObjList<Function> args, int i, SqlException ex) {
         Function arg = args.getQuick(i);
         ex.put(ColumnType.nameOf(arg.getType()));
-    }
-
-    // An aggregate sizes its state by its array argument's dimensionality, which a bind variable lacks until bound.
-    private static void rejectWeakDimsArrayArguments(@Nullable ObjList<Function> args, IntList argPositions) throws SqlException {
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (ColumnType.isArrayWithWeakDims(args.getQuick(i).getType())) {
-                    throw SqlException.position(argPositions.getQuick(i)).put("array bind variable argument is not supported");
-                }
-            }
-        }
     }
 
     private void admitStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
