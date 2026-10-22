@@ -2234,6 +2234,8 @@ public class CheckpointTest extends AbstractCairoTest {
 
     // Restore resets a saved lag, and the apply job re-applies the lag's transactions from the copied WAL.
     private void assertCheckpointRestoreReappliesSavedLag(boolean negativeLagChecksum) throws Exception {
+        // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+        setProperty(CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         execute("create table t (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
         drainWalQueue();
         final TableToken token = engine.verifyTableName("t");

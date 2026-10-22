@@ -1858,9 +1858,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     file.seek(Long.BYTES);
                     file.write(new byte[1_000 * Long.BYTES]);
                 }
-                final TableWriter.Row row = writer.newRow(parseFloorPartialTimestamp("2022-02-25T23:00"));
-                row.putLong(1, 5);
-                row.append();
+                // A WAL table refuses TableWriter rows, so an uncommitted column version change, as an UPDATE
+                // leaves one, puts the writer in the transaction
+                writer.upsertColumnVersion(parseFloorPartialTimestamp("2022-02-25"), writer.getColumnIndex("v"), 0);
+                Assert.assertTrue("the writer is not in a transaction to roll back", writer.inTransaction());
                 writer.rollback();
             }
             drainWalQueue();
@@ -2431,6 +2432,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     private static TableToken saveWalLag(String committedValues, boolean negativeLagChecksum) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        // Only a one-txn block keeps lag. With cairo.wal.apply.block.size on, the block row limit dwarfs the
+        // 1,000-row txn, so the out-of-order txn would join it in one block and commit it in full.
+        setProperty(PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, 1);
         execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
         final TableToken token = engine.verifyTableName("x");
         if (committedValues != null) {

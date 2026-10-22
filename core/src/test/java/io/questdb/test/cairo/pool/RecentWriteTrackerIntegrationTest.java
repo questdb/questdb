@@ -353,6 +353,11 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testPendingWalRowCountAfterReplay() throws Exception {
         assertMemoryLeak(() -> {
+            // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+            // Only a one-txn block keeps lag. With cairo.wal.apply.block.size on, the block row limit dwarfs the
+            // 1,000-row txn, so the out-of-order txn would join it in one block and commit it in full.
+            setProperty(PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, 1);
             for (String table : new String[]{"lag_reopen", "lag_outside_wal"}) {
                 setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
                 execute("CREATE TABLE " + table + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
