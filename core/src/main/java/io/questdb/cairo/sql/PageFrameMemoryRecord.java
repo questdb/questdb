@@ -663,6 +663,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return pageAddresses.get(columnOffset + columnIndex);
     }
 
+    /**
+     * Returns whether the current Parquet frame has no source column for the query column.
+     * This is narrower than {@link #getPageAddress(int)} returning zero: lazy casts hide
+     * their source address from raw consumers, and an inline variable-size value can have
+     * no data vector while retaining a live aux vector.
+     */
+    public boolean isParquetColumnTop(int columnIndex) {
+        if (frameFormat != PartitionFormat.PARQUET
+                || hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) != -1) {
+            return false;
+        }
+        final int index = columnOffset + columnIndex;
+        return pageAddresses.get(index) == 0 && auxPageAddresses.get(index) == 0;
+    }
+
     @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);
