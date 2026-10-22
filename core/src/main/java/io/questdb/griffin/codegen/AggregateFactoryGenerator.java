@@ -442,7 +442,9 @@ final class AggregateFactoryGenerator {
         final OutputSchema output = aggregate.getOutput();
         final GenericRecordMetadata metadata = new GenericRecordMetadata()
                 .add(new TableColumnMetadata(Chars.toString(output.getColumnName(0)), output.getColumnType(0)));
-        final int columnIndex = input.getOutput().getColumnIndexById(LogicalPlans.endpointColumn(aggregate).getColumnId());
+        final ColumnExpression column = LogicalPlans.endpointColumn(aggregate);
+        assert column != null;
+        final int columnIndex = input.getOutput().getColumnIndexById(column.getColumnId());
         return new TimestampEndpointRecordCursorFactory(metadata, codeGenerator.generate(frame, input, executionContext),
                 aggregate.getAggregates().getQuick(0).getName(), columnIndex);
     }
@@ -806,6 +808,7 @@ final class AggregateFactoryGenerator {
                     };
                 }
                 case AGGREGATE -> {
+                    assert plan != null;
                     assemble(plan, innerMetadata, functionInstantiator, executionContext,
                             aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
                     metadata = metadata(plan, innerMetadata, recordFunctions);
@@ -858,12 +861,13 @@ final class AggregateFactoryGenerator {
      */
     private RecordCursorFactory generateHorizonJoin(GenerationFrame frame, @Nullable AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
             throws SqlException {
+        assert (aggregate != null) == (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE);
         final int slaveCount = horizon.getSlaves().size();
         final ObjList<RecordCursorFactory> slaves = new ObjList<>(slaveCount);
         final ObjList<PreparedFilter> slaveFilters = new ObjList<>(slaveCount);
         final ObjList<RecordMetadata> slaveMetadatas = new ObjList<>(slaveCount);
         final ObjList<IntList> slaveCrossIndexes = new ObjList<>(slaveCount);
-        final PreparedFilter prepared = frame.pushPreparedFilter(horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE
+        final PreparedFilter prepared = frame.pushPreparedFilter(aggregate != null
                 ? aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER
                 : horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.PARALLEL_STOLEN_FILTER);
         final RecordCursorFactory factory;
