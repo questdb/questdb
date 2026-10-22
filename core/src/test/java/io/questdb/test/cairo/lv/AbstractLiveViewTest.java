@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -50,6 +51,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
@@ -438,6 +440,48 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                     + ", lastProcessedSeqTxn=" + instance.getLastProcessedSeqTxn() + "]: " + e.getMessage(), e);
         }
         return TIER_READ_RECOMPUTE;
+    }
+
+    /**
+     * Asserts the view's table holds its row at {@code timestamp} in a composite partition, at a
+     * file row at or past the partition's live row count. A walk of the partition's file rows
+     * {@code [0, liveRows)} never reaches such a row; only a walk of the partition's pieces does.
+     * A case that covers the piece walk asserts this premise first, so a change to where the
+     * writer lays out pieces cannot leave the case passing without reaching the row.
+     */
+    protected static void assertViewRowPastLiveFilePrefix(String viewName, String timestamp) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        final long rowTimestamp = ts(timestamp);
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            final int partitionIndex = reader.getPartitionIndexByTimestamp(rowTimestamp);
+            Assert.assertTrue("the view's table holds no partition for " + timestamp, partitionIndex > -1);
+            Assert.assertTrue(
+                    "the view's partition holding " + timestamp + " must be composite",
+                    reader.getTxFile().isPartitionComposite(partitionIndex)
+            );
+            final long liveRows = reader.openPartition(partitionIndex);
+            final MemoryCR timestamps = reader.getColumn(TableReader.getPrimaryColumnIndex(
+                    reader.getColumnBase(partitionIndex),
+                    reader.getMetadata().getTimestampIndex()
+            ));
+            final PartitionGeometry geometry = reader.getGeometry();
+            for (int piece = 0, n = geometry.getPieceCount(partitionIndex); piece < n; piece++) {
+                final long rowLo = geometry.getPieceRowOffset(partitionIndex, piece);
+                final long rowHi = rowLo + geometry.getPieceRowCount(partitionIndex, piece);
+                for (long row = rowLo; row < rowHi; row++) {
+                    if (timestamps.getLong(row << 3) == rowTimestamp) {
+                        Assert.assertTrue(
+                                "the view's row at " + timestamp + " sits at file row " + row
+                                        + ", inside the partition's first " + liveRows + " file rows",
+                                row >= liveRows
+                        );
+                        return;
+                    }
+                }
+            }
+            Assert.fail("the view's table holds no live row at " + timestamp);
+        }
     }
 
     /**
