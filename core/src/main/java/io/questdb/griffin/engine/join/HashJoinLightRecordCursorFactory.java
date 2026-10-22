@@ -200,8 +200,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private RecordSink masterCursorSink;
         private Record masterRecord;
         private LongChain.Cursor slaveChainCursor;
-        // The slave rows of the current chain the cursor has not returned.
-        private long slaveChainRowsLeft;
         private RecordSink slaveCursorSink;
         private Record slaveRecord;
         private boolean swapped;
@@ -226,7 +224,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             buildMapOfSlaveRecords();
             while (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveChainCursor.next();
-                slaveChainRowsLeft--;
                 counter.inc();
             }
 
@@ -274,7 +271,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             buildMapOfSlaveRecords();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                slaveChainRowsLeft--;
                 return true;
             }
 
@@ -285,7 +281,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 MapValue value = key.findValue();
                 if (value != null) {
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
-                    slaveChainRowsLeft = value.getInt(1) - 1;
                     // we know cursor has values
                     // advance to get the first value
                     slaveChainCursor.hasNext();
@@ -321,7 +316,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             if (masterRowsLeft != 0) {
                 return -1;
             }
-            return slaveChainCursor != null ? slaveChainRowsLeft : 0;
+            return slaveChainCursor != null ? slaveChainCursor.remaining() : 0;
         }
 
         @Override
@@ -332,10 +327,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             buildMapOfSlaveRecords();
-            while (rowCount.get() > 0 && slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                slaveChainCursor.next();
-                slaveChainRowsLeft--;
-                rowCount.dec();
+            if (slaveChainCursor != null) {
+                rowCount.dec(slaveChainCursor.skip(rowCount.get()));
             }
             while (rowCount.get() > 0 && masterCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -349,11 +342,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                         slaveChainCursor = null;
                     } else {
                         slaveChainCursor = slaveChain.getCursor(value.getInt(0));
-                        slaveChainRowsLeft = chainLength - rowCount.get();
-                        for (long i = rowCount.get(); i > 0; i--) {
-                            slaveChainCursor.hasNext();
-                            slaveChainCursor.next();
-                        }
+                        slaveChainCursor.skip(rowCount.get());
                         rowCount.clear();
                     }
                 }

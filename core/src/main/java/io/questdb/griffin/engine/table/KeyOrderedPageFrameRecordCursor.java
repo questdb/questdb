@@ -106,7 +106,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        prepareRowCursorFactory();
+        prepareKeyOrderedRowCursors();
         if (isGathering) {
             calculateGatheredSize(counter);
             return;
@@ -146,7 +146,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         if (isExhausted) {
             return false;
         }
-        prepareRowCursorFactory();
+        prepareKeyOrderedRowCursors();
         if (isGathering) {
             if (!isGatherPositioned) {
                 positionGatheredRows();
@@ -168,7 +168,9 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 return true;
             }
 
-            dropSkipWalkFramesAtTop();
+            if (hasSkipWalkFramesAtTop()) {
+                dropSkipWalkFrames();
+            }
             PageFrame frame = nextFrame();
             while (frame != null) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
@@ -255,7 +257,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     @Override
     public void skipRows(Counter rowCount, long requestedMaxRowsAfterSkip) {
-        prepareRowCursorFactory();
+        prepareKeyOrderedRowCursors();
         if (isGathering) {
             skipGatheredRows(rowCount, requestedMaxRowsAfterSkip);
             return;
@@ -283,23 +285,6 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     @Override
     protected boolean isSizeWalked() {
         return keyCount > 1 && (keyLo > 0 || frameCount > 0) || super.isSizeWalked();
-    }
-
-    @Override
-    protected void prepareRowCursors() {
-        super.prepareRowCursors();
-        keyCount = keyOrderedFactory.getKeyCount();
-        if (keyCount > 1) {
-            // a consumer that revisits rows in any order keeps its SCATTERED hint
-            if (frameMemoryPool.getDecodeHint() == ParquetDecodeHint.MONOTONIC) {
-                frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.CYCLIC);
-            }
-            // a read ordered by keys opens an index cursor per key and page frame, and lands its skips by index
-            // counts, so a page frame per partition frame costs it least
-            frameCursor.setPageFrameMaxRows(Integer.MAX_VALUE);
-        }
-        keyLo = 0;
-        keyHi = Math.min(keyCount, 1);
     }
 
     private static void countReadFrame() {
@@ -534,7 +519,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         if (!(frameCursor instanceof TablePageFrameCursor tableCursor) || !tableCursor.getTableReader().hasParquetPartitions()) {
             return false;
         }
-        prepareRowCursorFactory();
+        prepareKeyOrderedRowCursors();
         if (keyCount < 2) {
             return false;
         }
@@ -656,6 +641,24 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         isGatherPositioned = true;
+    }
+
+    private void prepareKeyOrderedRowCursors() {
+        if (!prepareRowCursorFactory()) {
+            return;
+        }
+        keyCount = keyOrderedFactory.getKeyCount();
+        if (keyCount > 1) {
+            // a consumer that revisits rows in any order keeps its SCATTERED hint
+            if (frameMemoryPool.getDecodeHint() == ParquetDecodeHint.MONOTONIC) {
+                frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.CYCLIC);
+            }
+            // a read ordered by keys opens an index cursor per key and page frame, and lands its skips by index
+            // counts, so a page frame per partition frame costs it least
+            frameCursor.setPageFrameMaxRows(Integer.MAX_VALUE);
+        }
+        keyLo = 0;
+        keyHi = Math.min(keyCount, 1);
     }
 
     /**

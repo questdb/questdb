@@ -157,7 +157,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 return true;
             }
 
-            dropSkipWalkFramesAtTop();
+            if (hasSkipWalkFramesAtTop()) {
+                dropSkipWalkFrames();
+            }
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
@@ -394,12 +396,20 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
     }
 
-    protected final void dropSkipWalkFramesAtTop() {
-        if (frameCount == 0 && cachedSkipWalkTarget != NO_SKIP_WALK) {
-            // This walk cuts frames where an ordinary walk cuts them, the cached ones are a skip
-            // walk's. Drop them at the first frame, before this walk reads any of them.
-            dropSkipWalkFrames();
-        }
+    protected final void dropSkipWalkFrames() {
+        resetFrameCache();
+        cachedSkipWalkFrameCount = -1;
+        cachedSkipWalkTarget = NO_SKIP_WALK;
+    }
+
+    /**
+     * True at the first page frame of a walk while the cached frames are a skip walk's, which cuts frames where an
+     * ordinary walk does not, so the walk drops them with {@link #dropSkipWalkFrames()} before it reads any of them.
+     * The walk tests this in its own row loop, where the JIT profiles the branch as never taken and leaves the drop
+     * out of the compiled loop.
+     */
+    protected final boolean hasSkipWalkFramesAtTop() {
+        return frameCount == 0 && cachedSkipWalkTarget != NO_SKIP_WALK;
     }
 
     /**
@@ -423,20 +433,17 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         return filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
     }
 
-    protected final void prepareRowCursorFactory() {
+    /**
+     * Prepares the row cursor factory over the page frames once per {@link #of(PageFrameCursor, SqlExecutionContext)}.
+     *
+     * @return true when this call prepared it
+     */
+    protected final boolean prepareRowCursorFactory() {
         if (!areCursorsPrepared) {
-            prepareRowCursors();
+            rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
+            return true;
         }
-    }
-
-    protected void prepareRowCursors() {
-        rowCursorFactory.prepareCursor(frameCursor);
-    }
-
-    private void dropSkipWalkFrames() {
-        resetFrameCache();
-        cachedSkipWalkFrameCount = -1;
-        cachedSkipWalkTarget = NO_SKIP_WALK;
+        return false;
     }
 }
