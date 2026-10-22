@@ -2323,4 +2323,36 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         1970-01-01T00:00:01.900000Z\tU\tO\tJ\tZ
                         """);
     }
+
+    @Test
+    public void testUnaryOperand() throws Exception {
+        // a minus or a complement right after CASE used to be taken for a binary operator,
+        // which failed with "too few arguments"
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT CASE WHEN x = 4 THEN NULL ELSE x END::INT i FROM long_sequence(4))");
+            assertQuery("""
+                    SELECT
+                        i,
+                        CASE -i WHEN -2 THEN 'minus two' WHEN -3 THEN 'minus three' ELSE 'other' END c1,
+                        CASE ~i WHEN -2 THEN 'minus two' ELSE 'other' END c2,
+                        CASE -i + 3 WHEN 0 THEN 'zero' ELSE 'other' END c3,
+                        CASE -abs(i) WHEN -2 THEN 'minus two' ELSE 'other' END c4
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tc1\tc2\tc3\tc4
+                            1\tother\tminus two\tother\tother
+                            2\tminus two\tother\tother\tminus two
+                            3\tminus three\tother\tzero\tother
+                            null\tother\tother\tother\tother
+                            """);
+            assertQuery("SELECT i FROM t WHERE CASE -i WHEN -2 THEN true ELSE false END")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            2
+                            """);
+        });
+    }
 }
