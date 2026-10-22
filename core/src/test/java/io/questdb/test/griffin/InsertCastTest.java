@@ -196,6 +196,44 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastCharGeoByteTabNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (c CHAR)");
+            execute("INSERT INTO src VALUES ('u'), (NULL)");
+            execute("CREATE TABLE dst (g GEOHASH(1c))");
+            // a NULL CHAR becomes a NULL geohash, as CAST(c AS GEOHASH(1c)) already gives
+            execute("INSERT INTO dst SELECT c FROM src");
+            assertQuery("SELECT g FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g
+                            u
+
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastCharGeoByteTabNullWidening() throws Exception {
+        // a geohash narrower than one char (5 bits) is widened from the char; NULL must stay NULL and not be widened
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (c CHAR)");
+            execute("INSERT INTO src VALUES ('u'), (NULL)");
+            execute("CREATE TABLE dst (g GEOHASH(3b))");
+            execute("INSERT INTO dst SELECT c FROM src");
+            assertQuery("SELECT g FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g
+                            110
+
+                            """);
+        });
+    }
+
+    @Test
     public void testCastCharIntFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "int",
@@ -446,6 +484,41 @@ public class InsertCastTest extends AbstractCairoTest {
                         3
                         """
         ));
+    }
+
+    @Test
+    public void testCastCharToGeoByteBindNull() throws Exception {
+        // a NULL CHAR is stored as character 0; through a bind variable it must become a NULL geohash
+        assertMemoryLeak(() -> {
+            execute("create table y(a geohash(1c));");
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
+            ) {
+                bindVariableService.setChar(0, 'u');
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setChar(0, (char) 0);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    // only character 0 is NULL; other non-geohash characters still fail
+                    bindVariableService.setChar(0, 'i');
+                    insert.execute(sqlExecutionContext);
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            u
+
+                            """);
+        });
     }
 
     @Test
