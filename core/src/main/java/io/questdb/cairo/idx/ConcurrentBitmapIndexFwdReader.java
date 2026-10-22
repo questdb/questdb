@@ -68,7 +68,14 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
             c = new Cursor();
         }
         c.isPooled = false;
-        return initCursor(c, key, minValue, maxValue);
+        final RowCursor cursor = initCursor(c, key, minValue, maxValue);
+        if (cursor != c) {
+            // initCursor() found nothing to read and returned the shared empty cursor. Return c to
+            // the pool: the caller never sees it, so it would never close it, and the next call
+            // would have to allocate a replacement.
+            c.close();
+        }
+        return cursor;
     }
 
     /**
@@ -199,8 +206,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 // should these values do not match.
                 long valueCount;
                 long valueBlockOffset;
-                long deadline = 0;
-                boolean hasDeadline = false;
+                long deadline = DEADLINE_UNARMED;
                 while (true) {
                     valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
@@ -214,9 +220,8 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                         }
                     }
 
-                    if (!hasDeadline) {
+                    if (deadline == DEADLINE_UNARMED) {
                         deadline = clock.getTicks() + spinLockTimeoutMs;
-                        hasDeadline = true;
                     } else if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
                         throw CairoException.critical(0).put(INDEX_CORRUPT);

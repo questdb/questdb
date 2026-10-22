@@ -82,6 +82,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.assertTrue;
@@ -529,6 +530,34 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentForwardReaderRepoolsCursorOfMissingKey() throws Exception {
+        // getCursor() pops a pooled cursor before it knows whether the key has rows. For a key past
+        // the key count it returns the shared empty cursor, whose close() pools nothing, so
+        // getCursor() itself must return the popped cursor to the pool. Pooling reuses the same
+        // instance, so a lost cursor shows as a fresh instance on the next lookup.
+        TestUtils.assertMemoryLeak(() -> {
+            final LongList list = new LongList();
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 10);
+                writer.add(1, 20);
+            }
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                final RowCursor pooled = reader.getCursor(1, 0, Long.MAX_VALUE);
+                assertThat("[20]", pooled, list);
+                for (int i = 0; i < 3; i++) {
+                    final RowCursor empty = reader.getCursor(1_000, 0, Long.MAX_VALUE);
+                    Assert.assertSame(EmptyRowCursor.INSTANCE, empty);
+                    empty.close();
+                }
+                final RowCursor reused = reader.getCursor(0, 0, Long.MAX_VALUE);
+                Assert.assertSame("a lookup of a missing key must return the pooled cursor to the pool", pooled, reused);
+                assertThat("[10]", reused, list);
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentWriterAndBackwardReadBreadth() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testConcurrentBackwardRW(rnd.nextInt(10000000), 1024);
@@ -550,6 +579,77 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWriterAndForwardReadHeight() throws Exception {
         testConcurrentForwardRW(100000, 10000);
+    }
+
+    @Test
+    public void testConsistentReadsMakeNoClockCalls() throws Exception {
+        // Each seqlock read loop arms its spin deadline only after a failed attempt, so opening
+        // the readers and reading consistent entries must not touch the clock. A torn entry must
+        // still time out: the clock advances 1ms per call, so the read gives up after a few calls.
+        final AtomicLong clockTicks = new AtomicLong();
+        final CairoConfiguration countingConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull MillisecondClock getMillisecondClock() {
+                return clockTicks::incrementAndGet;
+            }
+
+            @Override
+            public long getSpinLockTimeout() {
+                return 1;
+            }
+        };
+        TestUtils.assertMemoryLeak(() -> {
+            final LongList tmp = new LongList();
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 1);
+                writer.add(1, 2);
+                writer.add(0, 3);
+            }
+
+            try (
+                    BitmapIndexFwdReader fwdReader = new BitmapIndexFwdReader(countingConfiguration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0);
+                    BitmapIndexBwdReader bwdReader = new BitmapIndexBwdReader(countingConfiguration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0);
+                    ConcurrentBitmapIndexFwdReader concurrentReader = new ConcurrentBitmapIndexFwdReader(countingConfiguration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0);
+                    MemoryMARW keyMem = Vm.getCMARWInstance();
+                    Path keyPath = new Path()
+            ) {
+                assertThat("[1,3]", fwdReader.getCursor(0, 0, Long.MAX_VALUE), tmp);
+                assertThat("[3,1]", bwdReader.getCursor(0, 0, Long.MAX_VALUE), tmp);
+                assertThat("[1,3]", concurrentReader.getCursor(0, 0, Long.MAX_VALUE), tmp);
+                assertThat("[2]", concurrentReader.initCursor(null, 1, 0, Long.MAX_VALUE), tmp);
+                Assert.assertEquals(2, fwdReader.countMatchesInRange(0, 0, Long.MAX_VALUE, BitmapIndexUtils.UNBOUNDED_BLOCK_HOPS));
+                // a key past the key count makes the forward reader re-read the key count
+                assertThat("[]", fwdReader.getCursor(2, 0, Long.MAX_VALUE), tmp);
+                Assert.assertEquals(0, clockTicks.get());
+
+                keyPath.of(configuration.getDbRoot()).concat("x").put(".k");
+                keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                // tear key 0's entry: its value count no longer matches its count check
+                final long keyEntryOffset = BitmapIndexUtils.getKeyEntryOffset(0);
+                final long valueCount = keyMem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                keyMem.putLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
+                assertSpinTimeout(() -> fwdReader.getCursor(0, 0, Long.MAX_VALUE));
+                assertSpinTimeout(() -> fwdReader.countMatchesInRange(0, 0, Long.MAX_VALUE, BitmapIndexUtils.UNBOUNDED_BLOCK_HOPS));
+                assertSpinTimeout(() -> bwdReader.getCursor(0, 0, Long.MAX_VALUE));
+                assertSpinTimeout(() -> concurrentReader.getCursor(0, 0, Long.MAX_VALUE));
+                keyMem.putLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, valueCount);
+
+                // tear the header: its sequence no longer matches its sequence check
+                final long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq + 1);
+                assertSpinTimeout(() -> fwdReader.getCursor(2, 0, Long.MAX_VALUE));
+                keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
+
+                // the readers recover once the entries are consistent again
+                final long ticks = clockTicks.get();
+                assertThat("[1,3]", fwdReader.getCursor(0, 0, Long.MAX_VALUE), tmp);
+                assertThat("[3,1]", bwdReader.getCursor(0, 0, Long.MAX_VALUE), tmp);
+                assertThat("[1,3]", concurrentReader.getCursor(0, 0, Long.MAX_VALUE), tmp);
+                Assert.assertEquals(ticks, clockTicks.get());
+            }
+        });
     }
 
     @Test
@@ -1800,6 +1900,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException e) {
             assertTrue(Chars.contains(e.getMessage(), contains));
+        }
+    }
+
+    private void assertSpinTimeout(Runnable read) {
+        try {
+            read.run();
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), AbstractBitmapIndexReader.INDEX_CORRUPT);
         }
     }
 

@@ -688,6 +688,16 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     return Java_io_questdb_std_Files_truncate(e, cl, fd, size);
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    if (len <= offset) {
+        // Never a shrink: allocate() below sets the file's size to len.
+        return JNI_TRUE;
+    }
+    // There is no range to allocate on Windows: setting the file's size is the allocation.
+    return Java_io_questdb_std_Files_allocate(e, cl, fd, len);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
         (JNIEnv *e, jclass cl, jlong address, jlong len) {
     if (UnmapViewOfFile((LPCVOID) address) == 0) {

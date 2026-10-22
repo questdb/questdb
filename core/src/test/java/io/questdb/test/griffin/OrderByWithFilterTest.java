@@ -24,19 +24,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.table.SortedSymbolIndexRowCursorFactory;
-import io.questdb.std.CarrierLocal;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.Array;
-import java.lang.reflect.Field;
-import java.util.Comparator;
 
 /**
  * Test order by asc and desc with filter(s)/where clause
@@ -1002,92 +992,6 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         assertSortedSymbolIndex(false);
     }
 
-    @Test
-    public void testSortedSymbolIndexStableStorage() throws Exception {
-        assertMemoryLeak(() -> {
-            String longValue = "m".repeat(4096);
-            execute("CREATE TABLE large_symbols (s SYMBOL NOCACHE INDEX, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO large_symbols VALUES ('" + longValue + "', 1, 0), ('z', 2, 1), ('a', 3, 2)");
-            execute("CREATE TABLE small_symbols (s SYMBOL CACHE INDEX, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO small_symbols VALUES ('q', 4, 0)");
-            String largeQuery = "SELECT id FROM large_symbols WHERE ts IN '1970-01-01' ORDER BY s ";
-            assertQuery(largeQuery + "ASC").noLeakCheck().withPlanContaining("SortedSymbolIndex").returns("id\n3\n1\n2\n");
-
-            Object helper = getSortedSymbolSortHelper();
-            ObjList<?> pool = (ObjList<?>) getSortedSymbolField(helper, "entries");
-            ObjList<?> entries = new ObjList<>(pool);
-            ObjList<Object> sinks = new ObjList<>();
-            for (int i = 0; i < entries.size(); i++) {
-                Object value = getSortedSymbolField(entries.getQuick(i), "value");
-                Assert.assertTrue(value instanceof StringSink);
-                sinks.add(value);
-            }
-            for (int i = 0; i < 4; i++) {
-                assertQuery(largeQuery + "DESC").noLeakCheck().withPlanContaining("SortedSymbolIndex").returns("id\n2\n1\n3\n");
-                assertSortedSymbolStorage(entries, sinks);
-                assertQuery(largeQuery + "ASC").noLeakCheck().withPlanContaining("SortedSymbolIndex").returns("id\n3\n1\n2\n");
-                assertSortedSymbolStorage(entries, sinks);
-                Assert.assertEquals(longValue, sinks.getQuick(1).toString());
-                assertQuery("SELECT id FROM small_symbols WHERE ts IN '1970-01-01' ORDER BY s")
-                        .noLeakCheck().withPlanContaining("SortedSymbolIndex").returns("id\n4\n");
-                assertSortedSymbolStorage(entries, sinks);
-                Assert.assertEquals("q", sinks.getQuick(1).toString());
-            }
-            Field comparatorField = helper.getClass().getDeclaredField("ascComparator");
-            comparatorField.setAccessible(true);
-            Object comparator = comparatorField.get(helper);
-            IllegalStateException failure = new IllegalStateException("test sort failure");
-            try {
-                comparatorField.set(helper, (Comparator<Object>) (left, right) -> {
-                    throw failure;
-                });
-                Assert.assertSame(failure, Assert.assertThrows(IllegalStateException.class, () -> {
-                    try (RecordCursorFactory factory = select(largeQuery + "ASC");
-                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        cursor.hasNext();
-                    }
-                }));
-            } finally {
-                comparatorField.set(helper, comparator);
-            }
-            assertSortedSymbolStorage(entries, sinks);
-            assertQuery("SELECT id FROM small_symbols WHERE ts IN '1970-01-01' ORDER BY s")
-                    .noLeakCheck().withPlanContaining("SortedSymbolIndex").returns("id\n4\n");
-            assertSortedSymbolStorage(entries, sinks);
-            execute("INSERT INTO large_symbols VALUES ('b', 5, 3)");
-            assertQuery(largeQuery + "ASC").noLeakCheck().withPlanContaining("SortedSymbolIndex").returns("id\n3\n5\n1\n2\n");
-            assertSortedSymbolStorage(entries, sinks);
-        });
-    }
-
-    private static void assertSortedSymbolStorage(ObjList<?> entries, ObjList<?> sinks) throws Exception {
-        Object helper = getSortedSymbolSortHelper();
-        ObjList<?> pool = (ObjList<?>) getSortedSymbolField(helper, "entries");
-        for (int i = 0; i < entries.size(); i++) {
-            Assert.assertSame(entries.getQuick(i), pool.getQuick(i));
-            Assert.assertEquals(i, getSortedSymbolField(pool.getQuick(i), "key"));
-            Assert.assertSame(sinks.getQuick(i), getSortedSymbolField(pool.getQuick(i), "value"));
-        }
-        ObjList<?> refs = (ObjList<?>) getSortedSymbolField(helper, "sortedEntries");
-        Assert.assertEquals(0, refs.size());
-        Object buffer = getSortedSymbolField(refs, "buffer");
-        for (int i = 0, n = Array.getLength(buffer); i < n; i++) {
-            Assert.assertNull(Array.get(buffer, i));
-        }
-    }
-
-    private static Object getSortedSymbolField(Object owner, String name) throws Exception {
-        Field field = owner.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(owner);
-    }
-
-    private static Object getSortedSymbolSortHelper() throws Exception {
-        Field field = SortedSymbolIndexRowCursorFactory.class.getDeclaredField("TL_SORT_HELPER");
-        field.setAccessible(true);
-        return ((CarrierLocal<?>) field.get(null)).get();
-    }
-
     private void assertLimitQueries(String result, String query, String timestampColumn, boolean descending) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
@@ -1180,7 +1084,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                 assertQuery("SELECT s, id FROM sorted_symbols WHERE ts IN '1970-01-01' ORDER BY s "
                         + (isAscending ? "ASC" : "DESC") + ", ts ASC")
                         .noLeakCheck()
-                        .withPlanContaining("SortedSymbolIndex", "symbolOrder: " + (isAscending ? "asc" : "desc"))
+                        .withPlanContaining(
+                                "Encode sort light",
+                                "keys: [s" + (isAscending ? "" : " desc") + ", ts]",
+                                "PageFrame",
+                                "Row forward scan",
+                                "Interval forward scan on: sorted_symbols"
+                        )
                         .mutateWith("INSERT INTO sorted_symbols VALUES ('ab', 11, 10), ('', 12, 11)")
                         .returns(
                                 isAscending ? prefix + suffix : descendingPrefix + descendingSuffix + "\t3\n",

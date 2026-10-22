@@ -479,9 +479,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 int hash = Hash.boundedHash(value, maxHash);
                 // Here we need absolute row indexes within the partition while the cursor gives us relative ones.
                 // But since the minimum row index (minValue) is 0, they match.
-                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
-                while (rowCursor.hasNext()) {
-                    final long offsetOffset = rowCursor.next();
+                final RowCursor cursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
+                // initCursor() hands back the cursor it receives whenever it reuses it. Re-storing that
+                // reference would still dirty a card under ParallelGC, and the views that parallel workers
+                // use to translate SYMBOL join keys share card-table cache lines, so store only a different cursor.
+                // Never store the shared empty cursor that a hash past the index's key count gets: it would
+                // replace the real cursor, and the next in-range lookup would have to allocate a new one.
+                if (cursor != rowCursor && cursor != EmptyRowCursor.INSTANCE) {
+                    rowCursor = cursor;
+                }
+                while (cursor.hasNext()) {
+                    final long offsetOffset = cursor.next();
                     if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), csviewInternal))) {
                         return SymbolMapWriter.offsetToKey(offsetOffset);
                     }
