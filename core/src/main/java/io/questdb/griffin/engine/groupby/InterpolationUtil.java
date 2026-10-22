@@ -43,8 +43,22 @@ public class InterpolationUtil {
     static final StoreYFunction STORE_Y_LONG = InterpolationUtil::storeYLong;
     static final StoreYFunction STORE_Y_SHORT = InterpolationUtil::storeYShort;
 
+    /**
+     * Linear interpolation of y at x between the points (x1, y1) and (x2, y2).
+     * <p>
+     * x is a timestamp in micros or nanos, so for a large y the product {@code y1 * (x2 - x)}
+     * overflows to infinity before the division can bring it back, and the bucket would read as
+     * NULL. An overflow never yields a wrong finite value, only infinity or NaN, so the direct
+     * form is kept for its rounding, and only when it overflows is the value recomputed from
+     * weights in [0, 1], whose sum cannot overflow for finite y1 and y2.
+     */
     public static double interpolate(long x, long x1, double y1, long x2, double y2) {
-        return (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
+        final double y = (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
+        if (Double.isFinite(y)) {
+            return y;
+        }
+        final double span = x2 - x1;
+        return y1 * ((x2 - x) / span) + y2 * ((x - x1) / span);
     }
 
     public static void interpolateByte(

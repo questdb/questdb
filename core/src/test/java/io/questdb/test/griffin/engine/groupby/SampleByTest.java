@@ -17335,6 +17335,83 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillLinearLargeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO g VALUES (1.0E300, '2024-01-01T00:00:00.000000Z'), (1.0E300, '2024-01-01T02:00:00.000000Z')");
+            // the bucket between two equal values interpolates to that value; the product of
+            // the value and the bucket width in micros does not fit a double
+            assertQuery("SELECT ts, last(d) d FROM g SAMPLE BY 1h FILL(LINEAR)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td
+                            2024-01-01T00:00:00.000000Z\t1.0E300
+                            2024-01-01T01:00:00.000000Z\t1.0E300
+                            2024-01-01T02:00:00.000000Z\t1.0E300
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleFillLinearLargeValuesMixedFillList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (d DOUBLE, e DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO g VALUES (1.0E300, 1.0, '2024-01-01T00:00:00.000000Z'), (3.0E300, 2.0, '2024-01-01T02:00:00.000000Z')");
+            // a fill list with LINEAR interpolates through InterpolationGroupByFunction
+            assertQuery("SELECT ts, last(d) d, last(e) e FROM g SAMPLE BY 1h FILL(LINEAR, NULL)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td\te
+                            2024-01-01T00:00:00.000000Z\t1.0E300\t1.0
+                            2024-01-01T01:00:00.000000Z\t2.0E300\tnull
+                            2024-01-01T02:00:00.000000Z\t3.0E300\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleFillLinearLargeValuesNanoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (d DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO g VALUES (1.0E300, '2024-01-01T00:00:00.000000000Z'), (3.0E300, '2024-01-01T02:00:00.000000000Z')");
+            // the bucket width in nanos is a thousand times larger than in micros
+            assertQuery("SELECT ts, last(d) d FROM g SAMPLE BY 1h FILL(LINEAR)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td
+                            2024-01-01T00:00:00.000000000Z\t1.0E300
+                            2024-01-01T01:00:00.000000000Z\t2.0E300
+                            2024-01-01T02:00:00.000000000Z\t3.0E300
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleFillLinearOppositeExtremes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO g VALUES (-1.7976931348623157E308, '2024-01-01T00:00:00.000000Z'), (1.7976931348623157E308, '2024-01-01T00:00:02.000000Z')");
+            // the endpoints differ by more than Double.MAX_VALUE; the midpoint is still finite
+            assertQuery("SELECT ts, last(d) d, avg(d) a FROM g SAMPLE BY 1s FILL(LINEAR)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td\ta
+                            2024-01-01T00:00:00.000000Z\t-1.7976931348623157E308\t-1.7976931348623157E308
+                            2024-01-01T00:00:01.000000Z\t0.0\t0.0
+                            2024-01-01T00:00:02.000000Z\t1.7976931348623157E308\t1.7976931348623157E308
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleFillLinearWithAlignment() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
