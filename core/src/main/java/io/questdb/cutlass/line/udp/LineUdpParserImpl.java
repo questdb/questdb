@@ -601,12 +601,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
-                if (Chars.equals(tableName, e.writer.getTableToken().getTableName())) {
-                    commitList.put(e.writer.getTableToken().getTableName(), e.writer);
-                } else {
-                    // Cannot happen except with WAL table rename and out of date TableWriter.tableToken.
-                    commitList.put(Chars.toString(tableName), e.writer);
-                }
+                // dir name is unique per table and survives a rename
+                commitList.put(e.writer.getTableToken().getDirName(), e.writer);
             }
         }
 
