@@ -3312,9 +3312,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Without deduplication, taking timestamp == o3TimestampHi into merge
                 // can result into unnecessary partition rewrites, when instead of appending
                 // rows with equal timestamp a merge is triggered.
-                // A reader locked before a split still reads the moved rows from the parent's files,
-                // so the parent's tail must not be appended in place. Merging the rows at o3TimestampLo
-                // lets the split below move just those rows instead of copying the whole partition.
+                // a pinned tail merges the rows at o3TimestampLo, so the split below moves just those rows
                 isTailPinned = tableWriter.isPartitionTailPinnedByReaders(partitionTimestamp);
                 long mergeEquals = tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() || isTailPinned ? 1 : 0;
 
@@ -3848,8 +3846,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                // Never append in place over a pinned tail. mergeEquals = 1 already merges most such commits;
-                // rows above the parent's max, e.g. in a gap a range-replace commit left, copy the parent instead.
+                // rows above a pinned parent's max, e.g. in a gap a range-replace commit left, copy the parent
                 boolean canAppendOnly = !partitionSplit && !isTailPinned;
                 if (tableWriter.isCommitReplaceMode()) {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
@@ -5579,7 +5576,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
 
-                    // keep the merge, an in-place append would overwrite rows a reader locked before the split still reads
                     if (appendOnly && isTailPinned) {
                         appendOnly = false;
                     }
@@ -5660,8 +5656,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             if (openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
-                // An in-place append writes from srcDataMax into the partition's existing files. A reader sees rows
-                // past srcDataMax only if the partition shrank without a new version, as an O3 split does.
                 tableWriter.notifyPartitionAppend(oldPartitionTimestamp, srcNameTxn, srcDataMax);
             }
         } catch (Throwable e) {

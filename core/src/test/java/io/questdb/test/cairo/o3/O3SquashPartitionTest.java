@@ -168,29 +168,29 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMergeBelowColumnTopInLastPartition() throws Exception {
+    public void testMergeBelowColumnTopLastPartition() throws Exception {
         assertMergeBelowColumnTop(true, true);
     }
 
     @Test
-    public void testMergeBelowColumnTopInLastPartitionWithoutColumnData() throws Exception {
+    public void testMergeBelowColumnTopLastPartitionNoColumnData() throws Exception {
         assertMergeBelowColumnTop(true, false);
     }
 
     @Test
-    public void testMergeBelowColumnTopKeepsSourceFilesInMidPartition() throws Exception {
+    public void testMergeBelowColumnTopMidPartition() throws Exception {
         assertMergeBelowColumnTop(false, true);
     }
 
     @Test
-    public void testMergeBelowColumnTopKeepsSourceFilesInMidPartitionSyncCommit() throws Exception {
+    public void testMergeBelowColumnTopMidPartitionSyncCommit() throws Exception {
         // the copy job trims the column top scratch before it syncs the merged columns
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         assertMergeBelowColumnTop(false, true);
     }
 
     @Test
-    public void testMergeBelowColumnTopKeepsSourceFilesInMidPartitionWithoutColumnData() throws Exception {
+    public void testMergeBelowColumnTopMidPartitionNoColumnData() throws Exception {
         assertMergeBelowColumnTop(false, false);
     }
 
@@ -988,38 +988,37 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteCopiesWhenReaderOpenedAfterSplit() throws Exception {
+    public void testSplitParentAppendAfterNeighborRewriteLateReader() throws Exception {
         // The reader opened after the split and never saw the moved rows, but the neighbor's rewrite moved
         // its name txn past the reader's txn, so the pin check counts the reader and copies the parent.
-        assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(false);
+        assertSplitParentAppendAfterNeighborRewrite(false);
     }
 
     @Test
-    public void testSplitParentAppendAtMaxTimestampAfterNeighborRewriteCopiesWhenReaderPinned() throws Exception {
+    public void testSplitParentAppendAfterNeighborRewrite() throws Exception {
         // The reader opened before the split and still reads the parent's old tail. All parent rows share
         // the max timestamp, so the writer cannot resplit and copies the parent.
-        assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(true);
+        assertSplitParentAppendAfterNeighborRewrite(true);
     }
 
     @Test
-    public void testSplitParentAppendAtMaxTimestampCopiesWhenResplitTooSmall() throws Exception {
+    public void testPinnedSplitParentAppendResplitTooSmall() throws Exception {
         // the split threshold rejects the re-split, so the writer copies the parent instead
-        assertSplitParentTailSurvivesO3AppendAtMaxTimestamp(false);
+        assertPinnedSplitParentAppendAtMaxTimestamp(false);
     }
 
     @Test
-    public void testSplitParentAppendAtMaxTimestampResplitsWhenReaderPinned() throws Exception {
+    public void testPinnedSplitParentAppendAtMaxTimestamp() throws Exception {
         // A reader pinned before a split still reads the parent's old tail. An O3 row at the
         // parent's max timestamp goes into a new split together with the parent's rows at that timestamp.
-        assertSplitParentTailSurvivesO3AppendAtMaxTimestamp(true);
+        assertPinnedSplitParentAppendAtMaxTimestamp(true);
     }
 
     @Test
-    public void testSplitParentDedupAppendAtSharedTimestampKeepsPinnedReaderRows() throws Exception {
+    public void testPinnedSplitParentDedupAppend() throws Exception {
         // The dedup step can turn a merge back into an in-place append when every parent row shares
         // the O3 rows' timestamp. The parent's tail is pinned, so the writer must keep the merge.
-        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
-        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        // merge-append never opens a split directory; this test covers the plain split path
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1038,7 +1037,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             try (
                     RecordCursorFactory cursorFactory = select("SELECT * FROM x");
-                    // pins the reader before the split
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();
@@ -1086,18 +1084,17 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentGapAboveMaxCopiesWhenPinned() throws Exception {
+    public void testPinnedSplitParentGapAboveMax() throws Exception {
         // A range-replace commit trims the parent and leaves a gap below its split neighbor. A late row in
         // the gap sits above the parent's max; while the parent counts as pinned, the writer copies it.
-        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
-        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        // merge-append never opens a split directory; this test covers the plain split path
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             // keeps the trimmed parent and its split apart: no reader can pin a partition version it never saw
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 2);
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", timestampType.getTypeName());
-            // one row per minute from 00:00 to 01:39, and a row in the next day keeps 2020-02-03 a mid partition
+            // one row per minute from 00:00 to 01:39
             execute(
                     """
                             INSERT INTO x
@@ -1111,7 +1108,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             try (
                     RecordCursorFactory factoryBeforeSplit = select("SELECT * FROM x");
-                    // pins the partition before the split, so the squash keeps the split apart
                     RecordCursor cursorBeforeSplit = factoryBeforeSplit.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();
@@ -1207,18 +1203,20 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentLargeAppendAtMaxTimestampCopiesWhenReaderPinned() throws Exception {
-        assertPinnedSplitParentCopiedOnLargeO3Append(false);
+    public void testPinnedSplitParentLargeAppend() throws Exception {
+        // the merge rows outweigh the prefix, so the writer copies the parent
+        assertPinnedSplitParentLargeAppend(false);
     }
 
     @Test
-    public void testSplitParentLargeAppendSpanningSplitCopiesWhenReaderPinned() throws Exception {
-        assertPinnedSplitParentCopiedOnLargeO3Append(true);
+    public void testPinnedSplitParentLargeAppendSpanningSplit() throws Exception {
+        assertPinnedSplitParentLargeAppend(true);
     }
 
     @Test
-    public void testSplitParentMergeBelowColumnTopKeepsPinnedReaderRows() throws Exception {
-        assertPinnedSplitParentSurvivesColumnTopMerge(false);
+    public void testPinnedSplitParentMergeBelowColumnTop() throws Exception {
+        // the merge materializes the column top nulls; the pinned reader keeps its rows
+        assertPinnedSplitParentColumnTopMerge(false);
     }
 
     @Test
@@ -1232,14 +1230,13 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentPinnedResplitCyclesBelowColumnTopKeepColumnFileSize() throws Exception {
+    public void testPinnedSplitParentResplitCyclesBelowColumnTop() throws Exception {
         // A reader pinned before the split keeps the parent's moved rows readable. Each resplit materializes the
         // column top nulls in scratch space of the new split's files, so the parent's files keep their size.
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
             execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
-            // the added columns get a column top of 1000 rows in 2020-02-03
             execute("ALTER TABLE x ADD COLUMN l LONG");
             execute("ALTER TABLE x ADD COLUMN s STRING");
             execute("ALTER TABLE x ADD COLUMN v VARCHAR");
@@ -1251,7 +1248,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             FROM long_sequence(100)
                             """
             );
-            // a row in the next day keeps 2020-02-03 a mid partition
             execute("INSERT INTO x (i, ts, l, s, v) VALUES (2_000_000, '2020-02-04', 1, 'a', 'b')");
 
             final ObjList<String> files = new ObjList<>("l", "s", "s.i", "v", "v.i");
@@ -1261,7 +1257,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             final String expected;
             try (
                     RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts >= '2020-02-03T20'");
-                    // pins the reader before the first split, so the split cannot be squashed back into the parent
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();
@@ -1317,19 +1312,18 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSplitParentResplitBelowColumnTopKeepsPinnedReaderRows() throws Exception {
-        assertPinnedSplitParentSurvivesColumnTopMerge(true);
+    public void testPinnedSplitParentResplitBelowColumnTop() throws Exception {
+        assertPinnedSplitParentColumnTopMerge(true);
     }
 
     @Test
-    public void testSplitParentResplitCyclesBelowColumnTopKeepColumnFileSize() throws Exception {
+    public void testSplitParentResplitCyclesBelowColumnTop() throws Exception {
         // Without an open reader, each resplit below the column top is squashed back into the parent. The merge
         // materializes the column top in the split's files, so the parent's column file grows only by the squashed rows.
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
             execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
-            // the column gets a column top of 1000 rows in 2020-02-03
             execute("ALTER TABLE x ADD COLUMN l LONG");
             execute(
                     """
@@ -1338,7 +1332,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             FROM long_sequence(100)
                             """
             );
-            // a row in the next day keeps 2020-02-03 a mid partition
             execute("INSERT INTO x (i, ts, l) VALUES (2_000_000, '2020-02-04', 1)");
 
             final long[] columnFileSizes = new long[5];
@@ -2221,10 +2214,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSquashPartitionsNoLogicalPartitionWithReaderAtLatestTxn() throws Exception {
-        // A split without its logical parent gets a fresh parent stamped with the in-flight txn. A reader
-        // holding the latest committed txn counts as pinning that parent, so the squash copies it to a
-        // new directory with the same name txn and then purges the very directory it squashed into.
+    public void testSquashOrphanSplitWithReaderAtLatestTxn() throws Exception {
+        // A split without a parent gets a fresh parent named with the in-flight txn. A reader at the latest
+        // txn counted as pinning it, so the squash copied into a same-named directory and then purged it.
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
@@ -2305,13 +2297,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         testSquashPartitionsOnNonEmptyTable("WAL");
     }
 
-    // Mid partitions also check that the merge leaves the source files alone and trims the scratch off the merged
-    // files. The writer owns the last partition's files and may resize them, so last partitions check the data only.
+    // mid partitions also check file sizes; the writer may resize the last partition's files
     private void assertMergeBelowColumnTop(boolean isLastPartition, boolean hasColumnData) throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
             execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
-            // the added columns get a column top of 1000 rows in 2020-02-03
             execute("ALTER TABLE x ADD COLUMN l LONG");
             execute("ALTER TABLE x ADD COLUMN s STRING");
             execute("ALTER TABLE x ADD COLUMN v VARCHAR");
@@ -2328,7 +2318,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
             }
             if (!isLastPartition) {
-                // a row in the next day keeps 2020-02-03 a mid partition
                 execute("INSERT INTO x (i, ts) VALUES (2_000_000, '2020-02-04')");
             }
             final int rowCount = hasColumnData ? 1100 : 1000;
@@ -2424,8 +2413,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     private void assertO3IntoSplitParentAfterSquashOfNewerSplit(boolean isWal) throws Exception {
-        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
-        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
+        // merge-append never opens a split directory; this test covers the plain split path
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -2440,11 +2428,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
             drainWalQueue();
 
-            // Late rows walk backwards through the day: the first splits at 15:00, the second splits the parent
-            // again at 12:00. Three parts exceed the two splits allowed, so the squash folds two of them. A non-WAL
-            // table folds the newer split back into the parent and keeps the older one as its neighbor; a WAL table
-            // folds the smallest adjacent pair, the two splits, into a rewritten neighbor of the parent. Either way
-            // the parent's neighbor now carries a name txn newer than the split that left the parent's tail behind.
+            // Splits at 15:00 then 12:00 exceed the cap of two. Non-WAL folds the 12:00 split into the parent,
+            // WAL folds the two splits together; either way the parent's neighbor gets a newer name txn.
             execute("INSERT INTO x VALUES (1_001, '2020-02-03T15:00:30')");
             drainWalQueue();
             execute("INSERT INTO x VALUES (1_002, '2020-02-03T12:00:30')");
@@ -2481,10 +2466,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPinnedSplitParentCopiedOnLargeO3Append(boolean isSpanningIntoSplit) throws Exception {
+    private void assertPinnedSplitParentLargeAppend(boolean isSpanningIntoSplit) throws Exception {
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-            // a single O3 row re-splits this layout, see testSplitParentAppendAtMaxTimestampResplitsWhenReaderPinned
+            // a single O3 row re-splits this layout, see testPinnedSplitParentAppendAtMaxTimestamp
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, str STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
             execute("INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T16' FROM long_sequence(20)");
             execute("INSERT INTO x SELECT (20 + x)::INT, 'str-' || (20 + x), '2020-02-03T17' FROM long_sequence(2)");
@@ -2504,7 +2489,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             try (
                     RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts BETWEEN '2020-02-03T17' AND '2020-02-03T18'");
-                    // pins the reader before the split
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();
@@ -2571,12 +2555,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPinnedSplitParentSurvivesColumnTopMerge(boolean isResplit) throws Exception {
+    private void assertPinnedSplitParentColumnTopMerge(boolean isResplit) throws Exception {
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
             execute("INSERT INTO x SELECT x::INT, '2020-02-03T10'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(100)");
-            // the added columns get a column top of 100 rows in the partition
             execute("ALTER TABLE x ADD COLUMN l LONG");
             execute("ALTER TABLE x ADD COLUMN s STRING");
             execute("ALTER TABLE x ADD COLUMN v VARCHAR");
@@ -2662,7 +2645,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         return rowCount;
     }
 
-    private void assertSplitParentAppendAtMaxTimestampAfterNeighborRewrite(boolean isReaderBeforeSplit) throws Exception {
+    private void assertSplitParentAppendAfterNeighborRewrite(boolean isReaderBeforeSplit) throws Exception {
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
@@ -2753,7 +2736,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertSplitParentTailSurvivesO3AppendAtMaxTimestamp(boolean canResplit) throws Exception {
+    private void assertPinnedSplitParentAppendAtMaxTimestamp(boolean canResplit) throws Exception {
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             // rows at 16:00, 17:00 and 18:00; the re-split needs the rows before the parent's max
@@ -2775,7 +2758,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             final long parentNameTxn;
             try (
                     RecordCursorFactory cursorFactory = select("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
-                    // pins the reader before the split
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();

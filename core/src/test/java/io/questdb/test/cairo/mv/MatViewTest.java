@@ -7946,28 +7946,27 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestamp() throws Exception {
+    public void testRefreshAcrossSplitParentAppend() throws Exception {
         // The refresh pins its base reader before an O3 split. An O3 row at the parent's max timestamp
         // must not be appended in place over the parent's tail, which the pinned reader still reads.
-        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", false);
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", false);
     }
 
     @Test
-    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampDedup() throws Exception {
+    public void testRefreshAcrossSplitParentAppendDedup() throws Exception {
         // the O3 row is not a duplicate, its s differs
-        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", false);
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", false);
     }
 
     @Test
-    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampDedupMergeAppend() throws Exception {
-        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", true);
+    public void testRefreshAcrossSplitParentAppendDedupMergeAppend() throws Exception {
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", true);
     }
 
     @Test
-    public void testRefreshSurvivesO3AppendAtSplitParentMaxTimestampMergeAppend() throws Exception {
-        // Merge-append appends the late rows past the end of the parent's column files instead of splitting
-        // it, so the pinned reader's rows are never overwritten. Same symptom check, no split layout to assert.
-        assertRefreshSurvivesSplitParentTailAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", true);
+    public void testRefreshAcrossSplitParentAppendMergeAppend() throws Exception {
+        // merge-append appends past the end of the column files, so there is no split layout to assert
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", true);
     }
 
     @Test
@@ -10510,7 +10509,7 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
-    private void assertRefreshSurvivesSplitParentTailAppend(String baseTableDdl, boolean isMergeAppend) throws Exception {
+    private void assertRefreshAcrossSplitParentAppend(String baseTableDdl, boolean isMergeAppend) throws Exception {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(isMergeAppend));
         // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split

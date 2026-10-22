@@ -10229,9 +10229,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
             return false;
         }
-        // A partition named N is first visible to readers at txn N + 1, since the writer stamps
-        // the name txn before the commit bumps it. Readers in [parentNameTxn + 1, splitNameTxn]
-        // see the parent's files but not the split.
+        // a partition named N is first visible to readers at txn N + 1
         final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex) + 1;
         final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
         return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
