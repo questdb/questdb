@@ -1333,15 +1333,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     //
                     // A direct caller drives its own retry and is excluded throughout: LiveViewRefreshJob
                     // reads the tracker back to see whether its block landed.
-                    if (!idleRunOnly && isUnsolicitedTableLock(tableBusy.getReason())) {
-                        LOG.critical().$("unsolicited table lock [table=").$(tableToken)
-                                .$(", lockReason=").$(tableBusy.getReason())
-                                .I$();
+                    if (isUnsolicitedTableLock(tableBusy.getReason())) {
                         // A lock the WAL machinery did not arrange can be held for as long as its holder
                         // likes, so re-queueing here would spin a worker on it. Reset the tracker instead and
                         // let CheckWalTransactionsJob pace the retry.
-                        if (queueDriven) {
-                            engine.notifyWalTxnRepublisher(tableToken);
+                        //
+                        // A run for the idle save point alone has nothing to apply, so the holder is a normal
+                        // one: neither log nor republish, the purge job asks again after its interval. It
+                        // must not fall through to the re-queue arm below either, or the apply would spin on
+                        // the held writer.
+                        if (!idleRunOnly) {
+                            LOG.critical().$("unsolicited table lock [table=").$(tableToken)
+                                    .$(", lockReason=").$(tableBusy.getReason())
+                                    .I$();
+                            if (queueDriven) {
+                                engine.notifyWalTxnRepublisher(tableToken);
+                            }
                         }
                     } else if (queueDriven && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                         // A partition swap or a storage policy command: it lands one writer operation and
