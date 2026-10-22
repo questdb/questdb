@@ -592,6 +592,56 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalFromNumber() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("d", ColumnType.getDecimalType(10, 2))
+                .col("n", ColumnType.INT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        // a bare number into a DECIMAL column, as over TCP; one that does not fit the scale
+        // is a cast error, so the row keeps NULL there as for any other bad value
+        assertThat(
+                """
+                        d\tn\ttimestamp
+                        12.34\t1\t1970-01-01T00:00:01.000000Z
+                        1.50\t2\t1970-01-01T00:00:02.000000Z
+                        \t3\t1970-01-01T00:00:03.000000Z
+                        """,
+                """
+                        x d=12.34,n=1i 1000000000
+                        x d=1.5,n=2i 2000000000
+                        x d=1.234,n=3i 3000000000
+                        """,
+                "x"
+        );
+    }
+
+    @Test
+    public void testDecimalFromString() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("d", ColumnType.getDecimalType(10, 2))
+                .col("n", ColumnType.INT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        // ILP over TCP stores "12.34" in a DECIMAL column; UDP must not store NULL instead.
+        // Text that is not a number is a cast error: the row keeps NULL there.
+        assertThat(
+                """
+                        d\tn\ttimestamp
+                        12.34\t1\t1970-01-01T00:00:01.000000Z
+                        \t2\t1970-01-01T00:00:02.000000Z
+                        -0.01\t3\t1970-01-01T00:00:03.000000Z
+                        """,
+                """
+                        x d="12.34",n=1i 1000000000
+                        x d="abc",n=2i 2000000000
+                        x d="-0.01",n=3i 3000000000
+                        """,
+                "x"
+        );
+    }
+
+    @Test
     public void testCreateAndAppend() throws Exception {
         final String expected = """
                 tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp
@@ -860,6 +910,25 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPlusSignedNumber() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("d", ColumnType.DOUBLE)
+                .col("f", ColumnType.FLOAT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        // an explicit plus sign is a number, not a symbol, as over TCP; a new column takes
+        // the float type
+        assertThat(
+                """
+                        d\tf\ttimestamp\te
+                        1.5\t2.5\t1970-01-01T00:00:01.000000Z\t4.5
+                        """,
+                "x d=+1.5,f=+2.5,e=+4.5 1000000000\n",
+                "x"
+        );
+    }
+
+    @Test
     public void testReservedName() throws Exception {
         final String expected = """
                 sym\tdouble\tint\tbool\tstr\ttimestamp
@@ -896,6 +965,59 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 """;
         String lines = "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000";
         assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testStringIntoMultiDimensionalArrayColumnIsRejected() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
+                .col("n", ColumnType.INT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        // a DOUBLE[][] type keeps its dimensions in the bits a geohash type uses for its
+        // precision; a string must not pass for a geohash and leave the row with a NULL array,
+        // the line is dropped as a type mismatch instead
+        assertMemoryLeak(() -> {
+            parse("""
+                    x a="abc",n=1i 1000000000
+                    x n=2i 2000000000
+                    """, configuration, new DefaultLineUdpReceiverConfiguration());
+            refreshTablesInBaseEngine();
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(2, cursor.getRecord().getInt(1));
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolFromString() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("s", ColumnType.SYMBOL)
+                .col("t", ColumnType.SYMBOL)
+                .col("n", ColumnType.INT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        // a quoted field value loses its quotes; a tag value and a bare field value keep
+        // every character, as over TCP
+        assertThat(
+                """
+                        s\tt\tn\ttimestamp
+                        abc\t\t1\t1970-01-01T00:00:01.000000Z
+                        a b\t"q"\t2\t1970-01-01T00:00:02.000000Z
+                        bare\tplain\t3\t1970-01-01T00:00:03.000000Z
+                        """,
+                """
+                        x s="abc",n=1i 1000000000
+                        x,t="q" s="a b",n=2i 2000000000
+                        x,t=plain s=bare,n=3i 3000000000
+                        """,
+                "x"
+        );
     }
 
     @Test
@@ -981,6 +1103,28 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUuidFromString() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("u", ColumnType.UUID)
+                .col("n", ColumnType.INT)
+                .timestamp();
+        AbstractCairoTest.create(model);
+        // a string into a UUID column, as over TCP; text that is not a UUID is a cast error
+        assertThat(
+                """
+                        u\tn\ttimestamp
+                        11111111-2222-3333-4444-555555555555\t1\t1970-01-01T00:00:01.000000Z
+                        \t2\t1970-01-01T00:00:02.000000Z
+                        """,
+                """
+                        x u="11111111-2222-3333-4444-555555555555",n=1i 1000000000
+                        x u="not a uuid",n=2i 2000000000
+                        """,
+                "x"
+        );
+    }
+
+    @Test
     public void testUnquotedString1() throws Exception {
         final String expected1 = """
                 sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
@@ -1058,26 +1202,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration, LineUdpReceiverConfiguration udpConfiguration) throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, udpConfiguration)) {
-                    byte[] bytes = lines.getBytes(Files.UTF_8);
-                    int len = bytes.length;
-                    long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        for (int i = 0; i < len; i++) {
-                            Unsafe.putByte(mem + i, bytes[i]);
-                        }
-                        try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
-                            lexer.withParser(parser);
-                            lexer.parse(mem, mem + len);
-                            lexer.parseLast();
-                            parser.commitAll();
-                        }
-                    } finally {
-                        Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
-                    }
-                }
-            }
+            parse(lines, configuration, udpConfiguration);
             assertTable(expected, tableName);
         });
     }
@@ -1088,6 +1213,29 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertThat(String expected, String lines, CharSequence tableName) throws Exception {
         assertThat(expected, lines, tableName, configuration);
+    }
+
+    private void parse(String lines, CairoConfiguration configuration, LineUdpReceiverConfiguration udpConfiguration) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, udpConfiguration)) {
+                byte[] bytes = lines.getBytes(Files.UTF_8);
+                int len = bytes.length;
+                long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < len; i++) {
+                        Unsafe.putByte(mem + i, bytes[i]);
+                    }
+                    try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
+                        lexer.withParser(parser);
+                        lexer.parse(mem, mem + len);
+                        lexer.parseLast();
+                        parser.commitAll();
+                    }
+                } finally {
+                    Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        }
     }
 
     private void testAddColumnFloat(short colType, String expected) throws Exception {
