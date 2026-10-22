@@ -95,12 +95,9 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
 
     @Override
     public double getDouble(Record rec) {
-        // setNull(), and setEmpty() through its default, write LONG_NULL for a group with no rows
-        // yet, such as a key that keyed SAMPLE BY FILL(PREV) emits before its first row or a WINDOW
-        // JOIN master row with an empty window. The low 32 bits of LONG_NULL read as histogram 0,
-        // which belongs to another group, so check the whole slot.
+// setEmpty() and setNull() store LONG_NULL, which is not a valid histogram index
         final long index = rec.getLong(valueIndex);
-        if (index == Numbers.LONG_NULL || histograms.size() == 0) {
+        if (index < 0 || index >= histograms.size()) {
             return Double.NaN;
         }
 
@@ -167,6 +164,11 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     @Override
     public boolean isThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

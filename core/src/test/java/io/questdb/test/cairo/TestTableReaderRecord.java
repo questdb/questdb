@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -50,6 +51,7 @@ import org.jetbrains.annotations.Nullable;
 public class TestTableReaderRecord implements Record, Sinkable {
     private final BorrowedArray array = new BorrowedArray();
     private int columnBase;
+    private int partitionIndex;
     private TableReader reader;
     private long recordIndex = 0;
 
@@ -404,6 +406,7 @@ public class TestTableReaderRecord implements Record, Sinkable {
     }
 
     public void jumpTo(int partitionIndex, long recordIndex) {
+        this.partitionIndex = partitionIndex;
         this.columnBase = reader.getColumnBase(partitionIndex);
         this.recordIndex = recordIndex;
     }
@@ -427,7 +430,22 @@ public class TestTableReaderRecord implements Record, Sinkable {
 
     private long getAdjustedRecordIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
-        return recordIndex - reader.getColumnTop(columnBase, col);
+        return getPhysicalRowIndex() - reader.getColumnTop(columnBase, col);
+    }
+
+    /**
+     * {@code recordIndex} is directory-cumulative (piece order, timestamp order), the space {@code _txn}
+     * and every column top are expressed in. A composite directory's column files are physical: a
+     * merge-append can park a rewritten piece above pieces that sort before it, so the file row a given
+     * cumulative row lives at is not {@code recordIndex} itself - see {@link PartitionGeometry#getPieceShift}.
+     */
+    private long getPhysicalRowIndex() {
+        final PartitionGeometry geometry = reader.getGeometry();
+        if (!geometry.isComposite(partitionIndex)) {
+            return recordIndex;
+        }
+        final int pieceOrdinal = geometry.findPieceByRow(partitionIndex, recordIndex);
+        return recordIndex + geometry.getPieceShift(partitionIndex, pieceOrdinal);
     }
 
     @Nullable

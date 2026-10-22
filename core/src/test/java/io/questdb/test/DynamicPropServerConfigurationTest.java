@@ -219,11 +219,14 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
-                // Seed two tables whose hash join build map needs far more tracked memory
+                // Seed two tables whose hash join build needs far more tracked memory
                 // than the low limit configured below. Seeding runs under the default
                 // unlimited limit, so it is never constrained. A hash join drives the breach
-                // because its build map fails at a single deterministic site with the
-                // per-query OOM message intact, keeping the client-visible error stable.
+                // because it holds its whole build side in tracked memory before it returns
+                // a row. That holds whether the planner fuses the join into the count (Async
+                // Hash Join Group By) or counts over an ordinary hash join, and either build
+                // fails with the per-query OOM message intact, keeping the client-visible
+                // error stable.
                 try (Connection conn = getConnection("admin", "quest")) {
                     try (PreparedStatement stmt = conn.prepareStatement(
                             "CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))")) {

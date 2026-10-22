@@ -43,7 +43,8 @@ public class PartitionOverwriteControl {
 
     public void acquirePartitions(TableReader reader) {
         if (enabled) {
-            LOG.info().$("acquiring partitions [table=").$(reader.getTableToken())
+            // Every reader activation logs here, which in a test run is a large share of the output.
+            LOG.debug().$("acquiring partitions [table=").$(reader.getTableToken())
                     .$(", readerTxn=").$(reader.getTxn())
                     .I$();
             assert reader.isActive();
@@ -122,7 +123,7 @@ public class PartitionOverwriteControl {
 
     public void releasePartitions(TableReader reader) {
         if (enabled) {
-            LOG.info().$("releasing partitions [table=").$(reader.getTableToken())
+            LOG.debug().$("releasing partitions [table=").$(reader.getTableToken())
                     .$(", readerTxn=").$(reader.getTxn())
                     .I$();
 
