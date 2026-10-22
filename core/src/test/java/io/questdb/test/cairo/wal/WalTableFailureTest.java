@@ -1333,6 +1333,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testResumeSkipDedupLag() throws Exception {
+        // Merge-append takes no WAL lag; this test exercises recovery with pending lag.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table d (x long, k symbol, s varchar, ts timestamp) timestamp(ts) partition by DAY WAL dedup upsert keys(ts, k)");
             execute("insert into d values (0, 'z', 'seed', '2020-01-10T00:00:00')");
