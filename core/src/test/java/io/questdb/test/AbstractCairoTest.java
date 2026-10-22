@@ -709,8 +709,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
         final FilesFacade ffBefore = AbstractCairoTest.ff;
+        // The engine's pooled frame columns capture the FilesFacade they were built with and outlive the test, so a
+        // facade installed here must get a pool of its own, or a column built under an earlier test's facade flushes
+        // through that one: a crash model then never sees the flush and rolls the file back. The same the other way
+        // round once the facade is taken away, so no later test writes through this one.
+        final boolean swapsFilesFacade = ff2 != ffBefore;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
+            if (swapsFilesFacade) {
+                forEachNode(node -> node.getEngine().resetFrameFactory());
+            }
             Throwable th1 = null;
             try {
                 try {
@@ -740,6 +748,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     });
                     forEachNode(node -> node.getEngine().clear());
                     AbstractCairoTest.ff = ffBefore;
+                    if (swapsFilesFacade) {
+                        forEachNode(node -> node.getEngine().resetFrameFactory());
+                    }
                     if (!leakSink.isEmpty()) {
                         final AssertionError leakErr = new AssertionError(
                                 "test leaked unreleased resources " + leakSink
