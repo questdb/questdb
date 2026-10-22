@@ -75,6 +75,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testForecastDoesNotRewriteASourceBeforeBlockCreatesALaterDayAndSquashes() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSingleDaySplit();
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
@@ -154,6 +157,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testAColumnAddedMidDaySurvivesTheFold() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSplitDay();
             // A column added now has a top on every existing partition, so both sides of the fold carry
@@ -176,6 +182,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
      */
     @Test
     public void testAColumnOnlyTheSourcesHaveSurvivesTheFold() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSplitDay();
             execute("ALTER TABLE x ADD COLUMN v LONG");
@@ -199,6 +208,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testColdSmallTargetCompactsWithIndexedVariableColumnsAndPinnedReader() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSplitDay();
             execute("ALTER TABLE x ADD COLUMN v VARCHAR");
@@ -344,6 +356,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testHotSmallSquashTargetStaysComposite() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSingleDaySplit();
             makeComposite("T01:00:00");
@@ -391,11 +406,17 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testSquashTargetAtDiskSizeLimitStaysComposite() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> checkSquashTargetDiskSize(false));
     }
 
     @Test
     public void testSquashTargetBelowDiskSizeLimitBecomesPlain() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> checkSquashTargetDiskSize(true));
     }
 
@@ -419,6 +440,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testCompositeSourceIntoCompositeTarget() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSplitDay();
             makeComposite("T01:00:00");   // the front sibling: the fold's target
@@ -493,6 +517,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
      */
     @Test
     public void testSquashFoldsAdjacentSameShiftTailPiece() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             // A single-day fixture: squashAllPartitionsIntoOne folds ALL partitions into one and is not
             // day-aware, so a later day would be merged into this one. With only 2024-01-01 present the
@@ -537,6 +564,9 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
 
     @Test
     public void testPlainSourceIntoCompositeTarget() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createSplitDay();
             makeComposite("T01:00:00");

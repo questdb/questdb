@@ -283,6 +283,9 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
 
     @Test
     public void testSwapMetaOpenFailureBreaksNextCommit() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean armed = new AtomicBoolean();
         assertMemoryLeak(metaOpenFailureFacade(armed), () -> {
             createSwapFixture();
@@ -297,6 +300,9 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
 
     @Test
     public void testSwapMetaOpenFailureBreaksNextCommitQueued() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean armed = new AtomicBoolean();
         assertMemoryLeak(metaOpenFailureFacade(armed), () -> {
             createSwapFixture();

@@ -1843,6 +1843,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanDeletesTheRetiredDirectoryWhileTheWriterStaysLive() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
@@ -2594,6 +2597,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanMergeSurvivesMakePlainTrimmingTheFrontItCopies() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);

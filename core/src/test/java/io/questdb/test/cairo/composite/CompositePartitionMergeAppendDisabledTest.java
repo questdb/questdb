@@ -95,6 +95,9 @@ public class CompositePartitionMergeAppendDisabledTest extends AbstractCairoTest
      */
     @Test
     public void testStaleColumnTopLeftByMakePlainSurvivesTheFold() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT cast(x AS int) i," +
                     " timestamp_sequence('2024-01-01', 60*1000000L) ts FROM long_sequence(200))" +

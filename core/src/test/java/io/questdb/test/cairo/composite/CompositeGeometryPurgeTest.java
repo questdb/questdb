@@ -404,6 +404,9 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
      */
     @Test
     public void testATransientGeometryReadFailureKeepsTheGenerationAPinnedReaderNeeds() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean isFaultArmed = new AtomicBoolean();
         final AtomicBoolean hasFaultFired = new AtomicBoolean();
         assertMemoryLeak(new TestFilesFacadeImpl() {
@@ -476,6 +479,9 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
      */
     @Test
     public void testAPermanentlyUnreadableGeometryGenerationIsRetriedRatherThanPurged() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean isFaultArmed = new AtomicBoolean();
         assertMemoryLeak(new TestFilesFacadeImpl() {
             @Override
@@ -652,6 +658,9 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testTheRetiredGenerationGoesOnceNothingIsPinned() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {

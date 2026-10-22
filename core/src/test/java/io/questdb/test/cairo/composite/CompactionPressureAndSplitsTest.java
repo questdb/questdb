@@ -61,6 +61,9 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
 
     @Test
     public void testCommitCapChoosesSmallestColdAdjacentPair() throws Exception {
+        // ADAPTIVE defers the housekeeping this asserts (fold, MAKE-PLAIN, purge) until the next save point moves the
+        // durable-epoch pin off the range, so it pins NOSYNC like O3SquashPartitionTest, and keeps running under every sweep.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createFiveFolders();
             final long sourceTimestamp;
