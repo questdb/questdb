@@ -233,7 +233,11 @@ jobs:
     pool:
       vmImage: $(imageName)
       name: $(poolName)
-    timeoutInMinutes: 60
+    # 90, not 60: the slowest group (windows-cairo-2) takes 40 to 46 minutes on
+    # a normal hosted agent, and the build in front of its tests now compiles
+    # the Rust crate from source. A slow agent put one run past 60 minutes with
+    # every test still passing (macwin 276777).
+    timeoutInMinutes: 90
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
