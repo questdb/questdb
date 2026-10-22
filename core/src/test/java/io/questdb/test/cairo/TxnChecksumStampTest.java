@@ -101,6 +101,31 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
      * checksum and entirely below the next occupied field -- otherwise it clobbers a live value, and no
      * record may grow.
      */
+    /**
+     * A checksummed record whose base-header geometry stamp names another txn fails the load path, which falls
+     * back to the previous record. The diagnosis path must call the same file torn, or a reader that cannot
+     * acquire the live txn times out looking like contention.
+     */
+    @Test
+    public void testStaleGeometryStampIsTornOnBothPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final String tableName = "txn_geometry_stamp";
+            final int timestampType = createTwoCommitTable(tableName, ff);
+            final long liveTxn = TxnCorruptionUtils.readLiveAreaTxn(engine, tableName);
+            TxnCorruptionUtils.tearLiveAreaGeometryStamp(engine, tableName);
+
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                txnPath(path, tableName);
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue("the intact other area must still load", txReader.unsafeLoadAll());
+                Assert.assertEquals("the load path must fall back to the previous record", liveTxn - 1, txReader.getTxn());
+                Assert.assertTrue("a stale geometry stamp under a stable version is torn, not contention",
+                        txReader.unsafeIsLiveAreaTorn());
+            }
+        });
+    }
+
     @Test
     public void testStampOccupiesTheReservedRecordGap() {
         Assert.assertEquals(
@@ -128,6 +153,48 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
             Assert.assertNotEquals("a committed record must carry a stamp", 0, liveStamp);
             Assert.assertEquals("the stamp must name the record and checksum format",
                     (int) liveTxn ^ TableUtils.TX_BODY_CHECKSUM_STAMP_XOR, liveStamp);
+        });
+    }
+
+    /**
+     * The fast commit path republishes the previous-but-one area in place under a new txn: it rewrites the
+     * body-checksum stamp but used to leave the base-header geometry stamp naming the txn that area was last
+     * published under. A reader takes a checksummed record whose geometry stamp names another txn for a torn
+     * live area, falls back to the previous record and can never acquire the live txn, so it spins until the
+     * spin-lock timeout on every reload. Two consecutive no-change commits (a zero-row WAL commit, a TRUNCATE of
+     * an empty table) are enough to reach that path.
+     */
+    @Test
+    public void testFastPathCommitRestampsTheGeometrySlot() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final String tableName = "txn_fast_path";
+            final int timestampType = createTwoCommitTable(tableName, ff);
+            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration)) {
+                txnPath(path, tableName);
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                // The second commit of createTwoCommitTable changed a partition size, so this one still takes the
+                // full-record path; the next one, with the record structure unchanged twice in a row, is the fast path.
+                txWriter.commit(symbolCounts);
+                txWriter.commit(symbolCounts);
+            }
+
+            final long liveTxn = TxnCorruptionUtils.readLiveAreaTxn(engine, tableName);
+            Assert.assertEquals("the stamp must name the live record",
+                    (int) liveTxn ^ TableUtils.TX_GEOMETRY_VERSION_STAMP_XOR,
+                    TxnCorruptionUtils.readLiveAreaGeometryStamp(engine, tableName));
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                txnPath(path, tableName);
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(txReader.unsafeLoadAll());
+                Assert.assertEquals("the reader must load the live record, not fall back to the previous one",
+                        liveTxn, txReader.getTxn());
+                Assert.assertEquals(0L, TxReader.getBodyChecksumFallbackCount());
+                Assert.assertFalse(txReader.unsafeIsLiveAreaTorn());
+            }
         });
     }
 

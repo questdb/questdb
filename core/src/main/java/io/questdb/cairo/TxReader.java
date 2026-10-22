@@ -1028,6 +1028,9 @@ public class TxReader implements Closeable, Mutable {
             intact = false;
         } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
             intact = false;
+        } else if (unsafeReadGeometryVersion(areaBaseOffset, selectedVersion) < 0) {
+            // The load path rejects a checksummed record whose geometry stamp names another txn; agree with it.
+            intact = false;
         } else {
             // Explicit diagnosis checks the full body even after initial verification has completed.
             intact = !unsafeChecksumStampNamesThisRecord(areaBaseOffset, selectedVersion)
@@ -1079,7 +1082,17 @@ public class TxReader implements Closeable, Mutable {
     }
 
     private int unsafeReadGeometryVersion() {
-        final boolean isA = (version & 1) == 0;
+        return unsafeReadGeometryVersion(baseOffset, txn);
+    }
+
+    /**
+     * The geometry version of the record at {@code areaBaseOffset}, whose txn (equal to the version that
+     * selects it, so also its A/B slot parity) is {@code areaTxn}. Returns -1 for a record that carries a
+     * body-checksum stamp but whose base-header geometry slot does not name it: every publication of an
+     * area stamps both, so that is tearing. Touches no load state.
+     */
+    private int unsafeReadGeometryVersion(long areaBaseOffset, long areaTxn) {
+        final boolean isA = (areaTxn & 1) == 0;
         final long geometryOffset = isA
                 ? TX_BASE_OFFSET_GEOMETRY_VERSION_A_32
                 : TX_BASE_OFFSET_GEOMETRY_VERSION_B_32;
@@ -1087,20 +1100,20 @@ public class TxReader implements Closeable, Mutable {
                 ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32
                 : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32;
         final int stamp = roTxMemBase.getInt(stampOffset);
-        if (stamp != 0 && stamp == ((int) txn ^ TX_GEOMETRY_VERSION_STAMP_XOR)) {
+        if (stamp != 0 && stamp == ((int) areaTxn ^ TX_GEOMETRY_VERSION_STAMP_XOR)) {
             return roTxMemBase.getInt(geometryOffset);
         }
-        final int bodyStamp = roTxMemBase.getInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
-        if (bodyStamp != 0 && bodyStamp == ((int) txn ^ TX_BODY_CHECKSUM_STAMP_XOR)) {
+        final int bodyStamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        if (bodyStamp != 0 && bodyStamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR)) {
             // A merged-format record must have a matching base-header geometry slot. Treat its absence as tearing.
             return -1;
         }
         // A pre-merge adaptive record has the legacy body-checksum stamp and no geometry field.
-        if (bodyStamp != 0 && bodyStamp == ((int) txn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR)) {
+        if (bodyStamp != 0 && bodyStamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR)) {
             return 0;
         }
         // An upstream record has no body-checksum stamp and keeps geometryVersion in the legacy body slot.
-        return getInt(TX_OFFSET_GEOMETRY_VERSION_32);
+        return roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_GEOMETRY_VERSION_32);
     }
 
     public int unsafeReadSymbolColumnCount() {

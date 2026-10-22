@@ -36,9 +36,12 @@ import org.junit.Assert;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_A_32;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_B_32;
+import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32;
+import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_VERSION_64;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_BODY_CHECKSUM_64;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32;
+import static io.questdb.cairo.TableUtils.TX_GEOMETRY_VERSION_STAMP_XOR;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN_64;
 
 /**
@@ -109,6 +112,22 @@ public final class TxnCorruptionUtils {
         try (Path path = new Path()) {
             LPSZ txnPath = txnPath(engine, path, tableName);
             return RawFileAccess.peekInt(ff, txnPath, liveAreaOffset(ff, txnPath) + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        }
+    }
+
+    /**
+     * The geometry-version stamp in the base-header slot of the version-selected (live) area.
+     */
+    public static int readLiveAreaGeometryStamp(CairoEngine engine, String tableName) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            LPSZ txnPath = txnPath(engine, path, tableName);
+            long version = RawFileAccess.peekLong(ff, txnPath, TX_BASE_OFFSET_VERSION_64);
+            return RawFileAccess.peekInt(
+                    ff,
+                    txnPath,
+                    (version & 1L) == 0L ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32 : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32
+            );
         }
     }
 
@@ -229,6 +248,25 @@ public final class TxnCorruptionUtils {
         try (Path path = new Path()) {
             LPSZ txnPath = txnPath(engine, path, tableName);
             RawFileAccess.pokeLong(ff, txnPath, liveAreaOffset(ff, txnPath) + TX_OFFSET_BODY_CHECKSUM_64, 0L);
+        }
+    }
+
+    /**
+     * Makes the live area's base-header geometry stamp name the txn two commits back, the stale stamp the fast
+     * commit path used to leave behind, with the area's body and checksum stamp intact.
+     */
+    public static void tearLiveAreaGeometryStamp(CairoEngine engine, String tableName) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            LPSZ txnPath = txnPath(engine, path, tableName);
+            long version = RawFileAccess.peekLong(ff, txnPath, TX_BASE_OFFSET_VERSION_64);
+            long liveTxn = RawFileAccess.peekLong(ff, txnPath, liveAreaOffset(ff, txnPath) + TX_OFFSET_TXN_64);
+            RawFileAccess.pokeInt(
+                    ff,
+                    txnPath,
+                    (version & 1L) == 0L ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32 : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32,
+                    (int) (liveTxn - 2) ^ TX_GEOMETRY_VERSION_STAMP_XOR
+            );
         }
     }
 

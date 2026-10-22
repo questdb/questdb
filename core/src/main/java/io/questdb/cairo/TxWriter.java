@@ -250,6 +250,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
 
+            // The area's base-header geometry slot still names the txn it was last published under. A reader
+            // treats a record whose checksum stamp names it but whose geometry stamp does not as torn, falls
+            // back to the previous area and can never acquire this txn, so restamp it for the new txn.
+            storeGeometryVersion(writeBaseOffset);
+
             // The fast path keeps the previous record's structure, so the committed size is readRecordSize
             // and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount), the range the
             // reader derives. The checksum goes after the body and before the fence and version bump. Nothing
@@ -1030,19 +1035,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long offsetOffset = currentIsA ? TX_BASE_OFFSET_B_32 : TX_BASE_OFFSET_A_32;
         long symbolSizeOffset = currentIsA ? TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_A_32;
         long partitionsSizeOffset = currentIsA ? TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_A_32;
-        long geometryVersionOffset = currentIsA ? TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 : TX_BASE_OFFSET_GEOMETRY_VERSION_A_32;
-        long geometryVersionStampOffset = currentIsA
-                ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32
-                : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32;
 
         txMemBase.putInt(offsetOffset, areaOffset);
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
-        txMemBase.putInt(geometryVersionOffset, geometryVersion);
-        txMemBase.putInt(
-                geometryVersionStampOffset,
-                (int) txMemBase.getLong(areaOffset + TX_OFFSET_TXN_64) ^ TX_GEOMETRY_VERSION_STAMP_XOR
-        );
+        storeGeometryVersion(areaOffset);
 
         // The size comes from calculateTxRecordSize and the partition-table start from TX_RECORD_HEADER_SIZE +
         // bytesSymbols (== getPartitionTableSizeOffset(symbolCount)), as the reader derives them. The checksum
@@ -1256,6 +1253,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(
                 baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32,
                 (int) txMemBase.getLong(baseOffset + TX_OFFSET_TXN_64) ^ TX_BODY_CHECKSUM_STAMP_XOR
+        );
+    }
+
+    // Stores geometryVersion and its stamp in the base-header slot of the area about to go live (the slot
+    // opposite the current version's parity), before the storeFence() and version bump. The stamp names the
+    // record at areaOffset, read from the record itself like the body-checksum stamp; a reader rejects a
+    // checksummed record whose geometry stamp names another txn, so every publication of an area must
+    // restamp it, the fast path included.
+    private void storeGeometryVersion(int areaOffset) {
+        boolean currentIsA = (baseVersion & 1) == 0;
+        long geometryVersionOffset = currentIsA ? TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 : TX_BASE_OFFSET_GEOMETRY_VERSION_A_32;
+        long geometryVersionStampOffset = currentIsA
+                ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32
+                : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32;
+        txMemBase.putInt(geometryVersionOffset, geometryVersion);
+        txMemBase.putInt(
+                geometryVersionStampOffset,
+                (int) txMemBase.getLong(areaOffset + TX_OFFSET_TXN_64) ^ TX_GEOMETRY_VERSION_STAMP_XOR
         );
     }
 
