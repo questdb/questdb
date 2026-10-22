@@ -110,25 +110,27 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 baselineGeneration = saved[0].generation;
             }
 
-            // Calls 0-4 construct the apply job and writer (including purge gates and tracking ownership).
-            // Call 5 reconciles the anchor, call 6 is maybeAdvanceDurableEpoch's gate, and call 7 is
-            // advance()'s re-check. Only the re-check and subsequent calls see the demote.
-            final AtomicInteger calls = new AtomicInteger();
-            final boolean[] sawEnabledAtGate = {false};
-            final boolean[] sawDisabledAtRecheck = {false};
+            // The policy is also consulted while the apply job and the writer are set up (purge gates, tracking
+            // ownership, the anchor reconciliation), and how many times depends on code outside this test, so
+            // the two calls of interest are told apart by their caller, not by their ordinal: the gate is
+            // maybeAdvanceDurableEpoch's call, the re-check is advanceDurableEpoch's. Every call up to and
+            // including the gate answers ENABLED; the re-check and every call after it see the demote.
+            final AtomicInteger gateCalls = new AtomicInteger();
+            final AtomicInteger recheckCalls = new AtomicInteger();
             final LocalDurabilityPolicy demoteInWindow = () -> {
-                final int call = calls.getAndIncrement();
-                final boolean enabled = call < 7;
-                if (call == 6) {
-                    Assert.assertEquals("maybeAdvanceDurableEpoch", StackWalker.getInstance().walk(
-                            frames -> frames.skip(1).findFirst().orElseThrow().getMethodName()));
-                    sawEnabledAtGate[0] = true;
-                } else if (call == 7) {
-                    Assert.assertEquals("advanceDurableEpoch", StackWalker.getInstance().walk(
-                            frames -> frames.skip(1).findFirst().orElseThrow().getMethodName()));
-                    sawDisabledAtRecheck[0] = true;
+                final String caller = StackWalker.getInstance().walk(
+                        frames -> frames.skip(1).findFirst().orElseThrow().getMethodName());
+                final boolean demoted = recheckCalls.get() > 0;
+                if ("maybeAdvanceDurableEpoch".equals(caller) && !demoted) {
+                    gateCalls.incrementAndGet();
+                    return true;
                 }
-                return enabled;
+                if ("advanceDurableEpoch".equals(caller)) {
+                    Assert.assertEquals("the re-check must follow the gate", 1, gateCalls.get());
+                    recheckCalls.incrementAndGet();
+                    return false;
+                }
+                return !demoted;
             };
             engine.setLocalDurabilityPolicy(demoteInWindow);
             try {
@@ -137,19 +139,16 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
 
                 // The gate passed (entered advance()) and the re-check saw DISABLED: advance()'s re-check
                 // suppressed the epoch, not the gate.
-                Assert.assertTrue("epoch gate must have seen local durability ENABLED (entered advance())",
-                        sawEnabledAtGate[0]);
-                Assert.assertTrue("advance()'s re-check must have seen local durability DISABLED",
-                        sawDisabledAtRecheck[0]);
+                Assert.assertEquals("epoch gate must have seen local durability ENABLED (entered advance())",
+                        1, gateCalls.get());
+                Assert.assertEquals("advance()'s re-check must have seen local durability DISABLED",
+                        1, recheckCalls.get());
 
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a demote in the epoch window must not advance the durable epoch frontier",
                         0L, tracker.getDurableEpochSeqTxn());
                 Assert.assertEquals("a demote in the epoch window must not publish an epoch (lastEpochTs stays 0)",
                         0L, tracker.getLastEpochTs());
-
-                // Pin the exact sequence so a new policy reader cannot silently move the demote before the gate.
-                Assert.assertEquals("setup, reconcile, gate, then disabled re-check", 8, calls.get());
 
                 // Enrollment may have published an epoch-0 baseline before this window. The demoted node must
                 // not advance or replace that save point.
