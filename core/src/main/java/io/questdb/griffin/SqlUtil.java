@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -1082,6 +1083,65 @@ public class SqlUtil {
     }
 
     /**
+     * Returns the validated percentile at the given logical index of a one-dimensional
+     * percentile list. The list may be a slice or sub-array of a larger array, so this
+     * method reads through the list's stride and offset rather than its backing buffer.
+     *
+     * @param percentiles   the percentile list, checked by {@link #getPercentileCount}
+     * @param index         the logical index, below {@link #getPercentileCount}
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double getPercentile(ArrayView percentiles, int index, int percentilePos) {
+        return validatePercentile(percentiles.getDouble(index * percentiles.getStride(0)), percentilePos);
+    }
+
+    /**
+     * Returns the number of percentiles in a percentile list. A NULL list fails, as a NULL
+     * percentile does in {@link #validatePercentile}. The list must be one-dimensional: the
+     * result array of the percentile functions is always one-dimensional, so flattening a
+     * deeper list would silently lose its shape.
+     *
+     * @param percentiles   the percentile list
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the number of percentiles
+     */
+    public static int getPercentileCount(ArrayView percentiles, int percentilePos) {
+        if (percentiles.isNull()) {
+            throw CairoException.nonCritical().position(percentilePos).put("percentile array must not be NULL");
+        }
+        if (percentiles.getDimCount() != 1) {
+            throw CairoException.nonCritical().position(percentilePos).put("array is not one-dimensional");
+        }
+        return percentiles.getDimLen(0);
+    }
+
+    /**
+     * Returns the index of the percentile_disc() value in a sorted list of {@code size} values.
+     * The SQL standard defines the value as the first one whose cumulative distribution reaches
+     * the percentile; the k-th value's cumulative distribution is {@code k / size}, which this
+     * method computes in double precision, as cume_dist() does. Rounding
+     * {@code percentile * size} up alone gets it wrong when the product rounds past a whole
+     * number: {@code 0.07 * 100} is 7.000000000000001, yet the 7th of 100 values already has
+     * the cumulative distribution {@code 7 / 100 == 0.07}.
+     *
+     * @param percentile the percentile, within [0, 1]
+     * @param size       the number of values, at least 1
+     * @return the 0-based index of the percentile_disc() value
+     */
+    public static long getPercentileDiscIndex(double percentile, long size) {
+        // the product carries one rounding error, which moves its ceiling by one at most
+        long k = Math.max(1, (long) Math.ceil(percentile * size));
+        while (k > 1 && (double) (k - 1) / size >= percentile) {
+            k--;
+        }
+        while (k < size && (double) k / size < percentile) {
+            k++;
+        }
+        return k - 1;
+    }
+
+    /**
      * Extracts the interval/stride expression from a timestamp_floor or
      * timestamp_floor_utc function call, handling 2/3/5-param overloads.
      */
@@ -1678,6 +1738,29 @@ public class SqlUtil {
         }
     }
 
+    /**
+     * Interpolates between two adjacent sorted values the way percentile_cont() does:
+     * {@code lo + (hi - lo) * fraction}. The difference {@code hi - lo} overflows to infinity
+     * when {@code lo} and {@code hi} are huge and of opposite signs, although the result lies
+     * between them. Halving both values and doubling the result is exact at that magnitude, so
+     * the method then runs the same arithmetic on the halves.
+     *
+     * @param lo       the lower value, finite
+     * @param hi       the upper value, finite and not less than {@code lo}
+     * @param fraction the position between the two values, within [0, 1]
+     * @return the interpolated value, within [lo, hi]
+     */
+    public static double interpolatePercentile(double lo, double hi, double fraction) {
+        final double delta = hi - lo;
+        if (Numbers.isFinite(delta)) {
+            return lo + delta * fraction;
+        }
+        final double halfLo = lo * 0.5;
+        final double result = (halfLo + (hi * 0.5 - halfLo) * fraction) * 2;
+        // keeps rounding at the edge of the double range from pushing the result past hi
+        return Math.max(lo, Math.min(hi, result));
+    }
+
     public static boolean isNotPlainSelectModel(IQueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
@@ -2026,6 +2109,24 @@ public class SqlUtil {
             return columnType;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
+    }
+
+    /**
+     * Checks that a percentile lies within [0, 1], as the SQL standard requires of
+     * percentile_disc() and percentile_cont(), and returns it. NULL, NaN, infinities and
+     * negative values fail; negative zero passes as zero.
+     *
+     * @param percentile    the percentile
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double validatePercentile(double percentile, int percentilePos) {
+        // Numbers.isNull() is true for NaN and both infinities
+        if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
+            throw CairoException.nonCritical().position(percentilePos)
+                    .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+        }
+        return percentile;
     }
 
     // tableName and columnName have to be string objects,

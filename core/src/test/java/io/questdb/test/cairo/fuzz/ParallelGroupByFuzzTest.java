@@ -144,8 +144,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByOverJoin() throws Exception {
-        // Parallel GROUP BY shouldn't kick in on this query, yet we want
-        // to validate the result correctness.
+        // The aggregation reads a join, so the single-table parallel GROUP BY
+        // (Async Group By) can't run this query. The planner either fuses the
+        // hash join into a parallel aggregation (Async Hash Join Group By) or
+        // aggregates the join's output on a single thread. We want to validate
+        // the result correctness whichever plan runs.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             execute(

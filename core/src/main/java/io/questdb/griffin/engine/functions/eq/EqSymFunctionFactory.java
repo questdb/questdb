@@ -105,22 +105,21 @@ public class EqSymFunctionFactory implements FunctionFactory {
             final int leftKey = left.getInt(rec);
             final int rightKey = right.getInt(rec);
 
+            // NULL matches only NULL. Don't consult the right table's null flag: an outer join
+            // null-extends rows of a table that stores no NULL, including an empty table, and
+            // lag()/lead() mint a NULL key for a missing neighbor.
+            if (leftKey == StaticSymbolTable.VALUE_IS_NULL) {
+                return negated != (rightKey == StaticSymbolTable.VALUE_IS_NULL);
+            }
+
             // take the key + 1, so that zero is not possible
             final long index = lookupCache.keyIndex(leftKey + 1);
             final int matchingRightKey;
             if (index < 0) {
                 matchingRightKey = lookupCache.valueAt(index);
             } else {
-                if (leftKey != StaticSymbolTable.VALUE_IS_NULL) {
-                    final CharSequence leftSym = leftTable.valueOf(leftKey);
-                    matchingRightKey = rightTable.keyOf(leftSym);
-                } else {
-                    // NULL matches NULL no matter what rightTable.containsNullValue() says. That flag
-                    // describes the stored dictionary only; an outer join's null record and
-                    // lag()/lead() for a missing neighbor mint VALUE_IS_NULL on their own. A right
-                    // side that never emits NULL cannot match this key anyway.
-                    matchingRightKey = StaticSymbolTable.VALUE_IS_NULL;
-                }
+                final CharSequence leftSym = leftTable.valueOf(leftKey);
+                matchingRightKey = rightTable.keyOf(leftSym);
                 lookupCache.putAt(index, leftKey + 1, matchingRightKey);
             }
 
