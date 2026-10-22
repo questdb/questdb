@@ -30,10 +30,8 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
@@ -61,14 +59,16 @@ import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
 /**
- * A parallel COPY that reported success must survive a power loss in SYNC, and in ADAPTIVE into a WAL table, into a
- * new table as well as into an existing empty one. The importer writes every partition outside the WAL, so nothing
- * can redo it after the crash: the import must be durable before COPY reports it done, and a power loss before that
- * must not leave a table whose _txn names files that are not complete. Unless a test says otherwise, nothing is
- * written back by the kernel here: only the product's own barriers make bytes durable. Where syncfs is
- * filesystem-wide one syncfs before the attach and one after it make the import durable; elsewhere the importer
- * flushes file by file. NOSYNC, ASYNC and a non-WAL table in ADAPTIVE promise nothing on a power loss, and the
- * importer makes no flush there.
+ * A parallel COPY that reported success must survive a power loss in SYNC, into a new table as well as into an
+ * existing empty one, and in ADAPTIVE into an existing WAL table. The importer writes every partition outside the
+ * WAL, so nothing can redo it after the crash: the import must be durable before COPY reports it done, and a power
+ * loss before that must not leave a table whose _txn names files that are not complete. Unless a test says
+ * otherwise, nothing is written back by the kernel here: only the product's own barriers make bytes durable. Where
+ * syncfs is filesystem-wide one syncfs before the attach and one after it make the import durable; elsewhere the
+ * importer flushes file by file. NOSYNC, ASYNC and a non-WAL table in ADAPTIVE promise nothing on a power loss, and
+ * the importer makes no flush there. A COPY creates its table non-WAL whatever cairo.wal.enabled.default says (a WAL
+ * target would be replicated without the rows the attach lands outside the WAL), so a new table is in the last
+ * group: under ADAPTIVE, the promise covers a COPY only into an existing WAL table.
  */
 @RunWith(Parameterized.class)
 public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest {
@@ -102,9 +102,10 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
     public static Collection<Object[]> data() {
         final List<Object[]> params = new ArrayList<>();
         for (String mode : new String[]{"adaptive", "sync", "nosync", "async"}) {
-            for (boolean walTable : new boolean[]{true, false}) {
-                for (boolean syncfsFileSystemWide : new boolean[]{true, false}) {
-                    params.add(new Object[]{mode, true, walTable, syncfsFileSystemWide});
+            for (boolean syncfsFileSystemWide : new boolean[]{true, false}) {
+                // A COPY creates its table non-WAL, so a new table is never a WAL one.
+                params.add(new Object[]{mode, true, false, syncfsFileSystemWide});
+                for (boolean walTable : new boolean[]{true, false}) {
                     params.add(new Object[]{mode, false, walTable, syncfsFileSystemWide});
                 }
             }
@@ -121,7 +122,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
     public void testImportSurvivesPowerLoss() throws Exception {
         assumeCrashHarnessSupported();
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
+        setWalDefault();
         // A power loss takes no close-time save point.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
         inputRoot = temp.newFolder().getAbsolutePath();
@@ -176,6 +177,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             final int importColumnFileFsyncs = columnFileFsyncs.get();
             final String imported = rows(engine);
             Assert.assertEquals(IMPORTED, imported);
+            Assert.assertEquals("a COPY creates its table non-WAL", walTable, engine.verifyTableName("t").isWal());
 
             crashFf.powerLoss();
             engine.releaseAllReaders();
@@ -197,8 +199,9 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     Assert.assertEquals("no flush where nothing is promised", 0, importSyncfsCalls);
                 }
             }
-            // An existing WAL table in ADAPTIVE is flushed by the writer's save point instead.
-            if ("sync".equals(commitMode) || ("adaptive".equals(commitMode) && walTable && newTable)) {
+            // An existing WAL table in ADAPTIVE is flushed by the writer's save point instead, and a new table has
+            // no promise there.
+            if ("sync".equals(commitMode)) {
                 if (syncfsFileSystemWide) {
                     Assert.assertEquals("one syncfs before the attach and one after it make the import durable", 2, importSyncfsCalls);
                     Assert.assertEquals("no column file fsync where syncfs is filesystem-wide", 0, importColumnFileFsyncs);
@@ -340,7 +343,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     engine.releaseInactive();
                     crashFf.crash(root);
                     // An existing WAL table in ADAPTIVE comes back to the writer's save point instead.
-                    final boolean importerFlushes = "sync".equals(commitMode) || newTable;
+                    final boolean importerFlushes = "sync".equals(commitMode);
                     final String outcome = context + (importerFlushes && redoLostRenames(txnPath.get()) > 0 ? ", rename lost" : "");
                     try (CairoEngine restarted = new CairoEngine(configuration)) {
                         assertNoCorruptImport(restarted, outcome);
@@ -354,15 +357,12 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
 
     private void assertFailedFlushStopsTheEngine() throws Exception {
         // syncfs reports a write-back error of any file on the filesystem, so a failed device flush may belong to
-        // another table: in SYNC, and in ADAPTIVE for a WAL table, the engine must stop, whichever flush that makes
-        // the imported partitions live and durable fails. It stops at the flush, before the importer can clean up
-        // (a server halts there), so the table keeps what the failed COPY left until the guide's manual step clears it.
-        if ("adaptive".equals(commitMode)) {
-            Assume.assumeTrue("a non-WAL table in adaptive commit mode is flushed nowhere", walTable);
-            Assume.assumeTrue("an existing table is flushed by the writer's save point, which stops the engine itself", newTable);
-        } else {
-            Assume.assumeTrue("the import flushes nothing in nosync and async", "sync".equals(commitMode));
-        }
+        // another table: in SYNC the engine must stop, whichever flush that makes the imported partitions live and
+        // durable fails. It stops at the flush, before the importer can clean up (a server halts there), so the table
+        // keeps what the failed COPY left until the guide's manual step clears it. The importer flushes nothing in
+        // NOSYNC and ASYNC, nor in ADAPTIVE: a new table is non-WAL there and flushed nowhere, and an existing WAL
+        // table is flushed by the writer's save point, which stops the engine itself.
+        Assume.assumeTrue("the import flushes only in sync", "sync".equals(commitMode));
         assumeCrashHarnessSupported();
         final AtomicBoolean attaching = new AtomicBoolean();
         final AtomicInteger failAt = new AtomicInteger();
@@ -514,33 +514,19 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
     private void clearCreatedTableAfterRestart(String context) throws Exception {
         // A server halts inside the failed flush, so the created table keeps what the failed COPY left. A test engine
         // runs on after the stop, and where the failure reaches the importer without its flush flag, its clean-up
-        // drops the table; either way the restart must find nothing but imported rows. The guide's step for a non-WAL
-        // table is DROP TABLE. A WAL table the COPY created has no sequencer after a restart, so no SQL step works on
-        // it: its directory is deleted while the server is stopped, and the table is created before the COPY runs
-        // again.
+        // drops the table; either way the restart must find nothing but imported rows. The guide's step for the
+        // table, a non-WAL one, is DROP TABLE.
         releaseEngineHandles();
         // The registry lock is the server's: the next round's setUp() takes it again.
         engine.closeNameRegistry();
-        String walTableDir = null;
         try (CairoEngine restarted = new CairoEngine(configuration)) {
-            final TableToken token = restarted.getTableTokenIfExists("t");
-            if (token != null) {
+            if (restarted.getTableTokenIfExists("t") != null) {
                 assertOnlyImportedRows(context, rows(restarted));
-                if (walTable) {
-                    walTableDir = token.getDirName();
-                } else {
-                    restarted.execute("DROP TABLE t");
-                }
+                restarted.execute("DROP TABLE t");
             }
-        }
-        if (walTableDir != null) {
-            deleteRecursively(java.nio.file.Path.of(root, walTableDir));
         }
         try (CairoEngine restarted = new CairoEngine(configuration)) {
             Assert.assertNull(context + ": the manual step removes the table", restarted.getTableTokenIfExists("t"));
-            if (walTable) {
-                restarted.execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            }
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(restarted, 1)) {
                 importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -606,7 +592,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             setUp();
         }
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
+        setWalDefault();
         if (powerLoss) {
             // A power loss takes no close-time save point.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -626,12 +612,14 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         }
     }
 
+    private void setWalDefault() {
+        // A COPY creates its table non-WAL whatever the default says; a new table has the default on, so that
+        // testImportSurvivesPowerLoss checks it.
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(newTable || walTable));
+    }
+
     private void writeBackMetadata(String txnPath) {
         crashFf.markFileDurable(txnPath);
-        if (walTable && !Files.isDirectory(java.nio.file.Path.of(txnPath).resolveSibling(WalUtils.SEQ_DIR))) {
-            // Until a WAL table the import creates has its sequencer on disk, its registry entry is left alone.
-            return;
-        }
         final java.io.File[] rootFiles = new java.io.File(root).listFiles(java.io.File::isFile);
         if (rootFiles != null) {
             for (java.io.File file : rootFiles) {
