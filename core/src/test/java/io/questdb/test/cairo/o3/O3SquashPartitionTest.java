@@ -1792,6 +1792,19 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                         2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
                                         """, timestampType.getTypeName()));
 
+                // the surviving split must stay visible to interval scans: the table
+                // min timestamp moves to the split's first row, not the next partition's
+                assertQuery("select count() from x where ts < '2020-02-05'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n439\n");
+                assertQuery("select min(ts) from x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("min")
+                        .returns("min\n" + replaceTimestampSuffix1("2020-02-04T20:01:00.000000Z\n", timestampType.getTypeName()));
+
                 // should squash partitions
                 execute("alter table x squash partitions");
 
