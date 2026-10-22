@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.test.AbstractCairoTest;
@@ -55,6 +56,11 @@ public class ChecksumTrailerCvEquivalenceTest extends AbstractCairoTest {
         // Flip a byte inside the live _cv area: the reader must refuse it rather than serve column versions
         // derived from rotted bytes.
         assertMemoryLeak(() -> {
+            // The "both areas" verdict needs a _cv with one committed record, so the fallback has nothing settled
+            // to adopt. Merge-append (which the test harness turns on) commits _cv once more on the way, and the
+            // reader then adopts the previous record and reports that it cannot advance past it instead: still a
+            // rejection, but not the one under test. Pin the production default.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("create table cv_rot (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into cv_rot values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();

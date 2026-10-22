@@ -714,6 +714,10 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         // after each step, and each writer release checks the cached hashes against a full recomputation.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // The sequence drives a partition split and a squash, which merge-append never produces: an O3
+            // insert into the last partition becomes a piece of it instead. Pin the production default, which
+            // the test harness flips on, so the sequence keeps covering the split and squash commits.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("CREATE TABLE w (ts TIMESTAMP, v LONG, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // 144 rows a day, 2024-01-01 to 2024-01-05.
             execute(

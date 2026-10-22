@@ -288,6 +288,10 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
         Assume.assumeFalse("adaptive recovery restores enrolled tables", "adaptive".equals(commitMode));
         assertMemoryLeak(() -> {
             configureCommitMode();
+            // The torn image this test builds needs commit N to rewrite its partition under a new name txn,
+            // which only a whole-partition O3 merge does; merge-append leaves the O3 rows as a piece of the
+            // same partition version. Pin the production default, which the test harness flips on.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             final String txnPath = createTable(true, 12 * HOUR, 400);
             final ObjList<byte[]> snapshots = commitRows(txnPath, true, 4, k -> T0 + (150 + k) * DAY + 6 * HOUR, null);
             engine.clear();

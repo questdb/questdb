@@ -147,6 +147,10 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         // by itself once the next save point no longer names it, with the writer kept open.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        // The O3 change below must leave a partition version behind, which only a whole-partition rewrite does;
+        // merge-append (which the test harness turns on) keeps the version and appends a piece. Pin the production
+        // default.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             final String[] changes = {
                     "ALTER TABLE %s DROP PARTITION LIST '2024-01-01'",
@@ -180,6 +184,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        // As in testAdaptiveLeftVersionGoesAfterNextSavePoint: the O3 change must leave a partition version behind.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             final String[] changes = {
                     "ALTER TABLE %s DROP PARTITION LIST '2024-01-01'",
