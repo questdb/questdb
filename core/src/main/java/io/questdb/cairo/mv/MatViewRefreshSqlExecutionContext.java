@@ -49,6 +49,10 @@ import org.jetbrains.annotations.TestOnly;
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     private final boolean coveringIndexEnabled;
     private TableReader baseTableReader;
+    // Whether the view query compiled last through this context has a wildcard in its top-level select list.
+    // It starts out true, and resetTopLevelProjectionWildcard() sets it back before each compile, so a compile
+    // that does not report its select list keeps the refresh's column-name check.
+    private boolean hasTopLevelProjectionWildcard = true;
     private boolean isPassthrough;
     private TableToken viewTableToken;
 
@@ -157,6 +161,10 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
     }
 
+    public boolean hasTopLevelProjectionWildcard() {
+        return hasTopLevelProjectionWildcard;
+    }
+
     @Override
     public boolean isBackgroundJob() {
         return true;
@@ -203,6 +211,10 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
     }
 
+    public void resetTopLevelProjectionWildcard() {
+        hasTopLevelProjectionWildcard = true;
+    }
+
     @Override
     public void setAllowBareNoArgFunctionCalls(boolean value) {
         // no-op
@@ -217,6 +229,11 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     public void setRange(long timestampLo, long timestampHi, int timestampType) throws SqlException {
         getBindVariableService().setTimestampWithType(1, timestampType, timestampLo);
         getBindVariableService().setTimestampWithType(2, timestampType, timestampHi - 1);
+    }
+
+    @Override
+    public void setTopLevelProjectionWildcard(boolean hasTopLevelProjectionWildcard) {
+        this.hasTopLevelProjectionWildcard = hasTopLevelProjectionWildcard;
     }
 
     @Override

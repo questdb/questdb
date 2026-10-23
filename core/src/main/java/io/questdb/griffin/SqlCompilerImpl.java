@@ -4182,6 +4182,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ExecutionModel model = null;
             try {
                 model = parser.parse(lexer, executionContext, this);
+                if (executionContext.isMatViewRefresh() && model.getModelType() == ExecutionModel.QUERY) {
+                    // The optimiser expands wildcards in place, so only the parsed model still shows them.
+                    executionContext.setTopLevelProjectionWildcard(SqlUtil.hasTopLevelWildcard((IQueryModel) model));
+                }
                 if (viewDependencies != null && model.getModelType() == ExecutionModel.QUERY) {
                     return optimiseViewQuery((IQueryModel) model, executionContext, viewDependencies);
                 }
