@@ -1973,6 +1973,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    // Limit advice truncates the master scan, so every join in the chain must preserve
+    // its rows and no post-join filter may discard them.
+    private static boolean isLimitAdviceSafeForJoins(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            // Even a row-preserving join can discard master rows through a post-join filter.
+            if (joinModel.getPostJoinWhereClause() != null) {
+                return false;
+            }
+            if (i > 0) {
+                switch (joinModel.getJoinType()) {
+                    case IQueryModel.JOIN_ASOF, IQueryModel.JOIN_LT, IQueryModel.JOIN_WINDOW,
+                         IQueryModel.JOIN_LEFT_OUTER, IQueryModel.JOIN_CROSS_LEFT, IQueryModel.JOIN_CROSS -> {
+                        // These joins preserve master rows, or produce no rows for an empty CROSS slave.
+                    }
+                    default -> {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -14326,7 +14351,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getLatestBy().size() > 0) {
             return null;
         }
-        if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
+        if (model.getLimitAdviceLo() != null
+                && model.getLimitAdviceHi() == null
+                && isLimitAdviceSafeForJoins(model)) {
             return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
         }
         return null;
