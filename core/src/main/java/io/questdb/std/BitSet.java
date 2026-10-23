@@ -52,6 +52,18 @@ public class BitSet implements Mutable {
         Arrays.fill(words, 0);
     }
 
+    /**
+     * Sets every bit below the given index to 0.
+     */
+    public void clearBelow(int bitIndex) {
+        assert bitIndex >= 0;
+        final int fullWords = Math.min(wordIndex(bitIndex), words.length);
+        Arrays.fill(words, 0, fullWords, 0);
+        if (fullWords < words.length) {
+            words[fullWords] &= -1L << bitIndex;
+        }
+    }
+
     public boolean get(int bitIndex) {
         int wordIndex = wordIndex(bitIndex);
         return wordIndex < words.length && (words[wordIndex] & 1L << bitIndex) != 0L;

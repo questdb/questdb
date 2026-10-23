@@ -123,7 +123,44 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleFill() throws Exception {
+    public void testSampleByFirstLastResolveIndependently() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE tab (ts TIMESTAMP, k SYMBOL INDEX, s SYMBOL " + cacheFlag + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'K', 'A'),
+                        ('2024-01-01T00:00:00.000001Z', 'K', 'B'),
+                        ('2024-01-01T01:00:00.000000Z', 'K', 'C'),
+                        ('2024-01-01T01:00:00.000001Z', 'K', 'D'),
+                        ('2024-01-01T02:00:00.000000Z', 'K', 'E'),
+                        ('2024-01-01T02:00:00.000001Z', 'K', 'F')
+                        """);
+                assertQuery("""
+                        SELECT * FROM (
+                            SELECT first(s) f, last(s) l
+                            FROM tab
+                            WHERE k = 'K'
+                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
+                        )
+                        WHERE nullif(f, nullif(l, 'X')) IS NOT NULL
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("SampleByFirstLast")
+                        .returns("""
+                                f\tl
+                                A\tB
+                                C\tD
+                                E\tF
+                                """);
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
+    public void testSampleFill()throws Exception {
         assertQuery("select b, first(a) a, k from x sample by 3h align to first observation")
                 .ddl("create table x as " +
                         "(" +

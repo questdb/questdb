@@ -46,7 +46,36 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStaticSymbolsFromSameTableCompareByValue() throws Exception {
+    public void testLookupDoesNotRebindValueOfOtherCaller() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE fw (id INT, s SYMBOL " + cacheFlag + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO fw VALUES
+                        (1, 'alpha', '2024-01-01T00:00:00.000000Z'),
+                        (2, 'bravo', '2024-01-01T01:00:00.000000Z'),
+                        (3, 'charlie', '2024-01-01T02:00:00.000000Z')
+                        """);
+                assertQuery("""
+                        SELECT id, nullif(s, CASE WHEN p = s THEN 'same' ELSE 'different' END) result
+                        FROM (SELECT id, s, lag(s) OVER (ORDER BY ts) p FROM fw)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                id\tresult
+                                1\talpha
+                                2\tbravo
+                                3\tcharlie
+                                """);
+                execute("DROP TABLE fw");
+            }
+        });
+    }
+
+    @Test
+    public void testNonStaticSymbolsFromSameTableCompareByValue()throws Exception {
         // A UNION re-symbolises its columns through one dictionary that is not static, so = falls
         // back to the text comparison. Both sides then resolve through the same table and must
         // read distinct flyweights, otherwise the second read clobbers the first and every pair

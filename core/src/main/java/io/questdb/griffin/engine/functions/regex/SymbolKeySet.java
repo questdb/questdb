@@ -32,6 +32,7 @@ public final class SymbolKeySet {
     private final BitSet bits = new BitSet(64);
     private final IntList keys = new IntList();
     private int base;
+    private int denseSpan;
     private boolean isDense;
 
     public void add(int key) {
@@ -47,11 +48,12 @@ public final class SymbolKeySet {
             int min = keys.getQuick(0);
             long span = keys.getQuick(size - 1) - (long) min + 1;
             if (span <= MAX_SPAN_PER_KEY * size) {
-                bits.clear();
+                bits.clearBelow(denseSpan);
                 base = min;
                 for (int i = 0; i < size; i++) {
                     bits.set(keys.getQuick(i) - base);
                 }
+                denseSpan = (int) span;
                 isDense = true;
             }
         }

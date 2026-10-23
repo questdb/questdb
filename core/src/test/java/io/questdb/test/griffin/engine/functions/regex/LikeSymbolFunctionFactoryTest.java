@@ -951,6 +951,32 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolKeySetRebuildClearsEarlierSpan() {
+        SymbolKeySet keys = new SymbolKeySet();
+        for (int key = 0; key < 1000; key++) {
+            keys.add(key);
+        }
+        keys.build();
+        keys.clear();
+        keys.add(0);
+        keys.add(1_000_000);
+        keys.build();
+        keys.clear();
+        keys.add(70);
+        keys.add(100);
+        keys.build();
+        for (int key = 0; key < 1000; key++) {
+            Assert.assertEquals(key == 70 || key == 100, keys.contains(key));
+        }
+        keys.clear();
+        keys.add(5);
+        keys.build();
+        for (int key = 0; key < 200; key++) {
+            Assert.assertEquals(key == 5, keys.contains(key));
+        }
+    }
+
+    @Test
     public void testSymbolKeySetSparseAndHighKeys() {
         SymbolKeySet keys = new SymbolKeySet();
         keys.add(0);
