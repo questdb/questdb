@@ -25,8 +25,12 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
@@ -99,6 +103,8 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
             {"INT", "5", "VARCHAR", "5"},
             {"INT", "5", "STRING", "5"},
     };
+    // 2024-01-01T00:00:00.000000Z in micros
+    private static final long DAY_START = 1_704_067_200_000_000L;
     private static final String TIE_ROW = "(51, '2024-01-01T03:00:00.000000Z')";
 
     @Override
@@ -368,11 +374,14 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
     public void testDedupTieKeepsValuesFuzz() throws Exception {
         // random row counts per timestamp, the column added at a random point, random O3 rows with values and
         // tie commits at timestamps that several rows share, which a row group boundary may split; each tie
-        // commit adds its row and changes no stored row
+        // commit adds its row and changes no stored row. At least one iteration must merge a coalesced run
+        // in which a column top starts after a row group that holds values
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final String[][] pairs = LAZY_PAIRS;
+        final int iterationCount = Integer.getInteger("questdb.fuzz.parquet.coalesced.iterations", 30);
         assertMemoryLeak(() -> {
-            for (int iteration = 0; iteration < 30; iteration++) {
+            int nonLeadingTopIterationCount = 0;
+            for (int iteration = 0; iteration < iterationCount; iteration++) {
                 final String t = "pt" + iteration;
                 final String[] pair = pairs[rnd.nextInt(pairs.length)];
                 execute("CREATE TABLE " + t + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)");
@@ -381,11 +390,18 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                 final int topRowCount = isAddedAfterConvert ? rowCount : 1 + rnd.nextInt(rowCount);
                 final StringBuilder rows = new StringBuilder();
                 final IntList sharedMinutes = new IntList();
+                // the minutes that rows v and v - 1 share where v starts a row group inside the column top of
+                // b: the conversion writes rows v 1..rowCount in row groups of 4 rows
+                final IntList boundaryMinutes = new IntList();
                 int minute = 0;
                 for (int v = 1; v <= topRowCount; v++) {
-                    // a run of equal timestamps every few rows, likely across a row group boundary
-                    if (v > 1 && rnd.nextInt(3) == 0) {
+                    // a run of equal timestamps every few rows, more likely across a row group boundary
+                    final boolean isBoundary = v % 4 == 1;
+                    if (v > 1 && rnd.nextInt(isBoundary ? 2 : 3) == 0) {
                         sharedMinutes.add(minute);
+                        if (isBoundary) {
+                            boundaryMinutes.add(minute);
+                        }
                     } else {
                         minute += 10;
                     }
@@ -416,17 +432,40 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                     convertToParquet(t);
                 }
                 final int lastMinute = minute;
+                // three in four O3 rows land 1 microsecond before a minute shared across a row group boundary
+                // inside the column top, at the end of the row group the boundary closes, and three in four
+                // tie commits pick such a minute: the O3 merge ends the column top of that row group while the
+                // next one keeps its top
+                final IntList o3TieMinutes = new IntList();
                 for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                    final long o3Offset;
+                    if (boundaryMinutes.size() > 0 && rnd.nextInt(4) > 0) {
+                        final int o3TieMinute = boundaryMinutes.getQuick(rnd.nextInt(boundaryMinutes.size()));
+                        o3TieMinutes.add(o3TieMinute);
+                        o3Offset = o3TieMinute * 60_000_000L - 1;
+                    } else {
+                        o3Offset = rnd.nextInt(lastMinute + 1) * 60_000_000L + 1;
+                    }
                     execute("INSERT INTO " + t + " (v, ts, b) VALUES (" + (100 + i) + ", '2024-01-01'::TIMESTAMP + "
-                            + (rnd.nextInt(lastMinute + 1) * 60_000_000L + 1) + "L, " + pair[1] + ")");
+                            + o3Offset + "L, " + pair[1] + ")");
                     drainWalQueue();
                 }
                 execute("ALTER TABLE " + t + " ALTER COLUMN b TYPE " + pair[2]);
                 drainWalQueue();
+                boolean isNonLeadingTopIteration = false;
                 for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
-                    final int tieMinute = sharedMinutes.size() > 0 ? sharedMinutes.getQuick(rnd.nextInt(sharedMinutes.size())) : 10 * rnd.nextInt(lastMinute / 10 + 1);
+                    final int tieMinute;
+                    if (o3TieMinutes.size() > 0 && rnd.nextInt(4) > 0) {
+                        tieMinute = o3TieMinutes.getQuick(rnd.nextInt(o3TieMinutes.size()));
+                    } else {
+                        tieMinute = sharedMinutes.size() > 0 ? sharedMinutes.getQuick(rnd.nextInt(sharedMinutes.size())) : 10 * rnd.nextInt(lastMinute / 10 + 1);
+                    }
                     final String tieRow = "(" + (200 + i) + ", '2024-01-01'::TIMESTAMP + " + tieMinute * 60_000_000L + "L)";
+                    isNonLeadingTopIteration |= isTieRunWithNonLeadingTop(t, DAY_START + tieMinute * 60_000_000L);
                     assertTieKeepsRows(t, tieRow);
+                }
+                if (isNonLeadingTopIteration) {
+                    nonLeadingTopIterationCount++;
                 }
                 assertQuery("SELECT count() FROM " + t + " WHERE v BETWEEN 100 AND 102 AND b IS NULL")
                         .noLeakCheck()
@@ -434,6 +473,12 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                         .expectSize()
                         .returns("count\n0\n");
             }
+            LOG.info().$("iterations with a non-leading column top in a coalesced run [count=").$(nonLeadingTopIterationCount)
+                    .$(", iterations=").$(iterationCount).I$();
+            Assert.assertTrue(
+                    "no iteration merged a coalesced run with a column top after a row group with values",
+                    nonLeadingTopIterationCount > 0
+            );
         });
     }
 
@@ -585,5 +630,42 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
         execute("ALTER TABLE " + table + " ALTER COLUMN b TYPE " + targetType);
         drainWalQueue();
+    }
+
+    // Whether the tie commit at tieTimestamp merges a coalesced run, the row groups of 2024-01-01 that hold
+    // tieTimestamp, in which a column top of b starts after a row group that holds values of b, while b
+    // has a pending conversion from a type without a NULL sentinel to a type with one. The column top of a
+    // row group is its chunk null count, clamped to the row group size, as the merge reads it
+    private static boolean isTieRunWithNonLeadingTop(String table, long tieTimestamp) {
+        try (TableReader reader = engine.getReader(table)) {
+            // partition 0 is 2024-01-01
+            if (reader.getPartitionFormat(0) != PartitionFormat.PARQUET) {
+                return false;
+            }
+            reader.openPartition(0);
+            final ParquetMetaFileReader meta = reader.getAndInitParquetPartitionDecoder(0).metadata();
+            final int bIndex = meta.getColumnIndex("b");
+            if (bIndex < 0
+                    || !ColumnType.isNoNullSentinelFixedType(meta.getColumnType(bIndex))
+                    || ColumnType.isNoNullSentinelFixedType(reader.getMetadata().getColumnType("b"))) {
+                return false;
+            }
+            final int tsIndex = meta.getColumnIndex("ts");
+            int runRowGroupCount = 0;
+            boolean hasValuesBefore = false;
+            boolean hasNonLeadingTop = false;
+            for (int rowGroup = 0, n = meta.getRowGroupCount(); rowGroup < n; rowGroup++) {
+                if (meta.getRowGroupMinTimestamp(rowGroup, tsIndex) > tieTimestamp
+                        || meta.getRowGroupMaxTimestamp(rowGroup, tsIndex) < tieTimestamp) {
+                    continue;
+                }
+                final long rowCount = meta.getRowGroupSize(rowGroup);
+                final long top = meta.hasChunkNullCount(rowGroup, bIndex) ? Math.min(meta.getChunkNullCount(rowGroup, bIndex), rowCount) : 0;
+                hasNonLeadingTop |= top > 0 && hasValuesBefore;
+                hasValuesBefore |= top < rowCount;
+                runRowGroupCount++;
+            }
+            return runRowGroupCount > 1 && hasNonLeadingTop;
+        }
     }
 }
