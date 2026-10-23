@@ -512,6 +512,27 @@ public class LimitTest extends AbstractCairoTest {
         testLimitMinusOne();
     }
 
+    @Test
+    public void testLimitNotPushedBelowAsOfJoinPostFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT x v, 'X'::SYMBOL s, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(8)) TIMESTAMP(ts)");
+            execute("CREATE TABLE b AS (SELECT x - 4 v, 'X'::SYMBOL s, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(8)) TIMESTAMP(ts)");
+
+            // Keep the early-stop optimization when the join cannot discard master rows.
+            assertQuery("SELECT a.v FROM a ASOF JOIN b ON s WHERE a.s = 'X' LIMIT 3")
+                    .assertsPlanContaining("limit: 3");
+
+            assertQuery("SELECT a.v FROM a ASOF JOIN b ON s WHERE a.s = 'X' AND b.v > 0 LIMIT 3")
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            5
+                            6
+                            7
+                            """);
+        });
+    }
+
     // DISTINCT collapses duplicates, so an outer LIMIT N pushed into the
     // inner Async Filter would yield fewer than N post-DISTINCT rows.
     // The (t0.k + t0.k) key and disabled parallel GROUP BY keep the
@@ -644,6 +665,41 @@ public class LimitTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(30, rows);
             }
+        });
+    }
+
+    @Test
+    public void testLimitNotPushedBelowInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE forecast (ts TIMESTAMP, zone SYMBOL, run_ts TIMESTAMP, p50 DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO forecast VALUES
+                        ('2026-10-13T01:00:00Z', 'CZ', '2026-10-13T00:00:00Z', 1.0),
+                        ('2026-10-13T02:00:00Z', 'CZ', '2026-10-13T00:00:00Z', 2.0),
+                        ('2026-10-13T03:00:00Z', 'CZ', '2026-10-13T00:00:00Z', 3.0),
+                        ('2026-10-13T04:00:00Z', 'CZ', '2026-10-13T00:00:00Z', 4.0),
+                        ('2026-10-14T01:00:00Z', 'CZ', '2026-10-14T00:00:00Z', 5.0),
+                        ('2026-10-14T02:00:00Z', 'CZ', '2026-10-14T00:00:00Z', 6.0),
+                        ('2026-10-14T03:00:00Z', 'CZ', '2026-10-14T00:00:00Z', 7.0),
+                        ('2026-10-14T04:00:00Z', 'CZ', '2026-10-14T00:00:00Z', 8.0)
+                    """);
+
+            assertQuery("""
+                    SELECT f.ts, f.p50
+                    FROM forecast f
+                    JOIN (SELECT max(run_ts) AS run_ts FROM forecast WHERE zone = 'CZ') r ON f.run_ts = r.run_ts
+                    WHERE f.zone = 'CZ'
+                    LIMIT 3
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tp50
+                            2026-10-14T01:00:00.000000Z\t5.0
+                            2026-10-14T02:00:00.000000Z\t6.0
+                            2026-10-14T03:00:00.000000Z\t7.0
+                            """);
         });
     }
 
