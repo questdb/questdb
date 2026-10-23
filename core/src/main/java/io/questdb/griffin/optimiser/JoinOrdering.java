@@ -56,9 +56,10 @@ import io.questdb.std.ObjectPool;
  * change adds, requires it. A join that leads with another input designates no timestamp, and neither does a node on
  * the path that forwarded the join's.
  * A conjunct filters the step that joins the last input it reads, a conjunct that reads no input the last step. When
- * the join has an outer or temporal step, an ON conjunct filters no earlier than its own step unless it reads one input
- * and an ASOF, LT or SPLICE step anchors it, and a WHERE conjunct filters no earlier than the last RIGHT or FULL step
- * after it. A conjunct of the first step filters its input; the constant conjuncts filter the last step.
+ * the join has an outer or temporal step, an ON conjunct filters its own step when it reads no input and otherwise no
+ * earlier than its own step unless it reads one input and an ASOF, LT or SPLICE step anchors it, and a WHERE conjunct
+ * filters no earlier than the last RIGHT or FULL step after it. A conjunct of the first step filters its input; the
+ * graph's constant filter filters the last step.
  */
 final class JoinOrdering implements OptimiserPass {
     private final ColumnReads columnReads;
@@ -278,7 +279,8 @@ final class JoinOrdering implements OptimiserPass {
             final BoundExpression residual = residuals.getQuick(i);
             int target = lastOrderedInput(residual, join);
             if (target < 0) {
-                target = last;
+                final int origin = hasBarriers ? originPosition(graph, i, join) : -1;
+                target = origin < 0 ? last : origin;
             } else if (hasBarriers) {
                 final int origin = originPosition(graph, i, join);
                 if (origin >= 0) {

@@ -34,6 +34,11 @@ import org.junit.Test;
 
 public class OuterJoinTest extends AbstractCairoTest {
     @Test
+    public void testBindVariableInnerOnBeforeRightOrFullJoin() throws Exception {
+        assertInnerOnBeforeRightOrFullJoin(":has_match");
+    }
+
+    @Test
     public void testConstantFalseOnEmptiesUnmatchableSide() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -98,6 +103,111 @@ public class OuterJoinTest extends AbstractCairoTest {
                                 4	null
                                 5	null
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testConstantInnerOnBeforeRightOrFullJoin() throws Exception {
+        assertInnerOnBeforeRightOrFullJoin("false");
+    }
+
+    @Test
+    public void testConstantInnerOnBeforeRightOrFullJoinErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            createInnerOnRows();
+            final String prefix = "SELECT a.id FROM a JOIN c ON ";
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                assertQuery(prefix + "NULL " + join + " JOIN b ON a.k = b.k").noLeakCheck()
+                        .fails(29, "boolean expression expected");
+                assertQuery(prefix + "1 " + join + " JOIN b ON a.k = b.k").noLeakCheck()
+                        .fails(29, "boolean expression expected");
+                assertQuery(prefix + "true JOIN c c2 ON NULL " + join + " JOIN b ON a.k = b.k").noLeakCheck()
+                        .fails(47, "boolean expression expected");
+                assertQuery(prefix + "1 " + join + " JOIN b ON a.k = b.k WHERE true").noLeakCheck()
+                        .fails(29, "expression type mismatch, expected: BOOLEAN, actual: INT");
+                assertQuery(prefix + "NULL JOIN c c2 ON 1 " + join + " JOIN b ON a.k = b.k").noLeakCheck()
+                        .fails(29, "expression type mismatch, expected: BOOLEAN, actual: NULL");
+                for (String on : new String[]{"1 ", "true "}) {
+                    final String sql = prefix + on + join + " JOIN b ON a.k = b.k WHERE 1";
+                    assertQuery(sql).noLeakCheck().fails(sql.length() - 1, "expression type mismatch, expected: BOOLEAN, actual: INT");
+                }
+                final String keyMismatch = prefix + "1 + true " + join + " JOIN b ON a.k = b.l";
+                assertQuery(keyMismatch).noLeakCheck().fails(keyMismatch.length() - 3, "join column type mismatch");
+                final String twoTypeErrors = prefix + "1 + true " + join + " JOIN b ON a.k = b.k JOIN c c2 ON 2 + true";
+                assertQuery(twoTypeErrors).noLeakCheck()
+                        .fails(twoTypeErrors.lastIndexOf('+'), "there is no matching operator `+` with the argument types: INT + BOOLEAN");
+                assertQuery(prefix + "(SELECT false) " + join + " JOIN b ON a.k = b.k").noLeakCheck()
+                        .fails(30, "query is not allowed here");
+            }
+        });
+    }
+
+    @Test
+    public void testConstantInnerOnsAroundRightOrFullJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createInnerOnRows();
+            final String rightRows = """
+                    aid\tbid
+                    null\t20
+                    null\t21
+                    """;
+            final String select = "SELECT a.id aid, b.id bid FROM a JOIN c ON ";
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (String join : new String[]{"RIGHT", "FULL"}) {
+                    final String outerJoin = "Hash " + (join.equals("RIGHT") ? "Right" : "Full") + " Outer Join" + (isFullFat ? "" : " Light");
+                    final String on = " " + join + " JOIN b ON a.k = b.k";
+                    assertRows(select + "true JOIN c c2 ON 1 = 2" + on + " ORDER BY aid, bid", isFullFat, """
+                            %s
+                                      condition: b.k=a.k
+                                        Empty table
+                            """.formatted(outerJoin), rightRows);
+                    assertRows(select + "1 = 2 JOIN c c2 ON true" + on + " ORDER BY aid, bid", isFullFat, """
+                            %s
+                                      condition: b.k=a.k
+                                        Cross Join
+                                            Empty table
+                            """.formatted(outerJoin), rightRows);
+                    assertRows(select + "NULL AND true" + on + " ORDER BY aid, bid", isFullFat, """
+                            %s
+                                      condition: b.k=a.k
+                                        Empty table
+                            """.formatted(outerJoin), rightRows);
+                    assertRows(select + "1 = 1" + on + " WHERE 2 > 1 ORDER BY aid, bid", isFullFat, """
+                            %s
+                                      condition: b.k=a.k
+                                        Cross Join
+                                            PageFrame
+                            """.formatted(outerJoin), """
+                            aid\tbid
+                            10\t20
+                            11\t21
+                            """);
+                    assertRows(select + "1 = 2" + on + " JOIN c c2 ON 2 > 1 ORDER BY aid, bid", isFullFat, """
+                            Cross Join
+                                        %s
+                                          condition: b.k=a.k
+                                            Empty table
+                            """.formatted(outerJoin), rightRows);
+                    assertRows(select + "true" + on + " JOIN c c2 ON 1 = 2 ORDER BY aid, bid", isFullFat, """
+                            SelectedRecord
+                                    Empty table
+                            """, "aid\tbid\n");
+                    assertRows(select + "false" + on + " WHERE (SELECT true) ORDER BY aid, bid", isFullFat, null, rightRows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantNullInnerOnBeforeRightOrFullJoinWithFalseWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            for (int joinMode = 0; joinMode < 2; joinMode++) {
+                final String join = joinMode == 0 ? "RIGHT" : "FULL";
+                assertQuery("SELECT l.id FROM lp_outer_l l JOIN lp_outer_r r ON l.k = r.k AND NULL "
+                        + join + " JOIN lp_outer_r x ON r.k = x.k WHERE false")
+                        .noLeakCheck().returns("id\n");
             }
         });
     }
@@ -179,6 +289,40 @@ public class OuterJoinTest extends AbstractCairoTest {
                                     + "(SELECT * FROM lp_outer_r WHERE false) r ON l.k=r.k ORDER BY lid,rid", isFullFat, null,
                             "lid\trid\n");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testInnerOnReadingNoInputFiltersItsStepOnlyWithOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            bindVariableService.setBoolean("has_match", true);
+            final String expected = """
+                    lid\txid
+                    1\t10
+                    1\t10
+                    1\t11
+                    1\t11
+                    3\t12
+                    4\t13
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                final String query = "SELECT l.id lid, x.id xid FROM lp_outer_l l JOIN lp_outer_r r ON r.k = l.k AND :has_match %s "
+                        + "lp_outer_r x ON x.k = r.k ORDER BY lid, xid";
+                assertRows(query.formatted("JOIN"), isFullFat, """
+                        SelectedRecord
+                                Filter filter: :has_match::boolean
+                                    Hash Join%s
+                                      condition: x.k=r.k
+                        """.formatted(light), expected);
+                assertRows(query.formatted("LEFT JOIN"), isFullFat, """
+                        Hash Left Outer Join%s
+                                  condition: x.k=r.k
+                                    Filter filter: :has_match::boolean
+                                        Hash Join%s
+                        """.formatted(light, light), expected);
             }
         });
     }
@@ -919,6 +1063,35 @@ public class OuterJoinTest extends AbstractCairoTest {
         assertRows(prefix + "l.v < r.v ORDER BY lid, rid", isFullFat, expectedPlan, expectedCrossResidual);
     }
 
+    private void assertInnerOnBeforeRightOrFullJoin(String predicate) throws Exception {
+        assertMemoryLeak(() -> {
+            createInnerOnRows();
+            bindVariableService.setBoolean("has_match", false);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    for (int joinMode = 0; joinMode < 2; joinMode++) {
+                        final String join = joinMode == 0 ? "RIGHT" : "FULL";
+                        final String query = "SELECT a.id aid, b.id bid FROM a JOIN c ON " + predicate
+                                + " " + join + " JOIN b ON a.k = b.k";
+                        assertQuery(query + " ORDER BY aid, bid").withCompiler(compiler).noLeakCheck().returns("""
+                                aid\tbid
+                                null\t20
+                                null\t21
+                                """);
+                        assertQuery(query + " WHERE " + predicate + " ORDER BY aid, bid")
+                                .withCompiler(compiler).noLeakCheck().returns("aid\tbid\n");
+                        assertQuery(query + " WHERE b.k IS NULL ORDER BY aid, bid")
+                                .withCompiler(compiler).noLeakCheck().returns("""
+                                        aid\tbid
+                                        null\t21
+                                        """);
+                    }
+                }
+            }
+        });
+    }
+
     private void assertRows(String sql, boolean isFullFat, String expectedPlan, String expected) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             compiler.setFullFatJoins(isFullFat);
@@ -946,6 +1119,15 @@ public class OuterJoinTest extends AbstractCairoTest {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         }
         assertRows(sql, false, null, expected);
+    }
+
+    private void createInnerOnRows() throws Exception {
+        execute("CREATE TABLE a (id INT, k INT)");
+        execute("CREATE TABLE b (id INT, k INT, l LONG)");
+        execute("CREATE TABLE c (id INT)");
+        execute("INSERT INTO a VALUES (10, 1), (11, NULL)");
+        execute("INSERT INTO b VALUES (20, 1, 1), (21, NULL, NULL)");
+        execute("INSERT INTO c VALUES (30)");
     }
 
     private void createRows() throws Exception {

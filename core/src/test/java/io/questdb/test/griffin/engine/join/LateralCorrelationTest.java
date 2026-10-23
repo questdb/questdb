@@ -2391,6 +2391,57 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinOuterOnlyOnBeforeRightOrFullJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("CREATE TABLE c (id INT, sid INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+            execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+            execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)");
+            execute("INSERT INTO c VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)");
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    for (boolean isFullFat : new boolean[]{false, true}) {
+                        compiler.setFullFatJoins(isFullFat);
+                        for (int joinMode = 0; joinMode < 2; joinMode++) {
+                            final String join = joinMode == 0 ? "RIGHT" : "FULL";
+                            final String query = """
+                                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                                        SELECT a.id aid, b.id sid
+                                        FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1
+                                        %s JOIN b ON a.x = b.k WHERE b.k = o.x
+                                    ) l ORDER BY 1, 2, 3
+                                    """.formatted(join);
+                            assertQuery(query).withCompiler(compiler).noLeakCheck().expectSize().returns("""
+                                    id\taid\tsid
+                                    1\tnull\t21
+                                    1\tnull\t23
+                                    3\t11\t24
+                                    """);
+                            assertQuery(query.replace("b.k = o.x", "o.x IS NULL AND b.id = 21"))
+                                    .withCompiler(compiler).noLeakCheck().expectSize().returns("""
+                                            id\taid\tsid
+                                            2\tnull\t21
+                                            """);
+                            assertQuery(query.replace("AND o.x > 1", "").replace("b.k = o.x", "b.k = o.x AND o.x > 1"))
+                                    .withCompiler(compiler).noLeakCheck().expectSize().returns("""
+                                            id\taid\tsid
+                                            3\t11\t24
+                                            """);
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testJoinedCorrelatedSubQueryKeepsOnWithSecondOuterColumn() throws Exception {
         // #7725
         assertMemoryLeak(() -> {

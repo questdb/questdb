@@ -507,9 +507,13 @@ final class JoinBinder implements Mutable {
         final ObjList<JoinInput> inputs = join.getInputs();
         boolean hasBarriers = false;
         boolean hasTemporalStep = false;
+        int lastMasterNullingInput = -1;
         for (int i = 1, n = inputs.size(); i < n; i++) {
             hasBarriers |= inputs.getQuick(i).getJoinType().isBarrier();
             hasTemporalStep |= inputs.getQuick(i).getJoinType().isTemporal();
+            if (inputs.getQuick(i).getJoinType().isMasterNulling()) {
+                lastMasterNullingInput = i;
+            }
         }
         final JoinGraph graph = ctx.planNodes.joinGraphs.next();
         try {
@@ -533,7 +537,9 @@ final class JoinBinder implements Mutable {
                 }
                 validateJoinKeys(join, dependency);
                 validateTemporalKeys(step, dependency, timestampId);
-                bindJoinOnResidual(scope.joinOnNodes.getQuick(i), join, step, source, i, executionContext);
+                if (step.getJoinType().isBarrier()) {
+                    bindJoinOnResidual(scope.joinOnNodes.getQuick(i), join, step, source, i, executionContext);
+                }
                 bindJoinResiduals(join, graph, source, i, executionContext);
                 bindTolerance(join, step, joinModel(source, modelBase, i), timestampId);
                 if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp() && !isJoinedLast(graph, i)) {
@@ -554,9 +560,7 @@ final class JoinBinder implements Mutable {
                 final IntList owners = equality.getOwners();
                 graph.addResidual(bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext), owners);
             }
-            if (constantFilter != null) {
-                graph.setConstantFilter(bindJoinConstantFilter(constantFilter, join, source, executionContext), constantFilter.position);
-            }
+            bindJoinConstants(join, graph, source, constantFilter, lastMasterNullingInput, executionContext);
             for (int i = 0, n = inputs.size(); i < n; i++) {
                 if (!LogicalPlans.canPushJoinFilter(join.getInputs(), i, lastInput)) {
                     ctx.stopTimestampIntrinsics(inputs.getQuick(i).getSourceOutput());
@@ -611,15 +615,67 @@ final class JoinBinder implements Mutable {
     }
 
     private BoundExpression bindJoinConstantFilter(ExpressionNode expression, JoinPlan join, QueryModel source,
-                                                   SqlExecutionContext executionContext) throws SqlException {
-        // Constant WHERE conjuncts bind as their own group. A lone NULL
+                                                   SqlExecutionContext executionContext, boolean isNullAllowed) throws SqlException {
+        // Constant conjuncts bind as their own group. A lone NULL
         // must not acquire BOOLEAN type from an unrelated source predicate.
         final BoundExpression predicate = ctx.functionBinder.toBooleanSubquery(
                 ctx.functionBinder.bind(expression, join.getOutput(), sourceAlias(source), executionContext));
+        if (isNullAllowed && predicate.getDataType() == ColumnType.NULL) {
+            return ctx.planNodes.constants.next().ofBoolean(false, expression.position);
+        }
         if (predicate.getDataType() != ColumnType.BOOLEAN) {
             throw SqlException.$(expression.position, "boolean expression expected");
         }
         return predicate;
+    }
+
+    /**
+     * Binds the constant terms of WHERE ({@code where}) and of the inner ON clauses as one conjunction, which types
+     * them and raises their errors, and makes it the last step's constant filter. An inner step that precedes a RIGHT,
+     * FULL or SPLICE step filters by the constant terms of its own ON clause instead, because that later step
+     * preserves the rows they reject; those terms and the remaining ones then bind a second time, separately. Constant
+     * join terms are operator trees over literals, so the second bind has no side effects.
+     */
+    private void bindJoinConstants(JoinPlan join, JoinGraph graph, QueryModel source, ExpressionNode where, int lastMasterNullingInput,
+                                   SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<JoinInput> inputs = join.getInputs();
+        final ObjList<ExpressionNode> onConstants = ctx.scope().joinOnNodes;
+        ExpressionNode constants = where;
+        boolean hasOwnedConstantFilter = false;
+        for (int i = 1, n = inputs.size(); i < n; i++) {
+            if (onConstants.getQuick(i) != null && !inputs.getQuick(i).getJoinType().isBarrier()) {
+                constants = ctx.combinePredicates(constants, onConstants.getQuick(i));
+                hasOwnedConstantFilter |= i < lastMasterNullingInput;
+            }
+        }
+        if (constants == null) {
+            return;
+        }
+        final BoundExpression constantFilter = bindJoinConstantFilter(constants, join, source, executionContext, false);
+        if (!hasOwnedConstantFilter) {
+            graph.setConstantFilter(constantFilter, constants.position);
+            return;
+        }
+        ExpressionNode lastStepConstants = where;
+        for (int i = 1, n = inputs.size(); i < n; i++) {
+            final ExpressionNode stepConstants = onConstants.getQuick(i);
+            if (stepConstants == null || inputs.getQuick(i).getJoinType().isBarrier()) {
+                continue;
+            }
+            if (i < lastMasterNullingInput) {
+                final BoundExpression stepFilter = ctx.expressionRewriter.combineConstantFilter(null,
+                        bindJoinConstantFilter(stepConstants, join, source, executionContext, true), stepConstants.position);
+                if (stepFilter != null) {
+                    graph.addResidual(stepFilter, i);
+                }
+            } else {
+                lastStepConstants = ctx.combinePredicates(lastStepConstants, stepConstants);
+            }
+        }
+        if (lastStepConstants != null) {
+            graph.setConstantFilter(bindJoinConstantFilter(lastStepConstants, join, source, executionContext, true),
+                    lastStepConstants.position);
+        }
     }
 
     private void bindJoinInputs(JoinPlan join, QueryModel source, int lo, int hi, boolean hasTemporalJoin, OutputSchema prefix,
@@ -913,8 +969,7 @@ final class JoinBinder implements Mutable {
 
     /**
      * Collects the join keys and ordering constraints of the join's ON conditions and WHERE clause into its graph,
-     * filtering forward references when the constraints with them admit no order; returns the constant terms of the
-     * WHERE clause and the inner ON conditions.
+     * filtering forward references when the constraints with them admit no order; returns the constant WHERE terms.
      */
     private ExpressionNode collectJoinGraph(JoinPlan join, JoinGraph graph, QueryModel source, ExpressionNode where, int dependencyBase,
                                             int modelBase, boolean hasBarriers) throws SqlException {
@@ -943,7 +998,7 @@ final class JoinBinder implements Mutable {
         }
         final boolean hasNonEquiNullingJoin = nonEquiNullingJoinInputs.size() > 0;
         splitJoinTerms(where, JoinTerms.CONSTANT, join, -1);
-        ExpressionNode constantFilter = selectedTerms;
+        final ExpressionNode constantFilter = selectedTerms;
         collectJoinConditions(rejectedTerms, join, -1, hasBarriers, hasNonEquiNullingJoin);
         final JoinInput master = join.getInputs().getQuick(0);
         for (int i = dependencyBase, n = lateralDependencyInputs.size(); i < n; i++) {
@@ -1018,7 +1073,7 @@ final class JoinBinder implements Mutable {
                 }
             } else {
                 splitJoinTerms(onCriteria, JoinTerms.CONSTANT, join, i);
-                constantFilter = ctx.combinePredicates(constantFilter, selectedTerms);
+                scope.joinOnNodes.setQuick(i, selectedTerms);
                 collectJoinConditions(rejectedTerms, join, i, hasBarriers, hasNonEquiNullingJoin);
             }
             final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
