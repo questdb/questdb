@@ -148,7 +148,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             final CharSequenceHashSet previous = valueSet;
             valueSet = spareValueSet;
             spareValueSet = previous;
-            assert valueSet.size() == 0;
             try {
                 RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
