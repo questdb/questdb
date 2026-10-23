@@ -28,10 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -226,12 +229,14 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     @Test
     public void testRuntimeConstantTextParsesOnce() throws Exception {
         final long value = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(getFunctionFactory());
+        final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
         for (int textIndex = 0; textIndex < 2; textIndex++) {
             final CountingTextFunction text = new CountingTextFunction("2021-01-01T00:00:00.000000Z");
             final ObjList<Function> args = new ObjList<>();
             args.add(textIndex == 0 ? text : new ColumnFunction(timestampType.getTimestampType(), value));
             args.add(textIndex == 0 ? new ColumnFunction(timestampType.getTimestampType(), value) : text);
-            try (Function function = getFunctionFactory().newInstance(0, args, null, configuration, sqlExecutionContext)) {
+            try (Function function = parser.getFunctionResolver().createFunction(descriptor, 0, "<", args, new IntList(), sqlExecutionContext)) {
                 function.init(null, sqlExecutionContext);
                 for (int i = 0; i < 1_000; i++) {
                     Assert.assertEquals(textIndex == 1, function.getBool(null));

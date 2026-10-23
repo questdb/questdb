@@ -48,7 +48,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
@@ -336,7 +335,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                     isSlaveFilterInitialized = false;
                     cleanupFailure = Function.cursorClosed(cleanupFailure, slaveFilter);
                 }
-                cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, groupByFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, groupByFunctions);
                 CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }

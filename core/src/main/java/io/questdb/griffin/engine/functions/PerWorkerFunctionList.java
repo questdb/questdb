@@ -208,29 +208,53 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
         }
     }
 
-    public static void cursorClosed(ObjList<? extends Function> functions) {
-        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
-            for (int i = perWorkerFunctions.ownedFunctions.nextSetBit(0); i > -1; i = perWorkerFunctions.ownedFunctions.nextSetBit(i + 1)) {
-                final Function function = perWorkerFunctions.getQuick(i);
-                if (function != null) {
-                    function.cursorClosed();
+    /**
+     * Applies {@link #close(ObjList)} to each per-worker list in turn, nulling its slot first, and folds
+     * each failure into the one it returns.
+     */
+    public static Throwable closePerWorker(
+            @Nullable Throwable failure,
+            @Nullable ObjList<? extends ObjList<? extends Function>> perWorkerFunctions
+    ) {
+        if (perWorkerFunctions != null) {
+            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                final ObjList<? extends Function> functions = perWorkerFunctions.getQuick(i);
+                perWorkerFunctions.setQuick(i, null);
+                try {
+                    close(functions);
+                } catch (Throwable th) {
+                    failure = Misc.foldCleanupFailure(failure, th);
                 }
             }
-        } else {
-            Function.cursorClosed(functions);
         }
+        return failure;
     }
 
     /**
-     * Best-effort variant of {@link #cursorClosed(ObjList)} for cleanup paths that keep going past a
-     * failure: it notifies every owned slot and folds each failure into the one it returns.
+     * Notifies every owned slot that the cursor has closed, the way
+     * {@link Function#cursorClosed(Throwable, ObjList)} notifies a plain list: best-effort, with
+     * each failure folded into the one it returns.
      */
     public static Throwable cursorClosed(@Nullable Throwable failure, @Nullable ObjList<? extends Function> functions) {
-        if (functions != null) {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                if (isOwned(functions, i)) {
-                    failure = Function.cursorClosed(failure, functions.getQuick(i));
-                }
+        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
+            for (int i = perWorkerFunctions.ownedFunctions.nextSetBit(0); i > -1; i = perWorkerFunctions.ownedFunctions.nextSetBit(i + 1)) {
+                failure = Function.cursorClosed(failure, perWorkerFunctions.getQuick(i));
+            }
+            return failure;
+        }
+        return Function.cursorClosed(failure, functions);
+    }
+
+    /**
+     * Applies {@link #cursorClosed(Throwable, ObjList)} to each per-worker list in turn.
+     */
+    public static Throwable cursorClosedPerWorker(
+            @Nullable Throwable failure,
+            @Nullable ObjList<? extends ObjList<? extends Function>> perWorkerFunctions
+    ) {
+        if (perWorkerFunctions != null) {
+            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                failure = cursorClosed(failure, perWorkerFunctions.getQuick(i));
             }
         }
         return failure;
@@ -257,6 +281,29 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
                 }
             }
             Function.init(functions, symbolTableSource, executionContext, null);
+        }
+    }
+
+    /**
+     * Applies {@link #init(ObjList, ObjList, SymbolTableSource, SqlExecutionContext)} to each per-worker list in
+     * turn, with the execution context set to clone symbol tables, so that no two workers share one.
+     */
+    public static void initPerWorker(
+            @Nullable ObjList<? extends ObjList<? extends Function>> perWorkerFunctions,
+            @Nullable ObjList<? extends Function> ownerFunctions,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (perWorkerFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                    init(perWorkerFunctions.getQuick(i), ownerFunctions, symbolTableSource, executionContext);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
         }
     }
 

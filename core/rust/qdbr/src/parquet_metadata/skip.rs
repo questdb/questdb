@@ -217,6 +217,19 @@ pub fn can_skip_row_group(
             None
         };
 
+        if packed_filter.is_null_matching()
+            && !ParquetDecoder::has_no_sql_nulls(
+                qdb_column_type,
+                &physical_type,
+                null_count,
+                min_bytes,
+                max_bytes,
+                reader.footer().feature_flags().is_written_by_questdb(),
+            )
+        {
+            continue;
+        }
+
         // See ParquetDecoder::has_matchable_zero_nulls: a BYTE, SHORT or CHAR column top decodes
         // back to a plain 0 that neither the statistics nor the bloom set record.
         let has_implicit_zeros =
@@ -342,10 +355,17 @@ mod tests {
     use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
     use crate::parquet_metadata::types::{encode_stat_sizes, Codec, ColumnFlags, FieldRepetition};
     use crate::parquet_metadata::writer::ParquetMetaWriter;
+    use crate::parquet_read::FILTER_OP_NULL_MATCHING_FLAG;
     use qdb_core::col_type::ColumnType;
+
+    /// Physical type ordinal for Int32 in the `_pm` format.
+    const PHYS_INT32: u8 = 1;
 
     /// Physical type ordinal for Int64 in the `_pm` format.
     const PHYS_INT64: u8 = 2;
+
+    /// Physical type ordinal for ByteArray in the `_pm` format.
+    const PHYS_BYTE_ARRAY: u8 = 6;
 
     /// Physical type ordinal for FixedLenByteArray in the `_pm` format.
     const PHYS_FLBA: u8 = 7;
@@ -970,6 +990,216 @@ mod tests {
             can_skip_row_group(&reader, 0, &[filter], buf_end)?,
             "should skip row group when filter value is outside OOL stat range"
         );
+        Ok(())
+    }
+
+    /// Build a `_pm` file with one column and one row group whose statistics are `min` and `max`,
+    /// inlined up to 8 bytes and stored out of line past that, as the converter stores them.
+    fn build_stats_parquet_meta(
+        col_type: i32,
+        physical_type: u8,
+        fixed_byte_len: i32,
+        null_count: u64,
+        min: &[u8],
+        max: &[u8],
+        is_written_by_questdb: bool,
+    ) -> ParquetResult<(Vec<u8>, u64)> {
+        let mut writer = ParquetMetaWriter::new();
+        writer
+            .designated_timestamp(-1)
+            .add_column(
+                "val",
+                0,
+                col_type,
+                ColumnFlags::new().with_repetition(FieldRepetition::Optional),
+                fixed_byte_len,
+                physical_type,
+                0,
+                1,
+            )
+            .parquet_footer(0, 0)
+            .written_by_questdb(is_written_by_questdb);
+
+        let inline = |v: &[u8]| {
+            let mut buf = [0u8; 8];
+            buf[..v.len()].copy_from_slice(v);
+            u64::from_le_bytes(buf)
+        };
+        let is_min_inlined = min.len() <= 8;
+        let is_max_inlined = max.len() <= 8;
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(100);
+        let mut chunk = ColumnChunkRaw::zeroed();
+        chunk.codec = Codec::Uncompressed as u8;
+        chunk.num_values = 100;
+        chunk.null_count = null_count;
+        chunk.stat_flags = StatFlags::new()
+            .with_min(is_min_inlined, true)
+            .with_max(is_max_inlined, true)
+            .with_null_count()
+            .0;
+        if is_min_inlined {
+            chunk.min_stat = inline(min);
+        }
+        if is_max_inlined {
+            chunk.max_stat = inline(max);
+        }
+        chunk.stat_sizes = encode_stat_sizes(
+            if is_min_inlined { min.len() as u8 } else { 0 },
+            if is_max_inlined { max.len() as u8 } else { 0 },
+        );
+        rg.set_column_chunk(0, chunk)?;
+        if !is_min_inlined {
+            rg.add_out_of_line_stat(0, true, min)?;
+        }
+        if !is_max_inlined {
+            rg.add_out_of_line_stat(0, false, max)?;
+        }
+        writer.add_row_group(rg);
+        Ok(writer.finish()?)
+    }
+
+    /// Asserts that a plain `col > bound` prunes the row group, and a null-matching one, which
+    /// NULL rows satisfy as well, prunes it exactly when it holds no SQL NULL.
+    fn assert_null_matching_skip(
+        parquet_meta: &[u8],
+        file_offset: u64,
+        col_type: i32,
+        bound: &[u8],
+        has_no_sql_nulls: bool,
+    ) -> ParquetResult<()> {
+        let reader = ParquetMetaReader::from_file_size(parquet_meta, file_offset)?;
+        let buf_end = bound.as_ptr_range().end as u64;
+        let plain = make_filter(0, 1, FILTER_OP_GT, bound.as_ptr() as u64, col_type);
+        assert!(can_skip_row_group(&reader, 0, &[plain], buf_end)?);
+        let null_matching = make_filter(
+            0,
+            1,
+            FILTER_OP_GT | FILTER_OP_NULL_MATCHING_FLAG,
+            bound.as_ptr() as u64,
+            col_type,
+        );
+        assert_eq!(
+            has_no_sql_nulls,
+            can_skip_row_group(&reader, 0, &[null_matching], buf_end)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn null_matching_filter_prunes_only_row_groups_without_sql_nulls() -> ParquetResult<()> {
+        let bound = 300i64.to_le_bytes();
+        for (null_count, min, has_no_sql_nulls) in
+            [(0, 10, true), (5, 10, false), (0, i64::MIN, false)]
+        {
+            let (parquet_meta, fo) = build_long_parquet_meta(&[(100, null_count, min, 200, true)])?;
+            assert_null_matching_skip(
+                &parquet_meta,
+                fo,
+                ColumnTypeTag::Long as i32,
+                &bound,
+                has_no_sql_nulls,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn null_matching_filter_reads_date_days() -> ParquetResult<()> {
+        // DATE stored as INT32 days reads back as days * 86,400,000 milliseconds, which never
+        // reaches LONG's minimum, whatever the bounds.
+        let bound = (20_000i64 * 86_400_000).to_le_bytes();
+        for (null_count, has_no_sql_nulls) in [(0, true), (1, false)] {
+            let (parquet_meta, fo) = build_stats_parquet_meta(
+                ColumnTypeTag::Date as i32,
+                PHYS_INT32,
+                0,
+                null_count,
+                &i32::MIN.to_le_bytes(),
+                &19_000i32.to_le_bytes(),
+                false,
+            )?;
+            assert_null_matching_skip(
+                &parquet_meta,
+                fo,
+                ColumnTypeTag::Date as i32,
+                &bound,
+                has_no_sql_nulls,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn null_matching_filter_reads_decimals_in_every_physical_type() -> ParquetResult<()> {
+        let decimal32 = ColumnType::new_decimal(9, 0).unwrap().code();
+        let decimal64 = ColumnType::new_decimal(18, 0).unwrap().code();
+        let decimal128 = ColumnType::new_decimal(20, 0).unwrap().code();
+        let int32 = |v: i32| v.to_le_bytes().to_vec();
+        let int64 = |v: i64| v.to_le_bytes().to_vec();
+        let be8 = |v: i64| v.to_be_bytes().to_vec();
+        let be16 = |v: i128| v.to_be_bytes().to_vec();
+        // (type, physical type, fixed length, min, max, bounds within the precision)
+        let cases = [
+            (
+                decimal32,
+                PHYS_INT32,
+                0,
+                int32(-999_999_999),
+                int32(999_999_999),
+                true,
+            ),
+            (
+                decimal32,
+                PHYS_INT32,
+                0,
+                int32(-1_000_000_000),
+                int32(10),
+                false,
+            ),
+            (decimal64, PHYS_INT64, 0, int64(-10), int64(10), true),
+            (decimal64, PHYS_INT64, 0, int64(i64::MIN), int64(10), false),
+            (decimal64, PHYS_FLBA, 8, be8(-10), be8(10), true),
+            (decimal64, PHYS_FLBA, 8, be8(i64::MIN), be8(10), false),
+            (decimal64, PHYS_BYTE_ARRAY, 0, vec![0xF6], vec![0x0A], true),
+            (
+                decimal64,
+                PHYS_BYTE_ARRAY,
+                0,
+                be8(i64::MIN),
+                vec![0x0A],
+                false,
+            ),
+            (decimal128, PHYS_FLBA, 16, be16(-10), be16(10), true),
+            (decimal128, PHYS_FLBA, 16, be16(i128::MIN), be16(10), false),
+        ];
+        for (col_type, physical_type, fixed_byte_len, min, max, is_within_precision) in cases {
+            let bound = match ParquetDecoder::decimal_filter_size(col_type) {
+                Some(4) => i32::MAX.to_be_bytes().to_vec(),
+                Some(8) => i64::MAX.to_be_bytes().to_vec(),
+                _ => i128::MAX.to_be_bytes().to_vec(),
+            };
+            // QuestDB's writer writes a decimal NULL as a Parquet null, so its zero null count
+            // needs no bounds.
+            for is_written_by_questdb in [false, true] {
+                let (parquet_meta, fo) = build_stats_parquet_meta(
+                    col_type,
+                    physical_type,
+                    fixed_byte_len,
+                    0,
+                    &min,
+                    &max,
+                    is_written_by_questdb,
+                )?;
+                assert_null_matching_skip(
+                    &parquet_meta,
+                    fo,
+                    col_type,
+                    &bound,
+                    is_within_precision || is_written_by_questdb,
+                )?;
+            }
+        }
         Ok(())
     }
 }

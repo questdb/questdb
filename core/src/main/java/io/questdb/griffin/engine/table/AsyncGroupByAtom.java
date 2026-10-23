@@ -222,12 +222,10 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
 
     @Override
     public void clear() {
-        if (ownerKeyFunctions != null) {
-            Function.cursorClosed(ownerKeyFunctions);
-        }
-        Function.cursorClosed(ownerGroupByFunctions);
-        cursorClosedPerWorkerFunctions(perWorkerKeyFunctions);
-        cursorClosedPerWorkerFunctions(perWorkerGroupByFunctions);
+        Throwable failure = Function.cursorClosed(null, ownerKeyFunctions);
+        failure = Function.cursorClosed(failure, ownerGroupByFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, perWorkerKeyFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, perWorkerGroupByFunctions);
         shardingCtx.clear();
         Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
@@ -243,6 +241,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
         filterCtx.clear();
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -268,39 +267,12 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAllocators);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerLongTopKList);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerLongTopKLists);
-        cleanupFailure = closePerWorkerFunctions(cleanupFailure, perWorkerKeyFunctions);
-        cleanupFailure = closePerWorkerFunctions(cleanupFailure, perWorkerGroupByFunctions);
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerKeyFunctions);
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerGroupByFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerBatchList);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerBatchLists);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    private static Throwable closePerWorkerFunctions(Throwable cleanupFailure, ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
-        if (perWorkerFunctions != null) {
-            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
-                final ObjList<? extends Function> functions = perWorkerFunctions.getQuick(i);
-                perWorkerFunctions.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(functions);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-        }
-        return cleanupFailure;
-    }
-
-    private static void cursorClosedPerWorkerFunctions(ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
-        if (perWorkerFunctions != null) {
-            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.cursorClosed(perWorkerFunctions.getQuick(i));
-            }
-        }
     }
 
     public DirectLongList getBatchList(int slotId) {
@@ -422,8 +394,8 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         // and every worker must observe the same state as the owner.
         Function.init(ownerGroupByFunctions, symbolTableSource, executionContext, null);
 
-        initPerWorkerFunctions(perWorkerKeyFunctions, ownerKeyFunctions, symbolTableSource, executionContext);
-        initPerWorkerFunctions(perWorkerGroupByFunctions, ownerGroupByFunctions, symbolTableSource, executionContext);
+        PerWorkerFunctionList.initPerWorker(perWorkerKeyFunctions, ownerKeyFunctions, symbolTableSource, executionContext);
+        PerWorkerFunctionList.initPerWorker(perWorkerGroupByFunctions, ownerGroupByFunctions, symbolTableSource, executionContext);
     }
 
     public boolean isSharded() {
@@ -497,29 +469,5 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
         }
         return totalCardinality;
-    }
-
-    private void initPerWorkerFunctions(
-            ObjList<? extends ObjList<? extends Function>> functions,
-            ObjList<? extends Function> ownerFunctions,
-            SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (functions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = functions.size(); i < n; i++) {
-                    PerWorkerFunctionList.init(
-                            functions.getQuick(i),
-                            ownerFunctions,
-                            symbolTableSource,
-                            executionContext
-                    );
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
     }
 }

@@ -42,9 +42,8 @@ public interface TernaryFunction extends Function {
 
     @Override
     default void cursorClosed() {
-        getLeft().cursorClosed();
-        getCenter().cursorClosed();
-        getRight().cursorClosed();
+        final Throwable failure = Function.cursorClosed(Function.cursorClosed(null, getLeft()), getCenter());
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, getRight()));
     }
 
     Function getCenter();

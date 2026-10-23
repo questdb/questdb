@@ -19,6 +19,7 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
+use parquet2::types::NativeType;
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 use qdb_parquet_meta::convert::is_written_by_questdb;
 use std::{cmp, mem::size_of, ptr, slice};
@@ -1740,95 +1741,6 @@ impl ParquetDecoder {
         })
     }
 
-    /// Reports whether the chunk's statistics prove it holds no SQL NULL. A zero null count rules
-    /// out Parquet nulls only: an external writer stores a value that reads back as the NULL
-    /// sentinel of the column type as an ordinary value and does not count it, so the bounds have
-    /// to exclude the sentinel as well.
-    ///
-    /// - BOOLEAN, BYTE, SHORT, VARCHAR, STRING and SYMBOL have no sentinel among their values.
-    /// - INT and LONG, and DATE and TIMESTAMP stored as INT64, read the stored value as is, and
-    ///   their sentinel is the domain minimum, so a minimum above it excludes it. Both bounds are
-    ///   read in signed order; a writer that ordered them unsigned leaves a value at or past the
-    ///   sign boundary as a minimum above the maximum, which declines.
-    /// - IPv4 reads the stored value as is and its sentinel is 0, which a non-zero minimum in
-    ///   unsigned order excludes; a writer that ordered the bounds signed leaves 0 as a minimum,
-    ///   or a negative minimum above the maximum in unsigned order, which declines.
-    /// - DATE stored as INT32 days reads back as days times 86,400,000 milliseconds, which never
-    ///   reaches LONG's minimum.
-    /// - A decimal sentinel lies outside every precision of its width, so bounds within the
-    ///   precision exclude it.
-    /// - CHAR reads an INT32 value as a 16-bit char, and its sentinel is 0, so bounds inside
-    ///   1..=65535 exclude both a stored 0 and a value that truncates to one.
-    /// - FLOAT and DOUBLE also read an infinity as NULL, which the bounds of a finite range
-    ///   exclude. Their NaN is NULL too, and other writers keep it out of both the null count and
-    ///   the bounds, so only a file QuestDB's writer wrote, which writes NaN as a Parquet null,
-    ///   can prove it absent.
-    pub fn row_group_column_has_no_sql_nulls(
-        &self,
-        row_group_index: u32,
-        column_index: u32,
-    ) -> ParquetResult<bool> {
-        let column = self.column_chunk_meta(row_group_index, column_index)?;
-        if Self::chunk_null_count(column) != Some(0) {
-            return Ok(false);
-        }
-        let Some(column_type) = self
-            .columns
-            .get(column_index as usize)
-            .and_then(|c| c.column_type)
-        else {
-            return Ok(false);
-        };
-        let physical_type = column.physical_type();
-        let statistics = column
-            .column_chunk()
-            .meta_data
-            .as_ref()
-            .and_then(|m| m.statistics.as_ref());
-        let (min, max) = Self::comparable_min_max(statistics, &physical_type, column_type.code());
-        let tag = column_type.tag();
-        Ok(match (tag, physical_type) {
-            (
-                ColumnTypeTag::Boolean
-                | ColumnTypeTag::Byte
-                | ColumnTypeTag::Short
-                | ColumnTypeTag::Varchar
-                | ColumnTypeTag::String
-                | ColumnTypeTag::Symbol,
-                _,
-            ) => true,
-            (ColumnTypeTag::Int, PhysicalType::Int32) => {
-                matches!(i32_bounds(min, max), Some((lo, hi)) if lo != nulls::INT && lo <= hi)
-            }
-            (ColumnTypeTag::IPv4, PhysicalType::Int32) => {
-                matches!(i32_bounds(min, max), Some((lo, hi)) if lo != nulls::IPV4 && (lo as u32) <= (hi as u32))
-            }
-            (ColumnTypeTag::Date, PhysicalType::Int32) => true,
-            (ColumnTypeTag::Char, PhysicalType::Int32) => {
-                matches!(i32_bounds(min, max), Some((lo, hi)) if lo > 0 && lo <= hi && hi <= u16::MAX as i32)
-            }
-            (ColumnTypeTag::Float, PhysicalType::Float) => {
-                is_written_by_questdb(self.metadata.created_by.as_deref())
-                    && matches!(f32_bounds(min, max), Some((lo, hi)) if lo.is_finite() && hi.is_finite())
-            }
-            (ColumnTypeTag::Double, PhysicalType::Double) => {
-                is_written_by_questdb(self.metadata.created_by.as_deref())
-                    && matches!(f64_bounds(min, max), Some((lo, hi)) if lo.is_finite() && hi.is_finite())
-            }
-            (
-                ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                PhysicalType::Int64,
-            ) => matches!(i64_bounds(min, max), Some((lo, hi)) if lo != nulls::LONG && lo <= hi),
-            _ if is_decimal_tag(tag) => decimal_bounds_within_precision(
-                &physical_type,
-                min,
-                max,
-                column_type.decimal_precision(),
-            )?,
-            _ => false,
-        })
-    }
-
     // Parquet stores the null count signed, and nothing validates the footer a third-party writer
     // produced. A negative count is not "no nulls" - it is no information at all, so read it as
     // absent: every consumer already treats an absent count conservatively, while a negative one
@@ -1836,7 +1748,9 @@ impl ParquetDecoder {
     // The `_pm` path applies the same rule to its unsigned encoding at both ends - see
     // parquet_metadata::skip for the read and qdb_parquet_meta::convert::apply_thrift_stats for
     // the write.
-    fn chunk_null_count(column: &parquet2::metadata::ColumnChunkMetaData) -> Option<i64> {
+    pub(crate) fn chunk_null_count(
+        column: &parquet2::metadata::ColumnChunkMetaData,
+    ) -> Option<i64> {
         column
             .column_chunk()
             .meta_data
@@ -2699,6 +2613,18 @@ impl ParquetDecoder {
             let decimal_size = Self::decimal_filter_size(qdb_column_type);
             let (min_bytes, max_bytes) =
                 Self::comparable_min_max(statistics, &physical_type, qdb_column_type);
+            if packed_filter.is_null_matching()
+                && !Self::has_no_sql_nulls(
+                    qdb_column_type,
+                    &physical_type,
+                    null_count,
+                    min_bytes,
+                    max_bytes,
+                    is_written_by_questdb(self.metadata.created_by.as_deref()),
+                )
+            {
+                continue;
+            }
             let mut zero_widened_min = [0u8; 4];
             let mut zero_widened_max = [0u8; 4];
             let (min_bytes, max_bytes) = if has_implicit_zeros {
@@ -3267,13 +3193,8 @@ impl ParquetDecoder {
         match physical_type {
             PhysicalType::Int32 if is_ipv4 => {
                 Self::validate_filter_span(ptr, count, size_of::<u32>(), filter_desc.buf_end)?;
-                let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
-                        u32::from_le_bytes(min_b.try_into().unwrap()),
-                        u32::from_le_bytes(max_b.try_into().unwrap()),
-                    )),
-                    _ => None,
-                };
+                let min_max =
+                    stat_bounds::<i32>(min_bytes, max_bytes).map(|(lo, hi)| (lo as u32, hi as u32));
                 for i in 0..count {
                     let v = unsafe { (ptr as *const u32).add(i).read_unaligned() };
                     if v == 0 {
@@ -3300,13 +3221,7 @@ impl ParquetDecoder {
                     size_of::<i32>()
                 };
                 Self::validate_filter_span(ptr, count, elem_size, filter_desc.buf_end)?;
-                let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
-                        i32::from_le_bytes(min_b.try_into().unwrap()),
-                        i32::from_le_bytes(max_b.try_into().unwrap()),
-                    )),
-                    _ => None,
-                };
+                let min_max = stat_bounds::<i32>(min_bytes, max_bytes);
                 for i in 0..count {
                     let (v, is_null) = if is_date {
                         let millis = unsafe { (ptr as *const i64).add(i).read_unaligned() };
@@ -3336,13 +3251,7 @@ impl ParquetDecoder {
             // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
             PhysicalType::Int64 => {
                 Self::validate_filter_span(ptr, count, size_of::<i64>(), filter_desc.buf_end)?;
-                let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => Some((
-                        i64::from_le_bytes(min_b.try_into().unwrap()),
-                        i64::from_le_bytes(max_b.try_into().unwrap()),
-                    )),
-                    _ => None,
-                };
+                let min_max = stat_bounds::<i64>(min_bytes, max_bytes);
                 for i in 0..count {
                     let v = unsafe { (ptr as *const i64).add(i).read_unaligned() };
                     if v == i64::MIN {
@@ -3361,18 +3270,8 @@ impl ParquetDecoder {
             }
             PhysicalType::Float => {
                 Self::validate_filter_span(ptr, count, size_of::<f32>(), filter_desc.buf_end)?;
-                let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
-                        let min_val = f32::from_le_bytes(min_b.try_into().unwrap());
-                        let max_val = f32::from_le_bytes(max_b.try_into().unwrap());
-                        if min_val.is_nan() || max_val.is_nan() {
-                            None
-                        } else {
-                            Some((min_val, max_val))
-                        }
-                    }
-                    _ => None,
-                };
+                let min_max = stat_bounds::<f32>(min_bytes, max_bytes)
+                    .filter(|(lo, hi)| !lo.is_nan() && !hi.is_nan());
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f32).add(i).read_unaligned() };
                     if v.is_nan() {
@@ -3391,18 +3290,8 @@ impl ParquetDecoder {
             }
             PhysicalType::Double => {
                 Self::validate_filter_span(ptr, count, size_of::<f64>(), filter_desc.buf_end)?;
-                let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => {
-                        let min_val = f64::from_le_bytes(min_b.try_into().unwrap());
-                        let max_val = f64::from_le_bytes(max_b.try_into().unwrap());
-                        if min_val.is_nan() || max_val.is_nan() {
-                            None
-                        } else {
-                            Some((min_val, max_val))
-                        }
-                    }
-                    _ => None,
-                };
+                let min_max = stat_bounds::<f64>(min_bytes, max_bytes)
+                    .filter(|(lo, hi)| !lo.is_nan() && !hi.is_nan());
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f64).add(i).read_unaligned() };
                     if v.is_nan() {
@@ -3632,6 +3521,84 @@ impl ParquetDecoder {
             || tag == ColumnTypeTag::Short as i32
     }
 
+    /// Reports whether a column chunk's statistics prove it holds no SQL NULL, the condition a
+    /// null-matching filter needs to prune. Both read paths call it: the parquet footer supplies
+    /// the statistics and the `created_by` here, a `_pm` sidecar its own copy of them and its
+    /// footer flag. A zero null count rules out Parquet nulls only: an external writer stores a
+    /// value that reads back as the NULL sentinel of the column type as an ordinary value and does
+    /// not count it, so the bounds have to exclude the sentinel as well.
+    ///
+    /// - BOOLEAN, BYTE, SHORT, VARCHAR, STRING and SYMBOL have no sentinel among their values.
+    /// - INT and LONG, and DATE and TIMESTAMP stored as INT64, read the stored value as is, and
+    ///   their sentinel is the domain minimum, so a minimum above it excludes it. Both bounds are
+    ///   read in signed order; a writer that ordered them unsigned leaves a value at or past the
+    ///   sign boundary as a minimum above the maximum, which declines.
+    /// - IPv4 reads the stored value as is and its sentinel is 0, which a non-zero minimum in
+    ///   unsigned order excludes; a writer that ordered the bounds signed leaves 0 as a minimum,
+    ///   or a negative minimum above the maximum in unsigned order, which declines.
+    /// - DATE stored as INT32 reads back as days times 86,400,000 milliseconds, or as the widened
+    ///   value, neither of which reaches LONG's minimum.
+    /// - QuestDB's writer writes a decimal NULL as a Parquet null, so a file it wrote needs no
+    ///   bounds. Another writer's file needs bounds strictly within the precision: every decimal
+    ///   sentinel lies outside every precision of its width, whatever the physical type.
+    /// - CHAR reads an INT32 value as a 16-bit char, and its sentinel is 0, so bounds inside
+    ///   1..=65535 exclude both a stored 0 and a value that truncates to one.
+    /// - FLOAT and DOUBLE also read an infinity as NULL, which the bounds of a finite range
+    ///   exclude. Their NaN is NULL too, and other writers keep it out of both the null count and
+    ///   the bounds, so only a file QuestDB's writer wrote, which writes NaN as a Parquet null,
+    ///   can prove it absent.
+    pub(crate) fn has_no_sql_nulls(
+        qdb_column_type: i32,
+        physical_type: &PhysicalType,
+        null_count: Option<i64>,
+        min: Option<&[u8]>,
+        max: Option<&[u8]>,
+        is_written_by_questdb: bool,
+    ) -> bool {
+        if null_count != Some(0) {
+            return false;
+        }
+        if Self::is_null_free_type(qdb_column_type) {
+            return true;
+        }
+        let Ok(column_type) = ColumnType::try_from(qdb_column_type) else {
+            return false;
+        };
+        let tag = column_type.tag();
+        match (tag, physical_type) {
+            (ColumnTypeTag::Varchar | ColumnTypeTag::String | ColumnTypeTag::Symbol, _) => true,
+            (ColumnTypeTag::Int, PhysicalType::Int32) => {
+                matches!(stat_bounds::<i32>(min, max), Some((lo, hi)) if lo != nulls::INT && lo <= hi)
+            }
+            (ColumnTypeTag::IPv4, PhysicalType::Int32) => {
+                matches!(stat_bounds::<i32>(min, max), Some((lo, hi)) if lo != nulls::IPV4 && (lo as u32) <= (hi as u32))
+            }
+            (ColumnTypeTag::Date, PhysicalType::Int32) => true,
+            (ColumnTypeTag::Char, PhysicalType::Int32) => {
+                matches!(stat_bounds::<i32>(min, max), Some((lo, hi)) if lo > 0 && lo <= hi && hi <= u16::MAX as i32)
+            }
+            (ColumnTypeTag::Float, PhysicalType::Float) => {
+                is_written_by_questdb
+                    && matches!(stat_bounds::<f32>(min, max), Some((lo, hi)) if lo.is_finite() && hi.is_finite())
+            }
+            (ColumnTypeTag::Double, PhysicalType::Double) => {
+                is_written_by_questdb
+                    && matches!(stat_bounds::<f64>(min, max), Some((lo, hi)) if lo.is_finite() && hi.is_finite())
+            }
+            (
+                ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+                PhysicalType::Int64,
+            ) => {
+                matches!(stat_bounds::<i64>(min, max), Some((lo, hi)) if lo != nulls::LONG && lo <= hi)
+            }
+            _ if is_decimal_tag(tag) => {
+                is_written_by_questdb
+                    || decimal_bounds_within_precision(physical_type, min, max, column_type)
+            }
+            _ => false,
+        }
+    }
+
     /// Folds the implicit 0 of [`Self::has_matchable_zero_nulls`] into 4-byte little-endian INT32
     /// statistics, so a predicate matching 0 can no longer prune the row group while one that
     /// excludes 0 still can. Anything that is not a well-formed 4-byte pair is left alone: the
@@ -3642,16 +3609,12 @@ impl ParquetDecoder {
         min_buf: &'a mut [u8; 4],
         max_buf: &'a mut [u8; 4],
     ) -> (Option<&'a [u8]>, Option<&'a [u8]>) {
-        match (min_bytes, max_bytes) {
-            (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
-                let min_val = i32::from_le_bytes(min_b.try_into().unwrap()).min(0);
-                let max_val = i32::from_le_bytes(max_b.try_into().unwrap()).max(0);
-                *min_buf = min_val.to_le_bytes();
-                *max_buf = max_val.to_le_bytes();
-                (Some(&min_buf[..]), Some(&max_buf[..]))
-            }
-            _ => (min_bytes, max_bytes),
-        }
+        let Some((min_val, max_val)) = stat_bounds::<i32>(min_bytes, max_bytes) else {
+            return (min_bytes, max_bytes);
+        };
+        *min_buf = min_val.min(0).to_le_bytes();
+        *max_buf = max_val.max(0).to_le_bytes();
+        (Some(&min_buf[..]), Some(&max_buf[..]))
     }
 
     /// Check if a range/between filter proves the row group can be skipped.
@@ -3697,12 +3660,10 @@ impl ParquetDecoder {
         match physical_type {
             PhysicalType::Int32 if is_ipv4 => {
                 Self::validate_filter_span(ptr, count, size_of::<u32>(), filter_desc.buf_end)?;
-                let (min_val, max_val) = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
-                        u32::from_le_bytes(min_b.try_into().unwrap()),
-                        u32::from_le_bytes(max_b.try_into().unwrap()),
-                    ),
-                    _ => return Ok(false),
+                let Some((min_val, max_val)) =
+                    stat_bounds::<i32>(min_bytes, max_bytes).map(|(lo, hi)| (lo as u32, hi as u32))
+                else {
+                    return Ok(false);
                 };
                 if is_between {
                     let a = unsafe { (ptr as *const u32).read_unaligned() };
@@ -3735,12 +3696,8 @@ impl ParquetDecoder {
                     size_of::<i32>()
                 };
                 Self::validate_filter_span(ptr, count, elem_size, filter_desc.buf_end)?;
-                let (min_val, max_val) = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
-                        i32::from_le_bytes(min_b.try_into().unwrap()),
-                        i32::from_le_bytes(max_b.try_into().unwrap()),
-                    ),
-                    _ => return Ok(false),
+                let Some((min_val, max_val)) = stat_bounds::<i32>(min_bytes, max_bytes) else {
+                    return Ok(false);
                 };
                 if is_date {
                     let min_ms = min_val as i64 * MILLIS_PER_DAY;
@@ -3789,12 +3746,8 @@ impl ParquetDecoder {
             // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
             PhysicalType::Int64 => {
                 Self::validate_filter_span(ptr, count, size_of::<i64>(), filter_desc.buf_end)?;
-                let (min_val, max_val) = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => (
-                        i64::from_le_bytes(min_b.try_into().unwrap()),
-                        i64::from_le_bytes(max_b.try_into().unwrap()),
-                    ),
-                    _ => return Ok(false),
+                let Some((min_val, max_val)) = stat_bounds::<i64>(min_bytes, max_bytes) else {
+                    return Ok(false);
                 };
                 if is_between {
                     let a = unsafe { (ptr as *const i64).read_unaligned() };
@@ -3819,16 +3772,10 @@ impl ParquetDecoder {
             }
             PhysicalType::Float => {
                 Self::validate_filter_span(ptr, count, size_of::<f32>(), filter_desc.buf_end)?;
-                let (min_val, max_val) = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
-                        let min_val = f32::from_le_bytes(min_b.try_into().unwrap());
-                        let max_val = f32::from_le_bytes(max_b.try_into().unwrap());
-                        if min_val.is_nan() || max_val.is_nan() {
-                            return Ok(false);
-                        }
-                        (min_val, max_val)
-                    }
-                    _ => return Ok(false),
+                let Some((min_val, max_val)) = stat_bounds::<f32>(min_bytes, max_bytes)
+                    .filter(|(lo, hi)| !lo.is_nan() && !hi.is_nan())
+                else {
+                    return Ok(false);
                 };
                 if is_between {
                     let a = unsafe { (ptr as *const f32).read_unaligned() };
@@ -3853,16 +3800,10 @@ impl ParquetDecoder {
             }
             PhysicalType::Double => {
                 Self::validate_filter_span(ptr, count, size_of::<f64>(), filter_desc.buf_end)?;
-                let (min_val, max_val) = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => {
-                        let min_val = f64::from_le_bytes(min_b.try_into().unwrap());
-                        let max_val = f64::from_le_bytes(max_b.try_into().unwrap());
-                        if min_val.is_nan() || max_val.is_nan() {
-                            return Ok(false);
-                        }
-                        (min_val, max_val)
-                    }
-                    _ => return Ok(false),
+                let Some((min_val, max_val)) = stat_bounds::<f64>(min_bytes, max_bytes)
+                    .filter(|(lo, hi)| !lo.is_nan() && !hi.is_nan())
+                else {
+                    return Ok(false);
                 };
                 if is_between {
                     let a = unsafe { (ptr as *const f64).read_unaligned() };
@@ -4348,31 +4289,12 @@ fn resize_signed_be(src: &[u8], dst: &mut [u8]) -> bool {
     true
 }
 
-fn i32_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(i32, i32)> {
+/// Decodes a pair of little-endian statistics of a fixed-width physical type, or `None` when either
+/// is absent or has another width.
+fn stat_bounds<T: NativeType>(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(T, T)> {
     Some((
-        i32::from_le_bytes(min?.try_into().ok()?),
-        i32::from_le_bytes(max?.try_into().ok()?),
-    ))
-}
-
-fn i64_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(i64, i64)> {
-    Some((
-        i64::from_le_bytes(min?.try_into().ok()?),
-        i64::from_le_bytes(max?.try_into().ok()?),
-    ))
-}
-
-fn f32_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(f32, f32)> {
-    Some((
-        f32::from_le_bytes(min?.try_into().ok()?),
-        f32::from_le_bytes(max?.try_into().ok()?),
-    ))
-}
-
-fn f64_bounds(min: Option<&[u8]>, max: Option<&[u8]>) -> Option<(f64, f64)> {
-    Some((
-        f64::from_le_bytes(min?.try_into().ok()?),
-        f64::from_le_bytes(max?.try_into().ok()?),
+        T::from_bytes(min?.try_into().ok()?),
+        T::from_bytes(max?.try_into().ok()?),
     ))
 }
 
@@ -4382,8 +4304,17 @@ fn decimal_bounds_within_precision(
     physical_type: &PhysicalType,
     min_bytes: Option<&[u8]>,
     max_bytes: Option<&[u8]>,
-    precision: u8,
-) -> ParquetResult<bool> {
+    column_type: ColumnType,
+) -> bool {
+    let precision = column_type.decimal_precision();
+    // A column type comes from file contents. Past the precisions of its width, a value within the
+    // precision can truncate to the width's sentinel.
+    let Some((w0, w1, w2, w3)) = ColumnType::new_decimal(precision, 0)
+        .filter(|t| t.tag() == column_type.tag())
+        .and_then(|_| pow10_i256(precision as u32).ok())
+    else {
+        return false;
+    };
     let mut min_buf = [0u8; 8];
     let mut max_buf = [0u8; 8];
     let Some((min, max)) = decimal_stats_be(
@@ -4393,9 +4324,8 @@ fn decimal_bounds_within_precision(
         &mut min_buf,
         &mut max_buf,
     ) else {
-        return Ok(false);
+        return false;
     };
-    let (w0, w1, w2, w3) = pow10_i256(precision as u32)?;
     let mut upper = [0u8; DECIMAL_MAX_SIZE];
     upper[..8].copy_from_slice(&w0.to_be_bytes());
     upper[8..16].copy_from_slice(&w1.to_be_bytes());
@@ -4409,14 +4339,12 @@ fn decimal_bounds_within_precision(
             break;
         }
     }
-    Ok(
-        compare_signed_be_varlen(min, &lower) == cmp::Ordering::Greater
-            && compare_signed_be_varlen(max, &upper) == cmp::Ordering::Less
-            && compare_signed_be_varlen(min, max) != cmp::Ordering::Greater,
-    )
+    compare_signed_be_varlen(min, &lower) == cmp::Ordering::Greater
+        && compare_signed_be_varlen(max, &upper) == cmp::Ordering::Less
+        && compare_signed_be_varlen(min, max) != cmp::Ordering::Greater
 }
 
-/// Returns a decimal column's statistics as big-endian two's complement integers./// Returns a decimal column's statistics as big-endian two's complement integers. INT32 and
+/// Returns a decimal column's statistics as big-endian two's complement integers. INT32 and
 /// INT64 statistics are little-endian, so this reverses them into the caller's buffers;
 /// FIXED_LEN_BYTE_ARRAY and BYTE_ARRAY statistics already are big-endian.
 fn decimal_stats_be<'a>(

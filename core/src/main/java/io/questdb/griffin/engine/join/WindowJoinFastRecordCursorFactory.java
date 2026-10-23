@@ -515,12 +515,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             Misc.free(slaveData);
             Misc.free(slaveSymbolLookupMap);
-            if (joinFilter != null) {
-                joinFilter.cursorClosed();
-            }
-            if (groupByFunctions != null) {
-                Function.cursorClosed(groupByFunctions);
-            }
+            CairoException.rethrowCleanupFailure(Function.cursorClosed(Function.cursorClosed(null, joinFilter), groupByFunctions));
         }
 
         abstract void of(

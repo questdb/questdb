@@ -205,8 +205,7 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(latFunc);
-            Misc.free(lonFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, latFunc), lonFunc));
         }
 
         @Override
@@ -347,11 +346,10 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(latFunc);
-            Misc.free(lonFunc);
-            Misc.free(centerLatFunc);
-            Misc.free(centerLonFunc);
-            Misc.free(radiusFunc);
+            Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, latFunc), lonFunc);
+            failure = Misc.freeBestEffort(failure, centerLatFunc);
+            failure = Misc.freeBestEffort(failure, centerLonFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, radiusFunc));
         }
 
         @Override

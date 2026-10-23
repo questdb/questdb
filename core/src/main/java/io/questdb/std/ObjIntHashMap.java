@@ -32,7 +32,6 @@ import java.util.Iterator;
 
 public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final Object noEntryValue = null;
     private final EntryIterator iterator = new EntryIterator();
     private final double loadFactor;
     private final int noKeyValue;
@@ -58,7 +57,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         keys = createKeys();
         values = new int[keys.length];
         mask = keys.length - 1;
-        clear();
+        free = capacity;
     }
 
     public int capacity() {
@@ -69,7 +68,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     public final void clear() {
         if (free != capacity) {
             free = capacity;
-            Arrays.fill(keys, noEntryValue);
+            Arrays.fill(keys, null);
         }
     }
 
@@ -88,7 +87,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         int index = Hash.spread(key.hashCode()) & mask;
 
         final K kv = keys[index];
-        if (kv == noEntryValue) {
+        if (kv == null) {
             return index;
         }
 
@@ -107,7 +106,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         K[] otherKeys = other.keys;
         int[] otherValues = other.values;
         for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (otherKeys[i] != noEntryValue) {
+            if (otherKeys[i] != null) {
                 put(otherKeys[i], otherValues[i]);
             }
         }
@@ -148,7 +147,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         do {
             index = (index + 1) & mask;
             final K kv = keys[index];
-            if (kv == noEntryValue) {
+            if (kv == null) {
                 return index;
             }
             if (kv == key || key.equals(kv)) {
@@ -172,11 +171,10 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         K[] oldKeys = keys;
         this.keys = (K[]) new Object[Numbers.ceilPow2(Numbers.ceilPow2((int) (this.capacity / loadFactor)))];
         this.values = new int[keys.length];
-        Arrays.fill(keys, noEntryValue);
         mask = keys.length - 1;
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != noEntryValue) {
+            if (oldKeys[i] != null) {
                 put(oldKeys[i], oldValues[i]);
             }
         }
@@ -194,7 +192,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (keys[index] != noEntryValue || scan());
+            return index < values.length && (keys[index] != null || scan());
         }
 
         @Override
@@ -208,7 +206,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         private boolean scan() {
             do {
                 index++;
-            } while (index < values.length && keys[index] == noEntryValue);
+            } while (index < values.length && keys[index] == null);
 
             return index < values.length;
         }

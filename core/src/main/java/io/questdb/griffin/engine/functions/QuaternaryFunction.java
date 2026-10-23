@@ -43,10 +43,9 @@ public interface QuaternaryFunction extends Function {
 
     @Override
     default void cursorClosed() {
-        getFunc0().cursorClosed();
-        getFunc1().cursorClosed();
-        getFunc2().cursorClosed();
-        getFunc3().cursorClosed();
+        Throwable failure = Function.cursorClosed(Function.cursorClosed(null, getFunc0()), getFunc1());
+        failure = Function.cursorClosed(failure, getFunc2());
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, getFunc3()));
     }
 
     @Override

@@ -75,8 +75,18 @@ final class JoinBinder implements Mutable {
     private final IntList lateralDependencyParents = new IntList();
     private final IntList nonEquiNullingJoinInputs;
     private final IntList nullingJoinBoundaries;
+    private int equalityLeftIndex;
+    private int equalityRightIndex;
     private ExpressionNode firstForwardJoinReference;
+    /**
+     * Whether an inner ON conjunct that waits for a later source filters the joined rows once the source is joined:
+     * after an outer or temporal join, or when deferring its inner join would make the join order cyclic.
+     */
     private boolean isForwardInnerFiltered;
+    /**
+     * Whether a key from a later source to a LEFT join that waits for a later source filters instead, because it can
+     * make the join order cyclic.
+     */
     private boolean isForwardLeftKeyFiltered;
     private ExpressionNode rejectedTerms;
     private ExpressionNode selectedTerms;
@@ -198,16 +208,25 @@ final class JoinBinder implements Mutable {
         return hasTemporalJoin;
     }
 
+    /**
+     * Whether the expression is a tree of operators over literals.
+     */
     private static boolean isCompileTimeJoinConstant(ExpressionNode expression) {
-        if (expression == null) {
+        if (expression == null || expression.type == ExpressionNode.CONSTANT) {
             return true;
         }
-        return switch (expression.type) {
-            case ExpressionNode.CONSTANT -> true;
-            case ExpressionNode.OPERATION -> isCompileTimeJoinConstant(expression.lhs)
-                    && isCompileTimeJoinConstant(expression.rhs);
-            default -> false;
-        };
+        if (expression.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        if (expression.paramCount < 3) {
+            return isCompileTimeJoinConstant(expression.lhs) && isCompileTimeJoinConstant(expression.rhs);
+        }
+        for (int i = 0, n = expression.args.size(); i < n; i++) {
+            if (!isCompileTimeJoinConstant(expression.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -253,6 +272,13 @@ final class JoinBinder implements Mutable {
             case QueryModel.JOIN_SPLICE -> JoinKind.SPLICE;
             default -> throw new IllegalStateException("unexpected join type in join block");
         };
+    }
+
+    /**
+     * The input of the join that the column at the index of the join's output reads, -1 for a negative index.
+     */
+    private static int joinOutputSource(JoinPlan join, int index) {
+        return index < 0 ? -1 : LogicalPlans.joinColumnSource(join, join.getOutput().getColumnId(index));
     }
 
     private static int mergeJoinSources(int left, int right) {
@@ -507,13 +533,9 @@ final class JoinBinder implements Mutable {
         final ObjList<JoinInput> inputs = join.getInputs();
         boolean hasBarriers = false;
         boolean hasTemporalStep = false;
-        int lastMasterNullingInput = -1;
         for (int i = 1, n = inputs.size(); i < n; i++) {
             hasBarriers |= inputs.getQuick(i).getJoinType().isBarrier();
             hasTemporalStep |= inputs.getQuick(i).getJoinType().isTemporal();
-            if (inputs.getQuick(i).getJoinType().isMasterNulling()) {
-                lastMasterNullingInput = i;
-            }
         }
         final JoinGraph graph = ctx.planNodes.joinGraphs.next();
         try {
@@ -560,7 +582,7 @@ final class JoinBinder implements Mutable {
                 final IntList owners = equality.getOwners();
                 graph.addResidual(bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext), owners);
             }
-            validateJoinConstants(join, graph, source, whereConstants, lastMasterNullingInput, executionContext);
+            bindJoinConstants(join, graph, source, whereConstants, hasBarriers, executionContext);
             for (int i = 0, n = inputs.size(); i < n; i++) {
                 if (!LogicalPlans.canPushJoinFilter(join.getInputs(), i, lastInput)) {
                     ctx.stopTimestampIntrinsics(inputs.getQuick(i).getSourceOutput());
@@ -614,19 +636,62 @@ final class JoinBinder implements Mutable {
         return predicate;
     }
 
+    /**
+     * Binds on its own a conjunct of the constant conjunction that {@link #bindJoinConstantFilter} accepted: the
+     * conjunction's AND reads a NULL conjunct as FALSE, and so does the conjunct.
+     */
+    private BoundExpression bindJoinConstantConjunct(ExpressionNode conjunct, JoinPlan join, QueryModel source,
+                                                     SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression predicate = ctx.functionBinder.bind(conjunct, join.getOutput(), sourceAlias(source), executionContext);
+        return predicate.getDataType() == ColumnType.NULL ? ctx.planNodes.constants.next().ofBoolean(false, conjunct.position) : predicate;
+    }
+
     private BoundExpression bindJoinConstantFilter(ExpressionNode expression, JoinPlan join, QueryModel source,
-                                                   SqlExecutionContext executionContext, boolean isNullAllowed) throws SqlException {
+                                                   SqlExecutionContext executionContext) throws SqlException {
         // Constant conjuncts bind as their own group. A lone NULL
         // must not acquire BOOLEAN type from an unrelated source predicate.
         final BoundExpression predicate = ctx.functionBinder.toBooleanSubquery(
                 ctx.functionBinder.bind(expression, join.getOutput(), sourceAlias(source), executionContext));
-        if (isNullAllowed && predicate.getDataType() == ColumnType.NULL) {
-            return ctx.planNodes.constants.next().ofBoolean(false, expression.position);
-        }
         if (predicate.getDataType() != ColumnType.BOOLEAN) {
             throw SqlException.$(expression.position, "boolean expression expected");
         }
         return predicate;
+    }
+
+    /**
+     * Binds the constant WHERE terms and the constant ON terms of the inner steps as one conjunction, so they type and
+     * fail as a single predicate, and records them as the graph's constant conjuncts for join ordering to place. Without
+     * an outer or temporal step, every constant conjunct filters the last step, so the conjunction is the one conjunct.
+     * With one, the constant ON terms of each inner step are a conjunct that join ordering places at that step, so they
+     * and the constant WHERE terms bind again, each on its own, see {@link #bindJoinConstantConjunct}: operator trees
+     * over literals bind without side effects.
+     */
+    private void bindJoinConstants(JoinPlan join, JoinGraph graph, QueryModel source, ExpressionNode whereConstants,
+                                   boolean hasBarriers, SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<ExpressionNode> onConstants = ctx.scope().joinOnNodes;
+        final int inputCount = join.getInputs().size();
+        ExpressionNode constants = whereConstants;
+        for (int i = 1; i < inputCount; i++) {
+            if (hasInnerOnConstants(join, i)) {
+                constants = ctx.combinePredicates(constants, onConstants.getQuick(i));
+            }
+        }
+        if (constants == null) {
+            return;
+        }
+        final BoundExpression constantFilter = bindJoinConstantFilter(constants, join, source, executionContext);
+        if (!hasBarriers || constants == whereConstants) {
+            graph.addConstantFilter(constantFilter, -1);
+            return;
+        }
+        if (whereConstants != null) {
+            graph.addConstantFilter(bindJoinConstantConjunct(whereConstants, join, source, executionContext), -1);
+        }
+        for (int i = 1; i < inputCount; i++) {
+            if (hasInnerOnConstants(join, i)) {
+                graph.addConstantFilter(bindJoinConstantConjunct(onConstants.getQuick(i), join, source, executionContext), i);
+            }
+        }
     }
 
     private void bindJoinInputs(JoinPlan join, QueryModel source, int lo, int hi, boolean hasTemporalJoin, OutputSchema prefix,
@@ -874,8 +939,8 @@ final class JoinBinder implements Mutable {
         }
         if (isColumnEquality(expression, join)) {
             final OutputSchema output = join.getOutput();
-            final int leftIndex = ctx.bindColumnIndex(expression.lhs, output, (CharSequence) null);
-            final int rightIndex = ctx.bindColumnIndex(expression.rhs, output, (CharSequence) null);
+            final int leftIndex = FunctionBinder.checkColumn(expression.lhs, equalityLeftIndex, output, null);
+            final int rightIndex = FunctionBinder.checkColumn(expression.rhs, equalityRightIndex, output, null);
             final int leftId = output.getColumnId(leftIndex);
             final int rightId = output.getColumnId(rightIndex);
             final int leftSource = LogicalPlans.joinColumnSource(join, leftId);
@@ -949,7 +1014,7 @@ final class JoinBinder implements Mutable {
         }
         final boolean hasNonEquiNullingJoin = nonEquiNullingJoinInputs.size() > 0;
         splitJoinTerms(where, JoinTerms.CONSTANT, join, -1);
-        final ExpressionNode constantFilter = selectedTerms;
+        final ExpressionNode whereConstants = selectedTerms;
         collectJoinConditions(rejectedTerms, join, -1, hasBarriers, hasNonEquiNullingJoin);
         final JoinInput master = join.getInputs().getQuick(0);
         for (int i = dependencyBase, n = lateralDependencyInputs.size(); i < n; i++) {
@@ -1043,7 +1108,7 @@ final class JoinBinder implements Mutable {
             constrainNullingJoinConsumers(join, boundary);
         }
         if (joinGraphBuilder.prepare()) {
-            return constantFilter;
+            return whereConstants;
         }
         final boolean wasForwardInnerFiltered = isForwardInnerFiltered;
         final boolean wasForwardLeftKeyFiltered = isForwardLeftKeyFiltered;
@@ -1077,16 +1142,6 @@ final class JoinBinder implements Mutable {
     /**
      * The first input of the comma group of the input: a comma binds looser than JOIN.
      */
-    private ExpressionNode combineInnerOnConstants(JoinPlan join, int lo, int hi, ExpressionNode constants) {
-        final ObjList<ExpressionNode> onConstants = ctx.scope().joinOnNodes;
-        for (int i = lo; i < hi; i++) {
-            if (hasInnerOnConstants(join, i)) {
-                constants = ctx.combinePredicates(constants, onConstants.getQuick(i));
-            }
-        }
-        return constants;
-    }
-
     private int commaGroupStart(QueryModel source, int modelBase, int input) {
         for (int i = input; i > 0; i--) {
             if (joinModel(source, modelBase, i).isCommaJoin()) {
@@ -1184,18 +1239,9 @@ final class JoinBinder implements Mutable {
             return hasOwnJoinKey(expression.lhs, join, input) || hasOwnJoinKey(expression.rhs, join, input);
         }
         if (isColumnEquality(expression, join)) {
-            final int left = joinReferenceSource(expression.lhs, join);
-            final int right = joinReferenceSource(expression.rhs, join);
+            final int left = joinOutputSource(join, equalityLeftIndex);
+            final int right = joinOutputSource(join, equalityRightIndex);
             return left >= 0 && right >= 0 && left != right && Math.max(left, right) == input;
-        }
-        return false;
-    }
-
-    private boolean hasStepJoinConstants(JoinPlan join, int lastMasterNullingInput) {
-        for (int i = 1; i < lastMasterNullingInput; i++) {
-            if (hasInnerOnConstants(join, i)) {
-                return true;
-            }
         }
         return false;
     }
@@ -1210,17 +1256,19 @@ final class JoinBinder implements Mutable {
         return occurrence.getName() == null ? hintAlias(occurrence) : sourceAlias(occurrence);
     }
 
-    // An inner ON conjunct that waits for a later source filters the joined rows once the source is joined
-    // after an outer or temporal join, or when deferring its inner join would make the join order cyclic.
-    // A key from a later source to a LEFT join that waits for a later source can make the order cyclic; it filters instead.
-
     /**
-     * Whether the expression equates two columns of the join's inputs, rather than of an enclosing query.
+     * Whether the expression equates two columns of the join's inputs, rather than of an enclosing query. Leaves the
+     * indexes of the columns in the join's output, negative for a column the output does not resolve, in
+     * {@link #equalityLeftIndex} and {@link #equalityRightIndex}.
      */
     private boolean isColumnEquality(ExpressionNode expression, JoinPlan join) {
-        return expression.paramCount == 2 && Chars.equals(expression.token, '=')
-                && expression.lhs.type == ExpressionNode.LITERAL && expression.rhs.type == ExpressionNode.LITERAL
-                && !isOuterColumn(expression.lhs, join) && !isOuterColumn(expression.rhs, join);
+        if (expression.paramCount != 2 || !Chars.equals(expression.token, '=')
+                || expression.lhs.type != ExpressionNode.LITERAL || expression.rhs.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        equalityLeftIndex = FunctionBinder.findColumn(expression.lhs, join.getOutput(), null);
+        equalityRightIndex = FunctionBinder.findColumn(expression.rhs, join.getOutput(), null);
+        return !isOuterColumn(expression.lhs, equalityLeftIndex) && !isOuterColumn(expression.rhs, equalityRightIndex);
     }
 
     private boolean isForwardLeftFilteredKey(int leftSource, int rightSource, int origin) {
@@ -1240,8 +1288,8 @@ final class JoinBinder implements Mutable {
                 && join.getInputs().getQuick(input).getJoinType() == JoinKind.INNER && LogicalPlans.canPushJoinFilter(join.getInputs(), 0, input);
     }
 
-    private boolean isOuterColumn(ExpressionNode literal, JoinPlan join) {
-        return ctx.functionBinder.isOuterColumn(literal, join.getOutput(), null);
+    private boolean isOuterColumn(ExpressionNode literal, int index) {
+        return index == -1 && ctx.functionBinder.isOuterScopeColumn(literal);
     }
 
     private boolean isPostJoinFilterReference(ExpressionNode expression, JoinPlan join, int origin) {
@@ -1299,8 +1347,7 @@ final class JoinBinder implements Mutable {
      * resolve, which binding the conjunct reports.
      */
     private int joinReferenceSource(ExpressionNode literal, JoinPlan join) {
-        final int index = FunctionBinder.findColumn(literal, join.getOutput(), null);
-        return index < 0 ? -1 : LogicalPlans.joinColumnSource(join, join.getOutput().getColumnId(index));
+        return joinOutputSource(join, FunctionBinder.findColumn(literal, join.getOutput(), null));
     }
 
     private int lastJoinReferenceSource(ExpressionNode expression, JoinPlan join) {
@@ -1322,34 +1369,6 @@ final class JoinBinder implements Mutable {
      * SPLICE join follows the clause's input: the filter runs over that join's output and drops the rows it
      * preserves with the input NULL-extended.
      */
-    /**
-     * Lets each inner step that precedes the last RIGHT, FULL or SPLICE step filter by its own constant ON terms: a
-     * filter at the last step would also remove the rows that such a later step emits with NULL-extended master columns.
-     * The constant WHERE terms and the constant ON terms of the inner steps after the last RIGHT, FULL or SPLICE step
-     * remain the last step's constant filter. {@link #validateJoinConstants} has already bound and checked all of these
-     * terms as one conjunction; they are operator trees over literals, so binding them again, separately, has no side
-     * effects.
-     */
-    private void placeStepJoinConstants(JoinPlan join, JoinGraph graph, QueryModel source, ExpressionNode whereConstants,
-                                        int lastMasterNullingInput, SqlExecutionContext executionContext) throws SqlException {
-        final ObjList<ExpressionNode> onConstants = ctx.scope().joinOnNodes;
-        for (int i = 1; i < lastMasterNullingInput; i++) {
-            if (hasInnerOnConstants(join, i)) {
-                final ExpressionNode stepConstants = onConstants.getQuick(i);
-                final BoundExpression stepFilter = ctx.expressionRewriter.combineConstantFilter(null,
-                        bindJoinConstantFilter(stepConstants, join, source, executionContext, true), stepConstants.position);
-                if (stepFilter != null) {
-                    graph.addResidual(stepFilter, i);
-                }
-            }
-        }
-        final ExpressionNode lastStepConstants = combineInnerOnConstants(join, lastMasterNullingInput, join.getInputs().size(), whereConstants);
-        if (lastStepConstants != null) {
-            graph.setConstantFilter(bindJoinConstantFilter(lastStepConstants, join, source, executionContext, true),
-                    lastStepConstants.position);
-        }
-    }
-
     private void rejectMasterNullingForwardReference(ExpressionNode filter, JoinPlan join, int origin) throws SqlException {
         for (int i = origin + 1, n = join.getInputs().size(); i < n; i++) {
             if (join.getInputs().getQuick(i).getJoinType().isMasterNulling()) {
@@ -1413,8 +1432,8 @@ final class JoinBinder implements Mutable {
         if (isColumnEquality(expression, join)) {
             final OutputSchema output = join.getOutput();
             final OutputSchema slaveOutput = slave.getSourceOutput();
-            final boolean isLeftSlave = slaveOutput.getColumnIndexById(output.getColumnId(ctx.bindColumnIndex(expression.lhs, output, (CharSequence) null))) >= 0;
-            final boolean isRightSlave = slaveOutput.getColumnIndexById(output.getColumnId(ctx.bindColumnIndex(expression.rhs, output, (CharSequence) null))) >= 0;
+            final boolean isLeftSlave = slaveOutput.getColumnIndexById(output.getColumnId(FunctionBinder.checkColumn(expression.lhs, equalityLeftIndex, output, null))) >= 0;
+            final boolean isRightSlave = slaveOutput.getColumnIndexById(output.getColumnId(FunctionBinder.checkColumn(expression.rhs, equalityRightIndex, output, null))) >= 0;
             if (isLeftSlave != isRightSlave) {
                 return prefix;
             }
@@ -1441,7 +1460,7 @@ final class JoinBinder implements Mutable {
         final boolean isSelected = switch (terms) {
             // A constant join term is classified by its spelling, not by Function.isConstant(): function calls and
             // parameters remain runtime predicates even when their selected implementation folds at binding.
-            case CONSTANT -> !hasColumnReference(expression) && isCompileTimeJoinConstant(expression);
+            case CONSTANT -> isCompileTimeJoinConstant(expression);
             case LATEST_FILTER -> joinExpressionSource(expression, join) == 0;
             case POST_JOIN_FILTER -> isPostJoinFilterReference(expression, join, origin);
         };
@@ -1454,25 +1473,6 @@ final class JoinBinder implements Mutable {
      * equalities and matches, then the qualified columns of the conjuncts that cannot key the join, which
      * {@link #rejectSpliceResidual} rejects once the join's inputs validate.
      */
-    /**
-     * Binds the constant WHERE terms and the constant ON terms of the inner steps as one conjunction, so they type and
-     * fail as a single predicate, and makes it the last step's constant filter. When an inner step with constant ON
-     * terms precedes a RIGHT, FULL or SPLICE step, {@link #placeStepJoinConstants} builds the filters instead.
-     */
-    private void validateJoinConstants(JoinPlan join, JoinGraph graph, QueryModel source, ExpressionNode whereConstants,
-                                       int lastMasterNullingInput, SqlExecutionContext executionContext) throws SqlException {
-        final ExpressionNode constants = combineInnerOnConstants(join, 1, join.getInputs().size(), whereConstants);
-        if (constants == null) {
-            return;
-        }
-        final BoundExpression constantFilter = bindJoinConstantFilter(constants, join, source, executionContext, false);
-        if (hasStepJoinConstants(join, lastMasterNullingInput)) {
-            placeStepJoinConstants(join, graph, source, whereConstants, lastMasterNullingInput, executionContext);
-        } else {
-            graph.setConstantFilter(constantFilter, constants.position);
-        }
-    }
-
     private void validateSpliceOn(ExpressionNode on, JoinPlan join, JoinInput slave) throws SqlException {
         validateSpliceOnAnalysis(on, join);
         final ExpressionNode residual = spliceResidual(null, on, join, slave);

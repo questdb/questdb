@@ -37,7 +37,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -82,10 +84,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             @Transient RecordMetadata metadata,
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
-            // this cursor owns the "toTop()" and "cursorClosed()" lifecycle of filter
+            // this cursor owns the "init()", "toTop()" and "cursorClosed()" lifecycle of filter
             @Nullable Function filter
     ) {
         super(configuration, metadata);
+        assert !(rowCursorFactory instanceof KeyOrderedRowCursorFactory) || this instanceof KeyOrderedPageFrameRecordCursor
+                : "a key ordered row cursor factory needs KeyOrderedPageFrameRecordCursor";
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;
@@ -224,6 +228,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         cachedSkipWalkTarget = NO_SKIP_WALK;
         // prepare for page frame iteration
         super.init(sqlExecutionContext.getMemoryTracker());
+        if (filter != null) {
+            filter.init(this, sqlExecutionContext);
+        }
     }
 
     @Override
@@ -394,6 +401,53 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (isWalkCounterEnabled) {
             testWalkedRows.addAndGet(rows);
         }
+    }
+
+    /**
+     * Returns the cursor over the rows the per-key row cursor factories find, in the index order the planner chose:
+     * key by key for {@link ScanPlan.IndexOrder#KEY}, otherwise in page frame order, merged by the row cursor factory
+     * that the order names.
+     */
+    static PageFrameRecordCursorImpl newIndexScanCursor(
+            CairoConfiguration configuration,
+            @Transient RecordMetadata metadata,
+            ScanPlan.IndexOrder indexOrder,
+            ObjList<? extends FunctionBasedRowCursorFactory> cursorFactories,
+            int[] cursorFactoriesIdx,
+            int indexDirection,
+            @Nullable Function filter
+    ) {
+        return switch (indexOrder) {
+            case KEY -> new KeyOrderedPageFrameRecordCursor(
+                    configuration,
+                    metadata,
+                    new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx, indexDirection),
+                    false,
+                    filter
+            );
+            case TIMESTAMP, TABLE -> new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    false,
+                    filter
+            );
+            case TABLE_PER_FRAME -> new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new BitSetRowCursorFactory(cursorFactories, cursorFactoriesIdx, filter),
+                    false,
+                    filter
+            );
+            case KEY_PER_FRAME -> new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    false,
+                    filter
+            );
+            case NONE -> throw new UnsupportedOperationException();
+        };
     }
 
     protected final void dropSkipWalkFrames() {

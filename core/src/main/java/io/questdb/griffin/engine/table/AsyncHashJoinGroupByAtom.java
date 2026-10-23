@@ -51,7 +51,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -336,30 +335,30 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         if (isBuildFiltersInitialized) {
             isBuildFiltersInitialized = false;
             failure = Function.cursorClosed(failure, buildOnFilter);
-            failure = PerWorkerFunctionList.cursorClosed(failure, workerBuildOnFilters);
+            failure = Function.cursorClosed(failure, workerBuildOnFilters);
         }
         for (int i = 0; i < slots.size(); i++) {
             try {
                 slots.getQuick(i).clear(functions.getUpdater(i - 1));
             } catch (Throwable th) {
-                failure = addFailure(failure, th);
+                failure = Misc.foldCleanupFailure(failure, th);
             }
         }
         try {
             filterContext.clear();
         } catch (Throwable th) {
-            failure = addFailure(failure, th);
+            failure = Misc.foldCleanupFailure(failure, th);
         }
         try {
             buildFilterContext.clear();
         } catch (Throwable th) {
-            failure = addFailure(failure, th);
+            failure = Misc.foldCleanupFailure(failure, th);
         }
         if (shardingContext != null) {
             try {
                 shardingContext.clear();
             } catch (Throwable th) {
-                failure = addFailure(failure, th);
+                failure = Misc.foldCleanupFailure(failure, th);
             }
         }
         frozen = null;
@@ -383,7 +382,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         try {
             buildFrames.clear();
         } catch (Throwable th) {
-            failure = addFailure(failure, th);
+            failure = Misc.foldCleanupFailure(failure, th);
         }
         memoryTracker = null;
         probeSymbols = null;
@@ -592,16 +591,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             throw th;
         }
-    }
-
-    private static Throwable addFailure(Throwable failure, Throwable th) {
-        if (failure == null) {
-            return th;
-        }
-        if (failure != th) {
-            failure.addSuppressed(th);
-        }
-        return failure;
     }
 
     /**

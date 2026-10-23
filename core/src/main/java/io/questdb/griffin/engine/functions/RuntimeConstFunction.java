@@ -49,7 +49,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
  * of that by hand, which is exactly where a wrong-field read can sneak in.
  * <p>
  * {@link #wrapTemporalText(Function, int)} reuses the TIMESTAMP and DATE wrappers for runtime-constant text that a
- * temporal comparison reads, so the text parses once per cursor.
+ * TIMESTAMP or DATE parameter receives, so the text parses once per cursor.
  * <p>
  * Every subclass is read-only after init(), so it inherits the argument's thread-safety
  * ({@link UnaryFunction#isThreadSafe()}) and a single instance serves every parallel worker.
@@ -158,7 +158,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
     }
 
     /**
-     * Wraps {@code arg} when it is runtime-constant text that a comparison reads as {@code temporalType}, TIMESTAMP or
+     * Wraps {@code arg} when it is runtime-constant text that a parameter reads as {@code temporalType}, TIMESTAMP or
      * DATE, so the text parses once per cursor rather than on every row; returns any other argument as is. Unlike
      * {@link #isFoldable(Function)}, this wraps a leaf too: a text bind variable caches its text, not the value it
      * parses to.

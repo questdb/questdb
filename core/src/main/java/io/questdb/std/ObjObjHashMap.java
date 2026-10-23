@@ -32,7 +32,6 @@ import java.util.Iterator;
 
 public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final Object noEntryValue = null;
     private final EntryIterator iterator = new EntryIterator();
     private final double loadFactor;
     private int capacity;
@@ -57,12 +56,12 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         keys = (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / loadFactor))];
         values = (V[]) new Object[keys.length];
         mask = keys.length - 1;
-        clear();
+        free = capacity;
     }
 
     public final void clear() {
         free = capacity;
-        Arrays.fill(keys, noEntryValue);
+        Arrays.fill(keys, null);
     }
 
     public boolean excludes(K key) {
@@ -84,7 +83,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         int index = Hash.spread(key.hashCode()) & mask;
 
         final K kv = keys[index];
-        if (kv == noEntryValue) {
+        if (kv == null) {
             return index;
         }
 
@@ -138,7 +137,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         do {
             index = (index + 1) & mask;
             final K kv = keys[index];
-            if (kv == noEntryValue) {
+            if (kv == null) {
                 return index;
             }
             if (kv == key || key.equals(kv)) {
@@ -162,11 +161,10 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         K[] oldKeys = keys;
         this.keys = (K[]) new Object[Numbers.ceilPow2(Numbers.ceilPow2((int) (this.capacity / loadFactor)))];
         this.values = (V[]) new Object[keys.length];
-        Arrays.fill(keys, noEntryValue);
         mask = keys.length - 1;
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != noEntryValue) {
+            if (oldKeys[i] != null) {
                 put(oldKeys[i], oldValues[i]);
             }
         }
@@ -188,13 +186,13 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
             from = (from + 1) & mask;
             for (
                     K key = keys[from];
-                    key != noEntryValue;
+                    key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
                 int idealHit = Hash.spread(key.hashCode()) & mask;
                 if (idealHit != from) {
                     int to;
-                    if (keys[idealHit] != noEntryValue) {
+                    if (keys[idealHit] != null) {
                         to = probe(key, idealHit);
                     } else {
                         to = idealHit;
@@ -208,9 +206,8 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         }
     }
 
-    @SuppressWarnings("unchecked")
     protected void erase(int index) {
-        keys[index] = (K) noEntryValue;
+        keys[index] = null;
         ((Object[]) values)[index] = null;
     }
 
@@ -232,7 +229,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (keys[index] != noEntryValue || scan());
+            return index < values.length && (keys[index] != null || scan());
         }
 
         @Override
@@ -245,7 +242,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         private boolean scan() {
             do {
                 index++;
-            } while (index < values.length && keys[index] == noEntryValue);
+            } while (index < values.length && keys[index] == null);
 
             return index < values.length;
         }

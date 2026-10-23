@@ -138,8 +138,8 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            TernaryFunction.super.close();
             Misc.free(array);
+            TernaryFunction.super.close();
         }
 
         @Override

@@ -58,8 +58,9 @@ import io.questdb.std.ObjectPool;
  * A conjunct filters the step that joins the last input it reads, a conjunct that reads no input the last step. When
  * the join has an outer or temporal step, an ON conjunct filters its own step when it reads no input and otherwise no
  * earlier than its own step unless it reads one input and an ASOF, LT or SPLICE step anchors it, and a WHERE conjunct
- * filters no earlier than the last RIGHT or FULL step after it. A conjunct of the first step filters its input; the
- * graph's constant filter filters the last step.
+ * filters no earlier than the last RIGHT or FULL step after it. The graph's constant conjuncts read no input and follow
+ * the same rule; a true one drops out and a false one joins as a literal. A conjunct of the first step filters its
+ * input.
  */
 final class JoinOrdering implements OptimiserPass {
     private final ColumnReads columnReads;
@@ -114,6 +115,14 @@ final class JoinOrdering implements OptimiserPass {
     }
 
     /**
+     * The ordered step that a conjunct reading no input filters: the step whose ON clause states it, at
+     * {@code originPosition}, -1 for none, when the join has an outer or temporal step, otherwise the last step.
+     */
+    private static int inputFreeTarget(boolean hasBarriers, int originPosition, int last) {
+        return hasBarriers && originPosition >= 0 ? originPosition : last;
+    }
+
+    /**
      * Whether an inner ON conjunct stated at {@code originPosition} filters the step at {@code target} instead: the
      * target precedes the origin, the origin step is INNER or CROSS, the target is an ASOF, LT or SPLICE step, and no
      * step between them nulls master rows.
@@ -154,6 +163,13 @@ final class JoinOrdering implements OptimiserPass {
     }
 
     /**
+     * The ordered position of the input, -1 for none.
+     */
+    private static int orderedPosition(JoinPlan join, int input) {
+        return input < 0 ? -1 : join.getOrderedInputs().indexOf(join.getInputs().getQuick(input));
+    }
+
+    /**
      * The ordered step whose ON clause states a conjunct that one or more clauses state: none, -1, when WHERE does,
      * otherwise the step the order joins last.
      */
@@ -164,7 +180,7 @@ final class JoinOrdering implements OptimiserPass {
             if (owner < 0) {
                 return -1;
             }
-            position = Math.max(position, join.getOrderedInputs().indexOf(join.getInputs().getQuick(owner)));
+            position = Math.max(position, orderedPosition(join, owner));
         }
         return position;
     }
@@ -279,8 +295,7 @@ final class JoinOrdering implements OptimiserPass {
             final BoundExpression residual = residuals.getQuick(i);
             int target = lastOrderedInput(residual, join);
             if (target < 0) {
-                final int origin = hasBarriers ? originPosition(graph, i, join) : -1;
-                target = origin < 0 ? last : origin;
+                target = inputFreeTarget(hasBarriers, originPosition(graph, i, join), last);
             } else if (hasBarriers) {
                 final int origin = originPosition(graph, i, join);
                 if (origin >= 0) {
@@ -297,6 +312,12 @@ final class JoinOrdering implements OptimiserPass {
             }
             placed.setQuick(target, context.getRewriter().combineConjunction(placed.getQuick(target), residual, residual.getPosition()));
         }
+        final ObjList<BoundExpression> constantFilters = graph.getConstantFilters();
+        for (int i = 0, n = constantFilters.size(); i < n; i++) {
+            final BoundExpression constantFilter = constantFilters.getQuick(i);
+            final int target = inputFreeTarget(hasBarriers, orderedPosition(join, graph.getConstantFilterOrigin(i)), last);
+            placed.setQuick(target, context.getRewriter().combineConstantFilter(placed.getQuick(target), constantFilter, constantFilter.getPosition()));
+        }
         for (int i = 0; i <= last; i++) {
             final BoundExpression predicate = placed.getQuick(i);
             if (predicate != null) {
@@ -308,11 +329,6 @@ final class JoinOrdering implements OptimiserPass {
                     input.setPostJoinFilter(predicate);
                 }
             }
-        }
-        if (graph.getConstantFilter() != null) {
-            final JoinInput step = ordered.getQuick(last);
-            step.setPostJoinFilter(context.getRewriter().combineConstantFilter(step.getPostJoinFilter(), graph.getConstantFilter(),
-                    graph.getConstantFilterPosition()));
         }
     }
 }

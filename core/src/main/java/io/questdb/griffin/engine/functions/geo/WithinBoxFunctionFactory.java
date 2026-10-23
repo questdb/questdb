@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -172,8 +173,7 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(xFunc);
-            Misc.free(yFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, xFunc), yFunc));
         }
 
         @Override
@@ -286,12 +286,11 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(xFunc);
-            Misc.free(yFunc);
-            Misc.free(minXFunc);
-            Misc.free(minYFunc);
-            Misc.free(maxXFunc);
-            Misc.free(maxYFunc);
+            Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, xFunc), yFunc);
+            failure = Misc.freeBestEffort(failure, minXFunc);
+            failure = Misc.freeBestEffort(failure, minYFunc);
+            failure = Misc.freeBestEffort(failure, maxXFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, maxYFunc));
         }
 
         @Override

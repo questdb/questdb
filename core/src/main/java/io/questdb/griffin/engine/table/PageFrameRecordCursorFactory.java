@@ -232,9 +232,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         final PageFrameCursor frameCursor = initBwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {
             bwdRecordCursor.of(frameCursor, executionContext);
-            if (filter != null) {
-                filter.init(bwdRecordCursor, executionContext);
-            }
             return bwdRecordCursor;
         } catch (Throwable th) {
             frameCursor.close();
@@ -315,9 +312,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         final PageFrameCursor frameCursor = initBwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {
             bwdIndexedRecordCursor.of(frameCursor, executionContext);
-            if (filter != null) {
-                filter.init(bwdIndexedRecordCursor, executionContext);
-            }
             return bwdIndexedRecordCursor;
         } catch (Throwable th) {
             frameCursor.close();
@@ -533,9 +527,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             SqlExecutionContext executionContext
     ) throws SqlException {
         cursor.of(frameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
-        }
         return cursor;
     }
 

@@ -51,9 +51,18 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * The migration reads {@code _txn} to locate partitions and never modifies it. Each {@code _pm} gains its
  * footer through the same append-then-publish sequence as an incremental update, so a crash leaves the
  * committed snapshot in place, and a rerun skips partitions already recorded.
+ * <p>
+ * The migration must stay {@link MigrationAction.StorageVersionAgnostic}. Composite partitions shipped in
+ * 10.1.0, before this migration, so a table can already carry {@code ColumnType.MAX_STORAGE_VERSION} in its
+ * {@code _meta} when the migration first runs, and {@link EngineMigration} runs only agnostic migrations on
+ * such a table. Its parquet partitions would otherwise never gain the record, and their FLOAT and DOUBLE
+ * columns would never prune a negated range comparison.
+ * The migration qualifies because it reads only the partitioning and the designated timestamp type from
+ * {@code _meta}, the {@code _txn} partition table and the files of parquet partitions, whose formats no
+ * storage version changes, and a parquet partition is never composite.
  */
 public final class Mig1011 {
-    private static final Log LOG = LogFactory.getLog(EngineMigration.class);
+    private static Log LOG = LogFactory.getLog(EngineMigration.class);
 
     // Local copies of constants to avoid depending on values that may change.
     private static final int LONGS_PER_PARTITION = 4;
@@ -169,8 +178,12 @@ public final class Mig1011 {
         long parquetMetaFd = -1;
         try {
             parquetFd = ff.openRO(path.concat(TableUtils.PARQUET_PARTITION_NAME).$());
+            if (parquetFd < 0) {
+                LOG.error().$("could not open parquet file [path=").$(path).$(", errno=").$(ff.errno()).I$();
+                return Long.MIN_VALUE;
+            }
             path.trimTo(partitionDirLen);
-            if (parquetFd < 0 || !ff.exists(path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$())) {
+            if (!ff.exists(path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$())) {
                 return -1;
             }
             parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);

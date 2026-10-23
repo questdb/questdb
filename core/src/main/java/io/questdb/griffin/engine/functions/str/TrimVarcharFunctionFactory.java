@@ -93,8 +93,8 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(sink);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -136,9 +136,9 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             sinkA.close();
             sinkB.close();
+            UnaryFunction.super.close();
         }
 
         @Override

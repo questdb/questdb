@@ -252,8 +252,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            MultiArgFunction.super.close();
             Misc.free(arrayOut);
+            MultiArgFunction.super.close();
         }
 
         @Override

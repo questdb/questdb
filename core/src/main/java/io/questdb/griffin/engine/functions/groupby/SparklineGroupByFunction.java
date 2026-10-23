@@ -158,10 +158,9 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public void close() {
-        Misc.free(arg);
-        Misc.free(minFunc);
-        Misc.free(maxFunc);
-        Misc.free(widthFunc);
+        Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, arg), minFunc);
+        failure = Misc.freeBestEffort(failure, maxFunc);
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, widthFunc));
     }
 
     @Override

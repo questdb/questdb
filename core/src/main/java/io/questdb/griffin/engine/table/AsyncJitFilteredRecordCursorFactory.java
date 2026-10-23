@@ -546,8 +546,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public void clear() {
-            Function.cursorClosed(bindVarFunctions);
-            super.clear();
+            Throwable failure = Function.cursorClosed(null, bindVarFunctions);
+            try {
+                super.clear();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override

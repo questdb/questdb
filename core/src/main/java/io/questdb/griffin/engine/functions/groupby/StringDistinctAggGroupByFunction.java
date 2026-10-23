@@ -76,9 +76,9 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public void close() {
-        UnaryFunction.super.close();
         Misc.free(sinkA);
         Misc.free(sinkB);
+        UnaryFunction.super.close();
     }
 
     @Override

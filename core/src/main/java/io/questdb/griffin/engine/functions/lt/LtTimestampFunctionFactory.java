@@ -34,7 +34,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ComparisonFunction;
-import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -70,8 +69,8 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function left = RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.TIMESTAMP);
-        Function right = RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.TIMESTAMP);
+        Function left = args.getQuick(0);
+        Function right = args.getQuick(1);
         final int timestampType = ColumnType.getHigherPrecisionTimestampType(
                 ColumnType.getTimestampType(left.getType()),
                 ColumnType.getTimestampType(right.getType())

@@ -153,9 +153,11 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (Numbers.IPv4_NULL != arg.getIPv4(record)) {
+            int val = arg.getIPv4(record);
+            if (val != Numbers.IPv4_NULL) {
                 if (mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, val);
                 }
             }
         }

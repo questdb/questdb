@@ -44,6 +44,11 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default void cursorClosed() {
+        Function.cursorClosed(args());
+    }
+
+    @Override
     default int getComplexity() {
         final ObjList<Function> args = args();
         int total = 0;

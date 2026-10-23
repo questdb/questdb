@@ -58,6 +58,9 @@ public final class ParquetRowGroupFilter {
     public static final int FILTER_BUFFER_MAX_PAGES = 1_048_576; // 128MB with 128-byte pages
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 3;
+    // Set in a filter's op when NULL rows satisfy the filter as well, as they do a negated range comparison. The
+    // native pruner then lets the filter prune only a row group whose statistics prove it holds no SQL NULL.
+    public static final int NULL_MATCHING_OP_FLAG = 0x80;
     // The compiled filter's f32 tolerance (jit/impl/consts.h FLOAT_EPSILON). It is
     // (float) DOUBLE_TOLERANCE, i.e. 1.0000000133514320e-10 - slightly LARGER than the double one,
     // and the f32 arm applies it to a difference computed at f32 as well.
@@ -92,7 +95,7 @@ public final class ParquetRowGroupFilter {
             long filterBufEnd
     ) {
         try {
-            boolean skip = canSkip(rowGroupIndex, skipper, filterList, filterBufEnd);
+            boolean skip = skipper.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
             if (skip) {
                 rowGroupsSkipped.incrementAndGet();
             }
@@ -118,8 +121,7 @@ public final class ParquetRowGroupFilter {
      *
      * @param metadata                 the partition metadata for column index resolution
      * @param pushdownFilterConditions the filter conditions to apply
-     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter,
-     *                                 ordinary filters before null-matching ones, then the count of the ordinary ones
+     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
      * @param filterValues             reusable memory buffer for filter values
      * @param resolveByColumnId        when true, resolve the Parquet column by the condition's
      *                                 stable writer index (column id); when false, by name.
@@ -168,17 +170,8 @@ public final class ParquetRowGroupFilter {
             filterList.reopen();
             filterValues.jumpTo(0);
 
-            // The ordinary conditions go first, the null-matching ones after them: canSkip checks the former in one
-            // call and each of the latter alone.
-            int ordinaryCount = 0;
-            for (int k = 0, n = pushdownFilterConditions.size(); k < 2 * n; k++) {
-                if (k == n) {
-                    ordinaryCount = (int) (filterList.size() / LONGS_PER_FILTER);
-                }
-                final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(k % n);
-                if (condition.isNullMatching() != (k >= n)) {
-                    continue;
-                }
+            for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+                final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
                 final int opType = condition.getOperationType();
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
@@ -606,7 +599,11 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                filterList.add(encodeColumnCountAndOp(columnIndex, effectiveCount, effectiveOp));
+                filterList.add(encodeColumnCountAndOp(
+                        columnIndex,
+                        effectiveCount,
+                        condition.isNullMatching() ? effectiveOp | NULL_MATCHING_OP_FLAG : effectiveOp
+                ));
                 filterList.add(valuesOffset);
                 filterList.add(columnType);
             }
@@ -619,7 +616,6 @@ public final class ParquetRowGroupFilter {
             for (long i = 1, n = filterList.size(); i < n; i += LONGS_PER_FILTER) {
                 filterList.set(i, baseAddress + filterList.get(i));
             }
-            filterList.add(ordinaryCount);
             return true;
         } catch (CairoException e) {
             LOG.error().$("error during filter list preparation [msg=").$(e.getFlyweightMessage()).$(']').$();
@@ -633,25 +629,6 @@ public final class ParquetRowGroupFilter {
     @TestOnly
     public static void resetRowGroupsSkipped() {
         rowGroupsSkipped.set(0);
-    }
-
-    /**
-     * A row group is skipped when the ordinary conditions rule out every row together, or when a null-matching
-     * condition rules out every row of a group without NULLs. The last long of the list counts the ordinary ones.
-     */
-    private static boolean canSkip(int rowGroupIndex, ParquetRowGroupSkipper skipper, DirectLongList filterList, long filterBufEnd) {
-        final long descriptorLongs = filterList.size() - 1;
-        final int ordinaryCount = (int) filterList.get(descriptorLongs);
-        if (ordinaryCount > 0 && skipper.canSkipRowGroup(rowGroupIndex, filterList.getAddress(), ordinaryCount, filterBufEnd)) {
-            return true;
-        }
-        for (long i = (long) ordinaryCount * LONGS_PER_FILTER; i < descriptorLongs; i += LONGS_PER_FILTER) {
-            if (skipper.hasNoNulls(rowGroupIndex, (int) filterList.get(i))
-                    && skipper.canSkipRowGroup(rowGroupIndex, filterList.getAddress() + i * Long.BYTES, 1, filterBufEnd)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static int clampLongToInt(long v) {

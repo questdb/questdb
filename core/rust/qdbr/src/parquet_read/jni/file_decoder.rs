@@ -208,7 +208,7 @@ fn decode_row_group_impl<const MODE: u8>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_canSkipRowGroup(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_canSkipRowGroup0(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *const ParquetDecoder,
@@ -311,37 +311,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
                 row_group_index, column_index
             ));
             err.add_context("error in PartitionDecoder.rowGroupColumnHasEncoding");
-            err.into_cairo_exception().throw(env)
-        }
-    }
-}
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupColumnHasNoSqlNulls(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    row_group_index: u32,
-    column_index: u32,
-) -> bool {
-    let env = &mut env;
-    let res = (|| -> ParquetResult<bool> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        let decoder = unsafe { &*decoder };
-        decoder.row_group_column_has_no_sql_nulls(row_group_index, column_index)
-    })();
-
-    match res {
-        Ok(has_no_nulls) => has_no_nulls,
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not read null statistics for row group {}, column {}",
-                row_group_index, column_index
-            ));
-            err.add_context("error in PartitionDecoder.rowGroupColumnHasNoSqlNulls");
             err.into_cairo_exception().throw(env)
         }
     }

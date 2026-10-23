@@ -78,8 +78,8 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             array.close();
+            UnaryFunction.super.close();
         }
 
         @Override

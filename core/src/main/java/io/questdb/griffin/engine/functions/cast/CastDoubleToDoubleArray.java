@@ -84,8 +84,8 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(array);
+            UnaryFunction.super.close();
         }
 
         @Override

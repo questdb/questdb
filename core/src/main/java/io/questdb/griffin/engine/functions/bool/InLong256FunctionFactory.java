@@ -36,10 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.cast.CastByteToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToLong256FunctionFactory;
+import io.questdb.griffin.engine.functions.cast.AbstractCastToLong256Function;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256HashSet;
 import io.questdb.std.Long256Impl;
@@ -84,11 +81,14 @@ public final class InLong256FunctionFactory implements FunctionFactory {
             }
         }
 
+        for (int i = 1; i < n; i++) {
+            AbstractCastToLong256Function.widenInteger(args, i);
+        }
         final Long256HashSet set = new Long256HashSet(n - 1, 0.6);
         final Long256Impl parsed = new Long256Impl();
         if (constCount == n - 1) {
             for (int i = 1; i < n; i++) {
-                addToSet(widen(args.getQuick(i)), argPositions.getQuick(i), set, parsed);
+                addToSet(args.getQuick(i), argPositions.getQuick(i), set, parsed);
             }
             for (int i = 1; i < n; i++) {
                 args.setQuick(i, Misc.free(args.getQuick(i)));
@@ -96,11 +96,7 @@ public final class InLong256FunctionFactory implements FunctionFactory {
             return new InLong256ConstFunction(args.getQuick(0), set);
         }
 
-        final ObjList<Function> functions = new ObjList<>(n);
-        functions.add(args.getQuick(0));
-        for (int i = 1; i < n; i++) {
-            functions.add(widen(args.getQuick(i)));
-        }
+        final ObjList<Function> functions = new ObjList<>(args);
         final IntList positions = new IntList();
         positions.addAll(argPositions);
         return new InLong256RuntimeConstFunction(functions, positions, set, parsed);
@@ -120,17 +116,6 @@ public final class InLong256FunctionFactory implements FunctionFactory {
             }
             default -> set.add(func.getLong256A(null));
         }
-    }
-
-    // An integer element widens exactly as FunctionResolver widens an integer operand of a LONG256 call.
-    private static Function widen(Function func) {
-        return switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.BYTE -> new CastByteToLong256FunctionFactory.Func(func);
-            case ColumnType.SHORT -> new CastShortToLong256FunctionFactory.Func(func);
-            case ColumnType.INT -> new CastIntToLong256FunctionFactory.Func(func);
-            case ColumnType.LONG -> new CastLongToLong256FunctionFactory.Func(func);
-            default -> func;
-        };
     }
 
     private static class InLong256ConstFunction extends BooleanFunction implements UnaryFunction {

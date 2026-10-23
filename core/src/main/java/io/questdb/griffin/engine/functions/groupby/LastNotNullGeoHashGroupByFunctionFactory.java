@@ -102,9 +102,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (arg.getGeoByte(record) != GeoHashes.BYTE_NULL) {
+            byte val = arg.getGeoByte(record);
+            if (val != GeoHashes.BYTE_NULL) {
                 if (mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putByte(valueIndex + 1, val);
                 }
             }
         }
@@ -158,9 +160,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (arg.getGeoInt(record) != GeoHashes.INT_NULL) {
+            int val = arg.getGeoInt(record);
+            if (val != GeoHashes.INT_NULL) {
                 if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, val);
                 }
             }
         }
@@ -214,9 +218,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (arg.getGeoLong(record) != GeoHashes.NULL) {
+            long val = arg.getGeoLong(record);
+            if (val != GeoHashes.NULL) {
                 if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putLong(valueIndex + 1, val);
                 }
             }
         }
@@ -270,9 +276,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (arg.getGeoShort(record) != GeoHashes.SHORT_NULL) {
+            short val = arg.getGeoShort(record);
+            if (val != GeoHashes.SHORT_NULL) {
                 if (mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putShort(valueIndex + 1, val);
                 }
             }
         }

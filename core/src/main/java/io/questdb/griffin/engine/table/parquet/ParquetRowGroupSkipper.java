@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.DirectLongList;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Filter-pushdown contract for row group pruning. Implementations decide
@@ -51,28 +49,15 @@ public interface ParquetRowGroupSkipper {
     /**
      * Returns {@code true} when the row group can be skipped entirely based on
      * min/max statistics and bloom filter checks against the supplied filter
-     * list.
+     * list. A filter flagged
+     * {@link io.questdb.griffin.engine.table.ParquetRowGroupFilter#NULL_MATCHING_OP_FLAG}
+     * prunes only a row group whose statistics prove it holds no SQL NULL.
      *
      * @param rowGroupIndex zero-based row group index
-     * @param filters       encoded filter descriptors, {@link ParquetRowGroupFilter#LONGS_PER_FILTER} longs each
+     * @param filters       encoded filter descriptors produced by
+     *                      {@link io.questdb.griffin.engine.table.ParquetRowGroupFilter#prepareFilterList}
      * @param filterBufEnd  exclusive end address of the filter values buffer,
      *                      used for native bounds checking
      */
-    @TestOnly
-    default boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
-        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        return canSkipRowGroup(rowGroupIndex, filters.getAddress(), (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER), filterBufEnd);
-    }
-
-    /**
-     * Same as {@link #canSkipRowGroup(int, DirectLongList, long)} over the {@code filterCount} descriptors at
-     * {@code filtersAddr}.
-     */
-    boolean canSkipRowGroup(int rowGroupIndex, long filtersAddr, int filterCount, long filterBufEnd);
-
-    /**
-     * Returns {@code true} when the statistics prove the column chunk holds no SQL NULL: no Parquet null, and no
-     * stored value that reads back as the NULL sentinel of the column type.
-     */
-    boolean hasNoNulls(int rowGroupIndex, int columnIndex);
+    boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd);
 }

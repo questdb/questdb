@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -67,6 +68,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         if (arg.isConstant()) {
             final long start = MicrosTimestampDriver.INSTANCE.from(arg.getTimestamp(null), arg.getType());
             if (start == Numbers.LONG_NULL) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return MicrosTimestampDriver.INSTANCE.getTimestampConstantNull();
             }
             return new TimestampSequenceFunctionFactory.TimestampSequenceFunction(NAME, start, args.getQuick(1), timestampType);
@@ -87,6 +89,16 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             this.next = start;
             this.longIncrement = longIncrement;
             this.name = name;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(longIncrement);
+        }
+
+        @Override
+        public void cursorClosed() {
+            longIncrement.cursorClosed();
         }
 
         @Override
@@ -151,8 +163,12 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(start);
-            Misc.free(longIncrement);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, start), longIncrement));
+        }
+
+        @Override
+        public void cursorClosed() {
+            CairoException.rethrowCleanupFailure(Function.cursorClosed(Function.cursorClosed(null, start), longIncrement));
         }
 
         @Override

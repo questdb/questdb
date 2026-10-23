@@ -103,8 +103,8 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(derivedArray);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -140,8 +140,8 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(derivedArray);
+            UnaryFunction.super.close();
         }
 
         @Override

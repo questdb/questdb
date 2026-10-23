@@ -162,26 +162,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
      * Release execution state after draining slots and finishing output, also after failed init.
      */
     public void cursorClosed() {
-        Throwable failure = PerWorkerFunctionList.cursorClosed(null, keyFunctions);
-        failure = PerWorkerFunctionList.cursorClosed(failure, groupByFunctions);
-        failure = PerWorkerFunctionList.cursorClosed(failure, outputOnlyFunctions);
-        for (int i = 0; i < workerCount; i++) {
-            if (workerKeyFunctions != null) {
-                failure = PerWorkerFunctionList.cursorClosed(failure, workerKeyFunctions.getQuick(i));
-            }
-            if (workerGroupByFunctions != null) {
-                failure = PerWorkerFunctionList.cursorClosed(failure, workerGroupByFunctions.getQuick(i));
-            }
-        }
-        failure = PerWorkerFunctionList.cursorClosed(failure, workerFilters);
-        if (filter != null) {
-            try {
-                filter.cursorClosed();
-            } catch (Throwable th) {
-                failure = addFailure(failure, th);
-            }
-        }
-        CairoException.rethrowCleanupFailure(failure);
+        Throwable failure = Function.cursorClosed(null, keyFunctions);
+        failure = Function.cursorClosed(failure, groupByFunctions);
+        failure = Function.cursorClosed(failure, outputOnlyFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, workerKeyFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, workerGroupByFunctions);
+        failure = Function.cursorClosed(failure, workerFilters);
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, filter));
     }
 
     public Function getFilter(int slot) {
@@ -287,23 +274,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return true;
     }
 
-    private static Throwable addFailure(Throwable failure, Throwable th) {
-        if (failure == null) {
-            return th;
-        }
-        if (failure != th) {
-            failure.addSuppressed(th);
-        }
-        return failure;
-    }
-
     private static Throwable closeWorkers(Throwable failure, ObjList<? extends ObjList<? extends Function>> workers) {
         if (workers != null) {
             for (int i = 0; i < workers.size(); i++) {
                 try {
                     PerWorkerFunctionList.close(workers.getQuick(i));
                 } catch (Throwable th) {
-                    failure = addFailure(failure, th);
+                    failure = Misc.foldCleanupFailure(failure, th);
                 }
             }
             workers.clear();

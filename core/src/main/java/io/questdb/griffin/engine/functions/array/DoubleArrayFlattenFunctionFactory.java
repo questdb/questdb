@@ -78,8 +78,8 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             outArray = Misc.free(outArray);
+            UnaryFunction.super.close();
         }
 
         @Override

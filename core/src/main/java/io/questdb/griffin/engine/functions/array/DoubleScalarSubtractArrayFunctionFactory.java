@@ -83,8 +83,8 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
 
         @Override
         public void close() {
-            BinaryFunction.super.close();
             Misc.free(array);
+            BinaryFunction.super.close();
         }
 
         @Override

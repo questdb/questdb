@@ -147,6 +147,10 @@ pub const FILTER_OP_GE: u8 = 4;
 pub const FILTER_OP_IS_NULL: u8 = 5;
 pub const FILTER_OP_IS_NOT_NULL: u8 = 6;
 pub const FILTER_OP_BETWEEN: u8 = 7;
+/// Set in a filter's op byte when NULL rows satisfy the filter as well, as they do a negated range
+/// comparison. Such a filter prunes only a row group whose statistics prove it holds no SQL NULL;
+/// see [`ParquetDecoder::has_no_sql_nulls`].
+pub const FILTER_OP_NULL_MATCHING_FLAG: u8 = 0x80;
 
 /// Milliseconds per day, used to convert QuestDB DATE (millis) to Parquet DATE (days).
 pub(crate) const MILLIS_PER_DAY: i64 = 86_400_000;
@@ -172,7 +176,17 @@ impl ColumnFilterPacked {
 
     #[inline]
     pub fn operation_type(&self) -> u8 {
-        ((self.col_idx_and_count >> 56) & 0xFF) as u8
+        self.op_byte() & !FILTER_OP_NULL_MATCHING_FLAG
+    }
+
+    #[inline]
+    pub fn is_null_matching(&self) -> bool {
+        self.op_byte() & FILTER_OP_NULL_MATCHING_FLAG != 0
+    }
+
+    #[inline]
+    fn op_byte(&self) -> u8 {
+        (self.col_idx_and_count >> 56) as u8
     }
 
     #[inline]
@@ -268,7 +282,7 @@ mod tests {
     use crate::parquet_read::{
         ColumnFilterPacked, DecodeContext, ParquetDecoder, RowGroupBuffers, FILTER_OP_BETWEEN,
         FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL,
-        FILTER_OP_LE, FILTER_OP_LT,
+        FILTER_OP_LE, FILTER_OP_LT, FILTER_OP_NULL_MATCHING_FLAG,
     };
     use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
     use parquet::data_type::{ByteArray, ByteArrayType};
@@ -278,6 +292,7 @@ mod tests {
     use parquet::schema::types::Type;
     use parquet2::metadata::{ColumnChunkMetaData, RowGroupMetaData};
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+    use qdb_parquet_meta::convert::is_written_by_questdb;
     use std::io::Cursor;
     use std::sync::Arc;
 
@@ -2301,8 +2316,31 @@ mod tests {
         Ok(cursor.into_inner())
     }
 
+    /// Applies the no-SQL-NULL rule to row group 0, column 0, with the inputs
+    /// `ParquetDecoder::can_skip_row_group` reads from the parquet footer for a null-matching filter.
+    fn chunk_has_no_sql_nulls(decoder: &ParquetDecoder) -> bool {
+        let column = &decoder.metadata.row_groups[0].columns()[0];
+        let qdb_column_type = decoder.columns[0].column_type.map_or(0, |t| t.code());
+        let physical_type = column.physical_type();
+        let statistics = column
+            .column_chunk()
+            .meta_data
+            .as_ref()
+            .and_then(|m| m.statistics.as_ref());
+        let (min, max) =
+            ParquetDecoder::comparable_min_max(statistics, &physical_type, qdb_column_type);
+        ParquetDecoder::has_no_sql_nulls(
+            qdb_column_type,
+            &physical_type,
+            ParquetDecoder::chunk_null_count(column),
+            min,
+            max,
+            is_written_by_questdb(decoder.metadata.created_by.as_deref()),
+        )
+    }
+
     fn has_no_sql_nulls(buf: &[u8]) -> ParquetResult<bool> {
-        read_decoder(buf)?.row_group_column_has_no_sql_nulls(0, 0)
+        Ok(chunk_has_no_sql_nulls(&read_decoder(buf)?))
     }
 
     /// Asserts that a file that reads as null-free declines once a bound is missing or has the wrong
@@ -2330,14 +2368,13 @@ mod tests {
         for rewrite in rewrites {
             let mut decoder = read_decoder(buf)?;
             override_statistics(&mut decoder, rewrite);
-            assert!(!decoder.row_group_column_has_no_sql_nulls(0, 0)?);
+            assert!(!chunk_has_no_sql_nulls(&decoder));
         }
         Ok(())
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_excludes_parquet_nulls_and_long_sentinels(
-    ) -> ParquetResult<()> {
+    fn has_no_sql_nulls_excludes_parquet_nulls_and_long_sentinels() -> ParquetResult<()> {
         let values: Vec<i64> = (100..110).collect();
         let buf = gen_nullable_i64_parquet(&values, &[1; 10])?;
         assert_malformed_bounds_decline(&buf)?;
@@ -2360,19 +2397,15 @@ mod tests {
             let mut decoder = read_decoder(&buf)?;
             override_null_count(&mut decoder, null_count);
             assert!(
-                !decoder.row_group_column_has_no_sql_nulls(0, 0)?,
+                !chunk_has_no_sql_nulls(&decoder),
                 "an unknown null count must not read as null-free [null_count={null_count:?}]"
             );
         }
-
-        let decoder = read_decoder(&buf)?;
-        assert!(decoder.row_group_column_has_no_sql_nulls(1, 0).is_err());
-        assert!(decoder.row_group_column_has_no_sql_nulls(0, 1).is_err());
         Ok(())
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_excludes_int_sentinel() -> ParquetResult<()> {
+    fn has_no_sql_nulls_excludes_int_sentinel() -> ParquetResult<()> {
         let values: Vec<i32> = (-5..5).collect();
         assert_malformed_bounds_decline(&gen_nullable_i32_parquet(&values, &[1; 10], false)?)?;
         let mut with_sentinel = values.clone();
@@ -2386,7 +2419,7 @@ mod tests {
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_reads_date_days_and_decimals() -> ParquetResult<()> {
+    fn has_no_sql_nulls_reads_date_days_and_decimals() -> ParquetResult<()> {
         use parquet::data_type::{FixedLenByteArray, FixedLenByteArrayType, Int32Type};
 
         // DATE days read back as days * 86,400,000 milliseconds, which never reach LONG's minimum.
@@ -2448,7 +2481,8 @@ mod tests {
             )?)?);
         }
 
-        // A QuestDB column type comes from file contents, so its precision field can exceed 76.
+        // A QuestDB column type comes from file contents, so its precision field can exceed what
+        // its width holds.
         let mut qdb_column_type = ColumnType::new_decimal(76, 0).unwrap().code();
         qdb_column_type = (qdb_column_type & !(0xFF << 8)) | (100 << 8);
         let wide = |v: i128| {
@@ -2463,15 +2497,12 @@ mod tests {
             &[wide(-1), wide(1)],
             Some(ColumnType::try_from(qdb_column_type).unwrap()),
         )?;
-        assert!(read_decoder(&buf)?
-            .row_group_column_has_no_sql_nulls(0, 0)
-            .is_err());
+        assert!(!has_no_sql_nulls(&buf)?);
         Ok(())
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_excludes_ipv4_sentinel_in_either_bound_order(
-    ) -> ParquetResult<()> {
+    fn has_no_sql_nulls_excludes_ipv4_sentinel_in_either_bound_order() -> ParquetResult<()> {
         use parquet::data_type::Int32Type;
 
         let ipv4 = |values: &[i32]| {
@@ -2492,15 +2523,23 @@ mod tests {
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_reads_varchar_and_unsupported_types() -> ParquetResult<()>
-    {
-        use parquet::data_type::{ByteArrayType, FixedLenByteArray, FixedLenByteArrayType};
+    fn has_no_sql_nulls_reads_sentinel_free_and_unsupported_types() -> ParquetResult<()> {
+        use parquet::data_type::{
+            ByteArrayType, FixedLenByteArray, FixedLenByteArrayType, Int32Type,
+        };
 
         assert!(has_no_sql_nulls(&gen_typed_parquet::<ByteArrayType>(
             PhysicalType::BYTE_ARRAY,
             Some(LogicalType::String),
             -1,
             &[ByteArray::from("a"), ByteArray::from("")],
+            None
+        )?)?);
+        assert!(has_no_sql_nulls(&gen_typed_parquet::<Int32Type>(
+            PhysicalType::INT32,
+            Some(LogicalType::Integer { bit_width: 16, is_signed: true }),
+            -1,
+            &[i16::MIN as i32, 0, i16::MAX as i32],
             None
         )?)?);
         // A FIXED_LEN_BYTE_ARRAY(8) maps to no QuestDB column type.
@@ -2526,7 +2565,7 @@ mod tests {
 
     /// Writes one column with QuestDB's own parquet writer, with chunk statistics.
     fn gen_questdb_parquet(
-        tag: ColumnTypeTag,
+        column_type: ColumnType,
         data: &[u8],
         row_count: usize,
     ) -> ParquetResult<Vec<u8>> {
@@ -2536,7 +2575,7 @@ mod tests {
         let column = Column::from_raw_data(
             0,
             "val",
-            tag.into_type().code(),
+            column_type.code(),
             0,
             row_count,
             data.as_ptr(),
@@ -2557,11 +2596,11 @@ mod tests {
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_proves_questdb_floating_point_free_of_nan_and_infinity(
-    ) -> ParquetResult<()> {
+    fn has_no_sql_nulls_proves_questdb_floating_point_free_of_nan_and_infinity() -> ParquetResult<()>
+    {
         let doubles = |values: &[f64]| {
             let data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-            gen_questdb_parquet(ColumnTypeTag::Double, &data, values.len())
+            gen_questdb_parquet(ColumnTypeTag::Double.into_type(), &data, values.len())
         };
         assert_malformed_bounds_decline(&doubles(&[1.0, -2.5, 3.0])?)?;
         // QuestDB's writer writes NaN as a Parquet null, so the null count records it.
@@ -2572,7 +2611,7 @@ mod tests {
 
         let floats = |values: &[f32]| {
             let data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-            gen_questdb_parquet(ColumnTypeTag::Float, &data, values.len())
+            gen_questdb_parquet(ColumnTypeTag::Float.into_type(), &data, values.len())
         };
         assert_malformed_bounds_decline(&floats(&[1.0, -2.5, 3.0])?)?;
         assert!(!has_no_sql_nulls(&floats(&[1.0, f32::NAN])?)?);
@@ -2582,8 +2621,124 @@ mod tests {
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_declines_floating_point_of_other_writers(
-    ) -> ParquetResult<()> {
+    fn has_no_sql_nulls_reads_decimals_of_other_writers_in_every_physical_type() -> ParquetResult<()>
+    {
+        use parquet::data_type::{ByteArrayType, Int64Type};
+
+        // DECIMAL(18,0) as INT64.
+        let limit = 10i64.pow(18);
+        let int64 = |values: &[i64]| {
+            gen_typed_parquet::<Int64Type>(
+                PhysicalType::INT64,
+                Some(LogicalType::Decimal { scale: 0, precision: 18 }),
+                -1,
+                values,
+                None,
+            )
+        };
+        assert_malformed_bounds_decline(&int64(&[-(limit - 1), 0, limit - 1])?)?;
+        for out_of_precision in [limit, -limit, i64::MIN] {
+            assert!(!has_no_sql_nulls(&int64(&[0, out_of_precision])?)?);
+        }
+
+        // DECIMAL(20,0) as a BYTE_ARRAY, each value in its shortest big-endian two's complement.
+        let shortest = |v: i128| {
+            let bytes = v.to_be_bytes();
+            let fill = if v < 0 { 0xFF } else { 0x00 };
+            let mut start = 0;
+            while start < bytes.len() - 1
+                && bytes[start] == fill
+                && (bytes[start + 1] ^ fill) & 0x80 == 0
+            {
+                start += 1;
+            }
+            ByteArray::from(bytes[start..].to_vec())
+        };
+        // parquet-rs records these bounds in the deprecated min/max only, which the pruner ignores
+        // for a BYTE_ARRAY; copy them where other writers record them.
+        let limit = 10i128.pow(20);
+        let byte_array = |values: &[i128]| -> ParquetResult<bool> {
+            let values: Vec<ByteArray> = values.iter().map(|&v| shortest(v)).collect();
+            let buf = gen_typed_parquet::<ByteArrayType>(
+                PhysicalType::BYTE_ARRAY,
+                Some(LogicalType::Decimal { scale: 0, precision: 20 }),
+                -1,
+                &values,
+                None,
+            )?;
+            let mut decoder = read_decoder(&buf)?;
+            override_statistics(&mut decoder, |s| {
+                s.min_value = s.min.clone();
+                s.max_value = s.max.clone();
+            });
+            Ok(chunk_has_no_sql_nulls(&decoder))
+        };
+        assert!(byte_array(&[-(limit - 1), -1, 0, 1, limit - 1])?);
+        for out_of_precision in [limit, -limit, i128::MIN] {
+            assert!(!byte_array(&[0, out_of_precision])?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn has_no_sql_nulls_trusts_questdb_written_decimals_without_bounds() -> ParquetResult<()> {
+        // DECIMAL(2,0) holding 120, a value outside its precision that its width still stores.
+        let decimal8 = ColumnType::new_decimal(2, 0).unwrap();
+        let buf = gen_questdb_parquet(decimal8, &[1u8, 120], 2)?;
+        // QuestDB's writer writes a decimal NULL as a Parquet null, so the null count suffices.
+        assert!(has_no_sql_nulls(&buf)?);
+        // Another writer may store the sentinel as a value, and these bounds do not exclude it.
+        let mut decoder = read_decoder(&buf)?;
+        decoder.metadata.created_by = None;
+        assert!(!chunk_has_no_sql_nulls(&decoder));
+        let mut decoder = read_decoder(&gen_questdb_parquet(decimal8, &[1u8, 99], 2)?)?;
+        decoder.metadata.created_by = None;
+        assert!(chunk_has_no_sql_nulls(&decoder));
+
+        assert!(!has_no_sql_nulls(&gen_questdb_parquet(
+            decimal8,
+            &[1u8, i8::MIN as u8],
+            2
+        )?)?);
+        Ok(())
+    }
+
+    #[test]
+    fn null_matching_filter_prunes_only_row_groups_without_sql_nulls() -> ParquetResult<()> {
+        let values: Vec<i64> = (100..110).collect();
+        let mut with_sentinel = values.clone();
+        with_sentinel[3] = i64::MIN;
+        let with_nulls: Vec<i16> = (0..10).map(|i| i % 2).collect();
+        let bound = [200i64];
+        let buf_end = bound.as_ptr_range().end as u64;
+        let filter = |op: u8| {
+            [make_filter_with_op_and_type(
+                0,
+                1,
+                bound.as_ptr() as u64,
+                op,
+                ColumnTypeTag::Long as i32,
+            )]
+        };
+        let null_matching = filter(FILTER_OP_GT | FILTER_OP_NULL_MATCHING_FLAG);
+        let plain = filter(FILTER_OP_GT);
+        for (buf, has_sql_nulls) in [
+            (gen_nullable_i64_parquet(&values, &[1; 10])?, false),
+            (gen_nullable_i64_parquet(&with_sentinel, &[1; 10])?, true),
+            (gen_nullable_i64_parquet(&values, &with_nulls)?, true),
+        ] {
+            let decoder = read_decoder(&buf)?;
+            assert!(decoder.can_skip_row_group(0, &buf, &plain, buf_end)?);
+            assert_eq!(
+                !has_sql_nulls,
+                decoder.can_skip_row_group(0, &buf, &null_matching, buf_end)?
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn has_no_sql_nulls_declines_floating_point_of_other_writers() -> ParquetResult<()> {
         use parquet::data_type::FloatType;
 
         // Another writer stores NaN as an ordinary value that neither the null count nor the
@@ -2602,8 +2757,7 @@ mod tests {
     }
 
     #[test]
-    fn row_group_column_has_no_sql_nulls_excludes_char_sentinel_and_truncation() -> ParquetResult<()>
-    {
+    fn has_no_sql_nulls_excludes_char_sentinel_and_truncation() -> ParquetResult<()> {
         use parquet::data_type::Int32Type;
 
         let chars = |values: &[i32]| {

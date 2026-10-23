@@ -36,7 +36,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -163,8 +162,8 @@ public class AsyncFilterContext implements Closeable {
 
     public void clear() {
         Throwable failure = Function.cursorClosed(null, ownerFilter);
-        failure = PerWorkerFunctionList.cursorClosed(failure, perWorkerFilters);
-        failure = PerWorkerFunctionList.cursorClosed(failure, bindVarFunctions);
+        failure = Function.cursorClosed(failure, perWorkerFilters);
+        failure = Function.cursorClosed(failure, bindVarFunctions);
         Misc.free(ownerMemoryPool);
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();

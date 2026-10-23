@@ -372,9 +372,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             isOpenedByShared = false;
             baseCursor = Misc.free(baseCursor);
             Misc.free(allocator);
-            if (groupByFunctions != null) {
-                Function.cursorClosed(groupByFunctions);
-            }
+            Function.cursorClosed(groupByFunctions);
             Misc.clearObjList(groupByFunctions);
         }
 

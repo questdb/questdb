@@ -43,13 +43,20 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
@@ -61,6 +68,26 @@ import java.util.zip.CRC32;
 public class Mig1011Test extends AbstractCairoTest {
     private static final int MIG1011_VERSION = 431;
     private static final String[] PREDICATES = {"NOT (d < 4901.0)", "NOT (f < 4901.0)"};
+    private static final LogCapture capture = new LogCapture();
+
+    @Override
+    @Before
+    public void setUp() {
+        LogFactory.enableGuaranteedLogging(EngineMigration.class, Mig1011.class);
+        super.setUp();
+        capture.start();
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        try {
+            capture.stop();
+            super.tearDown();
+        } finally {
+            LogFactory.disableGuaranteedLogging(EngineMigration.class, Mig1011.class);
+        }
+    }
 
     @Test
     public void testEngineMigrationRecordsQuestDBWriterFromRecordedVersion() throws Exception {
@@ -121,6 +148,39 @@ public class Mig1011Test extends AbstractCairoTest {
             Assert.assertNotEquals(0, previousSnapshotSize(compositeParquetMetaPath));
             Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
             Assert.assertTrue(isComposite("x", "2024-01-02"));
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+            final String skipped = "skipping storage version dependent migration on table with composite partitions \\[path=\\S*"
+                    + engine.verifyTableName("x").getDirName() + "/?, toVersion=";
+            capture.drain();
+            capture.assertOnlyOnce(skipped + "429\\]");
+            capture.assertOnlyOnce(skipped + "430\\]");
+        });
+    }
+
+    @Test
+    public void testMigrationCountsUnreadableParquetFileAsFailed() throws Exception {
+        final ParquetOpenFailingFilesFacade ff = new ParquetOpenFailingFilesFacade();
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(ff, () -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final long size = Files.size(Paths.get(parquetMetaPath));
+            ff.isParquetOpenFailing = true;
+            try {
+                runMig1011();
+            } finally {
+                ff.isParquetOpenFailing = false;
+            }
+            Assert.assertEquals(size, Files.size(Paths.get(parquetMetaPath)));
+            capture.drain();
+            capture.assertLoggedRE("recorded parquet writer in _pm files \\[path=\\S+, marked=0, unchanged=0, failed=1\\]");
+            capture.assertLoggedRE("could not open parquet file \\[path=\\S+" + TableUtils.PARQUET_PARTITION_NAME + ", errno=");
+
+            // the partition left unrecorded gains the record on a rerun
+            runMig1011();
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
             }
@@ -331,6 +391,18 @@ public class Mig1011Test extends AbstractCairoTest {
             }
         } finally {
             Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static class ParquetOpenFailingFilesFacade extends TestFilesFacadeImpl {
+        private boolean isParquetOpenFailing;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isParquetOpenFailing && Utf8s.endsWithAscii(name, TableUtils.PARQUET_PARTITION_NAME)) {
+                return -1;
+            }
+            return super.openRO(name);
         }
     }
 }

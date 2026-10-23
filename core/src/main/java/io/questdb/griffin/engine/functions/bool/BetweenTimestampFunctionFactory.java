@@ -34,7 +34,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
@@ -71,9 +70,9 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function arg = RuntimeConstFunction.wrapTemporalText(args.getQuick(0), ColumnType.TIMESTAMP);
-        Function fromFn = RuntimeConstFunction.wrapTemporalText(args.getQuick(1), ColumnType.TIMESTAMP);
-        Function toFn = RuntimeConstFunction.wrapTemporalText(args.getQuick(2), ColumnType.TIMESTAMP);
+        Function arg = args.getQuick(0);
+        Function fromFn = args.getQuick(1);
+        Function toFn = args.getQuick(2);
         int argType = ColumnType.getTimestampType(arg.getType());
         int fromType = ColumnType.getTimestampType(fromFn.getType());
         int toType = ColumnType.getTimestampType(toFn.getType());

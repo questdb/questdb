@@ -41,19 +41,16 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
+import io.questdb.griffin.engine.functions.cast.AbstractCastToLong256Function;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
@@ -549,10 +546,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                 }
             }
 
-            boolean hasCursorParameter = false;
-            for (int k = 0; k < candidateSigArgCount; k++) {
-                hasCursorParameter |= FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k)) == ColumnType.CURSOR;
-            }
+            final boolean hasCursorParameter = hasCursorParameter(candidateDescriptor);
             for (int k = 0; k < candidateSigArgCount; k++) {
                 assert args != null;
                 final Function arg = args.getQuick(k);
@@ -615,18 +609,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                     assert argPositions != null;
                     args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
                     implicitConversions.setQuick(k, CastByteToDecimalFunctionFactory.class);
-                } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.LONG256) {
-                    args.setQuick(k, new CastIntToLong256FunctionFactory.Func(arg));
-                    implicitConversions.setQuick(k, CastIntToLong256FunctionFactory.class);
-                } else if (argTypeTag == ColumnType.LONG && sigArgTypeTag == ColumnType.LONG256) {
-                    args.setQuick(k, new CastLongToLong256FunctionFactory.Func(arg));
-                    implicitConversions.setQuick(k, CastLongToLong256FunctionFactory.class);
-                } else if (argTypeTag == ColumnType.SHORT && sigArgTypeTag == ColumnType.LONG256) {
-                    args.setQuick(k, new CastShortToLong256FunctionFactory.Func(arg));
-                    implicitConversions.setQuick(k, CastShortToLong256FunctionFactory.class);
-                } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.LONG256) {
-                    args.setQuick(k, new CastByteToLong256FunctionFactory.Func(arg));
-                    implicitConversions.setQuick(k, CastByteToLong256FunctionFactory.class);
+                } else if (sigArgTypeTag == ColumnType.LONG256) {
+                    implicitConversions.setQuick(k, AbstractCastToLong256Function.widenInteger(args, k));
                 }
                 if (hasCursorParameter && implicitConversions.getQuick(k) != null) {
                     assert argPositions != null;
@@ -800,6 +784,9 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     /**
      * Constructs a previously selected overload without parsing or resolving an expression.
      * Argument types, required constants and implicit casts must already have been resolved.
+     * Runtime-constant text passed to a TIMESTAMP or DATE parameter reaches the factory wrapped,
+     * so it parses once per cursor rather than on every row, unless the call compares it with a
+     * scalar sub-query: such an operand takes no implicit conversion, see {@link #coerceArguments}.
      * The factory may modify both argument lists. Argument ownership is transferred to the
      * returned function on success, or released here on failure; callers must not close the
      * arguments separately. The argument list is cleared after a successful transfer.
@@ -815,6 +802,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         final FunctionFactory factory = overload.getFactory();
         try {
             admitStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
+            wrapTemporalText(overload, args);
         } catch (Throwable th) {
             Misc.freeObjList(args, th);
             throw th;
@@ -1344,6 +1332,15 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         ex.setPosition(argPositions.getQuick(i));
     }
 
+    private static boolean hasCursorParameter(FunctionFactoryDescriptor overload) {
+        for (int i = 0, n = overload.getSigArgCount(); i < n; i++) {
+            if (FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(i)) == ColumnType.CURSOR) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isUntypedEmptyArrayLiteral(Function function) {
         return function instanceof ArrayConstant && ColumnType.decodeArrayElementType(function.getType()) == ColumnType.UNDEFINED;
     }
@@ -1514,6 +1511,18 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     private static void putArgType(ObjList<Function> args, int i, SqlException ex) {
         Function arg = args.getQuick(i);
         ex.put(ColumnType.nameOf(arg.getType()));
+    }
+
+    private static void wrapTemporalText(FunctionFactoryDescriptor overload, @Nullable ObjList<Function> args) {
+        if (args == null || hasCursorParameter(overload)) {
+            return;
+        }
+        for (int i = 0, n = Math.min(args.size(), overload.getSigArgCount()); i < n; i++) {
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(i));
+            if (sigArgTypeTag == ColumnType.TIMESTAMP || sigArgTypeTag == ColumnType.DATE) {
+                args.setQuick(i, RuntimeConstFunction.wrapTemporalText(args.getQuick(i), sigArgTypeTag));
+            }
+        }
     }
 
     private void admitStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)

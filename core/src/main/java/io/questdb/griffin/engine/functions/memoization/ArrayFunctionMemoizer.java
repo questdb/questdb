@@ -50,8 +50,8 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
 
     @Override
     public void close() {
-        MemoizerFunction.super.close();
         Misc.free(derivedArray);
+        MemoizerFunction.super.close();
     }
 
     @Override

@@ -25,12 +25,14 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -61,6 +63,7 @@ public class TimestampSequenceNanoFunctionFactory implements FunctionFactory {
         if (arg.isConstant()) {
             final long start = NanosTimestampDriver.INSTANCE.from(arg.getTimestamp(null), arg.getType());
             if (start == Numbers.LONG_NULL) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return NanosTimestampDriver.INSTANCE.getTimestampConstantNull();
             }
             return new TimestampSequenceFunctionFactory.TimestampSequenceFunction(NAME, start, args.getQuick(1), timestampType);

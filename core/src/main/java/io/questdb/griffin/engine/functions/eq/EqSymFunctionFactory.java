@@ -93,8 +93,8 @@ public class EqSymFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            super.close();
             Misc.free(lookupCache);
+            super.close();
         }
 
         @Override

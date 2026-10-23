@@ -139,6 +139,53 @@ public class PerWorkerFunctionListTest {
     }
 
     @Test
+    public void testCursorClosedNotifiesOwnedSlotsPastFailures() {
+        final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
+        final TrackingFunction failingFirst = new TrackingFunction("cursorClosed failure 0");
+        final TrackingFunction borrowed = new TrackingFunction();
+        final TrackingFunction failingSecond = new TrackingFunction("cursorClosed failure 1");
+        final TrackingFunction owned = new TrackingFunction();
+        list.add(failingFirst, true);
+        list.add(borrowed, false);
+        list.add(failingSecond, true);
+        list.add(owned, true);
+
+        final Throwable failure = PerWorkerFunctionList.cursorClosed(null, list);
+        Assert.assertSame(failingFirst.cursorClosedFailure, failure);
+        Assert.assertEquals(1, failure.getSuppressed().length);
+        Assert.assertSame(failingSecond.cursorClosedFailure, failure.getSuppressed()[0]);
+        Assert.assertEquals(1, failingFirst.cursorClosedCount);
+        Assert.assertEquals("the owner list notifies a borrowed function", 0, borrowed.cursorClosedCount);
+        Assert.assertEquals(1, failingSecond.cursorClosedCount);
+        Assert.assertEquals(1, owned.cursorClosedCount);
+    }
+
+    @Test
+    public void testCursorClosedPerWorkerNotifiesEveryWorker() {
+        final PerWorkerFunctionList<Function> firstWorker = new PerWorkerFunctionList<>(2);
+        final TrackingFunction failing = new TrackingFunction("cursorClosed failure");
+        final TrackingFunction borrowed = new TrackingFunction();
+        firstWorker.add(failing, true);
+        firstWorker.add(borrowed, false);
+        final ObjList<Function> secondWorker = new ObjList<>();
+        final TrackingFunction plain = new TrackingFunction();
+        secondWorker.add(plain);
+        secondWorker.add(null);
+        final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>();
+        perWorkerFunctions.add(firstWorker);
+        perWorkerFunctions.add(secondWorker);
+        final RuntimeException primary = new RuntimeException("primary");
+
+        Assert.assertSame(primary, PerWorkerFunctionList.cursorClosedPerWorker(primary, perWorkerFunctions));
+        Assert.assertEquals(1, primary.getSuppressed().length);
+        Assert.assertSame(failing.cursorClosedFailure, primary.getSuppressed()[0]);
+        Assert.assertEquals(1, failing.cursorClosedCount);
+        Assert.assertEquals(0, borrowed.cursorClosedCount);
+        Assert.assertEquals("a plain list owns every slot", 1, plain.cursorClosedCount);
+        Assert.assertNull(PerWorkerFunctionList.cursorClosedPerWorker(null, null));
+    }
+
+    @Test
     public void testInheritedStructuralMutatorsAreRejected() {
         final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
         final TrackingFunction function = new TrackingFunction();
@@ -476,12 +523,22 @@ public class PerWorkerFunctionListTest {
     }
 
     private static class TrackingFunction extends LongFunction {
+        private final RuntimeException cursorClosedFailure;
         private int clearCount;
         private int closeCount;
+        private int cursorClosedCount;
         private int initCount;
         private Function lastOfferStateTarget;
         private int offerStateCount;
         private int toTopCount;
+
+        private TrackingFunction() {
+            this(null);
+        }
+
+        private TrackingFunction(String cursorClosedFailureMessage) {
+            this.cursorClosedFailure = cursorClosedFailureMessage != null ? new RuntimeException(cursorClosedFailureMessage) : null;
+        }
 
         @Override
         public void clear() {
@@ -491,6 +548,14 @@ public class PerWorkerFunctionListTest {
         @Override
         public void close() {
             closeCount++;
+        }
+
+        @Override
+        public void cursorClosed() {
+            cursorClosedCount++;
+            if (cursorClosedFailure != null) {
+                throw cursorClosedFailure;
+            }
         }
 
         @Override

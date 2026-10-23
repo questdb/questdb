@@ -34,6 +34,48 @@ import org.junit.Test;
 
 public class OuterJoinTest extends AbstractCairoTest {
     @Test
+    public void testBetweenAndInListOverRuntimeValuesStayRuntimeOn() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            bindVariableService.setInt(0, 1);
+            final String matched = """
+                    lid\txid
+                    1\t10
+                    1\t10
+                    1\t11
+                    1\t11
+                    3\t12
+                    4\t13
+                    """;
+            final String[][] predicates = {
+                    {"$1 BETWEEN 0 AND 2", "$0::int between 0 and 2", matched},
+                    {"$1 IN (2, 3)", "$0::int in [2,3]", "lid\txid\n"},
+                    {"now() BETWEEN '2020' AND '2100'", "now() between 1577836800000000 and 4102444800000000", matched},
+                    {"now() IN ('2020', '2030')", "now() in [1577836800000000,1893456000000000]", "lid\txid\n"}
+            };
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                for (String[] predicate : predicates) {
+                    final String query = "SELECT l.id lid, x.id xid FROM lp_outer_l l JOIN lp_outer_r r ON r.k = l.k AND "
+                            + predicate[0] + " %s lp_outer_r x ON x.k = r.k ORDER BY lid, xid";
+                    assertRows(query.formatted("JOIN"), isFullFat, """
+                            SelectedRecord
+                                    Filter filter: %s
+                                        Hash Join%s
+                                          condition: x.k=r.k
+                            """.formatted(predicate[1], light), predicate[2]);
+                    assertRows(query.formatted("LEFT JOIN"), isFullFat, """
+                            Hash Left Outer Join%s
+                                      condition: x.k=r.k
+                                        Filter filter: %s
+                                            Hash Join%s
+                            """.formatted(light, predicate[1], light), predicate[2]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableInnerOnBeforeRightOrFullJoin() throws Exception {
         assertInnerOnBeforeRightOrFullJoin(":has_match");
     }
@@ -139,6 +181,50 @@ public class OuterJoinTest extends AbstractCairoTest {
                         .fails(twoTypeErrors.lastIndexOf('+'), "there is no matching operator `+` with the argument types: INT + BOOLEAN");
                 assertQuery(prefix + "(SELECT false) " + join + " JOIN b ON a.k = b.k").noLeakCheck()
                         .fails(30, "query is not allowed here");
+            }
+        });
+    }
+
+    @Test
+    public void testConstantInnerOnFiltersItsStepLikeRuntimeOnWithLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            bindVariableService.setInt(0, 1);
+            final String query = "SELECT l.id lid, x.id xid FROM lp_outer_l l JOIN lp_outer_r r ON r.k = l.k AND %s = %d "
+                    + "LEFT JOIN lp_outer_r x ON x.k = r.k ORDER BY lid, xid";
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                assertRows(query.formatted("1", 0), isFullFat, """
+                        Hash Left Outer Join%s
+                                  condition: x.k=r.k
+                                    Empty table
+                        """.formatted(light), "lid\txid\n");
+                assertRows(query.formatted("$1", 0), isFullFat, """
+                        Hash Left Outer Join%s
+                                  condition: x.k=r.k
+                                    Filter filter: $0::int=0
+                                        Hash Join%s
+                        """.formatted(light, light), "lid\txid\n");
+                final String matched = """
+                        lid\txid
+                        1\t10
+                        1\t10
+                        1\t11
+                        1\t11
+                        3\t12
+                        4\t13
+                        """;
+                assertRows(query.formatted("1", 1), isFullFat, """
+                        Hash Left Outer Join%s
+                                  condition: x.k=r.k
+                                    Hash Join%s
+                        """.formatted(light, light), matched);
+                assertRows(query.formatted("$1", 1), isFullFat, """
+                        Hash Left Outer Join%s
+                                  condition: x.k=r.k
+                                    Filter filter: $0::int=1
+                                        Hash Join%s
+                        """.formatted(light, light), matched);
             }
         });
     }

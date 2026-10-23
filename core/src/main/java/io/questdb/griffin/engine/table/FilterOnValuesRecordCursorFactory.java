@@ -58,7 +58,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private PageFrameRecordCursorImpl cursor;
     private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private Function filter;
-    private RowCursorFactory rowCursorFactory;
 
     public FilterOnValuesRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -87,17 +86,15 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             for (int i = 0; i < nKeyValues; i++) {
                 addSymbolKey(keyValues.get(i), indexDirection, keyFilter);
             }
-            rowCursorFactory = switch (indexOrder) {
-                case KEY ->
-                        new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx, indexDirection);
-                case TIMESTAMP, TABLE -> new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-                case TABLE_PER_FRAME -> new BitSetRowCursorFactory(cursorFactories, cursorFactoriesIdx, filter);
-                case KEY_PER_FRAME -> new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-                case NONE -> throw new UnsupportedOperationException();
-            };
-            cursor = rowCursorFactory instanceof KeyOrderedRowCursorFactory keyOrderedFactory
-                    ? new KeyOrderedPageFrameRecordCursor(configuration, metadata, keyOrderedFactory, false, filter)
-                    : new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+            cursor = PageFrameRecordCursorImpl.newIndexScanCursor(
+                    configuration,
+                    metadata,
+                    indexOrder,
+                    cursorFactories,
+                    cursorFactoriesIdx,
+                    indexDirection,
+                    filter
+            );
             followedOrderByAdvice = indexOrder.isRequested();
             isTableOrder = indexOrder.isTableOrder();
         } catch (Throwable th) {
@@ -133,7 +130,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         if (!isTableOrder) { // sorting symbols makes no sense for a table-order scan
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
-        sink.child(rowCursorFactory);
+        sink.child(cursor.getRowCursorFactory());
         sink.child(partitionFrameCursorFactory);
     }
 
@@ -206,8 +203,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         this.cursorFactories = null;
         final Function filter = this.filter;
         this.filter = null;
-        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
-        this.rowCursorFactory = null;
+        final RowCursorFactory rowCursorFactory = cursor != null ? cursor.getRowCursorFactory() : null;
         Throwable failure = null;
         try {
             super._close();
@@ -241,9 +237,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         findDuplicates();
 
         cursor.of(pageFrameCursor, sqlExecutionContext);
-        if (filter != null) {
-            filter.init(cursor, sqlExecutionContext);
-        }
         return cursor;
     }
 }

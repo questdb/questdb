@@ -93,8 +93,8 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(array);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -155,8 +155,8 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(array);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -246,8 +246,8 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            BinaryFunction.super.close();
             Misc.free(array);
+            BinaryFunction.super.close();
         }
 
         @Override

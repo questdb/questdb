@@ -197,8 +197,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
-            Misc.freeObjList(deferredValues);
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(Misc.freeBestEffort(null, arg), deferredValues));
         }
 
         @Override

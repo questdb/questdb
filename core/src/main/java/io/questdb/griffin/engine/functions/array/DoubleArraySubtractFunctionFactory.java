@@ -106,8 +106,8 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            BinaryFunction.super.close();
             Misc.free(arrayOut);
+            BinaryFunction.super.close();
         }
 
         @Override

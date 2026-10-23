@@ -44,11 +44,11 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
     @Override
     public void close() {
         Throwable cleanupFailure = null;
-        cleanupFailure = closeWorkerFunctions(cleanupFailure, perWorkerGroupByFunctions);
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerGroupByFunctions);
         perWorkerGroupByFunctions = null;
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
         keyFunctions = null;
-        cleanupFailure = closeWorkerFunctions(cleanupFailure, perWorkerKeyFunctions);
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerKeyFunctions);
         perWorkerKeyFunctions = null;
         cleanupFailure = freeBestEffort(cleanupFailure);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFilter);
@@ -86,24 +86,5 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
         final Function value = slaveFilter;
         slaveFilter = null;
         return value;
-    }
-
-    private static Throwable closeWorkerFunctions(Throwable cleanupFailure, ObjList<? extends ObjList<? extends Function>> workers) {
-        if (workers != null) {
-            for (int i = 0, n = workers.size(); i < n; i++) {
-                final ObjList<? extends Function> functions = workers.getQuick(i);
-                workers.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(functions);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-        }
-        return cleanupFailure;
     }
 }

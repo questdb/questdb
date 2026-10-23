@@ -480,6 +480,78 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCursorCloseReleasesDictionaryUnderCase() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v, CASE WHEN s::symbol = " + TS + " THEN 'hit' ELSE 'miss' END c FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("case([s::symbol=")
+                    .returns("""
+                            v\tc
+                            1\tmiss
+                            2\tmiss
+                            3\thit
+                            4\tmiss
+                            5\tmiss
+                            6\tmiss
+                            7\tmiss
+                            8\thit
+                            9\tmiss
+                            10\tmiss
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryUnderCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v, coalesce((s::symbol = " + TS + ")::int, v::int, 0) c FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("coalesce([")
+                    .returns("""
+                            v\tc
+                            1\t0
+                            2\t0
+                            3\t1
+                            4\t0
+                            5\t0
+                            6\t0
+                            7\t0
+                            8\t1
+                            9\t0
+                            10\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryUnderTimestampSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v, timestamp_sequence(0, (s::symbol = " + TS + ")::long) t FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("timestamp_sequence(0,")
+                    .returns("""
+                            v\tt
+                            1\t1970-01-01T00:00:00.000000Z
+                            2\t1970-01-01T00:00:00.000000Z
+                            3\t1970-01-01T00:00:00.000000Z
+                            4\t1970-01-01T00:00:00.000001Z
+                            5\t1970-01-01T00:00:00.000001Z
+                            6\t1970-01-01T00:00:00.000001Z
+                            7\t1970-01-01T00:00:00.000001Z
+                            8\t1970-01-01T00:00:00.000001Z
+                            9\t1970-01-01T00:00:00.000002Z
+                            10\t1970-01-01T00:00:00.000002Z
+                            """);
+        });
+    }
 
     // A lazy cast-to-symbol only needs a dictionary to answer the integer-key API
     // (getInt/valueOf). getSymbol()/getSymbolB() are pure pass-throughs: the wire

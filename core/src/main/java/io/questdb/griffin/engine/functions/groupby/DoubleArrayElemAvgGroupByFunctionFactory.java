@@ -101,8 +101,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void close() {
-            super.close();
             Misc.free(arrayOut);
+            super.close();
         }
 
         /**

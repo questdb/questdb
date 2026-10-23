@@ -46,7 +46,7 @@ import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
 public class EngineMigration {
 
-    private static final Log LOG = LogFactory.getLog(EngineMigration.class);
+    private static Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final IntObjHashMap<MigrationAction> MIGRATIONS = new IntObjHashMap<>();
 
     /**
@@ -214,7 +214,11 @@ public class EngineMigration {
 
                                 for (int ver = firstVersion; ver <= latestMigrationVersion; ver++) {
                                     final MigrationAction migration = getMigrationToVersion(ver);
-                                    if (migration != null && (!hasCompositePartitions || migration instanceof MigrationAction.StorageVersionAgnostic)) {
+                                    if (migration != null && hasCompositePartitions && !(migration instanceof MigrationAction.StorageVersionAgnostic)) {
+                                        LOG.info().$("skipping storage version dependent migration on table with composite partitions [path=").$(path)
+                                                .$(", toVersion=").$(ver)
+                                                .I$();
+                                    } else if (migration != null) {
                                         try {
                                             LOG.info().$("upgrading table [path=").$(path)
                                                     .$(", toVersion=").$(ver)

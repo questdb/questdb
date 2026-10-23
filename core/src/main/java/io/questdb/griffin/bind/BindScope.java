@@ -89,8 +89,9 @@ final class BindScope implements Mutable {
     final ObjList<JoinEquality> joinDerivedEqualities = new ObjList<>();
     final IntHashSet joinNativeTimestampIds = new IntHashSet();
     /**
-     * Per join input, the ON clause terms pending binding: the residual of an outer ON clause, the constant terms of an
-     * inner one.
+     * Per join input, the ON clause terms pending binding: the residual of an outer ON clause; the constant terms of an
+     * inner one, which filter the input's own step when the join has an outer or temporal step, and the last step
+     * otherwise.
      */
     final ObjList<ExpressionNode> joinOnNodes;
     final ObjList<ExpressionNode> joinResidualNodes;

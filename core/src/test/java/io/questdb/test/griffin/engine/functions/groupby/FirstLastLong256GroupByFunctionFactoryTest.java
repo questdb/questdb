@@ -24,7 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullLong256GroupByFunction;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.str.CharSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class FirstLastLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -58,5 +67,52 @@ public class FirstLastLong256GroupByFunctionFactoryTest extends AbstractCairoTes
                             \t0x02\t0x8000000000000000000000000000000000000000000000000000000000000001\t0x02
                             """);
         });
+    }
+
+    @Test
+    public void testLastNotNullStoresTheValueItChecked() throws Exception {
+        assertMemoryLeak(() -> {
+            final NullOnSecondReadFunction arg = new NullOnSecondReadFunction();
+            final LastNotNullLong256GroupByFunction function = new LastNotNullLong256GroupByFunction(arg);
+            final ArrayColumnTypes types = new ArrayColumnTypes();
+            function.initValueTypes(types);
+            try (SimpleMapValue value = new SimpleMapValue(types.getColumnCount())) {
+                function.setNull(value);
+                function.computeNext(value, null, 7);
+                Assert.assertEquals(1, arg.reads);
+                Assert.assertEquals(7, value.getLong(0));
+                Assert.assertEquals(NullOnSecondReadFunction.VALUE, value.getLong256A(1).getLong0());
+            }
+        });
+    }
+
+    private static class NullOnSecondReadFunction extends Long256Function {
+        private static final long VALUE = 42;
+        private final Long256Impl long256 = new Long256Impl();
+        private int reads;
+
+        @Override
+        public void getLong256(Record rec, CharSink<?> sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            if (++reads > 1) {
+                return Long256Impl.NULL_LONG256;
+            }
+            long256.setAll(VALUE, 0, 0, 0);
+            return long256;
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            return getLong256A(rec);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
     }
 }

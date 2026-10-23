@@ -34,10 +34,13 @@ import io.questdb.std.ObjectFactory;
  * it waits for and the equalities that key it ({@link JoinDependency}, null for none); the ordering constraints and
  * lateral dependencies the join semantics impose, as parent and child input pairs; the inputs held until nothing
  * else is ready; whether the first input leads the order; and the bound filter conjuncts the order places, each with the inputs whose ON clause
- * states it, -1 for WHERE, and the constant conjuncts the last step evaluates.
+ * states it, -1 for WHERE, and the constant conjuncts, each with the inner input whose ON clause states it, see
+ * {@link #addConstantFilter}.
  */
 public final class JoinGraph implements Mutable {
     public static final ObjectFactory<JoinGraph> FACTORY = JoinGraph::new;
+    private final IntList constantFilterOrigins = new IntList();
+    private final ObjList<BoundExpression> constantFilters = new ObjList<>();
     private final ObjList<JoinDependency> dependencies = new ObjList<>();
     private final IntList lateInputs = new IntList();
     private final IntList lateralDependencies = new IntList();
@@ -45,8 +48,6 @@ public final class JoinGraph implements Mutable {
     private final IntList residualOwnerEnds = new IntList();
     private final IntList residualOwners = new IntList();
     private final ObjList<BoundExpression> residuals = new ObjList<>();
-    private BoundExpression constantFilter;
-    private int constantFilterPosition;
 
     /**
      * Appends, as parent and child pairs, the edges the join semantics impose on the outer or temporal step at
@@ -66,6 +67,16 @@ public final class JoinGraph implements Mutable {
         }
     }
 
+    /**
+     * Adds a constant conjunct, which reads no input: one the ON clause of the INNER or CROSS input {@code origin}
+     * states, or, for -1, the constant WHERE terms, or the constant terms of every clause of a join without an outer or
+     * temporal input, which bind as one conjunction.
+     */
+    public void addConstantFilter(BoundExpression constantFilter, int origin) {
+        constantFilters.add(constantFilter);
+        constantFilterOrigins.add(origin);
+    }
+
     public void addResidual(BoundExpression residual, int origin) {
         residuals.add(residual);
         residualOwners.add(origin);
@@ -80,6 +91,8 @@ public final class JoinGraph implements Mutable {
 
     @Override
     public void clear() {
+        constantFilterOrigins.clear();
+        constantFilters.clear();
         dependencies.clear();
         lateInputs.clear();
         lateralDependencies.clear();
@@ -87,16 +100,14 @@ public final class JoinGraph implements Mutable {
         residualOwnerEnds.clear();
         residualOwners.clear();
         residuals.clear();
-        constantFilter = null;
-        constantFilterPosition = -1;
     }
 
-    public BoundExpression getConstantFilter() {
-        return constantFilter;
+    public int getConstantFilterOrigin(int constantFilter) {
+        return constantFilterOrigins.getQuick(constantFilter);
     }
 
-    public int getConstantFilterPosition() {
-        return constantFilterPosition;
+    public ObjList<BoundExpression> getConstantFilters() {
+        return constantFilters;
     }
 
     public ObjList<JoinDependency> getDependencies() {
@@ -127,11 +138,6 @@ public final class JoinGraph implements Mutable {
         return residuals;
     }
 
-    public void setConstantFilter(BoundExpression constantFilter, int position) {
-        this.constantFilter = constantFilter;
-        this.constantFilterPosition = position;
-    }
-
     private static void addUnnestEdges(ObjList<JoinInput> inputs, BoundExpression expression, int step, IntList edges) {
         if (expression instanceof ColumnExpression column) {
             for (int i = 0; i < step; i++) {
@@ -156,7 +162,7 @@ public final class JoinGraph implements Mutable {
 
     void visitReads(PlanExpressionVisitor visitor) {
         PlanReads.expressions(residuals, visitor);
-        constantFilter = PlanReads.expression(constantFilter, visitor);
+        PlanReads.expressions(constantFilters, visitor);
         for (int i = 0, n = dependencies.size(); i < n; i++) {
             final JoinDependency dependency = dependencies.getQuick(i);
             if (dependency != null) {

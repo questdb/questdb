@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -100,8 +101,7 @@ public class JsonExtractFunction implements Function {
         Misc.free(stateA);
         Misc.free(stateB);
         pointer = Misc.free(pointer);
-        json.close();
-        path.close();
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, json), path));
     }
 
     @Override

@@ -182,8 +182,7 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(lat2Func);
-            Misc.free(lon2Func);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, lat2Func), lon2Func));
         }
 
         @Override
@@ -300,10 +299,9 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(lat1Func);
-            Misc.free(lon1Func);
-            Misc.free(lat2Func);
-            Misc.free(lon2Func);
+            Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, lat1Func), lon1Func);
+            failure = Misc.freeBestEffort(failure, lat2Func);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, lon2Func));
         }
 
         @Override

@@ -668,7 +668,6 @@ public final class IntervalExtractor implements Mutable {
                     final long value = timestampValue(constant);
                     intervals.subtractInterval(value, value);
                 }
-                isIntrinsicFalse |= intervals.isEmptySet();
             } else {
                 unionElement(constant, seq);
             }

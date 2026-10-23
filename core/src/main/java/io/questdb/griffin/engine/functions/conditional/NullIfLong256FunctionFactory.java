@@ -86,13 +86,13 @@ public class NullIfLong256FunctionFactory implements FunctionFactory {
             // Read once: a second read of a non-deterministic argument is a fresh draw, and
             // returning that draw hands back the very value the comparison just excluded.
             final Long256 value = left.getLong256A(rec);
-            return isEqual(value, right.getLong256B(rec)) ? Long256Impl.NULL_LONG256 : value;
+            return value.equals(right.getLong256B(rec)) ? Long256Impl.NULL_LONG256 : value;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
             final Long256 value = left.getLong256B(rec);
-            return isEqual(value, right.getLong256A(rec)) ? Long256Impl.NULL_LONG256 : value;
+            return value.equals(right.getLong256A(rec)) ? Long256Impl.NULL_LONG256 : value;
         }
 
         @Override
@@ -103,11 +103,6 @@ public class NullIfLong256FunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("nullif(").val(left).val(',').val(right).val(')');
-        }
-
-        private static boolean isEqual(Long256 a, Long256 b) {
-            return a.getLong0() == b.getLong0() && a.getLong1() == b.getLong1()
-                    && a.getLong2() == b.getLong2() && a.getLong3() == b.getLong3();
         }
     }
 }

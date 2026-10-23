@@ -120,9 +120,11 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getInt(record) != Numbers.INT_NULL) {
+        int val = arg.getInt(record);
+        if (val != Numbers.INT_NULL) {
             if (mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putInt(valueIndex + 1, val);
             }
         }
     }

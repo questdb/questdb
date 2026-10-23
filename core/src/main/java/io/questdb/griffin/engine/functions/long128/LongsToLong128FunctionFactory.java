@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class LongsToLong128FunctionFactory implements FunctionFactory {
@@ -67,12 +66,6 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         public LongsToLong128Function(Function lo, Function hi) {
             this.lo = lo;
             this.hi = hi;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(lo);
-            Misc.free(hi);
         }
 
         @Override

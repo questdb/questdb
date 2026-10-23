@@ -77,9 +77,9 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
 
     @Override
     public void close() {
-        UnaryFunction.super.close();
         Misc.free(sinkA);
         Misc.free(sinkB);
+        UnaryFunction.super.close();
     }
 
     @Override

@@ -319,6 +319,18 @@ final class OwnershipFixture implements AutoCloseable {
         longCloseFailure = failure;
     }
 
+    /**
+     * Arms {@code failure} on every {@code owned_long} instantiated and not yet closed, so its next close fails.
+     */
+    void failLiveLongClose(RuntimeException failure) {
+        for (int i = 0, n = longs.size(); i < n; i++) {
+            final TrackingLong function = longs.getQuick(i);
+            if (function.closeCount == 0) {
+                function.closeFailure = failure;
+            }
+        }
+    }
+
     void failLongInit(RuntimeException failure) {
         longInitFailure = failure;
     }

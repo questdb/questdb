@@ -142,7 +142,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
             final SessionInfo session = iterator.next().getValue();
             if (Chars.equals(principal, session.getPrincipal()) && filter.test(session)) {
                 // a rotated session is mapped under more than one id, every mapping is removed;
-                // invalidating the session also rejects an id rotated in concurrently
+                // invalidating the session stops a request that still holds it from rotating it to a new id
                 iterator.remove();
                 session.invalidate();
                 destroyed++;

@@ -120,8 +120,8 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
 
     @Override
     public void close() {
-        MultiArgFunction.super.close();
         Misc.free(arrayOut);
+        MultiArgFunction.super.close();
     }
 
     @Override

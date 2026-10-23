@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -93,18 +92,17 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         this.filter = filter;
         cursorFactoriesIdx = new int[]{0};
         cursorFactories = new ObjList<>(keyValues.size());
-        final RowCursorFactory rowCursorFactory = switch (indexOrder) {
-            case KEY -> new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx, indexDirection);
-            case TIMESTAMP, TABLE -> new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-            case TABLE_PER_FRAME -> new BitSetRowCursorFactory(cursorFactories, cursorFactoriesIdx, filter);
-            case KEY_PER_FRAME -> new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-            case NONE -> throw new UnsupportedOperationException();
-        };
         // the bit set applies the filter to the merged rows
         isKeyFiltered = filter != null && indexOrder != ScanPlan.IndexOrder.TABLE_PER_FRAME;
-        cursor = rowCursorFactory instanceof KeyOrderedRowCursorFactory keyOrderedFactory
-                ? new KeyOrderedPageFrameRecordCursor(configuration, metadata, keyOrderedFactory, false, filter)
-                : new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+        cursor = PageFrameRecordCursorImpl.newIndexScanCursor(
+                configuration,
+                metadata,
+                indexOrder,
+                cursorFactories,
+                cursorFactoriesIdx,
+                indexDirection,
+                filter
+        );
         followedOrderByAdvice = indexOrder.isRequested();
         isTableOrder = indexOrder.isTableOrder();
 
@@ -269,9 +267,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
         recalculateIncludedValues(pageFrameCursor);
         cursor.of(pageFrameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
-        }
         return cursor;
     }
 }

@@ -210,22 +210,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
         }
 
-        if (perWorkerKeyFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.init(
-                            perWorkerKeyFunctions.getQuick(i),
-                            ownerKeyFunctions,
-                            horizonJoinSymbolTableSource,
-                            executionContext
-                    );
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        PerWorkerFunctionList.initPerWorker(perWorkerKeyFunctions, ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext);
     }
 
     public boolean isSharded() {
@@ -277,15 +262,12 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
 
     @Override
     protected void clearAggregationState() {
-        if (ownerKeyFunctions != null) {
-            Function.cursorClosed(ownerKeyFunctions);
-        }
-        if (perWorkerKeyFunctions != null) {
-            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.cursorClosed(perWorkerKeyFunctions.getQuick(i));
-            }
-        }
+        final Throwable failure = PerWorkerFunctionList.cursorClosedPerWorker(
+                Function.cursorClosed(null, ownerKeyFunctions),
+                perWorkerKeyFunctions
+        );
         shardingCtx.clear();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -295,21 +277,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
-        if (perWorkerKeyFunctions != null) {
-            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                final ObjList<Function> functions = perWorkerKeyFunctions.getQuick(i);
-                perWorkerKeyFunctions.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(functions);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-        }
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerKeyFunctions);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

@@ -614,7 +614,10 @@ public final class PlanVerifier {
             for (int i = 0, n = residuals.size(); i < n; i++) {
                 predicate(joinScope, residuals.getQuick(i));
             }
-            predicate(joinScope, join.getGraph().getConstantFilter());
+            final ObjList<BoundExpression> constantFilters = join.getGraph().getConstantFilters();
+            for (int i = 0, n = constantFilters.size(); i < n; i++) {
+                predicate(joinScope, constantFilters.getQuick(i));
+            }
             site = "join graph keys";
             final ObjList<JoinDependency> dependencies = join.getGraph().getDependencies();
             for (int i = 0, n = dependencies.size(); i < n; i++) {

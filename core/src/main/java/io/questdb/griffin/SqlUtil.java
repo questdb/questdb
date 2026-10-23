@@ -122,26 +122,10 @@ public class SqlUtil {
 
     public static long castPGDates(Utf8Sequence value, int fromColumnType, TimestampDriver driver) {
         try {
-            try {
-                // The common case needs neither an ASCII scan nor UTF-16 decoding.
-                return driver.fromDate(parsePGDate(value.asAsciiCharSequence()));
-            } catch (NumericException ignore) {
-            }
-            // A failed parse may still be a valid localized time-zone name.
-            // Avoid decoding when the false ASCII hint was merely conservative.
-            if (!Utf8s.isAscii(value)) {
-                final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
-                utf16Sink.clear();
-                if (Utf8s.utf8ToUtf16(value, utf16Sink)) {
-                    try {
-                        return driver.fromDate(parsePGDate(utf16Sink));
-                    } catch (NumericException ignore) {
-                    }
-                }
-            }
-        } catch (ImplicitCastException ignore) {
+            return driver.fromDate(parsePGDate(value));
+        } catch (NumericException | ImplicitCastException ignore) {
+            throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
         }
-        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
     public static void checkArrayDimensionsKnown(int type, int position) throws SqlException {
@@ -2598,6 +2582,28 @@ public class SqlUtil {
             }
         }
         throw NumericException.instance();
+    }
+
+    /**
+     * Parses the value as {@link #parsePGDate(CharSequence)} does, reading its bytes as ASCII first. A failed parse
+     * of non-ASCII text retries against its UTF-16 decoding, which may spell a localized time-zone name.
+     */
+    private static long parsePGDate(Utf8Sequence value) throws NumericException {
+        try {
+            // The common case needs neither an ASCII scan nor UTF-16 decoding.
+            return parsePGDate(value.asAsciiCharSequence());
+        } catch (NumericException e) {
+            // Avoid decoding when the false ASCII hint was merely conservative.
+            if (Utf8s.isAscii(value)) {
+                throw e;
+            }
+            final StringSink utf16Sink = IMPLICIT_CAST_VARCHAR_SINK.get();
+            utf16Sink.clear();
+            if (!Utf8s.utf8ToUtf16(value, utf16Sink)) {
+                throw e;
+            }
+            return parsePGDate(utf16Sink);
+        }
     }
 
     static QueryColumn nextColumn(

@@ -354,20 +354,16 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     public final void clear() {
         Throwable cleanupFailure = null;
         cleanupFailure = Function.cursorClosed(cleanupFailure, ownerMasterFilter);
-        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerMasterFilters);
-        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, bindVarFunctions);
-        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, ownerGroupByFunctions);
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerGroupByFunctions.getQuick(i));
-            }
-        }
+        cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerMasterFilters);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, bindVarFunctions);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, ownerGroupByFunctions);
+        cleanupFailure = PerWorkerFunctionList.cursorClosedPerWorker(cleanupFailure, perWorkerGroupByFunctions);
         cleanupFailure = Function.cursorClosed(cleanupFailure, ownerJoinFilter);
-        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerJoinFilters);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerJoinFilters);
         cleanupFailure = Function.cursorClosed(cleanupFailure, ownerWindowLoFunc);
         cleanupFailure = Function.cursorClosed(cleanupFailure, ownerWindowHiFunc);
-        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerWindowLoFuncs);
-        cleanupFailure = PerWorkerFunctionList.cursorClosed(cleanupFailure, perWorkerWindowHiFuncs);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerWindowLoFuncs);
+        cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerWindowHiFuncs);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
         cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
         cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerFunctionAllocator);
@@ -457,17 +453,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerTemporaryAllocator);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerTemporaryAllocators);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerGroupByFunctions);
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
-                perWorkerGroupByFunctions.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(functions);
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
-            }
-        }
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerGroupByFunctions);
 
         // Let the subclass close its keyed state. This runs inside the chain, not after the
         // rethrow, so a base-resource failure cannot skip it.
@@ -727,22 +713,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         // the same columnSplit rule on both sides). The per-worker clones below still bind here:
         // they need the cloned symbol tables and are not initialized anywhere else.
 
-        if (perWorkerGroupByFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.init(
-                            perWorkerGroupByFunctions.getQuick(i),
-                            ownerGroupByFunctions,
-                            joinSymbolTableSource,
-                            executionContext
-                    );
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        PerWorkerFunctionList.initPerWorker(perWorkerGroupByFunctions, ownerGroupByFunctions, joinSymbolTableSource, executionContext);
 
         if (ownerJoinFilter != null) {
             ownerJoinFilter.init(joinSymbolTableSource, executionContext);

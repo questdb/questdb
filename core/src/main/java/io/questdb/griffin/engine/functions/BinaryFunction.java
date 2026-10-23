@@ -44,8 +44,7 @@ public interface BinaryFunction extends Function {
 
     @Override
     default void cursorClosed() {
-        getLeft().cursorClosed();
-        getRight().cursorClosed();
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(Function.cursorClosed(null, getLeft()), getRight()));
     }
 
     @Override

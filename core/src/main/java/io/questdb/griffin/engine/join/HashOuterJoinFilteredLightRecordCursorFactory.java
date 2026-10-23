@@ -256,7 +256,34 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+    private abstract class AbstractHashOuterJoinFilteredLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+
+        AbstractHashOuterJoinFilteredLightRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            // _close() detaches the filter before it frees this cursor
+            if (filter != null) {
+                filter.cursorClosed();
+            }
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            filter.toTop();
+        }
+
+        void initFilter(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            filterSymbolTableSource.of(masterCursor, slaveCursor);
+            filter.init(filterSymbolTableSource, sqlExecutionContext);
+        }
+    }
+
+    private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinFilteredLightRecordCursor {
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
         private MapRecordCursor mapCursor;
@@ -273,7 +300,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Map matchIdsMap,
                 LongChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
+            super(columnSplit, joinKeyMap, slaveChain);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.matchIdsMap = matchIdsMap;
             isOpen = false;
@@ -286,9 +313,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             super.close();
             mapCursor = Misc.free(mapCursor);
-            if (filter != null) {
-                filter.cursorClosed();
-            }
         }
 
         @Override
@@ -389,7 +413,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         @Override
         public void toTop() {
             super.toTop();
-            filter.toTop();
             if (mapCursor != null) {
                 mapCursor.toTop();
             }
@@ -423,18 +446,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             this.swapped = swapped;
-            // The filter source mirrors this cursor's getSymbolTable(): when swapped, master/slave
-            // columns resolve against the swapped-back cursors.
             if (swapped) {
                 record.of(slaveRecord, masterRecord);
                 this.masterCursorSink = slaveKeySink;
                 this.slaveCursorSink = masterKeySink;
-                filterSymbolTableSource.of(slaveCursor, masterCursor);
             } else {
                 record.of(masterRecord, slaveRecord);
                 this.masterCursorSink = masterKeySink;
                 this.slaveCursorSink = slaveKeySink;
-                filterSymbolTableSource.of(masterCursor, slaveCursor);
             }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
@@ -446,8 +465,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                             slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
                 }
             }
-            // Adopt master/slave last so an init() throw above leaves them unset for the getCursor() catch.
-            filter.init(filterSymbolTableSource, sqlExecutionContext);
+            // The filter source mirrors this cursor's getSymbolTable(): when swapped, master/slave
+            // columns resolve against the swapped-back cursors. Adopt master/slave last so an
+            // initFilter() throw leaves them unset for the getCursor() catch.
+            if (swapped) {
+                initFilter(slaveCursor, masterCursor, sqlExecutionContext);
+            } else {
+                initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+            }
             this.mapCursor = Misc.free(mapCursor);
             this.unmatchedChainCursor = null;
             this.masterCursor = masterCursor;
@@ -460,7 +485,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         }
     }
 
-    private class HashLeftOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+    private class HashLeftOuterJoinLightRecordCursor extends AbstractHashOuterJoinFilteredLightRecordCursor {
         private final OuterJoinRecord record;
 
         public HashLeftOuterJoinLightRecordCursor(
@@ -469,17 +494,9 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Map joinKeyMap,
                 LongChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
+            super(columnSplit, joinKeyMap, slaveChain);
             record = new OuterJoinRecord(columnSplit, nullRecord);
             isOpen = false;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            if (filter != null) {
-                filter.cursorClosed();
-            }
         }
 
         @Override
@@ -530,17 +547,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         }
 
         @Override
-        public void toTop() {
-            super.toTop();
-            filter.toTop();
-        }
-
-        @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            filterSymbolTableSource.of(masterCursor, slaveCursor);
-            filter.init(filterSymbolTableSource, sqlExecutionContext);
+            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
@@ -551,7 +561,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         }
     }
 
-    private class HashRightOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+    private class HashRightOuterJoinLightRecordCursor extends AbstractHashOuterJoinFilteredLightRecordCursor {
         private final Map matchIdsMap;
         private final RightOuterJoinRecord record;
         private MapRecordCursor mapCursor;
@@ -563,7 +573,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Map matchIdsMap,
                 LongChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
+            super(columnSplit, joinKeyMap, slaveChain);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
             this.matchIdsMap = matchIdsMap;
             isOpen = false;
@@ -576,9 +586,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             super.close();
             mapCursor = Misc.free(mapCursor);
-            if (filter != null) {
-                filter.cursorClosed();
-            }
         }
 
         @Override
@@ -656,7 +663,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         @Override
         public void toTop() {
             super.toTop();
-            filter.toTop();
             if (mapCursor != null) {
                 mapCursor.toTop();
             }
@@ -674,8 +680,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            filterSymbolTableSource.of(masterCursor, slaveCursor);
-            filter.init(filterSymbolTableSource, sqlExecutionContext);
+            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
             mapCursor = Misc.free(mapCursor);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());

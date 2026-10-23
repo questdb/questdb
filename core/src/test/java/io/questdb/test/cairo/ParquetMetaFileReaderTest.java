@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileWriter;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -1296,93 +1298,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHasNoNullsRequiresSentinelFreeStatistics() throws Exception {
-        assertMemoryLeak(() -> {
-            // Type, physical type, min, max, flags, null count, expected proof of no SQL NULLs, and optionally
-            // whether QuestDB's writer wrote the file.
-            final long floatOne = Float.floatToRawIntBits(1.0f);
-            final long floatTwo = Float.floatToRawIntBits(2.0f);
-            final long doubleOne = Double.doubleToRawLongBits(1.0);
-            final long doubleTwo = Double.doubleToRawLongBits(2.0);
-            final long[][] cases = {
-                    {ColumnType.INT, 1, Integer.MIN_VALUE, 1, 0x9b, 0, 0},
-                    {ColumnType.INT, 1, 1, Integer.MIN_VALUE, 0x9b, 0, 0},
-                    {ColumnType.INT, 1, -10, 10, 0x9b, 0, 1},
-                    {ColumnType.INT, 1, 1, 10, 0x80, 0, 0},
-                    {ColumnType.INT, 1, 1, 10, 0x1b, 0, 0},
-                    {ColumnType.INT, 1, 1, 10, 0x9b, 1, 0},
-                    {ColumnType.LONG, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
-                    {ColumnType.LONG, 2, 1, Long.MIN_VALUE, 0x9b, 0, 0},
-                    {ColumnType.LONG, 2, -10, 10, 0x9b, 0, 1},
-                    {ColumnType.DATE, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
-                    {ColumnType.DATE, 2, -10, 10, 0x9b, 0, 1},
-                    {ColumnType.DATE, 1, -10, 10, 0x9b, 0, 0},
-                    {ColumnType.TIMESTAMP, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
-                    {ColumnType.TIMESTAMP, 2, -10, 10, 0x9b, 0, 1},
-                    {ColumnType.TIMESTAMP_NANO, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
-                    {ColumnType.TIMESTAMP_NANO, 2, -10, 10, 0x9b, 0, 1},
-                    {ColumnType.IPv4, 1, 0, -1, 0x9b, 0, 0},
-                    {ColumnType.IPv4, 1, 1, -1, 0x9b, 0, 1},
-                    {ColumnType.IPv4, 1, -1, 1, 0x9b, 0, 0},
-                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 0, 1},
-                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x1b, 0, 0},
-                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 1, 0},
-                    {ColumnType.getDecimalType(18, 2), 2, Long.MIN_VALUE, 10, 0x9b, 0, 0},
-                    {ColumnType.getDecimalType(18, 2), 2, Long.MIN_VALUE, 10, 0x9b, 0, 1, 1},
-                    {ColumnType.getDecimalType(9, 2), 1, -999_999_999, 999_999_999, 0x9b, 0, 1},
-                    {ColumnType.getDecimalType(9, 2), 1, -1_000_000_000, 10, 0x9b, 0, 0},
-                    {ColumnType.getDecimalType(9, 2), 1, -10, 1_000_000_000, 0x9b, 0, 0},
-                    {ColumnType.getDecimalType(18, 2), 7, -10, 10, 0x9b, 0, 0},
-                    {ColumnType.getDecimalType(18, 2), 7, -10, 10, 0x9b, 0, 1, 1},
-                    {ColumnType.CHAR, 1, 'a', 'z', 0x9b, 0, 1},
-                    {ColumnType.CHAR, 1, 0, 'z', 0x9b, 0, 0},
-                    {ColumnType.CHAR, 1, 'a', 65_536, 0x9b, 0, 0},
-                    {ColumnType.CHAR, 1, -1, 'z', 0x9b, 0, 0},
-                    {ColumnType.CHAR, 2, 'a', 'z', 0x9b, 0, 0},
-                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 0, 0},
-                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 0, 1, 1},
-                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 1, 0, 1},
-                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x1b, 0, 0, 1},
-                    {ColumnType.FLOAT, 4, Float.floatToRawIntBits(Float.NEGATIVE_INFINITY), floatTwo, 0x9b, 0, 0, 1},
-                    {ColumnType.FLOAT, 4, floatOne, Float.floatToRawIntBits(Float.POSITIVE_INFINITY), 0x9b, 0, 0, 1},
-                    {ColumnType.FLOAT, 4, floatOne, Float.floatToRawIntBits(Float.NaN), 0x9b, 0, 0, 1},
-                    {ColumnType.FLOAT, 5, floatOne, floatTwo, 0x9b, 0, 0, 1},
-                    {ColumnType.DOUBLE, 5, doubleOne, doubleTwo, 0x9b, 0, 0},
-                    {ColumnType.DOUBLE, 5, doubleOne, doubleTwo, 0x9b, 0, 1, 1},
-                    {ColumnType.DOUBLE, 5, Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY), doubleTwo, 0x9b, 0, 0, 1},
-                    {ColumnType.DOUBLE, 5, doubleOne, Double.doubleToRawLongBits(Double.POSITIVE_INFINITY), 0x9b, 0, 0, 1},
-                    {ColumnType.DOUBLE, 5, Double.doubleToRawLongBits(Double.NaN), doubleTwo, 0x9b, 0, 0, 1},
-                    {ColumnType.DOUBLE, 4, doubleOne, doubleTwo, 0x9b, 0, 0, 1}
-            };
-            for (long[] values : cases) {
-                try (ParquetMetaTestFile file = buildFile(1, 2)) {
-                    Unsafe.putInt(file.dataPtr + 32 + 12, (int) values[0]);
-                    Unsafe.putByte(file.dataPtr + 32 + 28, (byte) values[1]);
-                    long footer = file.dataPtr + file.parquetMetaFileSize - 4
-                            - Integer.toUnsignedLong(Unsafe.getInt(file.dataPtr + file.parquetMetaFileSize - 4));
-                    long chunk = file.dataPtr + (Integer.toUnsignedLong(Unsafe.getInt(footer + 40)) << 3) + 8;
-                    Unsafe.putLong(chunk + 48, values[2]);
-                    Unsafe.putLong(chunk + 56, values[3]);
-                    Unsafe.putByte(chunk + 2, (byte) values[4]);
-                    Unsafe.putLong(chunk + 32, values[5]);
-                    if (values.length > 7 && values[7] != 0) {
-                        Unsafe.putLong(footer + 32, Unsafe.getLong(footer + 32) | (1L << 2));
-                    }
-                    patchCrc(file.dataPtr, file.parquetMetaFileSize);
-                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    try {
-                        reader.of(file.dataPtr, file.parquetMetaFileSize);
-                        Assert.assertTrue(reader.resolveLastFooter());
-                        Assert.assertEquals(Arrays.toString(values), values[6] != 0, reader.hasNoNulls(0, 0));
-                    } finally {
-                        reader.clear();
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testLargeRowGroupCount() throws Exception {
         assertMemoryLeak(() -> {
             long[] sizes = new long[128];
@@ -1523,6 +1438,122 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(200, reader.getRowGroupSize(1));
                 Assert.assertEquals(500, reader.getRowGroupSize(2));
                 Assert.assertEquals(1_000_000, reader.getRowGroupSize(3));
+            }
+        });
+    }
+
+    @Test
+    public void testNullMatchingFilterRequiresSentinelFreeStatistics() throws Exception {
+        assertMemoryLeak(() -> {
+            // Type, physical type, min, max, flags, null count, whether the statistics prove no SQL NULL, and
+            // optionally whether QuestDB's writer wrote the file. Physical type 6 is BYTE_ARRAY and 7 an 8-byte
+            // FIXED_LEN_BYTE_ARRAY, both of which hold big-endian statistics.
+            final long floatOne = Float.floatToRawIntBits(1.0f);
+            final long floatTwo = Float.floatToRawIntBits(2.0f);
+            final long doubleOne = Double.doubleToRawLongBits(1.0);
+            final long doubleTwo = Double.doubleToRawLongBits(2.0);
+            final long beMinusTen = Long.reverseBytes(-10);
+            final long beTen = Long.reverseBytes(10);
+            final long beLongMin = Long.reverseBytes(Long.MIN_VALUE);
+            final long[][] cases = {
+                    {ColumnType.INT, 1, Integer.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.INT, 1, 1, Integer.MIN_VALUE, 0x9b, 0, 0},
+                    {ColumnType.INT, 1, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.INT, 1, 1, 10, 0x80, 0, 0},
+                    {ColumnType.INT, 1, 1, 10, 0x1b, 0, 0},
+                    {ColumnType.INT, 1, 1, 10, 0x9b, 1, 0},
+                    {ColumnType.LONG, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.LONG, 2, 1, Long.MIN_VALUE, 0x9b, 0, 0},
+                    {ColumnType.LONG, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.DATE, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.DATE, 2, -10, 10, 0x9b, 0, 1},
+                    // DATE days read back as days * 86,400,000 milliseconds, which never reach LONG's minimum.
+                    {ColumnType.DATE, 1, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.DATE, 1, Integer.MIN_VALUE, 10, 0x9b, 0, 1},
+                    {ColumnType.DATE, 1, -10, 10, 0x9b, 1, 0},
+                    {ColumnType.TIMESTAMP, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.TIMESTAMP, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.TIMESTAMP_NANO, 2, Long.MIN_VALUE, 1, 0x9b, 0, 0},
+                    {ColumnType.TIMESTAMP_NANO, 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.IPv4, 1, 0, -1, 0x9b, 0, 0},
+                    {ColumnType.IPv4, 1, 1, -1, 0x9b, 0, 1},
+                    {ColumnType.IPv4, 1, -1, 1, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x1b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, -10, 10, 0x9b, 1, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, Long.MIN_VALUE, 10, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 2, Long.MIN_VALUE, 10, 0x9b, 0, 1, 1},
+                    {ColumnType.getDecimalType(9, 2), 1, -999_999_999, 999_999_999, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(9, 2), 1, -1_000_000_000, 10, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(9, 2), 1, -10, 1_000_000_000, 0x9b, 0, 0},
+                    // Every INT64 value lies within 20 digits, and none sign-extends to the DECIMAL128 sentinel.
+                    {ColumnType.getDecimalType(20, 0), 2, Long.MIN_VALUE, Long.MAX_VALUE, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(18, 2), 7, beMinusTen, beTen, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(18, 2), 7, beLongMin, beTen, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 7, beLongMin, beTen, 0x9b, 0, 1, 1},
+                    {ColumnType.getDecimalType(18, 2), 6, beMinusTen, beTen, 0x9b, 0, 1},
+                    {ColumnType.getDecimalType(18, 2), 6, beLongMin, beTen, 0x9b, 0, 0},
+                    {ColumnType.getDecimalType(18, 2), 6, beLongMin, beTen, 0x9b, 0, 1, 1},
+                    {ColumnType.CHAR, 1, 'a', 'z', 0x9b, 0, 1},
+                    {ColumnType.CHAR, 1, 0, 'z', 0x9b, 0, 0},
+                    {ColumnType.CHAR, 1, 'a', 65_536, 0x9b, 0, 0},
+                    {ColumnType.CHAR, 1, -1, 'z', 0x9b, 0, 0},
+                    {ColumnType.CHAR, 2, 'a', 'z', 0x9b, 0, 0},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 0, 0},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 0, 1, 1},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x9b, 1, 0, 1},
+                    {ColumnType.FLOAT, 4, floatOne, floatTwo, 0x1b, 0, 0, 1},
+                    {ColumnType.FLOAT, 4, Float.floatToRawIntBits(Float.NEGATIVE_INFINITY), floatTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.FLOAT, 4, floatOne, Float.floatToRawIntBits(Float.POSITIVE_INFINITY), 0x9b, 0, 0, 1},
+                    {ColumnType.FLOAT, 4, floatOne, Float.floatToRawIntBits(Float.NaN), 0x9b, 0, 0, 1},
+                    {ColumnType.FLOAT, 5, floatOne, floatTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 5, doubleOne, doubleTwo, 0x9b, 0, 0},
+                    {ColumnType.DOUBLE, 5, doubleOne, doubleTwo, 0x9b, 0, 1, 1},
+                    {ColumnType.DOUBLE, 5, Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY), doubleTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 5, doubleOne, Double.doubleToRawLongBits(Double.POSITIVE_INFINITY), 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 5, Double.doubleToRawLongBits(Double.NaN), doubleTwo, 0x9b, 0, 0, 1},
+                    {ColumnType.DOUBLE, 4, doubleOne, doubleTwo, 0x9b, 0, 0, 1}
+            };
+            final int boundSize = 32;
+            final long bound = Unsafe.malloc(boundSize, MemoryTag.NATIVE_DEFAULT);
+            try (DirectLongList filters = new DirectLongList(ParquetRowGroupFilter.LONGS_PER_FILTER, MemoryTag.NATIVE_DEFAULT)) {
+                for (long[] values : cases) {
+                    final int columnType = (int) values[0];
+                    putUpperBound(bound, columnType);
+                    try (ParquetMetaTestFile file = buildFile(1, 2)) {
+                        Unsafe.putInt(file.dataPtr + 32 + 12, columnType);
+                        Unsafe.putInt(file.dataPtr + 32 + 20, Long.BYTES);
+                        Unsafe.putByte(file.dataPtr + 32 + 28, (byte) values[1]);
+                        long footer = file.dataPtr + file.parquetMetaFileSize - 4
+                                - Integer.toUnsignedLong(Unsafe.getInt(file.dataPtr + file.parquetMetaFileSize - 4));
+                        long chunk = file.dataPtr + (Integer.toUnsignedLong(Unsafe.getInt(footer + 40)) << 3) + 8;
+                        Unsafe.putLong(chunk + 48, values[2]);
+                        Unsafe.putLong(chunk + 56, values[3]);
+                        Unsafe.putByte(chunk + 2, (byte) values[4]);
+                        Unsafe.putByte(chunk + 3, (byte) 0x88);
+                        Unsafe.putLong(chunk + 32, values[5]);
+                        if (values.length > 7 && values[7] != 0) {
+                            Unsafe.putLong(footer + 32, Unsafe.getLong(footer + 32) | (1L << 2));
+                        }
+                        patchCrc(file.dataPtr, file.parquetMetaFileSize);
+                        ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                        try {
+                            reader.of(file.dataPtr, file.parquetMetaFileSize);
+                            Assert.assertTrue(reader.resolveLastFooter());
+                            // NOT (col <= bound) is a null-matching "col > bound" that every non-NULL row fails, so
+                            // only a row group that holds no SQL NULL can be pruned.
+                            filters.clear();
+                            filters.add(1L << 32 | (long) (PushdownFilterExtractor.OP_GT | ParquetRowGroupFilter.NULL_MATCHING_OP_FLAG) << 56);
+                            filters.add(bound);
+                            filters.add(columnType);
+                            Assert.assertEquals(Arrays.toString(values), values[6] != 0, reader.canSkipRowGroup(0, filters, bound + boundSize));
+                        } finally {
+                            reader.clear();
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(bound, boundSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -2086,6 +2117,25 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         CRC32 crc = new CRC32();
         crc.update(buf);
         Unsafe.putInt(crcFieldOff, (int) crc.getValue());
+    }
+
+    // Writes a filter bound at or above every value the column type stores, so that a plain "col > bound" prunes
+    // every row group with readable statistics.
+    private static void putUpperBound(long addr, int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.CHAR, ColumnType.INT -> Unsafe.putInt(addr, Integer.MAX_VALUE);
+            case ColumnType.IPv4 -> Unsafe.putInt(addr, -1);
+            case ColumnType.FLOAT -> Unsafe.putFloat(addr, Float.POSITIVE_INFINITY);
+            case ColumnType.DOUBLE -> Unsafe.putDouble(addr, Double.POSITIVE_INFINITY);
+            case ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128 -> {
+                // the largest decimal of the type's width, big-endian
+                Unsafe.putByte(addr, (byte) 0x7F);
+                for (int i = 1, n = ColumnType.sizeOf(columnType); i < n; i++) {
+                    Unsafe.putByte(addr + i, (byte) 0xFF);
+                }
+            }
+            default -> Unsafe.putLong(addr, Long.MAX_VALUE);
+        }
     }
 
     private static class ParquetMetaTestFile implements AutoCloseable {

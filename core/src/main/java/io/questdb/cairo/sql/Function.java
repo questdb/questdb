@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
@@ -67,15 +68,25 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * Notifies each function in the list that the cursor has closed, so it releases the
      * cursor-scoped state its init() built. The counterpart of
      * {@link #init(ObjList, SymbolTableSource, SqlExecutionContext, Function)}: whoever
-     * initializes a function list owns this call too.
+     * initializes a function list owns this call too. It notifies every function, skipping null
+     * slots, and then rethrows the first failure with the later ones suppressed.
      */
-    static void cursorClosed(ObjList<? extends Function> functions) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final Function function = functions.getQuick(i);
-            if (function != null) {
-                function.cursorClosed();
+    static void cursorClosed(@Nullable ObjList<? extends Function> functions) {
+        CairoException.rethrowCleanupFailure(cursorClosed(null, functions));
+    }
+
+    /**
+     * Best-effort variant of {@link #cursorClosed(ObjList)} for cleanup paths that keep going past
+     * a failure: it notifies every function in the list, skipping null slots, and folds each
+     * failure into {@code failure}, which it returns.
+     */
+    static Throwable cursorClosed(@Nullable Throwable failure, @Nullable ObjList<? extends Function> functions) {
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                failure = cursorClosed(failure, functions.getQuick(i));
             }
         }
+        return failure;
     }
 
     /**

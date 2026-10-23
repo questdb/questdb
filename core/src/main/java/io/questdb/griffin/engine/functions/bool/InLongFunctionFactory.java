@@ -245,8 +245,8 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(set);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -294,8 +294,8 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            MultiArgFunction.super.close();
             Misc.free(set);
+            MultiArgFunction.super.close();
         }
 
         @Override
@@ -455,8 +455,8 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            MultiArgFunction.super.close();
             Misc.freeObjList(constSets);
+            MultiArgFunction.super.close();
         }
 
         @Override

@@ -121,9 +121,11 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (!Numbers.isNull(arg.getFloat(record))) {
+        float val = arg.getFloat(record);
+        if (!Numbers.isNull(val)) {
             if (Numbers.isNull(mapValue.getFloat(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putFloat(valueIndex + 1, val);
             }
         }
     }

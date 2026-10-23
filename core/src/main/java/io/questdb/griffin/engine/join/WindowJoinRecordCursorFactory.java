@@ -414,18 +414,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
             }
-            if (joinFilter != null) {
-                joinFilter.cursorClosed();
-            }
-            if (windowLoFunc != null) {
-                windowLoFunc.cursorClosed();
-            }
-            if (windowHiFunc != null) {
-                windowHiFunc.cursorClosed();
-            }
-            if (groupByFunctions != null) {
-                Function.cursorClosed(groupByFunctions);
-            }
+            Throwable failure = Function.cursorClosed(null, joinFilter);
+            failure = Function.cursorClosed(failure, windowLoFunc);
+            failure = Function.cursorClosed(failure, windowHiFunc);
+            CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, groupByFunctions));
         }
 
         @Override

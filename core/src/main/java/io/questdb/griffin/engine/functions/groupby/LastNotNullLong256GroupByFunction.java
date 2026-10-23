@@ -40,9 +40,11 @@ public class LastNotNullLong256GroupByFunction extends FirstLong256GroupByFuncti
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (!Long256Impl.isNull(arg.getLong256A(record))) {
+        final Long256 value = arg.getLong256A(record);
+        if (!Long256Impl.isNull(value)) {
             if (Long256Impl.isNull(mapValue.getLong256A(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong256(valueIndex + 1, value);
             }
         }
     }

@@ -157,18 +157,18 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
             ownerFunctionUpdater.updateEmpty(value);
             value.setNew(true);
         }
-        Function.cursorClosed(ownerGroupByFunctions);
+        Throwable failure = Function.cursorClosed(null, ownerGroupByFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, perWorkerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
-                PerWorkerFunctionList.cursorClosed(functions);
-                PerWorkerFunctionList.clear(functions);
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
             }
         }
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
         filterCtx.clear();
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -192,21 +192,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAllocators);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMapValue);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMapValues);
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
-                perWorkerGroupByFunctions.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(functions);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-        }
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerGroupByFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -276,22 +262,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
         // potentially nondeterministic initialization exactly once per query, not once per worker,
         // and every worker must observe the same state as the owner.
         Function.init(ownerGroupByFunctions, symbolTableSource, executionContext, null);
-        if (perWorkerGroupByFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.init(
-                            perWorkerGroupByFunctions.getQuick(i),
-                            ownerGroupByFunctions,
-                            symbolTableSource,
-                            executionContext
-                    );
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        PerWorkerFunctionList.initPerWorker(perWorkerGroupByFunctions, ownerGroupByFunctions, symbolTableSource, executionContext);
     }
 
     /**

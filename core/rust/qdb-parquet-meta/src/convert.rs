@@ -58,7 +58,7 @@ use crate::writer::ParquetMetaWriter;
 use crate::ParquetFieldId;
 
 /// The `created_by` QuestDB's parquet writer stamps on every file it writes. That writer has
-/// always written NaN as a Parquet null, see `HeaderFeatureFlags::WRITTEN_BY_QUESTDB_BIT`.
+/// always written NaN as a Parquet null, see `FooterFeatureFlags::WRITTEN_BY_QUESTDB_BIT`.
 pub const QUESTDB_CREATED_BY: &str = "QuestDB version 9.0";
 
 /// Reports whether QuestDB's parquet writer wrote the file with this `created_by`.
@@ -477,7 +477,7 @@ pub fn convert_from_parquet(
         }
 
         let mut rg_builder = RowGroupBlockBuilder::new(col_count as u32);
-        rg_builder.set_num_rows(rg.num_rows().max(0) as u64);
+        rg_builder.set_num_rows(rg.num_rows() as u64);
 
         for (col_idx, col_chunk) in rg_columns.iter().enumerate() {
             let meta = col_chunk.metadata();
