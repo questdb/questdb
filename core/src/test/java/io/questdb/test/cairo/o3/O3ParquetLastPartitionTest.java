@@ -61,6 +61,15 @@ import org.junit.Test;
  */
 public class O3ParquetLastPartitionTest extends AbstractCairoTest {
 
+    @Override
+    public void setUp() {
+        super.setUp();
+        // These tests cover the native last partition that columns[] holds open, its append page and
+        // the WAL lag it stores. A merge-append table writes its partitions through the composite
+        // executor's own fds and parks no lag there, so it never reaches that state.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
+
     @Test
     public void testO3AppendIntoNativePartitionAfterColumnTypePrepassSurvivesWriterClose() throws Exception {
         // The sequence WalWriterFuzzTest#testCreateTableAsParquet hit in CI: the column type change
@@ -116,6 +125,8 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             // the apply job ejects after every transaction, and the ejection persists the WAL lag in _txn
             setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            // one transaction per apply block, so the O3 insert lands in a commit after the one that parks the lag
+            setProperty(PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, 1);
             execute("CREATE TABLE x (ts TIMESTAMP, a LONG) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
             final TableToken token = engine.verifyTableName("x");
             ff.of(token);
