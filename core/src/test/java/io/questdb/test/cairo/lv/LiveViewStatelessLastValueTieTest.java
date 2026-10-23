@@ -216,10 +216,12 @@ public class LiveViewStatelessLastValueTieTest extends AbstractLiveViewTest {
                 assertViewMatchesBase(2 * (tieCommit - 1) + 4);
 
                 // The cadence stayed armed rather than being consumed by the skip: the
-                // next cycle above the tie seals, and it seals both cycles' rows.
+                // next cycle above the tie seals, and it seals both cycles' rows. The root
+                // on the tie holds only its first half, so that seal takes its place
+                // rather than stacking above it.
                 commitInOrder(job, tieCommit + 1);
                 driveRefreshToQuiescence(job);
-                assertTimelineEntries(tieCommit + 1);
+                assertTimelineEntries(tieCommit);
                 assertViewMatchesBase(2 * tieCommit + 4);
                 assertNoRefreshFaults("lv");
             } finally {

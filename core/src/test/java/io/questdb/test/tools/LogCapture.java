@@ -36,8 +36,6 @@ public class LogCapture {
         consoleWriter.setInterceptor(logRecordSink -> logRecordSink.toSink(sink));
     }
 
-    @SuppressWarnings("unused")
-    // used in the Ent, will be useful in OSS eventually
     public void assertLogged(String message) {
         final int idx = sink.indexOf(message);
         if (idx < 0) {
@@ -57,6 +55,18 @@ public class LogCapture {
     public void assertNotLogged(String message) {
         // The logging worker may still be appending the final line. Inspect one stable snapshot.
         assertNotLogged(message, sink.toString());
+    }
+
+    /**
+     * How many times {@code message} appears in the captured log, read off one stable snapshot.
+     */
+    public int countOccurrences(String message) {
+        final String snapshot = sink.toString();
+        int count = 0;
+        for (int i = snapshot.indexOf(message); i >= 0; i = snapshot.indexOf(message, i + message.length())) {
+            count++;
+        }
+        return count;
     }
 
     public void assertOnlyOnce(String regex) {

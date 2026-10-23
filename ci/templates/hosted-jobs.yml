@@ -159,10 +159,10 @@ jobs:
           includeTests: "**/cairo/**"
           # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
-          # Exclude lv/mv/o3 subdirs: run in windows-cairo-2. cairo/lv moved here
-          # from this group in Sep 2026: cairo-1 had grown to 55 min against the
-          # 60-minute job cap (build 267306 timed out ~90s from the end) while
-          # cairo-2 sat at 20 min. lv is ~16 min, so the move balances the pair.
+          # Exclude lv/mv/o3 subdirs: lv runs in windows-cairo-3, mv/o3 in
+          # windows-cairo-2. cairo/lv first moved off this group in Sep 2026:
+          # cairo-1 had grown to 55 min against the 60-minute job cap (build
+          # 267306 timed out ~90s from the end) while cairo-2 sat at 20 min.
           excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -173,9 +173,26 @@ jobs:
           os: Windows
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**"
-          # Exclude Fuzz tests: run in windows-fuzz2 (LiveViewFuzzTest included:
-          # it is not under cairo/fuzz, so windows-fuzz1 does not claim it)
+          includeTests: "**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude Fuzz tests: run in windows-fuzz2.
+          # cairo/lv split off into windows-cairo-3 once the lv suite grew past
+          # ~25 min on the slow hosted Windows runner and lv+mv+o3 together
+          # crossed the 60-minute job cap (build 280635 timed out in o3, with lv
+          # alone ~25 min of the run).
+          excludeTests: "**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-3:
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/cairo/lv/**"
+          # Exclude Fuzz tests: run in windows-fuzz2 (LiveViewFuzzTest included
+          # there: it is not under cairo/fuzz, so windows-fuzz1 does not claim it).
+          # Split off windows-cairo-2 so the growing lv suite gets its own leg.
           excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -202,7 +219,7 @@ jobs:
           jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
-          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
+          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-cairo-3, windows-fuzz1
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in windows-pgwire
           # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
@@ -223,9 +240,10 @@ jobs:
           # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
           includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
           # Exclude Fuzz tests: run in windows-fuzz2
-          # Exclude cairo/lv, cairo/o3 and cairo/mv: run in windows-cairo-2.
-          # Only cairo/o3 holds O3*Test classes today; the other two keep the
-          # invariant so a future O3*Test there cannot run in both groups.
+          # Exclude cairo/lv (runs in windows-cairo-3), cairo/o3 and cairo/mv
+          # (run in windows-cairo-2). Only cairo/o3 holds O3*Test classes today;
+          # the other two keep the invariant so a future O3*Test there cannot run
+          # in both groups.
           excludeTests: "**/**Fuzz**,**/cairo/lv/**,**/cairo/o3/**,**/cairo/mv/**"
           javadoc_step: ""
           javadoc_profile: ""

@@ -45,13 +45,12 @@ import io.questdb.std.QuietCloseable;
  * agree whether the row came from disk or from the lead.
  * <p>
  * The source owns no tier state of its own: it holds the pin's slot and cache by
- * reference and stays valid exactly as long as its binder keeps the slot pinned.
- * Whoever the engine hands a read to - {@link LiveViewRecordCursor} or
+ * reference and stays valid as long as its binder keeps the slot pinned. Whoever the
+ * engine hands a read to - {@link LiveViewRecordCursor} or
  * {@link LiveViewPageFrameCursor} - binds one of these and answers
- * {@link SymbolTableSource} through it. Keeping the overlay here rather than inline
- * in the record cursor is what lets a frame consumer (a parallel filter worker
- * resolving symbols through the frame cursor rather than through a record) see the
- * lead at all.
+ * {@link SymbolTableSource} through it. Keeping the overlay here rather than inline in
+ * the record cursor lets a frame consumer (a parallel filter worker resolving symbols
+ * through the frame cursor rather than through a record) see the lead at all.
  * <p>
  * Column indices are OUTPUT columns throughout, as {@link SymbolTableSource}
  * defines them. The cache and the slot's symbol horizon, however, key off the TIER
@@ -59,7 +58,7 @@ import io.questdb.std.QuietCloseable;
  * every cache-side lookup goes through {@code tierColumns} (see
  * {@link LiveViewRecordCursor#isTierAddressableProjection}). A mis-keyed probe does
  * not merely resolve the wrong string: {@link LiveViewSymbolCache#isSymbolColumn}
- * reports a SYMBOL column as plain, no overlay is built, and a lead-only value then
+ * reports a SYMBOL column as plain, so no overlay is built and a lead-only value
  * matches nothing at all.
  * <p>
  * Each overlay is bounded by its slot's own symbol horizon

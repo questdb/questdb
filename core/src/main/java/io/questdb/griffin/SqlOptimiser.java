@@ -35,7 +35,6 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -7446,13 +7445,10 @@ public class SqlOptimiser implements Mutable {
                 }
                 throw SqlException.position(tableNamePosition).put(e);
             }
-        } else if (tableToken.isLiveView()) {
-            // live views have _meta but no column data files — read metadata directly
-            try (TableReaderMetadata metadata = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration(), tableToken)) {
-                metadata.loadMetadata();
-                enumerateColumns(model, metadata);
-            }
         } else {
+            // Live views plan here too: SqlCodeGenerator reads their table through a pooled reader,
+            // and _meta read from disk can run a metadata version ahead of it (TableWriter swaps
+            // _meta before it rebuilds a SYMBOL column's capacity), failing every recompile.
             try (TableReader reader = executionContext.getReader(tableToken)) {
                 enumerateColumns(model, reader.getMetadata());
             } catch (EntryLockedException e) {

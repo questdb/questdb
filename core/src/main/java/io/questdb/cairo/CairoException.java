@@ -90,6 +90,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED, which covers
     // required state and does surface to the operator.
     public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
+    // A live-view checkpoint timeline declares a format version this build does not implement.
+    // Unlike LV_CHECKPOINT_TIMELINE_INVALID, a rebuild cannot clear it, so the view blocks with
+    // everything intact rather than resetting.
+    public static final int LV_CHECKPOINT_FORMAT_BLOCKED = LV_CHECKPOINT_TIMELINE_INVALID - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this

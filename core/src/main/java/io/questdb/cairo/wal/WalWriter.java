@@ -372,6 +372,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * {@code lvConsumedSeqTxn} only when the block has been applied to the live view's
      * own table, satisfying the "applied to the LV's own on-disk tier" rule for
      * base-WAL retention.
+     * <p>
+     * For a view whose table carries dedup keys the caller commits
+     * {@link #commitLiveViewWithoutDedup(long)} instead.
      */
     public void commitLiveView(long maxBaseSeqTxnInBlock) {
         commit0(
@@ -382,6 +385,49 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 0,
                 0,
                 WAL_DEDUP_MODE_DEFAULT
+        );
+    }
+
+    /**
+     * {@link #commitLiveView(long)} for a view whose own table carries dedup keys. It stamps
+     * {@code WAL_DEDUP_MODE_NO_DEDUP} so the apply keeps rows sharing a {@code (timestamp, key)}
+     * pair, which a view may legitimately emit. The caller knows which tables carry the keys: they
+     * live in the table's {@code _meta}, which the sequencer metadata this writer reads does not
+     * carry.
+     */
+    public void commitLiveViewWithoutDedup(long maxBaseSeqTxnInBlock) {
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                0,
+                0,
+                WAL_DEDUP_MODE_NO_DEDUP
+        );
+    }
+
+    /**
+     * Commits a live view's WAL block that upserts its rows onto the view's applied output on
+     * the view table's dedup keys - the designated timestamp and the projected partition key.
+     * It is a repair's sparse alternative to
+     * {@link #commitLiveViewWithReplaceRange(long, long, long)} and cannot remove a stored row.
+     * The caller must ensure that the view's output is insert-only over the range, that no two
+     * rows of the block share a dedup-key pair ({@code LiveViewCheckpointOutputUniqueness}), and
+     * that the view's table carries the dedup keys, which this writer cannot check.
+     *
+     * @param maxBaseSeqTxnInBlock highest base sequencer txn whose rows this block
+     *                             reflects; same rule as {@link #commitLiveView(long)}
+     */
+    public void commitLiveViewWithUpsert(long maxBaseSeqTxnInBlock) {
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                0,
+                0,
+                WAL_DEDUP_MODE_UPSERT_NEW
         );
     }
 

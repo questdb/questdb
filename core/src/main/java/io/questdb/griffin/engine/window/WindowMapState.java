@@ -38,11 +38,15 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -52,8 +56,9 @@ import org.jetbrains.annotations.TestOnly;
  * BY columns, whose value carries every accumulator component a {@link WindowAccumulatorPlan}
  * laid out, and the one lookup per row that serves all of them.
  * <p>
- * The sequence a row runs through is always the same: load the value once, put a new entry's
- * components to identity, run every contributor, then run every projection. What the group
+ * It is the ordinary-query counterpart of what {@code LiveViewWindow} does for an anchored
+ * live view, and the row sequence is deliberately the same one: load the value once, put a new
+ * entry's components to identity, run every contributor, then run every projection. What it
  * does not carry is anything durable - no anchor, no bucket, no dirty set, no manifest - so
  * the whole of its state is a map that lives and dies with the cursor.
  * <p>
@@ -71,6 +76,16 @@ import org.jetbrains.annotations.TestOnly;
  * functions perform on their own maps - {@code avg}'s {@code preparePass2} overwrites the
  * sum slot a {@code sum} projection still needs - with arithmetic each projection does for
  * itself, off state the group never rewrites.
+ *
+ * <h2>What a refused row costs</h2>
+ * Unfused {@code sum} and {@code avg} test their DOUBLE argument before touching their maps,
+ * while the fused sequence writes the key and creates the value before the contributor refuses
+ * the row; on mostly-NULL input that outweighs the probe the group saves. So a two-pass group
+ * whose components are all
+ * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row} evaluates the
+ * predicate itself and skips such rows ({@link #isPass1SkipEnabled()}). A partition every row of
+ * which was refused then has no entry, and pass 2 projects identity for it off a buffer of the
+ * group's own; see {@link #projectPass2(Record)}.
  *
  * <h2>Ownership</h2>
  * The group owns its map and its key projection and nothing else. The functions it binds keep
@@ -125,6 +140,20 @@ import org.jetbrains.annotations.TestOnly;
  */
 public final class WindowMapState implements QuietCloseable, Reopenable {
     private final int componentCount;
+    /**
+     * The contributors' arguments in component order, or null unless
+     * {@link #isPass1SkipEnabled()} holds. Borrowed like {@link #keyRecord}'s terms: the window
+     * functions own and free them. The skip evaluates them ahead of the map work.
+     */
+    private final ObjList<Function> contributorArguments;
+    /**
+     * The value {@link #projectPass2(Record)} projects a missing partition off, over a buffer of
+     * the group's own, or null unless {@link #isPass1SkipEnabled()} holds. Identity does not
+     * vary by key, so one buffer serves every miss.
+     */
+    private final FlyweightPackedMapValue identityValue;
+    private final long identityValueSize;
+    private final boolean isPass1SkipEnabled;
     private final boolean isTwoPass;
     /**
      * The group's own wrapper over the borrowed PARTITION BY terms, or null when the key is
@@ -138,9 +167,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
     private final int unorderedMapMaxEntrySize;
-    private long lookupCount;
-    private long projectionWriteCount;
-    private long updateCount;
+    /**
+     * The identity buffer's native address, or 0 while the group holds no backing. Allocated
+     * and freed with the map, so a closed cursor's group owns nothing.
+     */
+    private long identityValueAddress;
 
     private WindowMapState(
             @NotNull CairoConfiguration configuration,
@@ -153,13 +184,19 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         this.projectionCount = plan.getProjectionCount();
         this.unorderedMapMaxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
         // A group's map is keyed by its spec, so only a plan that carries one is bindable
-        // here. Every plan carries one: WindowAccumulatorPlanBuilder.compileGroups skips a
-        // function whose spec is null and opens a builder per spec over the rest.
+        // here. A live view's plan does not - it is owned by LiveViewWindow, which keys the
+        // fused entry off its own anchor map - and never reaches this constructor.
         final WindowMapSpec spec = plan.getSpec();
         assert spec != null;
         // Every member of a group agrees with its spec on how many passes the traversal takes,
         // so this is the group's pass structure and not one function's.
         this.isTwoPass = spec.getPassCount() > WindowFunction.ONE_PASS;
+        // Only a two-pass group can leave a row's key out of pass 1: a one-pass group projects
+        // from the value it just loaded, so it needs the entry for every row whether the row
+        // contributed to it or not.
+        final ObjList<Function> skipArguments = isTwoPass ? contributorArgumentsForSkip(plan) : null;
+        this.contributorArguments = skipArguments;
+        this.isPass1SkipEnabled = skipArguments != null;
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         appendKeyTypes(spec, keyTypes);
         final ObjList<? extends Function> keyFunctions = spec.getPartitionByFunctions();
@@ -186,6 +223,10 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         plan.buildMapValueTypes(valueTypes);
+        // Only a skipping group can miss in pass 2, so only one carries the identity flyweight.
+        // Nothing inserts it; the components address it by slot as they would a map entry.
+        this.identityValue = isPass1SkipEnabled ? new FlyweightPackedMapValue(valueTypes) : null;
+        this.identityValueSize = isPass1SkipEnabled ? identityValue.getSizeInBytes() : 0;
         // Built before the map so a failure here cannot strand a tracked allocation.
         this.keySink = RecordSinkFactory.getInstance(configuration, asm, sinkTypes, keyColumnFilter, null);
         // Lazily opened, like every other tracker-aware window state: the owning cursor binds
@@ -248,12 +289,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         if (map.isOpen()) {
             map.clear();
         }
-        resetStructuralCounters();
     }
 
     @Override
     public void close() {
         Misc.free(map);
+        freeIdentityValue();
     }
 
     /**
@@ -281,8 +322,33 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * a projection loop a row better off not running one. Which of the two this is follows
      * from the spec every member shares, so it is the group's shape rather than a caller's
      * choice.
+     * <p>
+     * A group with {@link #isPass1SkipEnabled()} skips the whole sequence for a row no component
+     * would absorb, since every step would leave the value as it found it; such a row costs one
+     * {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE} predicate evaluation per
+     * component. The walk stops at the first component that accepts the row, hands its
+     * contributor the value already read through
+     * {@link WindowFunction#accumulateWindowState(Record, MapValue, double)}, and starts the
+     * contributor dispatch there.
      */
     public void computeNext(Record record) {
+        // The component the skip found accepting and the value it read; -1 when pass 1 skips
+        // nothing.
+        int acceptingComponent = -1;
+        double acceptedArgument = Double.NaN;
+        if (isPass1SkipEnabled) {
+            for (int c = 0; c < componentCount; c++) {
+                final double argument = contributorArguments.getQuick(c).getDouble(record);
+                if (Numbers.isFinite(argument)) {
+                    acceptingComponent = c;
+                    acceptedArgument = argument;
+                    break;
+                }
+            }
+            if (acceptingComponent < 0) {
+                return;
+            }
+        }
         final MapKey key = map.withKey();
         putKey(key, record);
         final MapValue value = key.createValue();
@@ -291,38 +357,20 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
                 plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
             }
         }
-        for (int c = 0; c < componentCount; c++) {
-            plan.getContributor(c).accumulateWindowState(record, value);
+        // Components ahead of the accepting one refused the row and are inert on it, so the
+        // loop starts at the accepting one.
+        for (int c = Math.max(acceptingComponent, 0); c < componentCount; c++) {
+            if (c == acceptingComponent) {
+                plan.getContributor(c).accumulateWindowState(record, value, acceptedArgument);
+            } else {
+                plan.getContributor(c).accumulateWindowState(record, value);
+            }
         }
         if (!isTwoPass) {
             for (int p = 0; p < projectionCount; p++) {
                 plan.getProjectionFunction(p).projectWindowState(record, value);
             }
-            projectionWriteCount += projectionCount;
         }
-        lookupCount++;
-        updateCount += componentCount;
-    }
-
-    /**
-     * The number of times a contributor absorbed a row, which is the lookup count times the
-     * component count. Beside {@link #getLookupCount()} it is what says a group removed
-     * updates rather than only maps.
-     */
-    @TestOnly
-    public long getContributorUpdateCount() {
-        return updateCount;
-    }
-
-    /**
-     * The number of rows this group looked its key up for - one per row, however many outputs
-     * read the value back, and two per row for a two-pass group, which probes once in each
-     * traversal. Structural rather than timed: a lookup reduction that is only visible in
-     * elapsed time is not a measurement.
-     */
-    @TestOnly
-    public long getLookupCount() {
-        return lookupCount;
     }
 
     /**
@@ -335,13 +383,16 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         return map.getClass().getSimpleName();
     }
 
-    public WindowAccumulatorPlan getPlan() {
-        return plan;
+    /**
+     * The number of distinct keys the group currently holds.
+     */
+    @TestOnly
+    public long getMapSize() {
+        return map.size();
     }
 
-    @TestOnly
-    public long getProjectionWriteCount() {
-        return projectionWriteCount;
+    public WindowAccumulatorPlan getPlan() {
+        return plan;
     }
 
     /**
@@ -366,6 +417,24 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
+     * Whether the group currently holds the identity buffer, which moves with the map.
+     */
+    @TestOnly
+    public boolean isIdentityValueAllocated() {
+        return identityValueAddress != 0;
+    }
+
+    /**
+     * Whether this group skips the pass-1 map work for a row every component refuses. A
+     * compile-time fact: true for a two-pass group whose components are all
+     * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}.
+     */
+    @TestOnly
+    public boolean isPass1SkipEnabled() {
+        return isPass1SkipEnabled;
+    }
+
+    /**
      * Whether this group's outputs are written by a second traversal - which is what makes it
      * the owner's business, since a two-pass group has to be driven from the pass-2 loop as
      * well as the pass-1 one. See {@link CachedWindowMapGroups}, the only owner that has both.
@@ -378,26 +447,34 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * Materializes every output of a two-pass group from the accumulator pass 1 left final,
      * for the row {@code record} is positioned on.
      * <p>
-     * The lookup is a {@link MapKey#findValue()} rather than a {@code createValue()}: pass 1
-     * created an entry for every row the two passes walk - it creates one unconditionally,
-     * where a function's own {@code pass1} may not - so there is nothing here to insert, and
-     * inserting would grow a key domain that is supposed to be closed by now.
+     * The lookup is a {@link MapKey#findValue()}: pass 1 created an entry for every row the two
+     * passes walk - it creates one unconditionally, where a function's own {@code pass1} may
+     * not - so there is nothing to insert for a group that skips nothing, and inserting would
+     * grow a key domain that is supposed to be closed by now.
+     * <p>
+     * A skipping group leaves the miss alone: pass 1 omits exactly the partitions nothing
+     * contributed to, so their answer is the components' identity - a NULL sum, a NULL average,
+     * a zero count - which the projections read off {@link #identityValue} without inserting an
+     * entry. Its map therefore holds only the contributing partitions; the answers match an
+     * unskipped group's, the map size does not.
      * <p>
      * There is deliberately no accumulation. A projection reads slots and writes no state, so
      * running this over a row a second time is idempotent, which is what a cached cursor's
-     * random access and its second drain need.
+     * random access and its second drain need; the identity path resets its buffer before
+     * every use.
      */
     public void projectPass2(Record record) {
         final MapKey key = map.withKey();
         putKey(key, record);
-        final MapValue value = key.findValue();
-        // Pass 1 walked the same rows and created an entry for each, so the key is there.
-        assert value != null;
+        MapValue value = key.findValue();
+        if (value == null) {
+            // Only a skipping group can miss, on a partition whose every row it refused.
+            assert isPass1SkipEnabled;
+            value = resetIdentityValue();
+        }
         for (int p = 0; p < projectionCount; p++) {
             plan.getProjectionFunction(p).projectWindowState(record, value);
         }
-        lookupCount++;
-        projectionWriteCount += projectionCount;
     }
 
     /**
@@ -408,7 +485,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         map.reopen();
-        resetStructuralCounters();
+        if (identityValue != null && identityValueAddress == 0) {
+            try {
+                identityValueAddress = Unsafe.malloc(identityValueSize, MemoryTag.NATIVE_DEFAULT);
+            } catch (Throwable th) {
+                // The map is already open by here, and an owner that never saw this group open
+                // has no reason to reset it - so give the backing back rather than strand it.
+                map.close();
+                throw th;
+            }
+            identityValue.of(identityValueAddress);
+        }
     }
 
     /**
@@ -417,7 +504,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     public void reset() {
         map.close();
-        resetStructuralCounters();
+        freeIdentityValue();
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
@@ -431,6 +518,33 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
+     * Returns the contributors' arguments in component order, or null when pass 1 may not
+     * skip. One component not
+     * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row} disables
+     * the skip for the whole group: a row {@code sum(x)} refuses is still one {@code count(*)}
+     * counts. The argument is the contributor's, the very function its
+     * {@code accumulateWindowState} evaluates; a contributor reporting none declines the group.
+     */
+    private static @Nullable ObjList<Function> contributorArgumentsForSkip(@NotNull WindowAccumulatorPlan plan) {
+        final int componentCount = plan.getComponentCount();
+        if (componentCount == 0) {
+            return null;
+        }
+        final ObjList<Function> arguments = new ObjList<>(componentCount);
+        for (int c = 0; c < componentCount; c++) {
+            if (!plan.getComponent(c).isRefusedRowInert()) {
+                return null;
+            }
+            final Function argument = plan.getContributor(c).windowAccumulatorArgument();
+            if (argument == null) {
+                return null;
+            }
+            arguments.add(argument);
+        }
+        return arguments;
+    }
+
+    /**
      * Hands every output of the group the slots it reads out of the shared value. Done once,
      * at compile time: a bound function's {@code computeNext} is a no-op from here on and its
      * private map stays closed, both of which the factory relies on for its whole life.
@@ -438,6 +552,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     private void bindProjectionFunctions() {
         for (int i = 0; i < projectionCount; i++) {
             plan.getProjectionFunction(i).bindWindowStateSlots(plan.getProjection(i));
+        }
+    }
+
+    /**
+     * Gives the identity buffer back, if the group holds one. Idempotent, because both
+     * {@link #reset()} and {@link #close()} run it and an owner may run both.
+     */
+    private void freeIdentityValue() {
+        if (identityValueAddress != 0) {
+            Unsafe.free(identityValueAddress, identityValueSize, MemoryTag.NATIVE_DEFAULT);
+            identityValueAddress = 0;
         }
     }
 
@@ -457,9 +582,15 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
     }
 
-    private void resetStructuralCounters() {
-        lookupCount = 0;
-        updateCount = 0;
-        projectionWriteCount = 0;
+    /**
+     * Puts the identity buffer back to identity and returns it for {@link #projectPass2(Record)}.
+     * Reset on every miss rather than once per open, so a projection family that writes state
+     * cannot leak one partition's output into another's.
+     */
+    private MapValue resetIdentityValue() {
+        for (int c = 0; c < componentCount; c++) {
+            plan.getComponent(c).resetState(identityValue, plan.getComponentSlotBase(c));
+        }
+        return identityValue;
     }
 }

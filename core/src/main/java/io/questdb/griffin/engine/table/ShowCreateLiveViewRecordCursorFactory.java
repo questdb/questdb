@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,22 +56,44 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
     protected final int tokenPosition;
     protected final TableToken viewToken;
     private final ShowCreateLiveViewCursor cursor = new ShowCreateLiveViewCursor();
+    private final boolean isTokenRebindingEnabled;
 
     public ShowCreateLiveViewRecordCursorFactory(
             TableToken viewToken,
             int tokenPosition,
             SqlExecutionContext.TableFunctionView tableFunctionView
     ) {
+        this(viewToken, tokenPosition, tableFunctionView, true);
+    }
+
+    ShowCreateLiveViewRecordCursorFactory(
+            TableToken viewToken,
+            int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView,
+            boolean isTokenRebindingEnabled
+    ) {
         super(METADATA);
         this.viewToken = viewToken;
         this.tokenPosition = tokenPosition;
         this.tableFunctionView = tableFunctionView;
+        this.isTokenRebindingEnabled = isTokenRebindingEnabled;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        return cursor.of(executionContext, viewToken, tokenPosition, tableFunctionView);
+        final TableToken currentViewToken = executionContext.getCairoEngine().getTableTokenIfExists(
+                viewToken.getTableName()
+        );
+        if (!isTokenRebindingEnabled && !viewToken.equals(currentViewToken)) {
+            throw TableReferenceOutOfDateException.of(viewToken);
+        }
+        if (currentViewToken == null) {
+            throw SqlException.$(tokenPosition, "live view does not exist [view=").put(viewToken.getTableName()).put(']');
+        }
+        // of() checks visibility before the object kind, so a same-name table the caller may not see
+        // reports as missing
+        return cursor.of(executionContext, currentViewToken, tokenPosition, tableFunctionView);
     }
 
     @Override

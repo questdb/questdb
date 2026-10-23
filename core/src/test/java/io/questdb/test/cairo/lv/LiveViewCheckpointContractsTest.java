@@ -132,6 +132,29 @@ public class LiveViewCheckpointContractsTest {
     }
 
     @Test
+    public void testInlineStateBudgetsAreFrozen() {
+        Assert.assertEquals(64, LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES);
+        Assert.assertEquals(256, LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES);
+        // One component can never be wider than the whole leaf it would sit in.
+        Assert.assertTrue(
+                LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES
+                        <= LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES
+        );
+
+        Assert.assertTrue(LiveViewCheckpointContracts.isInlineableStateLength(1));
+        Assert.assertTrue(LiveViewCheckpointContracts.isInlineableStateLength(
+                LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES
+        ));
+        // A declining function (-1), an empty image, and a state past the budget all
+        // stay page-backed.
+        Assert.assertFalse(LiveViewCheckpointContracts.isInlineableStateLength(-1));
+        Assert.assertFalse(LiveViewCheckpointContracts.isInlineableStateLength(0));
+        Assert.assertFalse(LiveViewCheckpointContracts.isInlineableStateLength(
+                LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES + 1
+        ));
+    }
+
+    @Test
     public void testRepairPublicationStageOrderingIsFrozen() {
         // Ordinal order is the required happens-before order.
         final RepairPublicationStage[] expected = {
