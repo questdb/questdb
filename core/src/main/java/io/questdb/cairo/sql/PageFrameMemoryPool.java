@@ -66,7 +66,8 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * Decoded Parquet frames live in a per-cursor LRU capped by total retained
  * bytes ({@code cairo.sql.parquet.cache.memory.size}). When a miss arrives
- * and {@code cachedBytes} is already at or above the budget,
+ * and {@code cachedBytes} is already at or above the budget, or would pass it
+ * with a decode the size of the one the victim holds,
  * {@link #acquireBuffer} reuses the LRU oldest unpinned
  * {@link ParquetBuffers} in place: it retains the tracker-aware data/aux
  * vectors so the upcoming decode overwrites them via the Rust
@@ -882,11 +883,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
-        if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= maxCachedBuffers()) {
-            for (ParquetBuffers victim = firstVictim(); victim != null; victim = nextVictim(victim)) {
-                if (victim.usageFlags != 0) {
-                    continue;
-                }
+        final boolean isFull = cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= maxCachedBuffers();
+        for (ParquetBuffers victim = firstVictim(); victim != null; victim = nextVictim(victim)) {
+            if (victim.usageFlags != 0) {
+                continue;
+            }
+            // A decode the size of the victim's takes the cache past its budget, and the trim after it evicts this
+            // victim first, so the decode reuses the victim's memory rather than a buffer that the trim frees.
+            if (isFull || cachedBytes + victim.retainedBytes > effectiveBudgetBytes) {
                 // In-place reuse keeps the victim's native memory (and thus its
                 // retainedBytes accounting); only the logical state resets.
                 bindGeneration++;
@@ -904,6 +908,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 setBound(usageBit, victim);
                 return victim;
             }
+            break;
         }
         final ParquetBuffers buffers;
         final int shellCount = freeParquetBufferShells.size();
