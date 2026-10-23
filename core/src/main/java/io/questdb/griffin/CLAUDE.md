@@ -253,7 +253,7 @@ if (hasTypeCasts) {
         return convertVarToInt(-srcTag, col);
     }
 }
-return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));  // Direct read
+return Unsafe.getInt(address + (rowIndex << 2));  // Direct read
 ```
 
 ```java

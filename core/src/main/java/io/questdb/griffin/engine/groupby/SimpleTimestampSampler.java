@@ -81,7 +81,16 @@ public class SimpleTimestampSampler implements TimestampSampler {
     @Override
     public long round(long value) {
         long q = (value - start) / bucket;
-        if (value < 0 && q * bucket != value) {
+        // The division truncates towards zero. Below the grid start, the decrement floors a value that falls between
+        // two grid points. At or above the grid start, the quotient is the floor already, also for a value before
+        // 1970 on a grid with a negative start. A value in [0, start) that falls between two grid points keeps the
+        // grid point above it. AbstractNoRecordSampleByCursor.initTimestamps() can round such values in two cases. When
+        // a positive WITH OFFSET starts a UTC grid after FROM, it rounds FROM and the first row, which can fall between
+        // FROM and the grid start, and raises both results to the grid start, so the round-up does not pick the first
+        // bucket. When an execution samples in the time zone although code generation converted FROM to UTC, it adds
+        // the offset of the execution to FROM. For a zone behind UTC, the round-up then picks the first bucket: the
+        // grid point at or after that shifted FROM.
+        if (value < 0 && value < start && q * bucket != value - start) {
             q = q - 1;
         }
         return start + q * bucket;

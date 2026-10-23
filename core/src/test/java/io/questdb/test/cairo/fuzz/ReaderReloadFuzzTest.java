@@ -79,7 +79,8 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 getRndO3PartitionSplit(rnd),
                 getRndO3PartitionSplitMaxCount(rnd),
                 10 * Numbers.SIZE_1MB,
-                3);
+                3,
+                getRndWalApplyBlockMaxRows(rnd));
         runFuzzWithWithReload(rnd);
     }
 
