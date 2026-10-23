@@ -20226,6 +20226,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowFactoryRetainsTimestampMetadata() throws Exception {
+        // key-major plans need non-composite partitions; merge-append founds composite ones
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, c VARCHAR, sym symbol index) timestamp(ts)", timestampType.getTypeName());
 

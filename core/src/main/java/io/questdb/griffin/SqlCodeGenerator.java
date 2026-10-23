@@ -20129,6 +20129,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (maxKeys <= 0) {
             return false;
         }
+        // The pieces of a composite partition overlap in time, so walking a key across the
+        // partition's frames does not visit its rows in timestamp order. Merge-append founds
+        // composite partitions and is not reloadable, so with it off a plan compiled over no
+        // composite partition stays correct: the writer folds leftover composites on open and
+        // founds no new ones.
+        if (configuration.isO3PartitionMergeAppendEnabled()) {
+            return false;
+        }
         final LongList intervals = intervalModel != null && intervalModel.isStatic()
                 ? intervalModel.calculateIntervals(executionContext)
                 : null;
@@ -20153,7 +20161,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     continue;
                 }
             }
-            if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+            if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET
+                    || reader.getTxFile().isPartitionComposite(i)) {
                 return false;
             }
             scannedPartitions++;

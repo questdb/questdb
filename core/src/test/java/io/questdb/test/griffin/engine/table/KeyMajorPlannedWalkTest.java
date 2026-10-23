@@ -37,6 +37,7 @@ import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.ExecutorService;
@@ -55,6 +56,14 @@ import java.util.concurrent.Future;
  */
 public class KeyMajorPlannedWalkTest extends AbstractCairoTest {
     private static final int[] WARMUPS = {1, 2, 4, 9};
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // key-major plans need non-composite partitions; merge-append founds composite ones
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
 
     @Test
     public void testCountAndIndexDisagreeFailsBothWays() throws Exception {

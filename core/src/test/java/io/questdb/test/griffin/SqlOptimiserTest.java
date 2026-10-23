@@ -1871,6 +1871,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin1a() throws Exception {
+        // key-major plans need non-composite partitions; merge-append founds composite ones
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // case when ordering by symbol, then timestamp - we expect to use the symbol index
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -1923,6 +1925,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin1b() throws Exception {
+        // key-major plans need non-composite partitions; merge-append founds composite ones
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // case when ordering by symbol, then timestamp - we expect to use the symbol index
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -2132,6 +2136,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin2() throws Exception {
+        // key-major plans need non-composite partitions; merge-append founds composite ones
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // case when ordering by just symbol - we expect to use the symbol index
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));

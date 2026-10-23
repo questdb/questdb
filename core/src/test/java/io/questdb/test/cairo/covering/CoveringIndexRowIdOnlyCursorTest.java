@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
@@ -56,6 +57,8 @@ public class CoveringIndexRowIdOnlyCursorTest extends AbstractCairoTest {
 
     @Test
     public void testKeyMajorQueriesMatchPlainIndex() throws Exception {
+        // key-major plans need non-composite partitions; merge-append founds composite ones
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             createTables();
             final String[] queries = {
