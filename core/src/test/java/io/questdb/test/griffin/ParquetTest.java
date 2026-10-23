@@ -3675,4 +3675,18 @@ public class ParquetTest extends AbstractCairoTest {
                             """);
         });
     }
+@Test
+    public void testAlterTableConvertPartitionsPlural() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, id int) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("alter table x convert partitions to parquet where ts in '2024-01-01'");
+            drainWalQueue();
+            assertQuery("count() from x where id = 1", """
+                    count
+                    1
+                    """);
+        });
+    }
 }
