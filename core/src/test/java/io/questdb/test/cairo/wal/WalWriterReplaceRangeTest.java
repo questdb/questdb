@@ -58,6 +58,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE;
 import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT;
 import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -79,6 +80,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
 
             execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
@@ -188,6 +190,57 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testRemovesLastPartitionNoRowsAddedNoRowsCommit() throws Exception {
         testRemovesLastPartitionNoRowsAdded(true);
+    }
+
+    @Test
+    public void testRemovesLastPartitionNoRowsAddedThenAppends() throws Exception {
+        // A REPLACE_RANGE that empties the last partition and writes no rows leaves the writer's
+        // partitionTimestampHi pointing at the partition it just deleted: the only place that
+        // lowers the field for a replace commit needs at least one written row, and
+        // o3ConsumePartitionUpdateSink recomputes txWriter.maxTimestamp without it. When the
+        // partition that inherits last place is COMPOSITE, finishO3Commit takes the
+        // append-blocked branch and skips the openPartition that would otherwise have papered
+        // over the stale field, so the next commit on the same writer works against a partition
+        // that no longer exists.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 400; i++) {
+                    appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T00:00:00.000000Z") + i * 180_000_000L, i, i * 10L);
+                }
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-25T01:00:00.000000Z"), 1000, 10_000);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            // Backdated write into the middle of 2022-02-24 makes that partition composite.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T04:00:00.000001Z"), 2000, 20_000);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            // Both commits are drained together so they run through one TableWriter instance:
+            // a pooled writer reload would refresh partitionTimestampHi and hide the defect.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2022-02-25T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2022-02-26T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T23:59:00.000000Z"), 3000, 30_000);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT count() c, min(ts) lo, max(ts) hi FROM rg").expectSize().noRandomAccess().returns("""
+                    c\tlo\thi
+                    402\t2022-02-24T00:00:00.000000Z\t2022-02-24T23:59:00.000000Z
+                    """);
+        });
     }
 
     @Test
@@ -770,6 +823,74 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatViewPosting() throws Exception {
+        // Same scenario as testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatView, with a POSTING index
+        // instead of the default BITMAP. The composite executor's index rebuild (O3PartitionJob.
+        // processCompositePartition, after executeCompositePlan) tags the rebuilt index's seal with the
+        // txn the executing commit is ABOUT to publish (RebuildColumnBase.reindexAfterCompositeWrite) - a
+        // BITMAP index has no seal/chain at all, so that path is only exercised through POSTING. A wrong
+        // tag there does not fail this single-instance test (nothing here crashes a recovery walk mid this
+        // commit), but it is the one behavioural difference from the BITMAP case worth a dedicated run.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+            }
+
+            execute("alter materialized view mv alter column s add index type posting");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "new" + i);
+                    row.putDouble(1, 1000 + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            drainWalQueue();
+
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            new0\t1000.0
+                            new1\t1001.0
+                            new2\t1002.0
+                            new3\t1003.0
+                            new4\t1004.0
+                            new5\t1005.0
+                            new6\t1006.0
+                            new7\t1007.0
+                            new8\t1008.0
+                            new9\t1009.0
+                            """);
+
+            assertQuery("select s, v from mv where s = 'new5'")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tv
+                            new5\t1005.0
+                            """);
+        });
+    }
+
+    @Test
     public void testReplaceRangeDoesNotSkipInsertBeforeSymbolConversion() throws Exception {
         // The WAL apply job's replace-range skip optimization (ApplyWal2TableJob.calculateSkipTransactionCount)
         // must not skip an INSERT that precedes a STRING->SYMBOL conversion, even when a later REPLACE_RANGE
@@ -1151,6 +1272,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // Merge-append turns the O3 batch into a composite partition instead of a split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             assertSplitWithoutParentConverts(
                     "rg",
                     "TIMESTAMP_NS",
@@ -1167,6 +1290,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // Merge-append turns the O3 batch into a composite partition instead of a split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             // Each step fits 61 steps into one partition of the unit.
             assertSplitWithoutParentConverts(
                     "rg_hour",
@@ -1357,6 +1482,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // Merge-append turns the O3 batch into a composite partition instead of a split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, s STRING, vc VARCHAR, b BINARY, arr DOUBLE[], sym SYMBOL, bo BOOLEAN, sh SHORT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
             final String values = "rnd_str(3, 8, 2), rnd_varchar(3, 8, 2), rnd_bin(4, 16, 2), ARRAY[x * 1.5, x * 2.5], "
@@ -1428,6 +1555,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // Merge-append turns the O3 batch into a composite partition instead of a split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG, sym SYMBOL INDEX TYPE POSTING INCLUDE (v)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
             execute("INSERT INTO rg SELECT x, timestamp_sequence('2022-02-24T08:00', 600_000_000), x * 10, CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END FROM long_sequence(60)");
@@ -1570,6 +1699,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // Merge-append turns the O3 batch into a composite partition instead of a split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
             execute("INSERT INTO rg VALUES (1, '2022-02-22T12:00', 0)");
@@ -1704,6 +1835,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // Merge-append turns the O3 batch into a composite partition instead of a split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
             execute("INSERT INTO rg SELECT x, timestamp_sequence('2022-02-24T08:00', 600_000_000), 0 FROM long_sequence(60)");
@@ -2307,10 +2440,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // the pre-conversion rows under a large lookahead changes which strings get registered
         // first, silently diverging the symbol key assignment from a low-lookahead applier.
         assertMemoryLeak(() -> {
-            // Build t1 with a tiny lag window (lookahead=1 + maxLagSize=1) so the apply job
+            // Build t1 with a tiny lag window (lookahead=1, maxLagSize=1, block size=1) so the apply job
             // sees only the current txn and cannot look ahead to the future replace-range.
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("create table rg_conv_small (id long, ts timestamp, s string) timestamp(ts) partition by DAY WAL");
             TableToken tt1 = engine.verifyTableName("rg_conv_small");
 
@@ -2359,6 +2493,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // replace-range can justify skipping across the ALTER txn (the bug path).
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 10_000);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1024 * 1024 * 1024);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1024 * 1024 * 1024);
             execute("create table rg_conv_large (id long, ts timestamp, s string) timestamp(ts) partition by DAY WAL");
             TableToken tt2 = engine.verifyTableName("rg_conv_large");
 
@@ -2436,6 +2571,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // future replace-range and does not skip any txns.
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("create table rg_trunc_small (id long, ts timestamp, s symbol) timestamp(ts) partition by DAY WAL");
             TableToken tt1 = engine.verifyTableName("rg_trunc_small");
 
@@ -2507,6 +2643,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // replace-range can justify skipping across the TRUNCATE txn (the bug path).
             node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 10_000);
             node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1024 * 1024 * 1024);
+            node1.setProperty(CAIRO_WAL_APPLY_BLOCK_SIZE, 1024 * 1024 * 1024);
             execute("create table rg_trunc_large (id long, ts timestamp, s symbol) timestamp(ts) partition by DAY WAL");
             TableToken tt2 = engine.verifyTableName("rg_trunc_large");
 
@@ -3052,6 +3189,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     private TableToken createDayWithSplitButNoParent() throws Exception {
         // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // Merge-append turns the O3 batch into a composite partition instead of a split.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         TableToken tableToken = engine.verifyTableName("rg");
 

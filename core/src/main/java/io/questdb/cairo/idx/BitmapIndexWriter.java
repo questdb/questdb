@@ -46,7 +46,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class BitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private static final long MAX_VALUE_OFFSET = 37L;
+    private static final long MAX_VALUE_OFFSET = BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE;
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
@@ -469,6 +469,14 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     private long allocateValueBlockAndStore(long value) {
+        // Raise the max value before memory grows: block allocation is the only way add() can fail, and
+        // rollbackConditionally trusts the max value to tell whether rows at or above the append offset are
+        // indexed. Values within an add loop ascend, so at the point of failure it covers every stored value,
+        // including those appended into existing blocks, and a retry rolls them back instead of indexing the
+        // same rows a second time.
+        if (value > keyMem.getLong(MAX_VALUE_OFFSET)) {
+            keyMem.putLong(MAX_VALUE_OFFSET, value);
+        }
         long newValueBlockOffset = valueMemSize;
 
         // store our value

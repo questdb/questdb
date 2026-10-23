@@ -110,6 +110,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
+    private boolean parallelHashJoinGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
@@ -120,6 +121,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -139,6 +141,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
+        parallelHashJoinGroupByEnabled = cairoConfiguration.isSqlParallelHashJoinGroupByEnabled();
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
@@ -418,6 +421,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public TableFunctionView getTableFunctionView() {
+        return tableFunctionView;
+    }
+
+    @Override
     public WindowContext getWindowContext() {
         return windowContext;
     }
@@ -458,6 +466,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelGroupByEnabled() {
         return parallelGroupByEnabled;
+    }
+
+    @Override
+    public boolean isParallelHashJoinGroupByEnabled() {
+        return parallelHashJoinGroupByEnabled && isParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
     }
 
     @Override
@@ -684,6 +697,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
+        this.parallelHashJoinGroupByEnabled = isEnabled;
+    }
+
+    @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
         this.parallelReadParquetEnabled = parallelReadParquetEnabled;
     }
@@ -716,6 +734,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
+    public void setTableFunctionView(TableFunctionView view) {
+        this.tableFunctionView = view;
     }
 
     @Override
@@ -843,6 +866,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        this.tableFunctionView = null;
         isMetadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.

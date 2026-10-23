@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -33,6 +34,9 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -40,6 +44,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -53,6 +58,8 @@ import org.junit.Test;
 import java.io.File;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -90,7 +97,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -121,7 +129,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -151,7 +160,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -235,10 +245,23 @@ public class TableUtilsTest extends AbstractTest {
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_STORAGE_POLICY)));
+        // The partition compaction sweep holds the writer to land its swap, exactly as
+        // STORAGE POLICY does; apply must not log its own scheduled work as an intruder.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_COMPOSITE_PARTITION_SWAP)));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_PARQUET_PARTITION_SWAP)));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("test"));
+
+        // The pool reports OWNERSHIP_REASON_UNKNOWN while a holder is still constructing the
+        // writer and has not stamped its reason yet. That string interns to the same reference
+        // as AbstractMultiTenantPool.NO_LOCK_REASON ("unknown"), which a reference-equality
+        // escape used to misread as "no reason, treat as solicited" - silently dropping the
+        // in-flight WAL apply notification with no recovery. An unidentified holder must be
+        // unsolicited so ApplyWal2TableJob re-arms notification delivery.
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_UNKNOWN));
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(AbstractMultiTenantPool.NO_LOCK_REASON));
     }
 
     @Test
@@ -335,6 +358,28 @@ public class TableUtilsTest extends AbstractTest {
             Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testSymbolDataHasNullsAcrossScanChunks() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long rowCount = TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS + 2L;
+            final long size = rowCount * Integer.BYTES;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memset(address, size, 0);
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+                final long[] nullRows = {0, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS - 1, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - 1};
+                for (long row : nullRows) {
+                    Unsafe.putInt(address + row * Integer.BYTES, SymbolTable.VALUE_IS_NULL);
+                    Assert.assertTrue("null at row " + row, TableUtils.symbolDataHasNulls(address, rowCount));
+                    Unsafe.putInt(address + row * Integer.BYTES, 0);
+                }
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
