@@ -5892,7 +5892,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT price FROM t_o3_parallel WHERE sym = 'A' AND price > 0.6")
                     .noLeakCheck()
-                    .withPlanContaining("Async Filter")
+                    // "Async Filter" or, with the filter JIT-compiled over the covering scan, "Async JIT Filter"
+                    .withPlanContaining("Filter workers")
                     .returns("""
                             price
                             1.0
