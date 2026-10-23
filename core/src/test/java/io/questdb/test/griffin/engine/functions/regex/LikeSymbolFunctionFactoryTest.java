@@ -948,6 +948,25 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
         target.copyFrom(source);
         Assert.assertFalse(target.contains(128));
         Assert.assertEquals(0, target.getKeys().size());
+        for (int key = 0; key < 1000; key++) {
+            target.add(key);
+        }
+        target.build();
+        source.add(5);
+        source.add(70);
+        source.build();
+        target.copyFrom(source);
+        for (int key = -1; key <= 1000; key++) {
+            Assert.assertEquals(key == 5 || key == 70, target.contains(key));
+        }
+        source.clear();
+        source.add(10);
+        source.add(5_000);
+        source.build();
+        target.copyFrom(source);
+        for (int key = -1; key <= 5_001; key++) {
+            Assert.assertEquals(key == 10 || key == 5_000, target.contains(key));
+        }
     }
 
     @Test

@@ -64,6 +64,21 @@ public class BitSet implements Mutable {
         }
     }
 
+    /**
+     * Sets every bit below the given index to its value in the source.
+     */
+    public void copyBelow(BitSet source, int bitIndex) {
+        assert bitIndex >= 0 && bitIndex <= source.capacity();
+        final int fullWords = wordIndex(bitIndex);
+        final boolean hasTail = (bitIndex & (BITS_PER_WORD - 1)) != 0;
+        checkCapacity(hasTail ? fullWords + 1 : fullWords);
+        System.arraycopy(source.words, 0, words, 0, fullWords);
+        if (hasTail) {
+            final long mask = -1L << bitIndex;
+            words[fullWords] = (words[fullWords] & mask) | (source.words[fullWords] & ~mask);
+        }
+    }
+
     public boolean get(int bitIndex) {
         int wordIndex = wordIndex(bitIndex);
         return wordIndex < words.length && (words[wordIndex] & 1L << bitIndex) != 0L;

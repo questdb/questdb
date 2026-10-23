@@ -24,7 +24,12 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -123,6 +128,31 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFillFirstLastResolveIndependently() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE tab (ts TIMESTAMP, s SYMBOL " + cacheFlag + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'alpha'),
+                        ('2024-01-01T00:30:00.000000Z', 'omega'),
+                        ('2024-01-01T02:00:00.000000Z', NULL),
+                        ('2024-01-01T02:30:00.000000Z', 'bravo')
+                        """);
+                assertSymbolRecords(
+                        "SELECT first(s) f, last(s) l FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                        """
+                                alpha\tomega\talpha\tomega
+                                alpha\tomega\talpha\tomega
+                                \tbravo\t\tbravo
+                                """
+                );
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastResolveIndependently() throws Exception {
         assertMemoryLeak(() -> {
             for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
@@ -134,7 +164,9 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         ('2024-01-01T01:00:00.000000Z', 'K', 'C'),
                         ('2024-01-01T01:00:00.000001Z', 'K', 'D'),
                         ('2024-01-01T02:00:00.000000Z', 'K', 'E'),
-                        ('2024-01-01T02:00:00.000001Z', 'K', 'F')
+                        ('2024-01-01T02:00:00.000001Z', 'K', 'F'),
+                        ('2024-01-01T03:00:00.000000Z', 'K', NULL),
+                        ('2024-01-01T03:00:00.000001Z', 'K', 'G')
                         """);
                 assertQuery("""
                         SELECT * FROM (
@@ -154,6 +186,15 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 C\tD
                                 E\tF
                                 """);
+                assertSymbolRecords(
+                        "SELECT first(s) f, last(s) l FROM tab WHERE k = 'K' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
+                        """
+                                A\tB\tA\tB
+                                C\tD\tC\tD
+                                E\tF\tE\tF
+                                \tG\t\tG
+                                """
+                );
                 execute("DROP TABLE tab");
             }
         });
@@ -237,5 +278,26 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         \tzz8\t1970-01-04T06:00:00.000000Z
                         FOUS\tzz9\t1970-01-04T06:00:00.000000Z
                         """);
+    }
+
+    private static void assertSymbolRecords(String sql, String expected) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            for (int pass = 0; pass < 2; pass++) {
+                sink.clear();
+                while (cursor.hasNext()) {
+                    final CharSequence firstA = record.getSymA(0);
+                    final CharSequence lastA = record.getSymA(1);
+                    final CharSequence firstB = record.getSymB(0);
+                    final CharSequence lastB = record.getSymB(1);
+                    sink.put(firstA).put('\t').put(lastA).put('\t').put(firstB).put('\t').put(lastB).put('\n');
+                }
+                TestUtils.assertEquals(expected, sink);
+                cursor.toTop();
+            }
+        }
     }
 }

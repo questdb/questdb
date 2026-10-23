@@ -75,9 +75,15 @@ public final class SymbolKeySet {
         if (source == this) {
             return;
         }
-        clear();
+        keys.clear();
         keys.addAll(source.keys);
-        build();
+        isDense = source.isDense;
+        if (isDense) {
+            bits.clearBelow(denseSpan);
+            bits.copyBelow(source.bits, source.denseSpan);
+            base = source.base;
+            denseSpan = source.denseSpan;
+        }
     }
 
     public IntList getKeys() {
