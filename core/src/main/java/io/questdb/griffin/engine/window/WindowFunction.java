@@ -545,6 +545,10 @@ public interface WindowFunction extends Function {
      * only ever appends, its footprint would otherwise track the view's LIFETIME partition
      * cardinality rather than its live one, and both the arena and the function's map are
      * charged to {@code cairo.live.view.refresh.memory.limit.bytes}.
+     * <p>
+     * Only a function that enrols in that sweep through
+     * {@code BasePartitionedWindowFunction.newCompactionScratch()} needs to answer non-null. A
+     * function the sweep never reaches may answer {@code null} even when it keeps a ring.
      */
     @Nullable
     default MemoryARW getRingArena() {
@@ -646,6 +650,14 @@ public interface WindowFunction extends Function {
      * and a counter that saturates at the frame size stops short of the true total; both
      * produce the same values from the output floor onward, which is what the contract
      * asks for.
+     * <p>
+     * A floating accumulator's warm-up re-sums the extent without the add/drop rounding the
+     * whole-history running sums carry, so its values match only up to
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#FLOATING_RELATIVE_TOLERANCE}.
+     * A function whose formula subtracts nearly equal running sums - the bounded-frame
+     * {@code stddev}/{@code variance} and {@code covar_*}/{@code corr} - scales that
+     * difference past any fixed ceiling, so it answers {@code false} even though its frame
+     * holds every row its state needs.
      * <p>
      * Default {@code false} fails closed: a function is enabled here only once its state
      * is proven to converge, one function and type at a time.
@@ -1172,7 +1184,9 @@ public interface WindowFunction extends Function {
 
     /**
      * The words this function's checkpoint ring spends on its scalar continuation state:
-     * 1 (the default), 2 for a 128-bit decimal accumulator, or 4 for a 256-bit one. It is
+     * 1 (the default), 2 for a 128-bit decimal accumulator or two running sums, 4 for a
+     * 256-bit decimal accumulator, or 5 for the five running sums of
+     * {@code covar_samp}/{@code covar_pop}/{@code corr}. It is
      * independent of {@link #checkpointRingValueKind()} - a {@code decimal(20,4)}
      * {@code avg} holds a 64-bit value per row and a 256-bit running sum, while a
      * {@code decimal(38,4)} {@code first_value} holds a 128-bit value per row and no scalar
@@ -1333,8 +1347,9 @@ public interface WindowFunction extends Function {
      * instead - they leave this false and override only the whole-state pair above.
      * <p>
      * The running-aggregate families leave it false for a different reason: they hold no ring
-     * to share. {@code ema}/{@code vwema}, {@code stddev}/{@code variance}, the bivariate
-     * stats, {@code ksum}, {@code count} over an unbounded frame, {@code row_number} and
+     * to share. {@code ema}/{@code vwema}; {@code stddev}/{@code variance}, the bivariate
+     * stats and {@code ksum} over an unbounded frame (the bounded RANGE frame of each is
+     * ring-shaped); {@code count} over an unbounded frame, {@code row_number} and
      * {@code rank} each carry a fixed handful of accumulator words per partition however long
      * the view has run, so one complete image per root is already the smallest thing a root
      * can write - a chunk reference costs more metadata than the image it would replace, and

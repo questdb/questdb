@@ -96,4 +96,13 @@ public interface LiveViewCheckpointRingStateSink {
      * significant word first. See {@link #putScalarState(long, long)}.
      */
     void putScalarState(long hh, long hl, long lh, long ll, long frameSize);
+
+    /**
+     * Records a five-word scalar continuation state: five independent 64-bit words
+     * rather than one wide number, such as the five running sums of
+     * {@code covar_samp}/{@code covar_pop}/{@code corr}. The words come back from
+     * {@link LiveViewCheckpointRingStateSource#getScalarWord(int)} at the index they
+     * go in at. See {@link #putScalarState(long, long)}.
+     */
+    void putScalarState(long word0, long word1, long word2, long word3, long word4, long frameSize);
 }

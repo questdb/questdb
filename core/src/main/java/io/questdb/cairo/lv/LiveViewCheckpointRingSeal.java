@@ -105,6 +105,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     private long scalarWord1;
     private long scalarWord2;
     private long scalarWord3;
+    private long scalarWord4;
     private int scalarWords;
     private long splitTimestamp;
     private long survivorCount;
@@ -164,17 +165,22 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
 
     @Override
     public void putScalarState(long scalarBits, long frameSize) {
-        putScalarWords(1, scalarBits, 0, 0, 0, frameSize);
+        putScalarWords(1, scalarBits, 0, 0, 0, 0, frameSize);
     }
 
     @Override
     public void putScalarState(long hi, long lo, long frameSize) {
-        putScalarWords(2, hi, lo, 0, 0, frameSize);
+        putScalarWords(2, hi, lo, 0, 0, 0, frameSize);
     }
 
     @Override
     public void putScalarState(long hh, long hl, long lh, long ll, long frameSize) {
-        putScalarWords(4, hh, hl, lh, ll, frameSize);
+        putScalarWords(4, hh, hl, lh, ll, 0, frameSize);
+    }
+
+    @Override
+    public void putScalarState(long word0, long word1, long word2, long word3, long word4, long frameSize) {
+        putScalarWords(5, word0, word1, word2, word3, word4, frameSize);
     }
 
     /**
@@ -208,7 +214,18 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
     ) {
         try {
             streamRing(dataWriter, function, value, previous, previousBoundaryMaxTimestamp);
-            builder.freeze(writer, keyAddress, keyLength, scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize, out);
+            builder.freeze(
+                    writer,
+                    keyAddress,
+                    keyLength,
+                    scalarWord0,
+                    scalarWord1,
+                    scalarWord2,
+                    scalarWord3,
+                    scalarWord4,
+                    frameSize,
+                    out
+            );
             return logicalStateBytes();
         } finally {
             writer = null;
@@ -322,6 +339,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         scalarWord1 = 0;
         scalarWord2 = 0;
         scalarWord3 = 0;
+        scalarWord4 = 0;
         survivorCount = 0;
     }
 
@@ -345,7 +363,15 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         builder.dropHeadRows(previousRowCount - survivorCount);
     }
 
-    private void putScalarWords(int words, long word0, long word1, long word2, long word3, long frameSize) {
+    private void putScalarWords(
+            int words,
+            long word0,
+            long word1,
+            long word2,
+            long word3,
+            long word4,
+            long frameSize
+    ) {
         if (words != scalarWords) {
             throw CairoException.critical(0)
                     .put("live view checkpoint ring state scalar width does not match the declared width")
@@ -355,6 +381,7 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
         this.scalarWord1 = word1;
         this.scalarWord2 = word2;
         this.scalarWord3 = word3;
+        this.scalarWord4 = word4;
         this.frameSize = frameSize;
         this.hasScalarState = true;
     }

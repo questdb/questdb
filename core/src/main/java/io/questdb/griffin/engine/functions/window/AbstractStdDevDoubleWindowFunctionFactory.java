@@ -26,10 +26,13 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -69,7 +72,13 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     static final ArrayColumnTypes STDDEV_COLUMN_TYPES;
     static final ArrayColumnTypes STDDEV_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    // Live-view variant of STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES with the BYTE
+    // tombstone slot appended.
+    private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    // Live-view variant of STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES with the BYTE
+    // tombstone slot appended.
+    private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
 
     // Naive sum-of-squares formula, used by sliding-window (removable) frames.
     static double computeResult(double sum, double sumSq, long count, boolean isSample, boolean isSqrt) {
@@ -184,13 +193,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES
+                                liveView ? STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -210,7 +221,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                                 timestampIndex,
                                 isSample,
                                 isSqrt,
-                                name
+                                name,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -263,13 +276,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 }
                 // between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                liveView ? STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -287,7 +302,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                                 mem,
                                 isSample,
                                 isSqrt,
-                                name
+                                name,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -490,11 +507,18 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final int initialBufferSize;
         private final boolean isSample;
         private final boolean isSqrt;
+        // Deep copy of the partition-by key column types for the snapshot codec. The
+        // factory reuses its partitionByKeyTypes buffer across compiles. Null outside LV.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout, tombstone slot included. Null outside LV.
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final String name;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int timestampIndex;
         private double stddev;
 
@@ -510,7 +534,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 int timestampIdx,
                 boolean isSample,
                 boolean isSqrt,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -523,6 +549,39 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             this.isSample = isSample;
             this.isSqrt = isSqrt;
             this.name = name;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 7;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        /**
+         * The ring carries {@code (sum, sumSq)} as its scalar continuation, so restore takes the
+         * two running sums verbatim instead of re-accumulating them. {@code count} rides the
+         * ring's {@code frameSize} slot.
+         */
+        @Override
+        public int checkpointRingScalarWords() {
+            return 2;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
         }
 
         @Override
@@ -542,7 +601,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             // 4 - ring buffer size (buffered elements, not all necessarily in frame)
             // 5 - ring buffer capacity
             // 6 - index of first (oldest) valid buffer element
-            // ring data: [timestamp, value] pairs; only finite values are stored
+            // 7 - tombstone (live view only)
+            // ring data: [timestamp, value] pairs; only finite values are stored. With a bounded
+            // frame start the first `count` buffered pairs are the frame and the rest are pairs
+            // a trailing frame end has not reached yet.
 
             partitionByRecord.of(record);
             MapKey key = map.withKey();
@@ -561,6 +623,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             double d = arg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -684,6 +749,70 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             mapValue.putLong(6, firstIdx);
         }
 
+        /**
+         * Streams the partition's buffered pairs oldest first, behind the exact running
+         * {@code (sum, sumSq)} as a two-word scalar and the in-frame count as its frame size.
+         * Restore takes all three verbatim, so a restored partition continues bit for bit where
+         * the runtime left it rather than from a re-accumulated sum carrying different rounding.
+         */
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            sink.putScalarState(
+                    Double.doubleToRawLongBits(value.getDouble(0)),
+                    Double.doubleToRawLongBits(value.getDouble(1)),
+                    value.getLong(2)
+            );
+            final long startOffset = value.getLong(3);
+            final long size = value.getLong(4);
+            final long capacity = value.getLong(5);
+            final long firstIdx = value.getLong(6);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putRow(memory.getLong(rec), Double.doubleToRawLongBits(memory.getDouble(rec + Long.BYTES)));
+            }
+        }
+
+        /**
+         * The in-RAM whole-state form, used by
+         * {@link io.questdb.cairo.lv.LiveViewFunctionSnapshot} to clone a partition into an
+         * out-of-order repair's scratch overlay: {@code (sum, sumSq, count, size)}, then the
+         * {@code size} buffered {@code (timestamp, value)} pairs, oldest first. The durable
+         * checkpoint uses the chunked ring form
+         * {@link #freezeCheckpointRingState(LiveViewCheckpointRingStateSink, MapValue)} instead,
+         * which shares pages across roots. Both carry the same words, so a state-layout change
+         * must move both together. Only a converging localized repair copies state aside, and
+         * {@link #hasFrameLocalCheckpointState()} declines that repair, so no production path
+         * reaches this form today; it stays in step for the snapshot contract.
+         */
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(3);
+            final long size = value.getLong(4);
+            final long capacity = value.getLong(5);
+            final long firstIdx = value.getLong(6);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putDouble(memory.getDouble(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+        }
+
         @Override
         public double getDouble(Record rec) {
             return stddev;
@@ -695,8 +824,51 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Declined on numeric grounds, although the ring holds the whole frame. A replay from
+            // the frame's lower edge rebuilds sum/sumSq from the frame alone, without the rounding
+            // the expired pairs left in the running sums. computeResult() subtracts two nearly
+            // equal terms, which scales that difference by mean^2 / variance: on tick-like prices
+            // the replayed output drifts from the whole-history output well past
+            // LiveViewCheckpointContracts.FLOATING_RELATIVE_TOLERANCE, and no fixed ceiling
+            // bounds it. Without the claim a late row resumes from a sealed root, whose sums the
+            // ring codec carries verbatim, or rebuilds from the view's boundary; both re-emit the
+            // plain query's bits.
+            return false;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread: a ring-shaped function's seal walks its whole map, so this
+            // keeps no checkpoint dirty set.
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -719,9 +891,120 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset, kept for parity with max/min's RANGE frame
+            // (MaxMinWindowFunctionFactoryHelper). No anchored window reaches this class: the one
+            // anchored spelling that lands here, RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            // EXCLUDE CURRENT ROW, is the unbounded-start shape supportsCheckpointState() declines,
+            // so CREATE LIVE VIEW refuses it. Drop the partition's frame to empty:
+            // sum, sumSq, count, size and firstIdx go to zero; the ring slab stays allocated and
+            // the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                // slot 3 (startOffset) stays - the ring slab is reused.
+                value.putLong(4, 0L);
+                // slot 5 (capacity) stays.
+                value.putLong(6, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long count = source.getFrameSize();
+            validateRestoredFrame(count, size);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset, capacity);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint stddev RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putDouble(0, Double.longBitsToDouble(source.getScalarWord(0)));
+            value.putDouble(1, Double.longBitsToDouble(source.getScalarWord(1)));
+            value.putLong(2, count);
+            value.putLong(3, newStartOffset);
+            value.putLong(4, size);
+            value.putLong(5, capacity);
+            value.putLong(6, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        /**
+         * Reads the in-RAM image
+         * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)} wrote, onto the same
+         * convention as {@link #restoreCheckpointRingState(LiveViewCheckpointRingStateSource, MapValue)}:
+         * the sums and the count verbatim, the pairs into a fresh slab rebased to index 0.
+         */
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final double partitionSum = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumSq = source.getDouble(offset);
+            offset += Double.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            validateRestoredFrame(count, size);
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            value.putDouble(0, partitionSum);
+            value.putDouble(1, partitionSumSq);
+            value.putLong(2, count);
+            value.putLong(3, newStartOffset);
+            value.putLong(4, size);
+            value.putLong(5, capacity);
+            value.putLong(6, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            // A bounded frame start only. There the frame is a prefix of the ring, which is what
+            // restore validates the carried count against. An unbounded start folds expired
+            // pairs into the sums and drops them from the ring. SqlParser's finite-influence
+            // gate rejects that shape at CREATE unless an ANCHOR resets the window, and
+            // RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW keeps its
+            // ANCHOR and still lands in this class, so the class declines it itself.
+            return liveView
+                    && frameLoBounded
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -752,6 +1035,57 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             memory.truncate();
             freeList.clear();
         }
+
+        // The shared reader checks only the frame size's sign. The bounded frame start
+        // supportsCheckpointState() admits keeps the frame a prefix of the ring, so a count past
+        // the buffered pairs is a corrupt root, not a state to continue from.
+        private void validateRestoredFrame(long count, long size) {
+            if (count < 0 || count > size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint stddev RANGE frame size out of range [frameSize=").put(count)
+                        .put(", rowCount=").put(size).put(']');
+            }
+        }
+
+        /**
+         * Writes restored ring pairs straight into the partition's freshly sized slab. Reused
+         * across partitions so a restore that walks thousands of them allocates nothing per
+         * partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            private long capacity;
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                final double value = Double.longBitsToDouble(valueBits);
+                // computeNext buffers finite values only, so a non-finite one here is a corrupt
+                // value page. The shared reader admits non-finite values for first/last/nth, so
+                // this re-asserts the invariant the running sums rely on.
+                if (!Numbers.isFinite(value)) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint stddev RANGE ring value is not finite");
+                }
+                // The slab is sized from the reader's row count; a replay running past it would
+                // write over whatever the arena appends next.
+                if (rows >= capacity) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint stddev RANGE ring overflows its slab [capacity=")
+                            .put(capacity).put(']');
+                }
+                final long rec = startOffset + rows * RECORD_SIZE;
+                memory.putLong(rec, timestamp);
+                memory.putDouble(rec + Long.BYTES, value);
+                rows++;
+            }
+
+            private void of(long startOffset, long capacity) {
+                this.startOffset = startOffset;
+                this.capacity = capacity;
+                this.rows = 0;
+            }
+        }
     }
 
     // Handles stddev() over (partition by x [order by o] rows between y and z).
@@ -764,6 +1098,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final int frameSize;
         private final boolean isSample;
         private final boolean isSqrt;
+        // Deep copy of the partition-by key column types for the snapshot codec. The
+        // factory reuses its partitionByKeyTypes buffer across compiles. Null outside LV.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout, tombstone slot included. Null outside LV.
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private double stddev;
@@ -778,7 +1118,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 MemoryARW memory,
                 boolean isSample,
                 boolean isSqrt,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -797,6 +1139,29 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             this.isSample = isSample;
             this.isSqrt = isSqrt;
             this.name = name;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
         }
 
         @Override
@@ -813,6 +1178,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             // 2 - finite count in frame
             // 3 - (0-based) index of oldest value
             // 4 - native array start offset
+            // 5 - tombstone (live view only)
             // ring buffer stores raw values including NaN placeholders
 
             partitionByRecord.of(record);
@@ -828,6 +1194,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
@@ -879,6 +1248,35 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
         }
 
+        /**
+         * Writes {@code (sum, sumSq, count, loIdx)} followed by the partition's whole ring,
+         * NaN placeholders included. The ring is always {@code bufferSize} cells long, so the
+         * image width depends on the declared frame rather than on the partition.
+         */
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
+            final long startOffset = value.getLong(4);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+            }
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
         @Override
         public double getDouble(Record rec) {
             return stddev;
@@ -890,8 +1288,50 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Declined on numeric grounds, although the ring holds the frame's own N values. A
+            // warm-up of N predecessors rebuilds sum/sumSq from the frame alone, without the
+            // rounding the dropped rows left in the running sums. computeResult() subtracts two
+            // nearly equal terms, which scales that difference by mean^2 / variance: on
+            // tick-like prices the replayed output drifts from the whole-history output well
+            // past LiveViewCheckpointContracts.FLOATING_RELATIVE_TOLERANCE, and no fixed ceiling
+            // bounds it. Without the claim a late row resumes from a sealed root, whose sums the
+            // whole-state image carries verbatim, or rebuilds from the view's boundary; both
+            // re-emit the plain query's bits.
+            return false;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread: this function keeps no checkpoint dirty set, so every
+            // seal full-scans it.
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -903,6 +1343,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
             // memory will allocate on first use
         }
 
@@ -910,12 +1351,75 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset, kept for parity with the other bounded ROWS frames. No anchored
+            // window reaches this class: SqlParser refuses an ANCHOR on a ROWS frame, and
+            // LiveViewWindow resets only the anchored window's calls. Drop the partition's
+            // frame to empty: sum, sumSq, count and loIdx go to zero and the ring back to NaN,
+            // so the next row re-anchors cleanly. The ring's startOffset (slot 4) stays
+            // allocated and the next row's write reuses it from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(4);
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long ringBytes = (long) bufferSize * Double.BYTES;
+            final double partitionSum = source.getDouble(offset);
+            offset += Double.BYTES;
+            final double partitionSumSq = source.getDouble(offset);
+            offset += Double.BYTES;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            value.putDouble(0, partitionSum);
+            value.putDouble(1, partitionSumSq);
+            value.putLong(2, partitionCount);
+            value.putLong(3, loIdx);
+            value.putLong(4, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
         }
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -945,6 +1449,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void toTop() {
             super.toTop();
             memory.truncate();
+            tombstoneCount = 0;
         }
     }
 
@@ -1844,6 +2349,14 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // lo index
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // start offset
 
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sumSq
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // finite count in frame
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // lo index
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // start offset
+        STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone
+
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // sumSq
@@ -1852,5 +2365,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);   // ring size
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);   // ring capacity
         STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);   // first index
+
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sumSq
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);   // finite count in frame
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);   // start offset
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);   // ring size
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);   // ring capacity
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);   // first index
+        STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone
     }
 }
