@@ -160,7 +160,7 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleFill()throws Exception {
+    public void testSampleFill() throws Exception {
         assertQuery("select b, first(a) a, k from x sample by 3h align to first observation")
                 .ddl("create table x as " +
                         "(" +
