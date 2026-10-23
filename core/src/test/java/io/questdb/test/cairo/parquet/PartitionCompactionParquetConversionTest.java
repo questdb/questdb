@@ -70,6 +70,122 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testAlterConvertsACompositeDay() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        assertMemoryLeak(() -> {
+            createTable("ac", true);
+            insertBackfill("ac", "2020-01-01T04:00:07");
+            assertFolders("ac", 1, true);
+            assertAlterConversion("ac", true);
+        });
+    }
+
+    @Test
+    public void testAlterConvertsAPlainDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("ap", true);
+            assertFolders("ap", 1, false);
+            assertAlterConversion("ap", true);
+        });
+    }
+
+    @Test
+    public void testAlterConvertsASplitDay() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        assertMemoryLeak(() -> {
+            createTable("asd", true);
+            insertBackfill("asd", "2020-01-01T22:00:07");
+            assertFolders("asd", 2, false);
+            assertAlterConversion("asd", true);
+        });
+    }
+
+    /**
+     * The active day goes through the fold before its conversion. Its split folded away, the day is the last
+     * partition again, so the writer has to let go of the native files it had open on it - a column a later
+     * ALTER COLUMN TYPE swaps out must not leave the others open over the parquet partition.
+     */
+    @Test
+    public void testAlterConvertsASplitActiveDay() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 50);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE aa (i INT, s SYMBOL INDEX, late LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO aa SELECT x::INT, rnd_symbol('k1', 'k2', NULL), x, timestamp_sequence('2020-01-01', 10 * 1_000_000L)" +
+                    " FROM long_sequence(4000)");
+            drainWalQueue();
+            // Lands near the end of the active day, so the O3 path splits it.
+            execute("INSERT INTO aa SELECT x::INT + 70_000, rnd_symbol('k1', 'k2', NULL), x + 1_000_000," +
+                    " timestamp_sequence('2020-01-01T11:06:07', 5 * 1_000_000L) FROM long_sequence(200)");
+            drainWalQueue();
+            assertFolders("aa", 2, false);
+
+            execute("ALTER TABLE aa CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            assertFolders("aa", 1, false);
+            execute("ALTER TABLE aa ALTER COLUMN late TYPE DOUBLE");
+            // O3 into the parquet last partition, under the changed schema.
+            execute("INSERT INTO aa SELECT x::INT + 90_000, rnd_symbol('k1', 'k2', NULL), x + 2_000_000," +
+                    " timestamp_sequence('2020-01-01T05:00:03', 7 * 1_000_000L) FROM long_sequence(300)");
+            drainWalQueue();
+            assertQuery("SELECT count(), sum(i), sum(late) FROM aa")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum\tsum1
+                            4500\t49067250\t8.0806725E8
+                            """);
+            try (TableReader reader = engine.getReader("aa")) {
+                Assert.assertTrue("the day must be parquet", reader.getTxFile().isPartitionParquet(0));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterConvertsASplitDayOfANonWalTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        assertMemoryLeak(() -> {
+            createTable("an", false);
+            insertBackfill("an", "2020-01-01T22:00:07");
+            assertFolders("an", 2, false);
+            assertAlterConversion("an", false);
+        });
+    }
+
+    @Test
+    public void testAlterConvertsASplitDayWithBloomFilterOverride() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        assertMemoryLeak(() -> {
+            createTable("ab", true);
+            insertBackfill("ab", "2020-01-01T22:00:07");
+            assertFolders("ab", 2, false);
+            execute("CREATE TABLE ab_oracle AS (SELECT * FROM ab) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertAlterConversionMatchesOracle("ab", true, " WITH (bloom_filter_columns = 'i, late', fpp = '0.05')");
+            // A point lookup the bloom filters can prune row groups for still finds its row.
+            for (String filter : new String[]{"i = 70_005", "late = 1_000_007", "i = -1"}) {
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM ab_oracle WHERE " + filter,
+                        "SELECT * FROM ab WHERE " + filter,
+                        LOG
+                );
+            }
+        });
+    }
+
+    @Test
     public void testConvertsACompositeDay() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
@@ -313,6 +429,35 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         }
     }
 
+    private static long tableTxn(String tableName) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            return reader.getTxn();
+        }
+    }
+
+    private void assertAlterConversion(String tableName, boolean isWal) throws Exception {
+        execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        assertAlterConversionMatchesOracle(tableName, isWal, "");
+    }
+
+    /**
+     * CONVERT PARTITION on the table writer converts the whole logical partition in a single pass too: one commit,
+     * with no fold of its splits or pieces first.
+     */
+    private void assertAlterConversionMatchesOracle(String tableName, boolean isWal, String withClause) throws Exception {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        final TableToken token = engine.verifyTableName(tableName);
+        Assert.assertEquals(isWal, token.isWal());
+        final long txnBefore = tableTxn(tableName);
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'" + withClause);
+        drainWalQueue();
+        Assert.assertEquals("the conversion must commit once, with no fold first", txnBefore + 1, tableTxn(tableName));
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        assertConvertedMatchesOracle(tableName);
+    }
+
     private void assertConversion(String tableName, boolean isWal) throws Exception {
         execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         assertConversionMatchesOracle(tableName, isWal);
@@ -329,6 +474,10 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         }
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        assertConvertedMatchesOracle(tableName);
+    }
+
+    private void assertConvertedMatchesOracle(String tableName) throws Exception {
         assertConverted(tableName);
         TestUtils.assertSqlCursors(
                 engine, sqlExecutionContext, "SELECT * FROM " + tableName + "_oracle", "SELECT * FROM " + tableName, LOG

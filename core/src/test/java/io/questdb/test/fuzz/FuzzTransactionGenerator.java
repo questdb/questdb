@@ -79,6 +79,89 @@ public class FuzzTransactionGenerator {
             double probabilityOfAddCoveringIndex,
             double probabilityOfSetTableFormat
     ) {
+        return generateSet(
+                initialRowCount,
+                sequencerMetadata,
+                tableMetadata,
+                rnd,
+                minTimestamp,
+                maxTimestamp,
+                rowCount,
+                transactionCount,
+                o3,
+                probabilityOfCancelRow,
+                probabilityOfUnassignedColumnValue,
+                probabilityOfAssigningNull,
+                probabilityOfTransactionRollback,
+                probabilityOfAddingNewColumn,
+                probabilityOfRemovingColumn,
+                probabilityOfRenamingColumn,
+                probabilityOfColumnTypeChange,
+                probabilityOfDataInsert,
+                probabilityOfSameTimestamp,
+                probabilityOfDropPartition,
+                probabilityOfConvertPartitionToParquet,
+                probabilityOfConvertPartitionToNative,
+                probabilityOfTruncate,
+                probabilityOfDropTable,
+                probabilityOfSetTtl,
+                replaceInsertProb,
+                probabilityOfSymbolAccessValidation,
+                probabilityOfQuery,
+                maxStrLenForStrColumns,
+                symbols,
+                metaVersion,
+                probabilityOfSetParquetEncoding,
+                probabilityOfAddCoveringIndex,
+                probabilityOfSetTableFormat,
+                0.0
+        );
+    }
+
+    /**
+     * {@link #generateSet} with backfills: an O3 data block is, with {@code probabilityOfBackfill}, a narrow cluster
+     * of rows dropped at a random point anywhere the run has written so far, rather than one near the run's
+     * advancing front. It lands among the rows of a day the run has moved on from, which is what cuts such a day
+     * into split folders and composite pieces. Zero draws nothing from {@code rnd}, so a run without backfills is the
+     * run {@link #generateSet} always was.
+     */
+    public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            Rnd rnd,
+            long minTimestamp,
+            long maxTimestamp,
+            int rowCount,
+            int transactionCount,
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
+            double probabilityOfDataInsert,
+            double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
+            double probabilityOfSetTtl,
+            double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
+            int maxStrLenForStrColumns,
+            String[] symbols,
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat,
+            double probabilityOfBackfill
+    ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
@@ -242,9 +325,9 @@ public class FuzzTransactionGenerator {
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToParquet) {
-                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToNative) {
-                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
             } else if (wantToAddCoveringIndex) {
                 generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
@@ -285,7 +368,13 @@ public class FuzzTransactionGenerator {
                 }
 
                 final long startTs, stopTs;
-                if (o3) {
+                final boolean isBackfill = o3
+                        && probabilityOfBackfill > 0
+                        && lastTimestamp > minTimestamp
+                        && rnd.nextDouble() < probabilityOfBackfill;
+                if (isBackfill) {
+                    startTs = minTimestamp + rnd.nextLong(lastTimestamp - minTimestamp);
+                } else if (o3) {
                     long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
                     long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
                     if (rnd.nextBoolean()) {
@@ -301,6 +390,10 @@ public class FuzzTransactionGenerator {
                 if (o3) {
                     //noinspection lossy-conversions
                     step *= rnd.nextDouble();
+                }
+                if (isBackfill) {
+                    // A tenth of an ordinary block's width at most, so the cluster has existing rows on both sides.
+                    step = Math.max(1, step / 10);
                 }
                 stopTs = Math.min(startTs + step, maxTimestamp);
 
@@ -329,11 +422,34 @@ public class FuzzTransactionGenerator {
                         replaceInsert
                 );
                 rowCount -= blockRows;
-                lastTimestamp = stopTs;
+                if (!isBackfill) {
+                    // A backfill lands behind the front, which is what the conversions and the next in-order
+                    // block are placed against.
+                    lastTimestamp = stopTs;
+                }
             }
         }
 
         return transactionList;
+    }
+
+    /**
+     * The upper end of the one-day window a CONVERT PARTITION targets: four times in ten the day the latest rows
+     * went to - the active one - three times the day before it, and three times an older day picked at random. The
+     * conversions in both directions keep cycling the days behind the active one, and the writer converts every
+     * folder of such a day - the splits and composite pieces O3 commits left behind - in a single pass, while the
+     * active day goes through a fold first. The day before the active one is the one the latest O3 commits most
+     * likely cut into pieces.
+     */
+    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, Rnd rnd) {
+        final int target = rnd.nextInt(100);
+        if (target < 30) {
+            return lastTimestamp - DAY_MICROS;
+        }
+        if (target < 60 && lastTimestamp - minTimestamp > DAY_MICROS) {
+            return minTimestamp + DAY_MICROS + rnd.nextLong(lastTimestamp - minTimestamp - DAY_MICROS);
+        }
+        return lastTimestamp;
     }
 
     private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
@@ -430,14 +546,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, Rnd rnd
     ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -446,14 +558,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, Rnd rnd
     ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;

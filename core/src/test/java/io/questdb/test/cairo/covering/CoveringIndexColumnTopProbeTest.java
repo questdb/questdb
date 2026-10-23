@@ -155,9 +155,12 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
     @Test
     public void testParquetPartitionMatchesSearchWalk() throws Exception {
         // The probe reads _cv and the transaction file only, so a Parquet partition must answer
-        // exactly as its native twin did. Both branches have to meet one: the record branch walks
-        // past a converted partition and then decides on a second converted one, and the predates
-        // branch reads a converted partition's row count out of the transaction file.
+        // as its _cv records say. The record branch walks past a converted partition. CONVERT
+        // PARTITION writes every column from row 0 and publishes a zero top for each - one it
+        // records for a column the partition predates too - so converting the deciding partition
+        // sends the walk off the end, and converting a predating partition moves the answer from
+        // the predates branch to the record branch of the next partition. The probe has to follow
+        // the walk each time.
         assertMemoryLeak(() -> {
             createColumnTopTable("t_probe_parquet");
             assertProbeMatchesSearchWalk("t_probe_parquet", "TOP_RECORD@2");
@@ -171,7 +174,18 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
             releaseAll();
             assertProbeMatchesSearchWalk("t_probe_parquet", "TOP_RECORD@2");
 
-            execute("ALTER TABLE t_probe_parquet CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-03'");
+            execute("ALTER TABLE t_probe_parquet CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            releaseAll();
+            assertPartitionFormats(
+                    "t_probe_parquet",
+                    PartitionFormat.PARQUET,
+                    PartitionFormat.NATIVE,
+                    PartitionFormat.NATIVE,
+                    PartitionFormat.NATIVE
+            );
+            assertProbeMatchesSearchWalk("t_probe_parquet", "TOP_RECORD@2");
+
+            execute("ALTER TABLE t_probe_parquet CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
             releaseAll();
             assertPartitionFormats(
                     "t_probe_parquet",
@@ -180,7 +194,7 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
                     PartitionFormat.PARQUET,
                     PartitionFormat.NATIVE
             );
-            assertProbeMatchesSearchWalk("t_probe_parquet", "TOP_RECORD@2");
+            assertProbeMatchesSearchWalk("t_probe_parquet", "NO_TOP@4");
 
             createPredatingPartitionTable("t_probe_parquet_pre");
             assertProbeMatchesSearchWalk("t_probe_parquet_pre", "PREDATES@0");
@@ -193,7 +207,7 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
                     PartitionFormat.NATIVE,
                     PartitionFormat.NATIVE
             );
-            assertProbeMatchesSearchWalk("t_probe_parquet_pre", "PREDATES@0");
+            assertProbeMatchesSearchWalk("t_probe_parquet_pre", "TOP_RECORD@1");
         });
     }
 

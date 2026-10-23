@@ -37,9 +37,11 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Writes the live rows of one logical partition - every folder of it, plain or composite, main directory or split -
@@ -81,10 +83,21 @@ final class ParquetPartitionConverter implements QuietCloseable {
      * Writes {@code data.parquet} and {@code _pm} of the folders {@code [lo, hi)} of {@code reader}'s snapshot into
      * {@code dstPartitionDir}, which has to exist.
      *
-     * @param seqTxn the version the footer is stamped with
+     * @param seqTxn             the version the footer is stamped with
+     * @param bloomFilterColumns comma-separated names of the columns to build bloom filters for - the CONVERT
+     *                           PARTITION override - or null to take them from the column metadata
+     * @param bloomFilterFpp     the bloom filter false-positive probability, NaN for the configured one
      * @return the parquet file size; {@link #getRowCount()} is the row count it holds
      */
-    long convert(TableReader reader, int lo, int hi, Path dstPartitionDir, long seqTxn) {
+    long convert(
+            TableReader reader,
+            int lo,
+            int hi,
+            Path dstPartitionDir,
+            long seqTxn,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp
+    ) {
         final TableMetadata metadata = reader.getMetadata();
         final TxReader txFile = reader.getTxFile();
         final PartitionGeometry geometry = reader.getGeometry();
@@ -118,7 +131,11 @@ final class ParquetPartitionConverter implements QuietCloseable {
             activeColumnCount++;
         }
         bloomFilterIndexes.clear();
-        TableUtils.deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
+        if (bloomFilterColumns == null || bloomFilterColumns.isEmpty()) {
+            TableUtils.deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
+        } else {
+            TableUtils.parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
+        }
 
         long parquetMetaFd = -1;
         long writer = 0;
@@ -145,7 +162,7 @@ final class ParquetPartitionConverter implements QuietCloseable {
                     configuration.getPartitionEncoderParquetVersion(),
                     bloomFilterIndexes.size() > 0 ? bloomFilterIndexes.getAddress() : 0,
                     (int) bloomFilterIndexes.size(),
-                    configuration.getPartitionEncoderParquetBloomFilterFpp(),
+                    Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp,
                     configuration.getPartitionEncoderParquetMinCompressionRatio(),
                     Files.toOsFd(parquetMetaFd),
                     -1L,
@@ -171,7 +188,22 @@ final class ParquetPartitionConverter implements QuietCloseable {
                 }
             }
             // The reader keeps every folder mapped until it is closed, so the frames stay valid up to the finish.
-            return PartitionFrameEncoder.finish(writer, configuration.getCommitMode() != CommitMode.NOSYNC);
+            final boolean isSync = configuration.getCommitMode() != CommitMode.NOSYNC;
+            final long parquetFileSize = PartitionFrameEncoder.finish(writer, isSync);
+            if (isSync) {
+                // The encoder syncs both files itself; the _pm fd is ours, so it goes through the facade too, the
+                // way TableUtils.produceParquetFromNativeInto syncs it. Both files are new in the directory, so
+                // its entries have to be made durable as well before the caller's _txn commit points at them.
+                ff.fsync(parquetMetaFd);
+                if (!Os.isWindows()) {
+                    dstPartitionDir.trimTo(dstDirLen).$();
+                    final long dirFd = TableUtils.openRONoCache(ff, dstPartitionDir.$(), LOG);
+                    if (dirFd != -1) {
+                        ff.fsyncAndClose(dirFd);
+                    }
+                }
+            }
+            return parquetFileSize;
         } finally {
             dstPartitionDir.trimTo(dstDirLen);
             if (writer != 0) {

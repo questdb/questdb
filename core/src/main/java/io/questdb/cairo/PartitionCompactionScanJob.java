@@ -800,7 +800,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 seqTxn = reader.getSeqTxn();
             }
             final ParquetPartitionConverter converter = getParquetConverter();
-            final long parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn);
+            final long parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, null, Double.NaN);
             if (converter.getRowCount() != liveRows) {
                 // The row count the swap will publish has to be the one the file holds.
                 throw CairoException.critical(0)

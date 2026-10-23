@@ -178,10 +178,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             // writing physical NULL values or leaving the older-partition -1 sentinel.
             execute("ALTER TABLE t ADD COLUMN x STRING");
             drainWalQueue();
-            execute("INSERT INTO t (ts, x) VALUES ('2024-01-02T00:00:00', 'active')");
-            drainWalQueue();
-
+            // Converted while still active: the active partition's conversion keeps an all-NULL column's full
+            // top in the parquet file. An older partition goes through the single-pass conversion instead,
+            // which writes every column from row 0 and publishes every top as zero.
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("INSERT INTO t (ts, x) VALUES ('2024-01-02T00:00:00', 'active')");
             drainWalQueue();
 
             try (TableWriter writer = getWriter("t")) {

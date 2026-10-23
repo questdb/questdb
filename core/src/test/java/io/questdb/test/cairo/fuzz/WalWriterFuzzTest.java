@@ -30,6 +30,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -186,7 +187,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertPartitionToParquet() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
 
         setFuzzProbabilities(
                 0.01,
@@ -202,9 +202,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.5,
                 0.5,
-                0.1,
+                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
                 0.0,
-                0.8,
+                0.05, // setTtlProb: rare, for the same reason
                 0.00,
                 0,
                 0.1,
@@ -212,7 +212,55 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01, // addCoveringIndexProb
                 0.1 // SET FORMAT PARQUET|NATIVE probability
         );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        // Several days, so CONVERT PARTITION reaches days behind the active one too.
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        // Small O3 splits, so the days CONVERT PARTITION reaches are split and composite, not only plain - and
+        // room for several folders per day, so an older day keeps its splits until it is converted.
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        runFuzz(rnd);
+    }
+
+    /**
+     * {@link #testConvertPartitionToParquet()}, shaped so CONVERT PARTITION keeps finding split and composite days
+     * behind the active one: every commit may land out of order across the whole range, and nothing - no TRUNCATE,
+     * no TTL, almost no DROP PARTITION - takes the older days away, so they keep collecting O3 splits and composite
+     * pieces between conversions in both directions.
+     */
+    @Test
+    public void testConvertSplitAndCompositePartitionToParquet() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                1.0,
+                0.01,
+                0.005,
+                0.3,
+                0.3,
+                0.0, // truncateProb
+                0.0,
+                0.0, // setTtlProb
+                0.0, // replaceProb: a replace commit is not supported over a parquet partition
+                0,
+                0.05,
+                0.05,
+                0.05, // addCoveringIndexProb
+                0.0 // SET FORMAT PARQUET|NATIVE probability
+        );
+        setFuzzCounts(true, 20_000, 300, 20, 10, 1000, 100, 4 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
         runFuzz(rnd);
     }
 
@@ -256,7 +304,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
 
         setFuzzProbabilities(
                 0.01,
@@ -272,9 +319,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.5,
                 0.5,
-                0.1,
+                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
                 0.0,
-                0.8,
+                0.05, // setTtlProb: rare, for the same reason
                 0.00,
                 0,
                 0.01,
@@ -283,7 +330,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0
 
         );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        // Several days, so CONVERT PARTITION reaches days behind the active one too.
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        // Small O3 splits, so the days CONVERT PARTITION reaches are split and composite, not only plain - and
+        // room for several folders per day, so an older day keeps its splits until it is converted.
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
         runFuzz(rnd);
     }
 
@@ -798,6 +851,53 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd);
         runFuzz(rnd);
+    }
+
+    /**
+     * Shapes the days CONVERT PARTITION reaches so they are split and composite when it does:
+     * <ul>
+     *     <li>room for 2 to 5 folders per day, so a day behind the active one keeps its O3 splits;</li>
+     *     <li>a piece floor of 1 to 128 rows (LOG-UNIFORM) instead of the default 4096: the merge-append
+     *     pre-split only cuts around incoming rows where it spares twice that many existing rows, which a
+     *     fuzz-sized day of a few thousand rows never has at the default, so every merge-append would rewrite
+     *     the whole day into one piece - and a one-piece composite is made plain on the next commit;</li>
+     *     <li>a tenth to two fifths of the O3 blocks are backfills: narrow clusters dropped among the rows of a
+     *     day the workload has moved on from, which is what cuts such a day into splits and pieces - an ordinary
+     *     O3 block lands near the workload's front, on the active day;</li>
+     *     <li>merge-append three runs in four, up from setFuzzProperties' one in two: it is what makes composite
+     *     pieces, while the classic O3 path the rest take makes splits;</li>
+     *     <li>three runs in four, nothing compacts the days the workload moved on from: no sweep, a long hot
+     *     window, a long idle timeout, and piece-count and waste thresholds no fuzz-sized day reaches, so the
+     *     splits and pieces stay for the conversion to fold in its single pass rather than being folded first. The
+     *     fourth run keeps whatever compaction setFuzzProperties drew.</li>
+     * </ul>
+     */
+    private static void setRndConvertedDayShapeProperties(Rnd rnd, FuzzRunner fuzzer) {
+        final int maxSplits = 2 + rnd.nextInt(4);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, maxSplits);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, maxSplits);
+        final long avgRowsPieceLim = Math.round(Math.pow(2, rnd.nextDouble() * 7));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, avgRowsPieceLim);
+        final double backfillProb = 0.1 + 0.3 * rnd.nextDouble();
+        fuzzer.setBackfillProb(backfillProb);
+        final boolean isMergeAppend = rnd.nextInt(4) > 0;
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, isMergeAppend);
+        final boolean isShapeKept = rnd.nextInt(4) > 0;
+        if (isShapeKept) {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 1_000);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, Micros.DAY_MICROS);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 10_000);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, 999);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, Numbers.SIZE_1GB);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, Numbers.SIZE_1GB);
+        }
+        LOG.info().$("converted day shape [maxSplits=").$(maxSplits)
+                .$(", isMergeAppend=").$(isMergeAppend)
+                .$(", avgRowsPieceLim=").$(avgRowsPieceLim)
+                .$(", backfillProb=").$(backfillProb)
+                .$(", isShapeKept=").$(isShapeKept)
+                .I$();
     }
 
     /**

@@ -349,6 +349,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final DirectIntList parquetBloomFilterIndexes;
     private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
     private final DirectIntList parquetColumnIdsAndTypes;
+    private final LongList parquetConversionFolders = new LongList();
     // Per decoded column of a parquet -> native conversion: the leading rows that become the
     // native column top, and the rows written to the column files after them.
     private final LongList parquetDecodedColumnLeadingRows = new LongList();
@@ -505,6 +506,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
+    private ParquetPartitionConverter parquetPartitionConverter;
+    private ParquetPartitionIndexBuilder parquetPartitionIndexBuilder;
     private PartitionCompactionPolicy partitionCompactionPolicy;
     private PartitionGeometry partitionGeometry;
     private long partitionTimestampHi;
@@ -2109,13 +2112,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        // The logical partition's run of folders: the main one and every split after it.
+        final int partitionCount = txWriter.getPartitionCount();
+        int runHi = partitionIndex + 1;
+        boolean isRunNative = true;
+        while (runHi < partitionCount
+                && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(runHi)) == partitionTimestamp) {
+            isRunNative &= !txWriter.isPartitionParquet(runHi);
+            runHi++;
+        }
+        if (runHi < partitionCount && isRunNative) {
+            // Not the active logical partition, whose files this writer holds open: every folder of it - plain or
+            // composite, main directory or split - goes into one parquet file in a single pass, with no fold first.
+            convertLogicalPartitionToParquet(partitionTimestamp, partitionIndex, runHi, bloomFilterColumns, bloomFilterFpp);
+            return true;
+        }
+
         // A logical partition with no split siblings never enters squashSplitPartitions, so
         // squashPartitionForce alone would leave a composite directory composite - and
         // produceParquetFromNative needs each column file as one flat [0, liveRows) range from byte 0.
         compactPartitionToPlain(partitionIndex, "parquet conversion");
         squashPartitionForce(partitionIndex);
+        // Read after the fold: before it, the last partition of a split active day is its last split, which
+        // the squash has just folded into this one. Read before, the conversion would leave columns[] open on
+        // the native files of the day it turns into parquet.
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
         try {
@@ -4446,91 +4468,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         other.trimTo(pathSize);
 
-        // Hoisted: the formatter writes through a reusable sink, so it runs before the ring slot is taken.
-        final Utf8Sequence mergedDir = formatPartitionForTimestamp(logicalPartitionTimestamp, newNameTxn);
-        LOG.info().$("merging a logical partition into one directory [table=").$(tableToken)
-                .$(", dir=").$(mergedDir)
-                .$(", parquetFileSize=").$(parquetFileSize)
-                .$(", folders=").$(folderCount)
-                .$(", liveRows=").$(liveRows)
-                .$(", aroundOpenTransaction=").$(isInTransaction)
-                .I$();
-
-        // Cold version of the merged partition: max of the merged sources' stamps, the same rule squashing applies.
-        long mergedSeqTxn = 0;
-        boolean isMergedReadOnly = false;
-        // The rows the bucket holds are the rows of the run only when every folder of it was uploaded.
-        boolean isMergedRemote = true;
-        for (int i = 0; i < folderCount; i++) {
-            mergedSeqTxn = Math.max(mergedSeqTxn, nativePartitionSeqTxn(firstIndex + i));
-            isMergedReadOnly |= txWriter.isPartitionReadOnly(firstIndex + i);
-            isMergedRemote &= txWriter.isPartitionRemote(firstIndex + i);
-        }
-        // Back to front, so the indexes of the folders not yet removed do not shift under the loop.
-        for (int i = folderCount - 1; i >= 0; i--) {
-            removeAttachedPartitionsTracked(folders.getQuick(i * CompositePartitionSwapCommand.LONGS_PER_FOLDER));
-        }
-        for (int i = 0; i < folderCount; i++) {
-            final long folderTimestamp = folders.getQuick(i * CompositePartitionSwapCommand.LONGS_PER_FOLDER);
-            if (folderTimestamp != logicalPartitionTimestamp) {
-                columnVersionWriter.squashPartition(logicalPartitionTimestamp, folderTimestamp);
-            }
-        }
-        txWriter.insertPartition(firstIndex, logicalPartitionTimestamp, liveRows, newNameTxn);
-        // The merged directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
-        setPartitionGeometryRefTracked(logicalPartitionTimestamp, NO_GEOMETRY_REF);
-        if (isParquetConversion) {
-            // A parquet folder's offset-3 word is its file size; the merged seqTxn went into the file's footer.
-            txWriter.setPartitionParquet(logicalPartitionTimestamp, parquetFileSize);
-            // A parquet folder with its data.parquet held locally, as CONVERT PARTITION leaves one.
-            txWriter.setPartitionParquetGenerated(firstIndex, true);
-            if (isMergedRemote) {
-                // An uploaded native partition: its bucket copy holds the very rows, at the very seqTxn, the new
-                // file does, so the upload stands. Cold storage then treats it like any uploaded local parquet.
-                txWriter.setPartitionRemote(firstIndex, true);
-            }
-        } else {
-            txWriter.setPartitionSeqTxn(firstIndex, mergedSeqTxn);
-        }
-        if (isMergedReadOnly) {
-            txWriter.setPartitionReadOnly(firstIndex, true);
-        }
-
-        ColumnTopSink sink = columnVersionWriter.asColumnTopSink(logicalPartitionTimestamp);
-        columnTops.pushInto(sink);
-        if (isParquetConversion) {
-            zeroColumnTopsAfterFullMaterialization(logicalPartitionTimestamp, liveRows, true);
-        }
-
-        // The splits this merge folded may have been the earliest ones the squash scan starts from.
-        minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
-
-        // No posting index reseal: the build sealed every POSTING index of the directory, covered values included,
-        // off this writer - see NativePartitionIndexBuilder.
-
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        if (isInTransaction) {
-            commitSwapAroundOpenTransaction(firstIndex, firstIndex + folderCount, 1);
-        } else {
-            commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
-        }
-        if (isParquetConversion) {
-            publishHasParquetPartitions();
-        }
-
-        // Filled and drained here, the way safeDeletePartitionDir does it for a single directory: a list built
-        // before the commit is one the commit may clear without draining.
-        try {
-            partitionRemoveCandidates.clear();
-            for (int i = 0; i < folderCount; i++) {
-                final int offset = i * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
-                partitionRemoveCandidates.add(folders.getQuick(offset), folders.getQuick(offset + 1));
-            }
-            processPartitionRemoveCandidates();
-        } catch (Throwable e) {
-            handleHousekeepingException(e);
-        }
+        publishMergedLogicalPartition(
+                logicalPartitionTimestamp,
+                folders,
+                firstIndex,
+                newNameTxn,
+                liveRows,
+                parquetFileSize,
+                columnTops,
+                isInTransaction
+        );
     }
 
     /**
@@ -7190,6 +7137,121 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Converts the logical partition whose folders are {@code [lo, hi)} - plain or composite, main directory or splits
+     * - into one parquet folder in a single pass, the way {@link PartitionCompactionScanJob} converts one: each live
+     * piece goes to the encoder as one frame straight off a {@link TableReader} snapshot of this writer's committed
+     * state, so nothing is first folded into a native directory. The run must not reach the last {@code _txn} entry,
+     * whose files this writer holds open, and no transaction may be open.
+     */
+    private void convertLogicalPartitionToParquet(
+            long logicalPartitionTimestamp,
+            int lo,
+            int hi,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp
+    ) {
+        assert !inTransaction();
+        assert hi < txWriter.getPartitionCount();
+        final LongList folders = parquetConversionFolders;
+        folders.clear();
+        long liveRows = 0;
+        int compositeFolderCount = 0;
+        // The file's version: the latest one among the folders it replaces, the rule a squash applies.
+        long seqTxn = -1;
+        for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
+            if (txWriter.isPartitionComposite(partitionIndex)) {
+                compositeFolderCount++;
+            }
+            final long folderTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            final long folderRows = txWriter.getPartitionSize(partitionIndex);
+            folders.add(folderTimestamp);
+            folders.add(txWriter.getPartitionNameTxn(partitionIndex));
+            folders.add(compositePartitionGeneration(partitionIndex));
+            folders.add(folderRows);
+            folders.add(columnVersionWriter.getMaxPartitionVersion(folderTimestamp));
+            liveRows += folderRows;
+            seqTxn = Math.max(seqTxn, nativePartitionSeqTxn(partitionIndex));
+        }
+        if (seqTxn <= 0) {
+            seqTxn = txWriter.getSeqTxn();
+        }
+
+        final long newNameTxn = txWriter.getTxn();
+        long parquetFileSize;
+        boolean isDirCreated = false;
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, logicalPartitionTimestamp, newNameTxn);
+            if (ff.exists(other.$())) {
+                // Left behind by a conversion that never committed: no committed folder carries the current txn.
+                ff.rmdir(other, false);
+            }
+            final int partitionDirLen = other.size();
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            isDirCreated = true;
+            // createDirsOrFail() leaves a trailing separator behind.
+            other.trimTo(partitionDirLen);
+
+            LOG.info().$("converting logical partition to parquet [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, logicalPartitionTimestamp)
+                    .$(", folders=").$(hi - lo)
+                    .$(", compositeFolders=").$(compositeFolderCount)
+                    .$(", liveRows=").$(liveRows)
+                    .I$();
+            try (TableReader reader = engine.getReader(tableToken)) {
+                if (reader.getTxn() != txWriter.getTxn() || reader.getMetadataVersion() != getMetadataVersion()) {
+                    throw CairoException.critical(0)
+                            .put("table reader does not match the writer's committed state [table=").put(tableToken)
+                            .put(", readerTxn=").put(reader.getTxn())
+                            .put(", writerTxn=").put(txWriter.getTxn())
+                            .put(", readerMetadataVersion=").put(reader.getMetadataVersion())
+                            .put(", writerMetadataVersion=").put(getMetadataVersion())
+                            .put(']');
+                }
+                final ParquetPartitionConverter converter = getParquetPartitionConverter();
+                parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, bloomFilterColumns, bloomFilterFpp);
+                if (converter.getRowCount() != liveRows) {
+                    throw CairoException.critical(0)
+                            .put("converted logical partition holds a different row count than _txn states [table=")
+                            .put(tableToken)
+                            .put(", convertedRows=").put(converter.getRowCount())
+                            .put(", liveRows=").put(liveRows)
+                            .put(']');
+                }
+                getParquetPartitionIndexBuilder().buildIndexes(
+                        other,
+                        parquetFileSize,
+                        reader.getMetadata(),
+                        reader.getColumnVersionReader(),
+                        logicalPartitionTimestamp,
+                        liveRows,
+                        reader.getTxn()
+                );
+            }
+        } catch (Throwable th) {
+            if (isDirCreated) {
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, logicalPartitionTimestamp, newNameTxn);
+                if (!ff.rmdir(other, false)) {
+                    LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+                }
+            }
+            throw th;
+        } finally {
+            other.trimTo(pathSize);
+        }
+
+        publishMergedLogicalPartition(
+                logicalPartitionTimestamp,
+                folders,
+                lo,
+                newNameTxn,
+                liveRows,
+                parquetFileSize,
+                null,
+                false
+        );
+    }
+
+    /**
      * Copies or rebuilds bitmap index files for indexed symbol columns from the
      * old partition directory ({@code path}) to the new one ({@code other}).
      * For columns whose column top will be zeroed, the index is rebuilt with
@@ -8350,6 +8412,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(dedupColumnCommitAddresses);
         Misc.free(parquetDecoder);
         Misc.free(parquetFileDecoder);
+        parquetPartitionConverter = Misc.free(parquetPartitionConverter);
+        parquetPartitionIndexBuilder = Misc.free(parquetPartitionIndexBuilder);
         // parquetMetaReader is a flyweight: it never owns its mmap, so
         // clear() (release native handle, zero state) is the right cleanup.
         parquetMetaReader.clear();
@@ -9214,6 +9278,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
+    }
+
+    private ParquetPartitionConverter getParquetPartitionConverter() {
+        if (parquetPartitionConverter == null) {
+            parquetPartitionConverter = new ParquetPartitionConverter(configuration, ff);
+        }
+        return parquetPartitionConverter;
+    }
+
+    private ParquetPartitionIndexBuilder getParquetPartitionIndexBuilder() {
+        if (parquetPartitionIndexBuilder == null) {
+            parquetPartitionIndexBuilder = new ParquetPartitionIndexBuilder(configuration, ff);
+        }
+        return parquetPartitionIndexBuilder;
     }
 
     private long getPartitionTimestampOrMax(int partitionIndex) {
@@ -14883,6 +14961,113 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 metadataRW.setHasParquetPartitions(tableToken, hasParquetPartitions);
             }
             hasNotifiedParquetPartitions = hasParquetPartitions;
+        }
+    }
+
+    /**
+     * Publishes the directory {@code <logicalPartitionTimestamp>.<newNameTxn>}, already in place and holding the live
+     * rows of the whole run of {@code folders} ({@link CompositePartitionSwapCommand#LONGS_PER_FOLDER} longs each,
+     * starting at {@code firstIndex}), as the logical partition's only {@code _txn} entry, commits, and removes the
+     * folders it replaces. With a non-negative {@code parquetFileSize} the directory holds one parquet file - a
+     * parquet conversion - and every column top is published as zero.
+     */
+    private void publishMergedLogicalPartition(
+            long logicalPartitionTimestamp,
+            LongList folders,
+            int firstIndex,
+            long newNameTxn,
+            long liveRows,
+            long parquetFileSize,
+            @Nullable ColumnTopRecorder columnTops,
+            boolean isInTransaction
+    ) {
+        final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+        final boolean isParquetConversion = parquetFileSize > -1;
+        // Hoisted: the formatter writes through a reusable sink, so it runs before the ring slot is taken.
+        final Utf8Sequence mergedDir = formatPartitionForTimestamp(logicalPartitionTimestamp, newNameTxn);
+        LOG.info().$("merging a logical partition into one directory [table=").$(tableToken)
+                .$(", dir=").$(mergedDir)
+                .$(", parquetFileSize=").$(parquetFileSize)
+                .$(", folders=").$(folderCount)
+                .$(", liveRows=").$(liveRows)
+                .$(", aroundOpenTransaction=").$(isInTransaction)
+                .I$();
+
+        // Cold version of the merged partition: max of the merged sources' stamps, the same rule squashing applies.
+        long mergedSeqTxn = 0;
+        boolean isMergedReadOnly = false;
+        // The rows the bucket holds are the rows of the run only when every folder of it was uploaded.
+        boolean isMergedRemote = true;
+        for (int i = 0; i < folderCount; i++) {
+            mergedSeqTxn = Math.max(mergedSeqTxn, nativePartitionSeqTxn(firstIndex + i));
+            isMergedReadOnly |= txWriter.isPartitionReadOnly(firstIndex + i);
+            isMergedRemote &= txWriter.isPartitionRemote(firstIndex + i);
+        }
+        // Back to front, so the indexes of the folders not yet removed do not shift under the loop.
+        for (int i = folderCount - 1; i >= 0; i--) {
+            removeAttachedPartitionsTracked(folders.getQuick(i * CompositePartitionSwapCommand.LONGS_PER_FOLDER));
+        }
+        for (int i = 0; i < folderCount; i++) {
+            final long folderTimestamp = folders.getQuick(i * CompositePartitionSwapCommand.LONGS_PER_FOLDER);
+            if (folderTimestamp != logicalPartitionTimestamp) {
+                columnVersionWriter.squashPartition(logicalPartitionTimestamp, folderTimestamp);
+            }
+        }
+        txWriter.insertPartition(firstIndex, logicalPartitionTimestamp, liveRows, newNameTxn);
+        // The merged directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
+        setPartitionGeometryRefTracked(logicalPartitionTimestamp, NO_GEOMETRY_REF);
+        if (isParquetConversion) {
+            // A parquet folder's offset-3 word is its file size; the merged seqTxn went into the file's footer.
+            txWriter.setPartitionParquet(logicalPartitionTimestamp, parquetFileSize);
+            // A parquet folder with its data.parquet held locally, as CONVERT PARTITION leaves one.
+            txWriter.setPartitionParquetGenerated(firstIndex, true);
+            if (isMergedRemote) {
+                // An uploaded native partition: its bucket copy holds the very rows, at the very seqTxn, the new
+                // file does, so the upload stands. Cold storage then treats it like any uploaded local parquet.
+                txWriter.setPartitionRemote(firstIndex, true);
+            }
+        } else {
+            txWriter.setPartitionSeqTxn(firstIndex, mergedSeqTxn);
+        }
+        if (isMergedReadOnly) {
+            txWriter.setPartitionReadOnly(firstIndex, true);
+        }
+
+        if (columnTops != null) {
+            columnTops.pushInto(columnVersionWriter.asColumnTopSink(logicalPartitionTimestamp));
+        }
+        if (isParquetConversion) {
+            zeroColumnTopsAfterFullMaterialization(logicalPartitionTimestamp, liveRows, true);
+        }
+
+        // The splits this merge folded may have been the earliest ones the squash scan starts from.
+        minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
+
+        // No posting index reseal: the build sealed every POSTING index of the directory, covered values included,
+        // off this writer - see NativePartitionIndexBuilder.
+
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        if (isInTransaction) {
+            commitSwapAroundOpenTransaction(firstIndex, firstIndex + folderCount, 1);
+        } else {
+            commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
+        }
+        if (isParquetConversion) {
+            publishHasParquetPartitions();
+        }
+
+        // Filled and drained here, the way safeDeletePartitionDir does it for a single directory: a list built
+        // before the commit is one the commit may clear without draining.
+        try {
+            partitionRemoveCandidates.clear();
+            for (int i = 0; i < folderCount; i++) {
+                final int offset = i * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+                partitionRemoveCandidates.add(folders.getQuick(offset), folders.getQuick(offset + 1));
+            }
+            processPartitionRemoveCandidates();
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
         }
     }
 
