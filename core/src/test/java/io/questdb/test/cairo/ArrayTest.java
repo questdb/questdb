@@ -2127,6 +2127,94 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyArrayColumnRejectedByDoubleArrayFunctions() throws Exception {
+        // A column or alias of untyped ARRAY type is not the ARRAY[] literal: DOUBLE[]
+        // functions reject it with a positioned error instead of reading it.
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT array_sum(a) FROM (SELECT ARRAY[] a)")
+                    .noLeakCheck()
+                    .fails(17, "argument type mismatch");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[] a FROM long_sequence(1))");
+            assertQuery("SELECT array_sum(a) FROM tango")
+                    .noLeakCheck()
+                    .fails(17, "argument type mismatch");
+            assertQuery("SELECT a = a FROM tango")
+                    .noLeakCheck()
+                    .fails(9, "no matching operator");
+            assertQuery("SELECT a[1] FROM tango")
+                    .noLeakCheck()
+                    .fails(8, "no matching function");
+        });
+    }
+
+    @Test
+    public void testEmptyArrayLiteralFirstLast() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String func : new String[]{"first", "last", "first_not_null", "last_not_null"}) {
+                assertQuery("SELECT " + func + "(ARRAY[]) v FROM long_sequence(2)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("v\n[]\n");
+                assertQuery("SELECT x % 2 k, " + func + "(ARRAY[]) v FROM long_sequence(4) ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tv
+                                0\t[]
+                                1\t[]
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyArrayLiteralRejectedByVarcharIn() throws Exception {
+        // the ARRAY[] literal takes only the DOUBLE[] type; it does not match the
+        // VARCHAR[] parameter of in(ØØ[]) or in(SØ[])
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT 'a'::VARCHAR IN ARRAY[]")
+                    .noLeakCheck()
+                    .fails(28, "cannot compare VARCHAR with type ARRAY");
+            assertQuery("SELECT 'a'::STRING IN ARRAY[]")
+                    .noLeakCheck()
+                    .fails(27, "cannot compare STRING with type ARRAY");
+        });
+    }
+
+    @Test
+    public void testEmptyArrayLiteralTakesDoubleArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[] * 2.0 a, array_reverse(ARRAY[]) b FROM long_sequence(1))");
+            assertQuery("SELECT \"column\", type FROM table_columns('tango')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype
+                            a\tDOUBLE[]
+                            b\tDOUBLE[]
+                            """);
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n[]\t[]\n");
+
+            execute("CREATE TABLE wal_tango (ts TIMESTAMP, a DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO wal_tango SELECT x::TIMESTAMP, ARRAY[] * 2.0 FROM long_sequence(2)");
+            drainWalQueue();
+            assertQuery("wal_tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ta
+                            1970-01-01T00:00:00.000001Z\t[]
+                            1970-01-01T00:00:00.000002Z\t[]
+                            """);
+        });
+    }
+
+    @Test
     public void testEmptyArrayToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -3437,6 +3525,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull
                             """);
         });
+    }
+
+    @Test
+    public void testNestedEmptyArrayLiteralRejectedByDoubleArrayFunction() throws Exception {
+        // ARRAY[[]] is constant but has no element type; only the ARRAY[] literal
+        // takes the DOUBLE[] type from the function signature.
+        assertQuery("SELECT first(ARRAY[[]]) FROM long_sequence(2)")
+                .fails(7, "there is no matching function");
     }
 
     @Test

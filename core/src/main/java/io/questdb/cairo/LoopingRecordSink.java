@@ -117,11 +117,17 @@ public class LoopingRecordSink implements RecordSink {
             final boolean strVar = strAsVarchar.get(i);
             final boolean tsNanos = timestampAsNanos.get(i);
 
-            // Handle negative types (skip columns)
+            // Handle negative types (skip columns): consume exactly the space RecordChain
+            // lays out for the column, the same as RecordSinkFactory.generateSkip()
             if (type < 0) {
-                int size = ColumnType.sizeOf(-type);
-                if (size > 0) {
-                    w.skip(size);
+                final int tag = -type;
+                if (ColumnType.isVarSize(tag)) {
+                    w.skipVarSize();
+                } else {
+                    final int size = ColumnType.sizeOf(tag);
+                    if (size > 0) {
+                        w.skip(size);
+                    }
                 }
                 continue;
             }
@@ -198,7 +204,7 @@ public class LoopingRecordSink implements RecordSink {
             case ColumnType.TIMESTAMP:
                 long ts = r.getTimestamp(idx);
                 if (tsNanos) {
-                    ts *= 1000L;
+                    ts = RecordSinkFactory.widenMicrosToNanos(ts);
                 }
                 w.putTimestamp(ts);
                 break;

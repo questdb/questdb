@@ -386,6 +386,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
         this.lastFunctionFactorySignature = null;
+        // A sub-query operand re-enters this method through createCursorFunction() while the outer
+        // traversal still holds its pending operands on the same stacks.
+        final int functionDepth = functionStack.size();
+        final int positionDepth = positionStack.size();
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -398,12 +402,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
-                // Release parsed functions best-effort: keep closing the rest even if one close()
-                // throws, and fold close failures into e as suppressed instead of masking it.
-                for (int i = functionStack.size(); i > 0; i--) {
+                // Release the functions this call parsed best-effort: keep closing the rest even if one
+                // close() throws, and fold close failures into e as suppressed instead of masking it.
+                // Entries below the depths belong to the outer traversal. It frees them if the failure
+                // reaches it, and keeps parsing with them if a nested caller falls back instead.
+                for (int i = functionStack.size(); i > functionDepth; i--) {
                     Misc.free(functionStack.poll(), e);
                 }
-                positionStack.clear();
+                for (int i = positionStack.size(); i > positionDepth; i--) {
+                    positionStack.pop();
+                }
                 throw e;
             }
 
@@ -704,6 +712,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         ex.put(')');
         Misc.freeObjList(args, ex);
         return ex;
+    }
+
+    private static boolean isUntypedEmptyArrayLiteral(Function arg) {
+        // ArrayConstant.emptyUntyped() is the only producer of an ArrayConstant without an element type
+        return arg instanceof ArrayConstant && ColumnType.decodeArrayElementType(arg.getType()) == ColumnType.UNDEFINED;
     }
 
     private static long parseDate(CharSequence str, int position) throws SqlException {
@@ -1241,7 +1254,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                     if (argIsArray) { // given the above checks, implies that sigIsArray is also true
                         short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
+
                         if (sigArgTypeTag == argElemTypeTag) {
+                            match = mergeWithExactMatch(match);
+                            continue;
+                        } else if (isUntypedEmptyArrayLiteral(arg) && sigArgTypeTag == ColumnType.DOUBLE) {
+                            // the ARRAY[] literal takes the DOUBLE[] type once this candidate wins
                             match = mergeWithExactMatch(match);
                             continue;
                         } else {
@@ -1435,7 +1453,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
-            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
+            if (isUntypedEmptyArrayLiteral(arg) && FunctionFactoryDescriptor.isArray(sigArgType)) {
+                // type the ARRAY[] literal the same way ARRAY[]::DOUBLE[] does
+                arg.assignType(
+                        ColumnType.encodeArrayType(sigArgTypeTag, ColumnType.decodeArrayDimensionality(arg.getType())),
+                        sqlExecutionContext.getBindVariableService()
+                );
+            } else if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
                 if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);

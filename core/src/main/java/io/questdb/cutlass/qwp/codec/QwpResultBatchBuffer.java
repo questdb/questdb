@@ -82,9 +82,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // Reused Gorilla encoder. One instance per batch buffer (i.e. per connection).
     private final QwpGorillaEncoder gorillaEncoder = new QwpGorillaEncoder();
     private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
-    // Snapshot of connection-scoped dict size taken at {@link #beginBatch}. Any conn
-    // ids allocated by this batch's SYMBOL rows sit in [batchDeltaStart..connDict.size()),
-    // which is exactly what {@link #emitDeltaSection} needs to ship.
+    // Connection-scoped dict size the client already holds. beginBatch snapshots it,
+    // and advanceStartRow moves it after every shipped frame. Any conn ids allocated
+    // by unshipped SYMBOL rows sit in [batchDeltaStart..connDict.size()), which is
+    // exactly what {@link #emitDeltaSection} needs to ship.
     private int batchDeltaStart;
     private long batchDeltaWireBytesAtStart;
     private int columnCount;
@@ -114,25 +115,20 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Advances {@code batchDeltaStart} to {@code connDict.size()}. Called from
-     * inside the send functions after a successful partial-emit frame so the
-     * subsequent emit's delta section ships no overlap with the bytes already
-     * sent.
+     * Advances the logical start past {@code k} just-shipped rows. Every frame
+     * ships the whole delta section, so {@code batchDeltaStart} also moves to
+     * {@code connDict.size()}: the next emit ships no overlap, and
+     * {@link #rollbackCurrentBatch} never drops entries the client already
+     * holds. When the advance drains the live row count to zero, scratch
+     * positions reset in place so the next batch reuses the native heap from
+     * byte 0.
      */
-    public void advanceDeltaStart() {
+    public void advanceStartRow(int k) {
+        assert startRow <= Integer.MAX_VALUE - k : "startRow int overflow";
         if (connDict != null) {
             batchDeltaStart = connDict.size();
             batchDeltaWireBytesAtStart = connDict.getTotalWireBytes();
         }
-    }
-
-    /**
-     * Advances the logical start past {@code k} just-shipped rows. When the
-     * advance drains the live row count to zero, scratch positions reset in
-     * place so the next batch reuses the native heap from byte 0.
-     */
-    public void advanceStartRow(int k) {
-        assert startRow <= Integer.MAX_VALUE - k : "startRow int overflow";
         startRow += k;
         if (startRow == physicalRowCount) {
             for (int i = 0; i < columnCount; i++) {
@@ -393,14 +389,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Like {@link #resetForNewQuery} but without the buffer-size shrink pass, so a
-     * following {@code beginStreaming} owns the single shrink and the previous
-     * query's sizing isn't discarded.
+     * Called after the connection dict is cleared. Like {@link #resetForNewQuery}
+     * but without the buffer-size shrink pass, so a following
+     * {@code beginStreaming} owns the single shrink and the previous query's
+     * sizing isn't discarded. Also rewinds the delta start to the empty dict;
+     * otherwise {@link #rollbackCurrentBatch} on an error before the next
+     * {@link #beginBatch} would target entries the dict no longer has, and throw.
      */
     public void clearConnKeyMaps() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).clearConnKeyMap();
         }
+        batchDeltaStart = 0;
+        batchDeltaWireBytesAtStart = 0;
     }
 
     @Override
@@ -544,8 +545,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     /**
      * Undoes any dict entries committed by the current batch and discards any
-     * un-shipped scratch rows. Called from the server's error path before
-     * {@code endStreaming}: a batch that called
+     * un-shipped scratch rows. Called from the server's error and cancel paths
+     * before {@code endStreaming}: a batch that called
      * {@link QwpEgressConnSymbolDict#addEntry} but never shipped its
      * {@code RESULT_BATCH} frame must not leave orphan entries in the connection
      * dict, because a subsequent query could hit the dedup map on the same bytes,

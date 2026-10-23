@@ -206,6 +206,33 @@ public final class StringTypeDriver extends NPlusOneAuxTypeDriver {
     }
 
     @Override
+    public void o3ColumnMergeWithTop(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcDataTop,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    ) {
+        Vect.oooMergeCopyStrColumnWithTop(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcDataTop,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
+    }
+
+    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
     }
