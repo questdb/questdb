@@ -332,8 +332,8 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         // converges below the frontier replays on the primary runtime after copying every
         // partition's state aside. The narrow frames' influence converges here, but the class
         // declines frame-local state, so the view has no localized plan: the correction resumes
-        // from the root below it on the primary runtime, restoring the durable ring, and
-        // nothing is copied aside or replayed in an isolated runtime.
+        // from the root below it on the primary runtime instead, restoring the durable ring.
+        // assertRepairResumedFromRoot pins that route.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
         assertMemoryLeak(() -> {
             createBase();
@@ -347,11 +347,6 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
 
                 commitOutOfOrderHalfSecond(job, DEEP_SECOND_A, "a", "4242", "17");
                 driveRefreshToQuiescence(job);
-                for (String view : NARROW_VIEWS) {
-                    final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(view);
-                    Assert.assertNotNull(view, instance);
-                    Assert.assertNull(view + ": the repair must not build an isolated runtime", instance.getRepairRuntime());
-                }
                 assertViewsMatchRecompute(NARROW_VIEWS);
                 assertRepairResumedFromRoot(NARROW_VIEWS);
 

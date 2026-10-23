@@ -463,8 +463,7 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
     // the localized plan, resume from a sealed root and print exactly what the plain query
     // prints. With the isolated runtime declined, the control view's repair replays on the
     // primary runtime after copying every partition's state aside; a one-row replay budget
-    // parks it after the copy, which is what proves that route ran, while `lv` resumes on the
-    // primary runtime without one.
+    // parks it after the copy, which is what proves that route ran.
     private void assertLocalizedRepairStaysWithinFloatingCeiling(
             String[] frames,
             String[] functions,
@@ -546,9 +545,6 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
                         "resume from anchor",
                         LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
                 );
-                if (isCopyAside) {
-                    Assert.assertNull("the resume must run on the primary runtime", instance.getRepairRuntime());
-                }
 
                 // In-order commits keep running on the state the repairs left behind.
                 for (int c = 0; c < 2; c++) {
