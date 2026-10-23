@@ -214,6 +214,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                         nullValueAddress,
                         shl
                 );
+                // validity batch site: a column with a validity bitmap would mark the rows below the column top NULL here
             } else {
                 mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
             }

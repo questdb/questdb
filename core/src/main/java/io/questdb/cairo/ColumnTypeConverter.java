@@ -216,6 +216,7 @@ public class ColumnTypeConverter {
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, addr, dstByteOffset, padBytes, memoryTag);
         }
+        // validity batch site: a column with a validity bitmap would mark these rows NULL here
     }
 
     /**
@@ -389,6 +390,7 @@ public class ColumnTypeConverter {
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, auxAddr, dstAuxOffset, auxSize, memoryTag);
         }
+        // validity batch site: a column with a validity bitmap would mark these rows NULL here
     }
 
     /**

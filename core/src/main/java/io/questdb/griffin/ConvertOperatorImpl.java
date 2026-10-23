@@ -364,7 +364,14 @@ public class ConvertOperatorImpl implements Closeable {
                                 final boolean srcPieceable = ColumnType.isFixedSize(existingType) || existingType == ColumnType.STRING || existingType == ColumnType.VARCHAR;
                                 final boolean dstFixed = ColumnType.isFixedSize(newType);
                                 final boolean dstVarStringy = newType == ColumnType.STRING || newType == ColumnType.VARCHAR;
-                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy);
+                                // The piece converters read a NULL from the source value and write one as a
+                                // target value, as ColumnTypeConverter.convertColumn's converters do. A policy
+                                // that keeps NULLs outside the values needs piece converters of its own.
+                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy) && switch (srcNullPolicy) {
+                                    case SENTINEL, NONE -> switch (dstNullPolicy) {
+                                        case SENTINEL, NONE -> true;
+                                    };
+                                };
                                 // Those four only read the column types, so they cannot throw and belong outside the
                                 // descriptor guard. The geometry lookup they gate CAN throw, so it goes inside it -
                                 // otherwise it would run after the catch closes and before an owner takes the four
