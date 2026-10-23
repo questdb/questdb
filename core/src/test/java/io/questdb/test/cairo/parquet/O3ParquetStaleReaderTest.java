@@ -5200,8 +5200,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             case 1 -> symRowsText(isNanos, row -> row.s == null && isFirstDay.test(row), SYM_ROW_BY_TS, rowSets);
             case 2 -> symRowsText(isNanos, row -> "".equals(row.s) && isFirstDay.test(row), SYM_ROW_BY_TS, rowSets);
             case 3 -> symRowsText(isNanos, row -> "d".equals(row.s) && isFirstDay.test(row), SYM_ROW_BY_TS, rowSets);
-            case 4 -> symRowsText(isNanos, row -> ("a".equals(row.s) || "b".equals(row.s)) && isFirstDay.test(row), SYM_ROW_BY_TS, rowSets);
-            case 5 -> symRowsText(isNanos, row -> "a".equals(row.s) && isFirstDay.test(row), SYM_ROW_BY_TS.reversed(), rowSets);
+            case 4 ->
+                    symRowsText(isNanos, row -> ("a".equals(row.s) || "b".equals(row.s)) && isFirstDay.test(row), SYM_ROW_BY_TS, rowSets);
+            case 5 ->
+                    symRowsText(isNanos, row -> "a".equals(row.s) && isFirstDay.test(row), SYM_ROW_BY_TS.reversed(), rowSets);
             case 6 -> symRowsLatestText(isNanos, row -> true, rowSets);
             case 7 -> symRowsLatestText(isNanos, row -> "b".equals(row.s) && isFirstDay.test(row), rowSets);
             default -> throw new AssertionError("unknown query " + query);

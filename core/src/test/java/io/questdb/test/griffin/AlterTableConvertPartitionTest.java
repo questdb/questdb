@@ -2611,6 +2611,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute(inserts[i]);
         }
     }
+
     /**
      * Fails the {@code n}-th append to the armed file, once, as a full disk would.
      */

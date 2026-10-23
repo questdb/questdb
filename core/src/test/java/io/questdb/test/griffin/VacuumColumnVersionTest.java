@@ -2318,7 +2318,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         }
     }
 
-    private record StalePostingInstance(String partitionDir, long staleTxn, String liveFiles, String coverDataFile, String rowsOfY) {
+    private record StalePostingInstance(String partitionDir, long staleTxn, String liveFiles, String coverDataFile,
+                                        String rowsOfY) {
     }
 
     private record OrphanIndexFiles(String[] partitionDirs, String[] liveFiles) {

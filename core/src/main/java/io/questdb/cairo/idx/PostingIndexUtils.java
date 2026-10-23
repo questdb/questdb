@@ -1806,7 +1806,7 @@ public final class PostingIndexUtils {
         final boolean isTailValid = secondDot < 0
                 ? parseTxnSegment(fileName, hostDot + 1, fileLen) != PARSE_FAIL
                 : parseTxnSegment(fileName, hostDot + 1, secondDot) != PARSE_FAIL
-                && parseTxnSegment(fileName, secondDot + 1, fileLen) != PARSE_FAIL;
+                  && parseTxnSegment(fileName, secondDot + 1, fileLen) != PARSE_FAIL;
         return isTailValid ? hostTxn : PARSE_FAIL;
     }
 
