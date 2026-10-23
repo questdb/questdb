@@ -75,7 +75,7 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStaticSymbolsFromSameTableCompareByValue()throws Exception {
+    public void testNonStaticSymbolsFromSameTableCompareByValue() throws Exception {
         // A UNION re-symbolises its columns through one dictionary that is not static, so = falls
         // back to the text comparison. Both sides then resolve through the same table and must
         // read distinct flyweights, otherwise the second read clobbers the first and every pair
