@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -70,8 +71,7 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
 
     @Override
     public void close() {
-        Misc.free(arg);
-        Misc.free(percentileFunc);
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, arg), percentileFunc));
     }
 
     @Override

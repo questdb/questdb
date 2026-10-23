@@ -44,6 +44,11 @@ import io.questdb.std.str.Utf8String;
 
 public class RndVarcharListFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
+
+    @Override
     public String getSignature() {
         return "rnd_varchar(V)";
     }

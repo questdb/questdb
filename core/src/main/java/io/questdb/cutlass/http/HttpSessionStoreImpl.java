@@ -124,9 +124,11 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     }
 
     @Override
-    public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+    public synchronized void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         final SessionInfo session = sessionsById.remove(sessionId);
         if (session != null) {
+            // the caller may hold an id the session has been rotated from
+            sessionsById.remove(session.getSessionId(), session);
             session.invalidate();
             LOG.info().$("session destroyed [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
         }
@@ -140,7 +142,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
             final SessionInfo session = iterator.next().getValue();
             if (Chars.equals(principal, session.getPrincipal()) && filter.test(session)) {
                 // a rotated session is mapped under more than one id, every mapping is removed;
-                // invalidating the session also rejects an id rotated in concurrently
+                // invalidating the session stops a request that still holds it from rotating it to a new id
                 iterator.remove();
                 session.invalidate();
                 destroyed++;
@@ -153,11 +155,6 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
 
     @Override
     public void extendSession(@NotNull SessionInfo session, @NotNull HttpConnectionContext httpContext) {
-        if (session.isInvalid()) {
-            // a concurrent request destroyed the session since this request looked it up,
-            // do not map a new id to it
-            return;
-        }
         final long currentMicros = microsClock.getTicks();
         session.setExpiresAt(currentMicros + sessionTimeout);
         if (session.getRotateAt() < currentMicros) {
@@ -169,15 +166,14 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
                     // maybe another thread just rotated the session id, and released the lock
                     // after we checked 'rotateAt', but before we acquired the lock
                     if (session.getRotateAt() < currentMicros) {
-                        final String newSessionId = generateSessionId();
-                        final long nextRotationAt = currentMicros + rotationPeriod;
-                        session.rotate(newSessionId, nextRotationAt);
-                        sessionsById.put(newSessionId, session);
-                        LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
+                        final String newSessionId = rotateSession(session, currentMicros + rotationPeriod);
+                        if (newSessionId != null) {
+                            LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
 
-                        final StringSink sessionIdSink = httpContext.getSessionIdSink();
-                        sessionIdSink.clear();
-                        sessionIdSink.put(newSessionId);
+                            final StringSink sessionIdSink = httpContext.getSessionIdSink();
+                            sessionIdSink.clear();
+                            sessionIdSink.put(newSessionId);
+                        }
                     }
                 } finally {
                     session.unlock();
@@ -351,5 +347,16 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
                 currentMicros + rotationPeriod,
                 credential
         );
+    }
+
+    // synchronized with destroySession(), a concurrent request may have destroyed the session since this one looked it up
+    private synchronized @Nullable String rotateSession(@NotNull SessionInfo session, long nextRotationAt) {
+        if (session.isInvalid()) {
+            return null;
+        }
+        final String newSessionId = generateSessionId();
+        session.rotate(newSessionId, nextRotationAt);
+        sessionsById.put(newSessionId, session);
+        return newSessionId;
     }
 }

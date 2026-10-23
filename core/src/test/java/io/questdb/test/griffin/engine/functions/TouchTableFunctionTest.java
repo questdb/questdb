@@ -24,8 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -74,6 +84,79 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             sink.clear();
             TestUtils.printSql(engine, sqlExecutionContext, query, sink);
             TestUtils.assertContains(sink, "data_pages");
+        });
+    }
+
+    @Test
+    public void testTouchInParallelFilter() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        runWithPool((engine, ctx) -> {
+            final int threshold = createTouchTables(engine, ctx);
+            final String[] filters = {
+                    "x > length(touch(SELECT * FROM touch_src))",
+                    "x > length(touch(SELECT * FROM touch_src WHERE ts >= (SELECT min(ts) FROM touch_src)))"
+            };
+            for (String filter : filters) {
+                TestWorkerCloneFunctionFactory.arm(threshold);
+                try {
+                    assertQuery("SELECT count(*) FROM touch_rows WHERE test_worker_clone(" + filter + ", x::DOUBLE)")
+                            .withEngine(engine)
+                            .withContext(ctx)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
+                            .returns("count\n" + (10_000 - threshold) + "\n");
+                    Assert.assertTrue(TestWorkerCloneFunctionFactory.workerEvaluations() > 0);
+                    Assert.assertEquals(0, TestWorkerCloneFunctionFactory.mismatches());
+                } finally {
+                    TestWorkerCloneFunctionFactory.disarm();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTouchInParallelFilterFailures() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        runWithPool((engine, ctx) -> {
+            final int threshold = createTouchTables(engine, ctx);
+            final String query = "SELECT count(*) FROM touch_rows WHERE x > length(touch(SELECT * FROM touch_src)) AND test_fault()";
+            final String expected = "count\n" + (10_000 - threshold) + "\n";
+            try {
+                int failures = 0;
+                RecordCursorFactory compiled;
+                while (true) {
+                    TestFaultFunctionFactory.armToFailAfterCompiles(failures);
+                    try {
+                        compiled = engine.select(query, ctx);
+                        break;
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected compile failure");
+                        failures++;
+                    }
+                }
+                TestFaultFunctionFactory.disarm();
+                try (RecordCursorFactory factory = compiled) {
+                    Assert.assertEquals("owner plus four worker clones", 5, failures);
+                    TestFaultFunctionFactory.armToFailAfter(5_000);
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        cursor.hasNext();
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected failure");
+                    }
+                    TestFaultFunctionFactory.disarm();
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                    }
+                }
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
         });
     }
 
@@ -155,4 +238,29 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
         });
     }
 
+    private static int createTouchTables(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {
+        engine.execute("CREATE TABLE touch_src (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        engine.execute("INSERT INTO touch_src VALUES (1, '2024-01-01')", ctx);
+        engine.execute("CREATE TABLE touch_rows AS (SELECT x FROM long_sequence(10_000))", ctx);
+        try (
+                RecordCursorFactory factory = engine.select("SELECT length(touch(SELECT * FROM touch_src))", ctx);
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getInt(0);
+        }
+    }
+
+    private void runWithPool(PoolRunnable body) throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
+                TestUtils.execute(pool, (engine, _, ctx) -> body.run(engine, ctx), configuration, LOG);
+            }
+        });
+    }
+
+    @FunctionalInterface
+    private interface PoolRunnable {
+        void run(CairoEngine engine, SqlExecutionContext ctx) throws Exception;
+    }
 }

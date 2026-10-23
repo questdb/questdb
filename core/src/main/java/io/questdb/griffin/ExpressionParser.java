@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -75,15 +75,13 @@ public class ExpressionParser {
     private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
-    // columnTypes that an expression can be cast into, in addition to the range BOOLEAN…LONG256
-    private static final IntHashSet moreCastTargetTypes = new IntHashSet();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
     private final CharacterStore characterStore;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
-    private final IntStack paramCountStack = new IntStack();
+    private final IntStack paramCountStack;
     private final ObjStack<Scope> scopeStack = new ObjStack<>();
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
@@ -101,7 +99,8 @@ public class ExpressionParser {
             ObjectPool<ExpressionNode> expressionNodePool,
             SqlParser sqlParser,
             CharacterStore characterStore,
-            ObjectPool<WindowExpression> windowExpressionPool
+            ObjectPool<WindowExpression> windowExpressionPool,
+            IntStack paramCountStack
     ) {
         this.activeRegistry = activeRegistry;
         this.shadowRegistry = shadowRegistry;
@@ -109,6 +108,7 @@ public class ExpressionParser {
         this.sqlParser = sqlParser;
         this.characterStore = characterStore;
         this.windowExpressionPool = windowExpressionPool;
+        this.paramCountStack = paramCountStack;
     }
 
     public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {
@@ -158,12 +158,6 @@ public class ExpressionParser {
         this.stopOnTopINOperator = stopOnTop;
     }
 
-    private static boolean cannotCastTo(int targetTag, boolean isFromNull) {
-        return (targetTag < ColumnType.BOOLEAN || targetTag > ColumnType.LONG256) &&
-                (!isFromNull || (targetTag != ColumnType.BINARY && targetTag != ColumnType.INTERVAL)) &&
-                !moreCastTargetTypes.contains(targetTag);
-    }
-
     private static boolean hasOffset(WindowExpression windowExpr) {
         int loKind = windowExpr.getRowsLoKind();
         int hiKind = windowExpr.getRowsHiKind();
@@ -174,6 +168,12 @@ public class ExpressionParser {
                     && windowExpr.getRowsHiExpr() != null;
         }
         return hasOffset;
+    }
+
+    private static boolean isValueListOwner(ExpressionNode node) {
+        return node.type == ExpressionNode.LITERAL
+                || node.type == ExpressionNode.MEMBER_ACCESS
+                || node.type == ExpressionNode.SET_OPERATION;
     }
 
     private static SqlException missingArgs(int position) {
@@ -284,7 +284,7 @@ public class ExpressionParser {
             return tok;
         }
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !Chars.isOnlyDecimals(tok)) { // ranges are checked later by FunctionParser.createConstant
+        if (tok == null || !Chars.isOnlyDecimals(tok)) { // ranges are checked later by FunctionResolver.createConstant
             throw SqlException.$(lexer.lastTokenPosition(), "missing bits size for GEOHASH constant");
         }
         opStack.push(expressionNodePool.next().of(
@@ -333,6 +333,11 @@ public class ExpressionParser {
             node.paramCount = 2;
         }
         opStack.push(node);
+    }
+
+    private boolean isColonColonOnTop() {
+        final ExpressionNode en = opStack.peek();
+        return en != null && SqlKeywords.isColonColon(en.token);
     }
 
     private boolean isCompletedOperand(int branchTag) {
@@ -406,6 +411,7 @@ public class ExpressionParser {
             if (exprStackUnwind) {
                 SqlKeywords.assertNameIsQuotedOrNotAKeyword(node.token, node.position);
             }
+            node.isQuoted = Chars.isQuoted(node.token);
             node.token = GenericLexer.unquote(node.token);
         }
         listener.onNode(node);
@@ -990,7 +996,6 @@ public class ExpressionParser {
 
     private int processPgTimestampCast(
             ExpressionParserListener listener,
-            boolean isCastingNull,
             CharSequence tok,
             int lastPos,
             int prevBranch,
@@ -1003,8 +1008,7 @@ public class ExpressionParser {
         // timestamp with time zone '2005-04-02 12:00:00-07'
 
         // validate type
-        final short columnType = ColumnType.tagOf(prevNode.token);
-        if (cannotCastTo(columnType, isCastingNull)) {
+        if (!SqlParser.isCastTarget(prevNode.token)) {
             throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
         }
         ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
@@ -1113,7 +1117,7 @@ public class ExpressionParser {
             char thisChar;
             int prevBranch = BRANCH_NONE;
             int thisBranch = BRANCH_NONE;
-            boolean isCastingNull = false;
+            int frameListPosition = -1;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
                 thisChar = tok.charAt(0);
@@ -1338,6 +1342,9 @@ public class ExpressionParser {
                         if (prevBranch == BRANCH_CONSTANT) {
                             throw SqlException.$(lastPos, "dangling expression");
                         }
+                        if (prevBranch == BRANCH_OPERATOR && isColonColonOnTop()) {
+                            throw SqlException.$(lastPos, "type definition is expected");
+                        }
 
                         thisBranch = BRANCH_LEFT_PARENTHESIS;
                         // entering parenthesised context, push stuff onto the stacks
@@ -1394,18 +1401,13 @@ public class ExpressionParser {
                                         continue;
                                     }
                                     if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {
-                                        // validate type
-                                        final short castAsTag = ColumnType.tagOf(node.token);
-                                        if ((cannotCastTo(castAsTag, isCastingNull)) ||
-                                                (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
-                                        ) {
-                                            throw SqlException.$(node.position, "unsupported cast");
-                                        }
+                                        SqlParser.normalizeCastType(node);
                                         node.type = ExpressionNode.CONSTANT;
                                     }
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
 
+                                final int listPosition = node.position;
                                 if (argStackDepthStack.notEmpty()) {
                                     argStackDepth += argStackDepthStack.pop();
                                 }
@@ -1414,6 +1416,12 @@ public class ExpressionParser {
                                 }
 
                                 node = opStack.peek();
+                                frameListPosition = localParamCount > 1
+                                        && (node == null || node.type == ExpressionNode.CONTROL && Chars.equals(node.token, '|'))
+                                        ? listPosition : -1;
+                                if (frameListPosition != -1 && !listener.isValueListAllowed()) {
+                                    throw SqlException.$(listPosition, "value list is not allowed here");
+                                }
                                 if (node == null) {
                                     break;
                                 }
@@ -1430,6 +1438,9 @@ public class ExpressionParser {
                                         }
                                     }
                                     throw SqlException.$(lastPos, "no function or operator?");
+                                }
+                                if (localParamCount > 1 && frameListPosition == -1 && !isValueListOwner(node)) {
+                                    throw SqlException.$(listPosition, "value list is not allowed here");
                                 }
 
                                 // Check for window function OVER clause (including IGNORE/RESPECT NULLS)
@@ -1570,10 +1581,7 @@ public class ExpressionParser {
                                 thisBranch = BRANCH_CAST_AS;
 
                                 // push existing args to the listener
-                                int nodeCount = 0;
                                 while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
-                                    nodeCount++;
-                                    isCastingNull = nodeCount == 1 && SqlKeywords.isNullKeyword(node.token);
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
                                 if (node != null) {
@@ -1665,6 +1673,15 @@ public class ExpressionParser {
                             betweenStartScopeDepth = scopeStack.size();
                         }
                         processDefaultBranch = true;
+                        break;
+                    case 'w':
+                    case 'W':
+                        if (prevBranch == BRANCH_LEFT_PARENTHESIS && SqlKeywords.isWithKeyword(tok)) {
+                            thisBranch = BRANCH_LAMBDA;
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
+                        } else {
+                            processDefaultBranch = true;
+                        }
                         break;
                     case 's':
                     case 'S':
@@ -1764,7 +1781,7 @@ public class ExpressionParser {
                                     break;
                                 } else {
                                     if (opStack.size() > 0 && prevBranch == BRANCH_LITERAL && thisChar == '\'') {
-                                        argStackDepth = processPgTimestampCast(listener, isCastingNull, tok, lastPos, prevBranch, argStackDepth);
+                                        argStackDepth = processPgTimestampCast(listener, tok, lastPos, prevBranch, argStackDepth);
                                         break;
                                     }
 
@@ -1844,6 +1861,9 @@ public class ExpressionParser {
                     OperatorExpression op;
                     if ((op = activeRegistry.map.get(tok)) != null && !(stopOnTopINOperator && op.operator == In && scopeStack.size() == 0)) {
 
+                        if (prevBranch == BRANCH_RIGHT_PARENTHESIS && frameListPosition != -1) {
+                            throw SqlException.$(frameListPosition, "value list is not allowed here");
+                        }
                         thisBranch = BRANCH_OPERATOR;
 
                         if (Chars.equals(tok, ":=")) {
@@ -2429,9 +2449,9 @@ public class ExpressionParser {
                 }
                 tok = SqlUtil.fetchNext(lexer);
 
-                int direction = IQueryModel.ORDER_DIRECTION_ASCENDING;
+                int direction = QueryModel.ORDER_DIRECTION_ASCENDING;
                 if (tok != null && SqlKeywords.isDescKeyword(tok)) {
-                    direction = IQueryModel.ORDER_DIRECTION_DESCENDING;
+                    direction = QueryModel.ORDER_DIRECTION_DESCENDING;
                     tok = SqlUtil.fetchNext(lexer);
                 } else if (tok != null && SqlKeywords.isAscKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
@@ -2628,16 +2648,11 @@ public class ExpressionParser {
         nonLiteralBranches.add(BRANCH_LAMBDA);
         nonLiteralBranches.add(BRANCH_ARRAY_TYPE_QUALIFIER_END);
         nonLiteralBranches.add(BRANCH_DECIMAL);
+        nonLiteralBranches.add(BRANCH_GEOHASH);
 
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);
         caseKeywords.put("else", IDX_ELSE);
-
-        moreCastTargetTypes.add(ColumnType.UUID);
-        moreCastTargetTypes.add(ColumnType.IPv4);
-        moreCastTargetTypes.add(ColumnType.VARCHAR);
-        moreCastTargetTypes.add(ColumnType.ARRAY);
-        moreCastTargetTypes.add(ColumnType.DECIMAL);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");

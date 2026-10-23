@@ -25,18 +25,24 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "<(DD)";
@@ -48,11 +54,16 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new FuncVV(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class FuncVV extends NegatableBooleanFunction implements BinaryFunction {
+    private static class FuncVV extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -63,10 +74,7 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final double l = left.getDouble(rec);
-            final double r = right.getDouble(rec);
-            final boolean eq = Numbers.equals(l, r);
-            return negated ? (eq || l > r) : (!eq && l < r);
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -80,7 +88,7 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -88,6 +96,13 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
+            final double l = left.getDouble(rec);
+            final double r = right.getDouble(rec);
+            final boolean eq = Numbers.equals(l, r);
+            return negated ? (eq || l > r) : (!eq && l < r);
         }
     }
 }

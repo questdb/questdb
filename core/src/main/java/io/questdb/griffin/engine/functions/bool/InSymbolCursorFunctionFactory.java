@@ -55,6 +55,11 @@ import io.questdb.std.str.StringSink;
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "in(KC)";
     }
@@ -75,6 +80,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 : ColumnType.NULL;
         if (ColumnType.isNull(zeroColumnType)) {
             if (valueFunction.isNullConstant()) {
+                Misc.freeObjList(args);
                 return BooleanConstant.TRUE;
             }
             final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);

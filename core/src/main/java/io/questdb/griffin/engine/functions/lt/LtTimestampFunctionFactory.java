@@ -33,12 +33,18 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
+import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtTimestampFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -51,6 +57,11 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -58,20 +69,27 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int leftType = ColumnType.getTimestampType(args.getQuick(0).getType());
-        int rightType = ColumnType.getTimestampType(args.getQuick(1).getType());
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
+        Function left = args.getQuick(0);
+        Function right = args.getQuick(1);
+        final int timestampType = ColumnType.getHigherPrecisionTimestampType(
+                ColumnType.getTimestampType(left.getType()),
+                ColumnType.getTimestampType(right.getType())
+        );
         assert ColumnType.isTimestamp(timestampType);
+        left = CastDateToTimestampFunctionFactory.toNanosOperand(left, timestampType);
+        right = CastDateToTimestampFunctionFactory.toNanosOperand(right, timestampType);
+        final int leftType = ColumnType.getTimestampType(left.getType());
+        final int rightType = ColumnType.getTimestampType(right.getType());
         if (leftType == rightType) {
-            return new Func(args.getQuick(0), args.getQuick(1));
+            return new Func(left, right);
         } else if (leftType != timestampType) {
-            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), leftType);
+            return new LeftConvertFunc(left, right, ColumnType.getTimestampDriver(timestampType), leftType);
         } else {
-            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), rightType);
+            return new RightConvertFunc(left, right, ColumnType.getTimestampDriver(timestampType), rightType);
         }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    private static class Func extends ComparisonFunction implements BinaryFunction {
         private final Function leftFunc;
         private final Function rightFunc;
 
@@ -82,11 +100,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    leftFunc.getTimestamp(rec),
-                    rightFunc.getTimestamp(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -100,7 +114,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (negated) {
                 sink.val(">=");
@@ -109,9 +123,17 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(rightFunc);
         }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    rightFunc.getTimestamp(rec),
+                    negated
+            );
+        }
     }
 
-    private static class LeftConvertFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class LeftConvertFunc extends ComparisonFunction implements BinaryFunction {
         private final Function leftFunc;
         private final Function rightFunc;
         protected TimestampDriver driver;
@@ -126,11 +148,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    driver.from(leftFunc.getTimestamp(rec), toTimestampType),
-                    rightFunc.getTimestamp(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -144,7 +162,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (negated) {
                 sink.val(">=");
@@ -153,9 +171,17 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(rightFunc);
         }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    driver.from(leftFunc.getTimestamp(rec), toTimestampType),
+                    rightFunc.getTimestamp(rec),
+                    negated
+            );
+        }
     }
 
-    private static class RightConvertFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class RightConvertFunc extends ComparisonFunction implements BinaryFunction {
         private final Function leftFunc;
         private final Function rightFunc;
         protected TimestampDriver driver;
@@ -170,11 +196,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    leftFunc.getTimestamp(rec),
-                    driver.from(rightFunc.getTimestamp(rec), toTimestampType),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -188,7 +210,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (negated) {
                 sink.val(">=");
@@ -196,6 +218,14 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(rightFunc);
+        }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    driver.from(rightFunc.getTimestamp(rec), toTimestampType),
+                    negated
+            );
         }
     }
 }

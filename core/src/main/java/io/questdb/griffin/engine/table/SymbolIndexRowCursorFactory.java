@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -36,6 +37,7 @@ import io.questdb.griffin.PlanSink;
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
+    private final ShiftedRowCursor shiftedCursor = new ShiftedRowCursor();
     private final Function symbolFunction;
     private int symbolKey;
 
@@ -59,8 +61,34 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
+        final IndexReader reader = pageFrame.getIndexReader(columnIndex, indexDirection);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        if (indexDirection == IndexReader.DIR_BACKWARD) {
+            return reader.getCursor(symbolKey, pageFrame.getIndexRowLo(), firstRow + indexShift);
+        }
+        return shiftedCursor.of(reader.getCursor(symbolKey, firstRow + indexShift, pageFrame.getIndexRowHi() - 1), firstRow - pageFrame.getPartitionLo());
+    }
+
+    @Override
     public Function getFunction() {
         return symbolFunction;
+    }
+
+    @Override
+    public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
+        final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.getRow(symbolKey, rowLo + indexShift, rowHi + indexShift, indexDirection, rowIndex) - indexShift;
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
+        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.countRows(symbolKey, rowLo + indexShift, rowHi + indexShift, maxCount);
     }
 
     public int getSymbolKey() {
@@ -70,14 +98,6 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     @Override
     public boolean isEntity() {
         return false;
-    }
-
-    // Stable within the execution iff the looked-up symbol key is: a null key function means the
-    // key was resolved to a compile-time constant (fully stable); otherwise a bind variable re-reads
-    // the same frozen snapshot (stable) while an rnd_* key is not.
-    @Override
-    public boolean isStableWithinExecution() {
-        return symbolFunction == null || symbolFunction.isStableWithinExecution();
     }
 
     @Override

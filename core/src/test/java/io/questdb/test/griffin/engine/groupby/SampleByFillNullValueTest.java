@@ -6,10 +6,18 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -28,13 +36,10 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNonePreservesDuplicateAggregateDedup() throws Exception {
-        // After rewriteSampleBy clears sampleBy, rewriteSelectClause0 re-exposes
-        // the rewritten fill list on groupByModel.sampleByFill so per-aggregate
-        // fill validation can run. The re-expose is skipped for FILL(NONE)
-        // because every aggregate's getSampleByFlags() includes
-        // SAMPLE_BY_FILL_NONE -- validation is a strict no-op -- and an
-        // unconditional re-expose would defeat detectDuplicateAggregates on the
-        // calendar-align path. This test pins the dedup: count(x) appears once
+        // FILL(NONE) keeps duplicate-aggregate deduplication: every aggregate's
+        // getSampleByFlags() includes SAMPLE_BY_FILL_NONE, so per-aggregate fill
+        // validation is a strict no-op and nothing needs one column per aggregate
+        // on the calendar-align path. This test pins the dedup: count(x) appears once
         // in the inner Async Group By, not twice.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
@@ -44,8 +49,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [ts]
-                                VirtualRecord
-                                  functions: [count,count,ts]
+                                SelectedRecord
                                     Async Group By workers: 1
                                       keys: [ts]
                                       keyFunctions: [timestamp_floor_utc('1h',ts)]
@@ -61,8 +65,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillNullDisablesDuplicateAggregateDedup() throws Exception {
         // Counter-test to testFillNonePreservesDuplicateAggregateDedup. With FILL(NULL)
-        // the fill-list propagation in rewriteSelectClause0 re-exposes the fill on
-        // groupByModel.sampleByFill, which gates off detectDuplicateAggregates. This is
+        // SampleByBinder keeps one column per aggregate, so duplicates are not deduplicated. This is
         // deliberate: per-column FILL(NULL) values must reach their own column, so
         // collapsing count(x), count(x) into one inner aggregate would silently drop the
         // second column's fill in cases like FILL(NULL, 0). The cost is that duplicate
@@ -76,27 +79,26 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [count(x),count(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [count(x),count(x)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
                             """);
         });
     }
 
     @Test
     public void testFillNullBucketBeforeQualifiedFloorKey() throws Exception {
-        // The table-qualified user floor stays a second TIMESTAMP group-by key after the
-        // bucket; the fill must key on the bucket and keep the 02:00 gap row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
@@ -115,12 +117,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketCastToLongUnderTimestampName() throws Exception {
-        // rewriteSampleBy moves the cast to a wrapper above the group-by; the LONG column
-        // named ts must not be taken for the bucket.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT ts::LONG AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             ts\tv
                             1704067200000000\t1.0
@@ -133,10 +134,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketWhenTimestampNamedLikeAggregate() throws Exception {
-        // The designated timestamp is named max, so max(v) carries the same token and
-        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
-        // column surfaces as max1 because of the pre-existing alias de-duplication; the
-        // test pins the gap row, not that name.
         assertMemoryLeak(() -> {
             createTimestampNamedMaxTable();
             assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(NULL)")
@@ -155,9 +152,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
-        // first(ts) AS ts takes the timestamp's name, so rewriteSampleBy names the bucket key
-        // ts1. generateFill must fill by the recorded bucket, not by the TIMESTAMP column
-        // that merely carries the name ts (#7838).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT first(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
@@ -175,8 +169,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketWhenOtherTimestampAliasedAsTimestamp() throws Exception {
-        // generateFill used to take first(ets) AS ts for the bucket and emit a 9-row cross
-        // product, even with assertions enabled (#7838).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT first(ets) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
@@ -194,13 +186,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketWhenQualifiedFloorAliasedAsTimestamp() throws Exception {
-        // The table-qualified user floor stays a second group-by key named ts; generateFill
-        // used to take it for the bucket and drop the 02:00 gap row (#7838).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT timestamp_floor('1d', t.ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
-                    .noRandomAccess()
+                    .timestamp("ts")
                     .returns("""
                             ts\tv
                             2024-01-01T00:00:00.000000Z\t1.0
@@ -212,17 +202,54 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketWhenQualifiedFloorSpansDays() throws Exception {
+        // A function of the table-qualified timestamp computes on the bucket, as its unqualified spelling does, so
+        // FILL emits one row per bucket and a bucket that an OFFSET starts on the previous day floors to that day.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (2.0, '2024-01-01T05:00:00.000000Z'),
+                        (3.0, '2024-01-02T01:00:00.000000Z'),
+                        (4.0, '2024-01-03T02:00:00.000000Z')""");
+            for (String timestamp : new String[]{"t.ts", "ts"}) {
+                assertQuery("SELECT ts, timestamp_floor('1d', " + timestamp + ") d, avg(val) v FROM t SAMPLE BY 12h FILL(NULL)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\td\tv
+                                2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.5
+                                2024-01-01T12:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                                2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t3.0
+                                2024-01-02T12:00:00.000000Z\t2024-01-02T00:00:00.000000Z\tnull
+                                2024-01-03T00:00:00.000000Z\t2024-01-03T00:00:00.000000Z\t4.0
+                                """);
+                assertQuery("SELECT ts, timestamp_floor('1d', " + timestamp + ") d, avg(val) v FROM t SAMPLE BY 12h FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '20:00'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\td\tv
+                                2023-12-31T20:00:00.000000Z\t2023-12-31T00:00:00.000000Z\t1.5
+                                2024-01-01T08:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                                2024-01-01T20:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3.0
+                                2024-01-02T08:00:00.000000Z\t2024-01-02T00:00:00.000000Z\tnull
+                                2024-01-02T20:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t4.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFillNullBucketKeyRenamedByAggregateAlias() throws Exception {
-        // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
-        // renames the bucket key to avg1. The 02:00 gap row proves generateFill found the
-        // renamed bucket. The column surfaces as avg1 instead of avg: that naming comes from
-        // the pre-existing key rename, not from fill, and this test does not endorse it.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1
+                            v\tavg
                             2.0\t2024-01-01T00:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z
                             7.0\t2024-01-01T03:00:00.000000Z
@@ -233,16 +260,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketKeyWithoutAliasCollision() throws Exception {
-        // Control for the chained-rename tests: the user floor over ets is aliased zz, so
-        // only the bucket is renamed (avg to avg1) and nothing collides with avg1. The
-        // fill keys on the bucket and treats the user floor as a second key: 4 buckets x
-        // the keys seen, with the real rows first under ORDER BY v and the gap rows after.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('1h', ets, null, '00:00', null) AS zz FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tzz
+                            v\tavg\tzz
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T05:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z
@@ -265,17 +288,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsConcatKey() throws Exception {
-        // avg(val) claims the alias avg, so the group-by model renames the bucket key to
-        // avg1 and then the concat key avg1 to avg11. The fill must stay on the bucket and
-        // key on the STRING column: every bucket gets a row per key, and the 02:00 gap
-        // gets both keys. The headers come from the alias de-duplication and this test
-        // does not endorse them.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\tax
                             4.0\t2024-01-01T01:00:00.000000Z\tbx
                             6.0\t2024-01-01T03:00:00.000000Z\tax
@@ -290,12 +308,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsStringKey() throws Exception {
-        // max(val) claims the alias max (the designated timestamp's own name), so the
-        // bucket key max is renamed max1 and the STRING key max1 is renamed max11. The
-        // fill must stay on the TIMESTAMP bucket and key on the STRING column. The row
-        // order follows the ORDER BY that rewriteSampleBy adds, which here resolves to the
-        // aggregate rather than the bucket; the headers come from the alias de-duplication.
-        // This test pins the rows, not the order's origin or the names.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tm2 (val DOUBLE, ets TIMESTAMP, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
             execute("""
@@ -304,15 +316,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                         (3.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:00:00.000000Z')""");
             assertQuery("SELECT max(val) * 2 AS v, max, ets::string AS max1 FROM tm2 SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
+                    .timestamp("max")
+                    .noRandomAccess()
                     .returns("""
-                            v\tmax1\tmax11
+                            v\tmax\tmax1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T05:00:00.000000Z
-                            6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
                             null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
                             null\t2024-01-01T01:00:00.000000Z\t2024-01-01T05:00:00.000000Z
                             null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
                             null\t2024-01-01T02:00:00.000000Z\t2024-01-01T05:00:00.000000Z
                             null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
                             null\t2024-01-01T03:00:00.000000Z\t2024-01-01T05:00:00.000000Z
                             """);
         });
@@ -320,15 +334,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsTwoArgFloorKey() throws Exception {
-        // The user key is a TIMESTAMP, a 2-argument timestamp_floor over ets with a 2h
-        // stride, aliased avg1 and renamed avg11 behind the renamed bucket avg1. The fill
-        // must stay on the bucket: 4 buckets x 2 keys, real rows first under ORDER BY v.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor('2h', ets) AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
@@ -343,15 +354,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsUpperCaseAliasKey() throws Exception {
-        // Same as the 2h user floor shape, with the user alias written AVG1. Alias
-        // collisions are case-insensitive, so the key is renamed AVG11 and the rows are
-        // identical to the lower-case spelling.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS AVG1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tAVG11
+                            v\tavg\tAVG1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
@@ -366,11 +374,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsUserFloorKey() throws Exception {
-        // The user key has the exact shape of the bucket key, a 5-argument
-        // timestamp_floor_utc, over ets instead of ts, and is TIMESTAMP-typed. It is
-        // aliased avg1 and renamed avg11 behind the renamed bucket avg1. The plan pins
-        // that the fill sorts on the bucket avg1 and keys on avg11; filling along ets
-        // would invent 2024-01-01T02:00 to 05:00 "buckets" and lose the real 02:00 gap.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('1h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
@@ -379,14 +382,14 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             Encode sort
                               keys: [v]
                                 VirtualRecord
-                                  functions: [avg*2,avg1,avg11]
+                                  functions: [avg2*2,avg,avg1]
                                     Sample By Fill
                                       stride: '1h'
                                       fill: null
                                         Encode sort light
-                                          keys: [avg1]
+                                          keys: [avg]
                                             Async Group By workers: 1
-                                              keys: [avg1,avg11]
+                                              keys: [avg,avg1]
                                               keyFunctions: [timestamp_floor_utc('1h',ts),timestamp_floor_utc('1h',ets)]
                                               values: [avg(val)]
                                               filter: null
@@ -395,7 +398,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                                     Frame forward scan on: t
                             """)
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T05:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             6.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z
@@ -418,29 +421,24 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameOnEmptyTable() throws Exception {
-        // The bucket lookup runs at compile time, so the chained-rename shape must compile
-        // and return only the header when the table holds no rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ets TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             """);
         });
     }
 
     @Test
     public void testFillNullBucketRenameTwiceWhenKeyPrecedesBucket() throws Exception {
-        // The concat key is listed first and takes avg1, then avg(val) takes avg, so the
-        // bucket itself is renamed to the next free sequence number, avg2. The rows are
-        // those of the forward column order with the columns reordered.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT concat(k, 'x') AS avg1, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            avg1\tv\tavg2
+                            avg1\tv\tavg
                             ax\t2.0\t2024-01-01T00:00:00.000000Z
                             bx\t4.0\t2024-01-01T01:00:00.000000Z
                             ax\t6.0\t2024-01-01T03:00:00.000000Z
@@ -455,14 +453,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameUnderOuterProjection() throws Exception {
-        // A plain SELECT * above the filled sub-query. The bucket must resolve on the
-        // inner group-by and the outer projection must pass the inner rows through.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT * FROM (SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v)")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\tax
                             4.0\t2024-01-01T01:00:00.000000Z\tbx
                             6.0\t2024-01-01T03:00:00.000000Z\tax
@@ -477,15 +473,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameWithTwoAggregates() throws Exception {
-        // Two aggregates are emitted, avg and sum; only avg collides with the bucket's
-        // alias. The extra aggregate must not change which column the fill keys on.
-        // Every bucket holds one row per key, so v and w agree row by row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, sum(val) * 2 AS w, ts AS avg, concat(k, 'x') AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tw\tavg1\tavg11
+                            v\tw\tavg\tavg1
                             2.0\t2.0\t2024-01-01T00:00:00.000000Z\tax
                             4.0\t4.0\t2024-01-01T01:00:00.000000Z\tbx
                             6.0\t6.0\t2024-01-01T03:00:00.000000Z\tax
@@ -500,14 +493,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullFromToBucketRenameKeepsUserFloorKey() throws Exception {
-        // FROM/TO pads the grid to 00:00 through 05:00 (6 buckets) around the renamed
-        // bucket avg1, with the 2h user floor over ets as the second key avg11.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
@@ -526,15 +517,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullTimeZoneBucketRenameKeepsUserFloorKey() throws Exception {
-        // Asia/Kathmandu is +05:45, so the hourly buckets sit at :15 UTC. The renamed
-        // bucket avg1 must carry that grid while the 2h user floor avg11 stays on the
-        // plain UTC grid.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Asia/Kathmandu' ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2023-12-31T23:15:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:15:00.000000Z\t2024-01-01T04:00:00.000000Z
                             6.0\t2024-01-01T02:15:00.000000Z\t2024-01-01T02:00:00.000000Z
@@ -551,13 +539,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueBucketRenameKeepsUserFloorKey() throws Exception {
-        // FILL(42) variant of the 2h user floor shape: gap rows carry 42 * 2 = 84.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(42) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
@@ -572,7 +559,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullFromToBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
-        // Same shape as the first(ts) AS ts case, with FROM/TO padding the range.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT first(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00Z' FILL(NULL)")
@@ -592,7 +578,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullJoinBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
-        // Same shape as the first(ts) AS ts case, over a join with table-qualified columns.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT first(t.ts) AS ts, avg(t.val) AS v FROM t JOIN (SELECT DISTINCT k FROM t) u ON t.k = u.k SAMPLE BY 1h FILL(NULL)")
@@ -610,7 +595,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullKeyedBucketWhenMaxTimestampAliasedAsTimestamp() throws Exception {
-        // Keyed variant: max(ts) AS ts must not be taken for the bucket.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT max(ts) AS ts, k, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
@@ -631,10 +615,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillNoneTwiceRejectedBeforeOwnershipCheck() throws Exception {
-        // An all-NONE fill list carries no ownership signal on the group-by model, so
-        // generateFill runs its FILL(NONE) validation before the ownership check. This
-        // keeps FILL(NONE, NONE) rejected on the fast path, like the legacy path does.
+    public void testFillNoneTwiceRejected() throws Exception {
+        // A fill list of two or more values plans a fill even when every value is NONE,
+        // so SampleByBinder validates the list and rejects NONE among other values.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT ts, avg(val) AS a, sum(val) AS s FROM t SAMPLE BY 1h FILL(NONE, NONE)")
@@ -645,8 +628,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullOuterAggregateAndFloorDoesNotRefill() throws Exception {
-        // The outer GROUP BY aggregates the inner bucket under the timestamp's own name
-        // and floors it again; neither output column is a bucket this group-by owns.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -666,10 +647,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullOuterBucketShapedFloorDoesNotRefill() throws Exception {
-        // The outer key has the exact shape of the optimizer's own bucket key
-        // (5-argument timestamp_floor_utc) and even reuses the alias ts. Only the
-        // ownership signal that rewriteSelectClause0 maintains tells generateFill
-        // that the inner fill is not this group-by's.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -689,10 +666,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullOuterBucketShapedFloorSameStrideDoesNotRefill() throws Exception {
-        // Same shape with the inner bucket's own stride, so the outer key is structurally
-        // identical to the node that rewriteSampleBy recorded. Only node identity tells
-        // the two apart: a structural match would hand the inner fill to the outer
-        // GROUP BY and re-insert the filtered 02:00 gap row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -736,11 +709,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillNullOuterGroupByDoesNotRefill() throws Exception {
         // An outer GROUP BY over a SAMPLE BY ... FILL sub-query must not re-apply the
-        // inner fill. SqlOptimiser.rewriteSelectClause0 exposes the fill only on the
-        // group-by whose own base model carries it, and generateFill returns the plain
-        // group-by factory when that list is empty. Before, generateFill walked into
-        // the inner model, found its fill, matched the outer ts by name and stacked a
-        // second Sample By Fill on the outer GROUP BY (16 rows instead of 4).
+        // inner fill: AggregateBinder plans a fill only for the query block whose source
+        // carries the SAMPLE BY, so the outer GROUP BY gets none (4 rows, not 16).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -805,9 +775,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullOuterGroupByOverJoinFillDoesNotRefill() throws Exception {
-        // With a JOIN the fill parameters sit two models below the inner group-by
-        // (GROUP BY, CHOOSE, base). The downward walk still reaches them from the
-        // outer GROUP BY; the ownership check must keep the outer query empty-handed.
+        // The same with a JOIN under the inner SAMPLE BY: the fill stays with the
+        // inner query block, and the outer GROUP BY fills nothing.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -905,8 +874,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullOuterTimestampFloorDoesNotRefill() throws Exception {
-        // The outer key is a 2-argument timestamp_floor, not the rewrite's bucket key;
-        // the outer query owns no fill and must not re-insert a 01:00 row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -1189,6 +1156,210 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullDstBerlinSpringForwardDayStrideWithOffsetInGap() throws Exception {
+        // OFFSET '02:00' puts the Mar 28 grid line in the DST gap, so timestamp_floor_utc
+        // starts that bucket at 01:00Z (03:00 CEST): 23 h after the Mar 27 bucket and
+        // 23 h before the Mar 29 bucket at 00:00Z (02:00 CEST).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-03-26T12:00:00.000000Z'),
+                    (2.0, '2021-03-28T12:00:00.000000Z'),
+                    (3.0, '2021-03-30T12:00:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-03-26T01:00:00.000000Z
+                            null\t2021-03-27T01:00:00.000000Z
+                            2.0\t2021-03-28T01:00:00.000000Z
+                            null\t2021-03-29T00:00:00.000000Z
+                            3.0\t2021-03-30T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinSpringForwardDayStrideWithOffsetInGapKeyed() throws Exception {
+        // Keyed mirror of testFillNullDstBerlinSpringForwardDayStrideWithOffsetInGap. // ORDER BY-safe
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1.0, '2021-03-26T12:00:00.000000Z'),
+                    ('b', 2.0, '2021-03-28T12:00:00.000000Z'),
+                    ('a', 3.0, '2021-03-30T12:00:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT ts, k, sum(val) s FROM x
+                        SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'
+                    ) ORDER BY ts, k""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\ts
+                            2021-03-26T01:00:00.000000Z\ta\t1.0
+                            2021-03-26T01:00:00.000000Z\tb\tnull
+                            2021-03-27T01:00:00.000000Z\ta\tnull
+                            2021-03-27T01:00:00.000000Z\tb\tnull
+                            2021-03-28T01:00:00.000000Z\ta\tnull
+                            2021-03-28T01:00:00.000000Z\tb\t2.0
+                            2021-03-29T00:00:00.000000Z\ta\tnull
+                            2021-03-29T00:00:00.000000Z\tb\tnull
+                            2021-03-30T00:00:00.000000Z\ta\t3.0
+                            2021-03-30T00:00:00.000000Z\tb\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinFallBackDayStrideWithOffsetInOverlap() throws Exception {
+        // OFFSET '02:00' puts the Oct 31 grid line in the DST overlap, which local
+        // 02:00 enters twice. The bucket starts at the first 02:00 (00:00Z, CEST) and
+        // lasts 25 hours.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-10-29T12:00:00.000000Z'),
+                    (2.0, '2021-10-31T12:00:00.000000Z'),
+                    (3.0, '2021-11-02T12:00:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-10-29T00:00:00.000000Z
+                            null\t2021-10-30T00:00:00.000000Z
+                            2.0\t2021-10-31T00:00:00.000000Z
+                            null\t2021-11-01T01:00:00.000000Z
+                            3.0\t2021-11-02T01:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstHavanaSpringForwardDayStrideFirstBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-03-14T06:00:00.000000Z'),
+                    (2.0, '2021-03-16T12:00:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/Havana'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-03-14T05:00:00.000000Z
+                            null\t2021-03-15T04:00:00.000000Z
+                            2.0\t2021-03-16T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstMatchesNonFillBuckets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dense AS (
+                        SELECT x::DOUBLE v, ('2021-01-01'::TIMESTAMP + (x - 1) * 900_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(35_040)
+                    ) TIMESTAMP(ts) PARTITION BY MONTH""");
+            execute("CREATE TABLE sparse AS (SELECT * FROM dense WHERE v::LONG % 83 = 0 OR v::LONG % 1009 < 4) TIMESTAMP(ts) PARTITION BY MONTH");
+            final String[] zones = {"Europe/Berlin", "America/New_York", "Australia/Sydney", "America/Havana", "America/Santiago", "Australia/Lord_Howe"};
+            final String[] strides = {"1d", "1h", "30m"};
+            final String[] offsets = {"", " WITH OFFSET '02:00'", " WITH OFFSET '-01:00'"};
+            final long yearEnd = MicrosFormatUtils.parseTimestamp("2021-12-25T00:00:00.000000Z");
+            final StringSink lo = new StringSink();
+            final StringSink hi = new StringSink();
+            final StringSink expected = new StringSink();
+            for (String zone : zones) {
+                final TimeZoneRules rules = Micros.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+                long transition = rules.getNextDST(MicrosFormatUtils.parseTimestamp("2021-01-05T00:00:00.000000Z"));
+                for (; transition < yearEnd; transition = rules.getNextDST(transition)) {
+                    lo.clear();
+                    hi.clear();
+                    MicrosFormatUtils.appendDateTimeUSec(lo, transition - 3 * Micros.DAY_MICROS);
+                    MicrosFormatUtils.appendDateTimeUSec(hi, transition + 3 * Micros.DAY_MICROS);
+                    for (String stride : strides) {
+                        for (String offset : offsets) {
+                            final String align = " ALIGN TO CALENDAR TIME ZONE '" + zone + "'" + offset;
+                            final String window = " WHERE ts >= '" + lo + "' AND ts < '" + hi + "' SAMPLE BY " + stride;
+                            final String range = " SAMPLE BY " + stride + " FROM '" + lo + "' TO '" + hi + "'";
+                            assertMatchesNonFillBuckets(window, align, true, expected);
+                            assertMatchesNonFillBuckets(range, align, false, expected);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFillNullNegativeOffsetMonthKeyed() throws Exception {
+        // A negative OFFSET starts each month at 23:00 on the previous day. // ORDER BY-safe
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1.0, '2021-01-15T12:00:00.000000Z'),
+                    ('b', 2.0, '2021-03-15T12:00:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT ts, k, sum(val) s FROM x SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'
+                    ) ORDER BY ts, k""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\ts
+                            2020-12-31T23:00:00.000000Z\ta\t1.0
+                            2020-12-31T23:00:00.000000Z\tb\tnull
+                            2021-01-31T23:00:00.000000Z\ta\tnull
+                            2021-01-31T23:00:00.000000Z\tb\tnull
+                            2021-02-28T23:00:00.000000Z\ta\tnull
+                            2021-02-28T23:00:00.000000Z\tb\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullNegativeOffsetMonthYearMatchesNonFillBuckets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dense AS (
+                        SELECT x::DOUBLE v, ('2019-01-01'::TIMESTAMP + (x - 1) * 21_600_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(7_300)
+                    ) TIMESTAMP(ts) PARTITION BY MONTH""");
+            execute("""
+                    CREATE TABLE sparse AS (
+                        SELECT * FROM dense WHERE v::LONG % 211 = 0 AND (ts < '2021-01-01' OR ts >= '2022-01-01')
+                    ) TIMESTAMP(ts) PARTITION BY MONTH""");
+            final StringSink expected = new StringSink();
+            for (String stride : new String[]{"1M", "1y"}) {
+                for (String zone : new String[]{"", " TIME ZONE 'Europe/Berlin'"}) {
+                    for (String offset : new String[]{" WITH OFFSET '-01:00'", " WITH OFFSET '-00:30'", " WITH OFFSET '02:00'", ""}) {
+                        assertMatchesNonFillBuckets(" SAMPLE BY " + stride, " ALIGN TO CALENDAR" + zone + offset, true, expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFillNullDstBerlinDayStrideWithFromOnDstBoundary() throws Exception {
         // Berlin spring-forward day as the FROM anchor. Local 02:00 CET ->
         // 03:00 CEST on 2024-03-31, so the Mar 31 bucket is 23 h wide:
@@ -1355,11 +1526,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     public void testFillNullDstNewYorkMonthStrideAcrossSpringForward() throws Exception {
         // NY + 1M + FROM='2024-03-01'. Buckets anchor at the first day of
         // each local month. Mar 1 local = 2024-03-01T05:00Z (EST). Apr 1
-        // local = 2024-04-01T04:00Z (EDT, after spring-forward). The
-        // resultTzOff re-derivation in the wrap's offsetFlooredUtcResult
-        // kicks in here: the floor result lands at Apr 1 local 00:00,
-        // tzRules at 2024-04-01T00:00Z says EDT so the back-conversion
-        // subtracts 4 h instead of 5 h.
+        // local = 2024-04-01T04:00Z (EDT, after spring-forward): the grid
+        // line converts back with the offset in effect at the line.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
             execute("INSERT INTO x VALUES " +
@@ -1548,7 +1716,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // 2024-01-01T00:00Z, 02T, 03T -- one tzOff ahead of GROUP BY's
         // TZ-shifted grid. Post-fix: routes through the wrap with
         // setLocalAnchor, emitting 22:00Z prev day each day matching
-        // timestamp_floor_utc.
+        // timestamp_floor_utc, up to TO at 2024-01-03T22:00Z.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
@@ -1561,7 +1729,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             null\t2023-12-31T22:00:00.000000Z
                             null\t2024-01-01T22:00:00.000000Z
                             null\t2024-01-02T22:00:00.000000Z
-                            null\t2024-01-03T22:00:00.000000Z
                             """);
         });
     }
@@ -1640,6 +1807,57 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             1.0\t2024-01-02T05:00:00.000000Z
                             null\t2024-01-03T05:00:00.000000Z
                             3.0\t2024-01-04T05:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneDayStrideToBoundEast() throws Exception {
+        // TO is local time: the range ends at 2021-12-04 00:00 CET (12-03T23:00Z), so no
+        // bucket starts at TO, and the row after TO does not turn its bucket into a gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-12-02T12:00:00.000000Z'),
+                    (2.0, '2021-12-03T23:30:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2021-12-01' TO '2021-12-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            null\t2021-11-30T23:00:00.000000Z
+                            1.0\t2021-12-01T23:00:00.000000Z
+                            null\t2021-12-02T23:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneDayStrideToBoundWest() throws Exception {
+        // TO is local time: the range ends at 2021-12-04 00:00 EST (12-04T05:00Z), so the
+        // bucket at 12-04T04:00Z (12-03 23:00 EST) keeps the row before TO.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-12-02T12:00:00.000000Z'),
+                    (2.0, '2021-12-04T04:30:00.000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2021-12-01' TO '2021-12-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '-01:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tts
+                            null\t2021-12-01T04:00:00.000000Z
+                            1.0\t2021-12-02T04:00:00.000000Z
+                            null\t2021-12-03T04:00:00.000000Z
+                            2.0\t2021-12-04T04:00:00.000000Z
                             """);
         });
     }
@@ -2120,8 +2338,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // Guard against factoryColToUserFillIdx mis-mapping when two SELECT columns
         // share an alias: groupByMetadata.getColumnIndexQuiet() returns the first
         // match, so a non-rejection here would silently route one aggregate onto
-        // the wrong fill slot. The SqlOptimiser rejects duplicate aliases up front
-        // (SqlOptimiser#Duplicate column), and this test locks that rejection in
+        // the wrong fill slot. SqlBinder rejects duplicate aliases up front
+        // ("Duplicate column"), and this test locks that rejection in
         // place for FILL-bearing SAMPLE BY queries.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2273,21 +2491,22 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              range: ('2024-01-01',)
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  range: ('2024-01-01',)
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [first(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                          values: [first(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: x
+                                                  intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
                             """);
         });
     }
@@ -2613,7 +2832,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // the same compiled factory with a different bind value must rebind
         // TimezoneFloorTimestampSampler's tz rules so the cursor's grid follows
         // the current bind. The pre-fix code resolved tz once in
-        // SqlCodeGenerator.generateFill and baked the resulting TimeZoneRules
+        // SampleByFactoryGenerator.generateFill and baked the resulting TimeZoneRules
         // into a final field, silently reusing the first-execute rules on
         // every subsequent execution. This test pins the contract: each
         // execute lands its own buckets.
@@ -2789,8 +3008,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueAppliesAfterAggregateArithmetic() throws Exception {
-        // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Earlier
-        // SqlOptimiser.rewriteAggregate split sum(x*10) into sum(x)*10, so the fill
+        // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Sum normalisation
+        // (now AggregateRewrite) used to split sum(x*10) into sum(x)*10, so the fill
         // landed on sum(x) and empty buckets returned 420. Coverage: ALIGN TO CALENDAR
         // and ALIGN TO FIRST OBSERVATION, each in non-keyed and keyed form.
         assertMemoryLeak(() -> {
@@ -2948,7 +3167,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     public void testFillValuePerColumnPreservedAcrossDuplicates() throws Exception {
         // FILL(0, 42) over duplicate aggregates must apply 0 to the first column and
         // 42 to the second. Before fill-list propagation reached groupByModel.sampleByFill
-        // on the calendar-align path, SqlOptimiser.detectDuplicateAggregates collapsed
+        // on the calendar-align path, duplicate-aggregate detection collapsed
         // sum(x) AS a and sum(x) AS b into a single inner aggregate and codegen mapped
         // the FILL list against the collapsed count, silently dropping the 42.
         // Coverage: ALIGN TO CALENDAR and ALIGN TO FIRST OBSERVATION, each in non-keyed
@@ -3008,19 +3227,20 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL(0.0) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [first(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
@@ -3076,9 +3296,34 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         });
     }
 
-    // Fixture for the #7838 bucket shapes: ets is a second TIMESTAMP column whose values
-    // differ from ts, and 02:00 is the only gap in the 1h grid. SampleByFillPrevTest
-    // shares it.
+    private void assertMatchesNonFillBuckets(String sampleBy, String align, boolean isClippedToRows, StringSink expected) throws Exception {
+        final String sparse = "SELECT ts, count() c, sum(v) s FROM sparse" + sampleBy;
+        expected.clear();
+        if (isClippedToRows) {
+            // Without FROM/TO the fill spans the buckets from the first to the last row.
+            try (
+                    RecordCursorFactory factory = select("SELECT min(ts), max(ts) FROM (" + sparse + align + ")");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                expected.put(" WHERE g.ts BETWEEN '");
+                MicrosFormatUtils.appendDateTimeUSec(expected, cursor.getRecord().getTimestamp(0));
+                expected.put("' AND '");
+                MicrosFormatUtils.appendDateTimeUSec(expected, cursor.getRecord().getTimestamp(1));
+                expected.put('\'');
+            }
+        }
+        final String bounds = expected.toString();
+        expected.clear();
+        printSql("SELECT g.ts ts, r.c c, r.s s FROM (SELECT ts, count() c FROM dense" + sampleBy + align + ") g"
+                + " LEFT JOIN (" + sparse + align + ") r ON g.ts = r.ts" + bounds + " ORDER BY g.ts", expected);
+        assertQuery(sparse + " FILL(NULL)" + align)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+    }
+
     static void createBucketAliasTable() throws SqlException {
         execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ets TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
@@ -3089,8 +3334,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     ('b', 4.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:30:00.000000Z')""");
     }
 
-    // Fixture whose designated timestamp is named max, so max(v) carries the same token
-    // and rewriteSampleBy puts its bucket on the explicit GROUP BY list.
     static void createTimestampNamedMaxTable() throws SqlException {
         execute("CREATE TABLE m (v DOUBLE, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
         execute("""

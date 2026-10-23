@@ -47,31 +47,29 @@ public class HashJoinGroupByPushdownTest extends AbstractCairoTest {
             """;
 
     @Test
-    public void testInnerJoinOnConjunctOfRightJoinPreservedSideStaysAboveJoin() throws Exception {
+    public void testInnerJoinOnConjunctReachesRightJoinPreservedInput() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             for (boolean isFusedEnabled : new boolean[]{true, false}) {
                 sqlExecutionContext.setParallelHashJoinGroupByEnabled(isFusedEnabled);
                 try {
-                    // assignFilters() reaches the conjunct with innerPredicate set, so the RIGHT join
-                    // does not admit it below itself, and b's scan runs without a filter.
+                    // The later INNER predicate can filter the RIGHT join's preserved input.
                     assertQuery(CHAIN + "b.x > 0 ORDER BY bk")
                             .noLeakCheck()
-                            .withPlanContaining("Filter filter: 0<b.x", "Hash Right Outer Join Light")
-                            .withPlanNotContaining("filter: 0<x", "Hash Join Group By")
+                            .withPlanContaining("filter: 0<x", "Hash Right Outer Join Light")
+                            .withPlanNotContaining("Filter filter: 0<b.x", "Hash Join Group By")
                             .returns(POSITIVE);
                     // A sub-query side takes the same route.
                     assertQuery(CHAIN_OVER_SUB_QUERY + "b.x > 0 ORDER BY bk")
                             .noLeakCheck()
-                            .withPlanContaining("Filter filter: 0<b.x", "Hash Right Outer Join Light")
-                            .withPlanNotContaining("filter: 0<x", "Hash Join Group By")
+                            .withPlanContaining("filter: 0<x", "Hash Right Outer Join Light")
+                            .withPlanNotContaining("Filter filter: 0<b.x", "Hash Join Group By")
                             .returns(POSITIVE);
-                    // An equality of two columns of the side, and one with a constant, enter through
-                    // analyseEquals() and still reach assignFilters() as ON conjuncts.
+                    // Column and constant equalities follow the same pushdown rule.
                     assertQuery(CHAIN + "b.x = b.y ORDER BY bk")
                             .noLeakCheck()
-                            .withPlanContaining("Filter filter: b.x=b.y")
-                            .withPlanNotContaining("filter: x=y", "Hash Join Group By")
+                            .withPlanContaining("filter: x=y")
+                            .withPlanNotContaining("Filter filter: b.x=b.y", "Hash Join Group By")
                             .returns("""
                                     ak\tbk\tx\tck
                                     1\t1\t100\t1
@@ -79,17 +77,17 @@ public class HashJoinGroupByPushdownTest extends AbstractCairoTest {
                                     """);
                     assertQuery(CHAIN + "b.x = 400 ORDER BY bk")
                             .noLeakCheck()
-                            .withPlanContaining("Filter filter: b.x=400")
-                            .withPlanNotContaining("filter: x=400", "Hash Join Group By")
+                            .withPlanContaining("filter: x=400")
+                            .withPlanNotContaining("Filter filter: b.x=400", "Hash Join Group By")
                             .returns("""
                                     ak\tbk\tx\tck
                                     null\t4\t400\t4
                                     """);
-                    // A predicate on b's designated timestamp stays a filter, not an interval scan.
+                    // The preserved timestamp predicate becomes an interval scan.
                     assertQuery(CHAIN + "b.ts >= '2024-01-03' ORDER BY bk")
                             .noLeakCheck()
-                            .withPlanContaining("Filter filter: b.ts>=2024-01-03T00:00:00.000000Z")
-                            .withPlanNotContaining("Interval forward scan on: b", "Hash Join Group By")
+                            .withPlanContaining("Interval forward scan on: b")
+                            .withPlanNotContaining("Filter filter: b.ts>=", "Hash Join Group By")
                             .returns("""
                                     ak\tbk\tx\tck
                                     null\t3\t300\t3
@@ -99,8 +97,8 @@ public class HashJoinGroupByPushdownTest extends AbstractCairoTest {
                     assertQuery(GROUPED_CHAIN + "b.x > 0 ORDER BY b.k")
                             .noLeakCheck()
                             .expectSize()
-                            .withPlanContaining("Filter filter: 0<b.x")
-                            .withPlanNotContaining("filter: 0<x", "Hash Join Group By")
+                            .withPlanContaining("filter: 0<x")
+                            .withPlanNotContaining("Filter filter: 0<b.x", "Hash Join Group By")
                             .returns("""
                                     k\tn\tw
                                     1\t1\t1000

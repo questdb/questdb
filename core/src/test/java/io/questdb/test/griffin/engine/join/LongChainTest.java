@@ -205,6 +205,75 @@ public class LongChainTest {
         });
     }
 
+    @Test
+    public void testRemainingAndSkip() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(64, 16, true)) {
+                chain.reopen();
+                int a = -1;
+                int b = -1;
+                for (int i = 0; i < 5; i++) {
+                    a = chain.put(i, a);
+                    if (i < 2) {
+                        b = chain.put(100 + i, b);
+                    }
+                }
+                LongChain.Cursor cursor = chain.getCursor(a);
+                Assert.assertEquals(5, cursor.remaining());
+                Assert.assertEquals(4, cursor.next());
+                Assert.assertEquals(4, cursor.remaining());
+                Assert.assertEquals(2, cursor.skip(2));
+                Assert.assertEquals(2, cursor.remaining());
+                Assert.assertEquals(1, cursor.next());
+                Assert.assertEquals(1, cursor.remaining());
+                Assert.assertEquals(1, cursor.skip(10));
+                Assert.assertFalse(cursor.hasNext());
+                Assert.assertEquals(0, cursor.remaining());
+                Assert.assertEquals(0, cursor.skip(1));
+
+                cursor = chain.getCursor(b);
+                Assert.assertEquals(0, cursor.skip(0));
+                Assert.assertEquals(2, cursor.skip(10));
+                Assert.assertFalse(cursor.hasNext());
+
+                // the heap reuses the position of the last value of chain a for a chain of another length
+                Assert.assertEquals(5, chain.getCursor(a).remaining());
+                chain.clear();
+                Assert.assertEquals(a, putLinkedEvery(chain, 7, 1));
+                cursor = chain.getCursor(a);
+                Assert.assertEquals(7, cursor.remaining());
+                Assert.assertEquals(7, cursor.skip(7));
+                Assert.assertFalse(cursor.hasNext());
+
+                Assert.assertEquals(7, chain.getCursor(a).remaining());
+                chain.close();
+                chain.reopen();
+                Assert.assertEquals(a, putLinkedEvery(chain, 7, 2));
+                cursor = chain.getCursor(a);
+                Assert.assertEquals(4, cursor.skip(4));
+                Assert.assertFalse(cursor.hasNext());
+                Assert.assertEquals(4, chain.getCursor(a).remaining());
+            }
+        });
+    }
+
+    /**
+     * Puts {@code count} values, linking every {@code step}-th value to the previous {@code step}-th one.
+     *
+     * @return the offset of the last value
+     */
+    private static int putLinkedEvery(LongChain chain, int count, int step) {
+        int tail = -1;
+        int offset = -1;
+        for (int i = 0; i < count; i++) {
+            offset = chain.put(i, i % step == 0 ? tail : -1);
+            if (i % step == 0) {
+                tail = offset;
+            }
+        }
+        return offset;
+    }
+
     private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
         int tail = -1;
         for (int i = 0; i < 1000; i++) {

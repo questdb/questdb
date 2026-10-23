@@ -24,12 +24,17 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -37,6 +42,42 @@ import org.junit.Test;
 
 public class AsyncFilterAtomTest extends AbstractCairoTest {
     private static final int SLOT_COUNT = 2;
+
+    @Test
+    public void testClearNotifiesEveryFilterWhenOneFails() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024L);
+            final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                    sqlExecutionContext.getSecurityContext(),
+                    1L,
+                    MemoryTrackerWorkload.QUERY
+            );
+            final CursorClosedFilter ownerFilter = new CursorClosedFilter("owner failure");
+            final CursorClosedFilter failingWorkerFilter = new CursorClosedFilter("worker failure");
+            final CursorClosedFilter workerFilter = new CursorClosedFilter(null);
+            final ObjList<Function> perWorkerFilters = new ObjList<>();
+            perWorkerFilters.add(failingWorkerFilter);
+            perWorkerFilters.add(workerFilter);
+            final AsyncFilterAtom atom = newAtom(ownerFilter, perWorkerFilters);
+            sqlExecutionContext.setMemoryTracker(tracker);
+            try {
+                atom.init(null, sqlExecutionContext);
+                Assert.assertSame(tracker, atom.getMemoryTracker());
+                final RuntimeException e = Assert.assertThrows(RuntimeException.class, atom::clear);
+                Assert.assertSame(ownerFilter.failure, e);
+                Assert.assertEquals(1, e.getSuppressed().length);
+                Assert.assertSame(failingWorkerFilter.failure, e.getSuppressed()[0]);
+                Assert.assertEquals(1, ownerFilter.cursorClosedCount);
+                Assert.assertEquals(1, failingWorkerFilter.cursorClosedCount);
+                Assert.assertEquals(1, workerFilter.cursorClosedCount);
+                Assert.assertNull("clear() must release the query tracker after a failed notification", atom.getMemoryTracker());
+            } finally {
+                sqlExecutionContext.setMemoryTracker(null);
+                tracker.close();
+                atom.close();
+            }
+        });
+    }
 
     @Test
     public void testPerWorkerFiltersUseSlotStatistics() {
@@ -80,13 +121,17 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
     }
 
     private AsyncFilterAtom newAtom(ObjList<Function> perWorkerFilters) {
+        return newAtom(BooleanConstant.TRUE, perWorkerFilters);
+    }
+
+    private AsyncFilterAtom newAtom(Function filter, ObjList<Function> perWorkerFilters) {
         final IntHashSet filterColumns = new IntHashSet();
         filterColumns.add(0);
         final IntList columnTypes = new IntList();
         columnTypes.add(0);
         return new AsyncFilterAtom(
                 configuration,
-                BooleanConstant.TRUE,
+                filter,
                 filterColumns,
                 perWorkerFilters,
                 columnTypes,
@@ -100,5 +145,27 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
             perWorkerFilters.add(BooleanConstant.TRUE);
         }
         return newAtom(perWorkerFilters);
+    }
+
+    private static class CursorClosedFilter extends BooleanFunction {
+        private final RuntimeException failure;
+        private int cursorClosedCount;
+
+        private CursorClosedFilter(String failureMessage) {
+            this.failure = failureMessage != null ? new RuntimeException(failureMessage) : null;
+        }
+
+        @Override
+        public void cursorClosed() {
+            cursorClosedCount++;
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return true;
+        }
     }
 }

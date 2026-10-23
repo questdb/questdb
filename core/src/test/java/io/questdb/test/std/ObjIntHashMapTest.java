@@ -60,4 +60,29 @@ public class ObjIntHashMapTest {
         ObjIntHashMap<Class<?>> map = new ObjIntHashMap<>();
         Assert.assertEquals(-1, map.get(Object.class));
     }
+
+    @Test
+    public void testClearAndReuse() {
+        final ObjIntHashMap<String> map = new ObjIntHashMap<>();
+        for (int i = 0; i < 100; i++) {
+            map.put("k" + i, i);
+        }
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(-1, map.get("k1"));
+        Assert.assertFalse(map.iterator().hasNext());
+
+        map.put("k1", 10);
+        map.put("k2", 20);
+        final ObjIntHashMap<String> copy = new ObjIntHashMap<>();
+        copy.putAll(map);
+        Assert.assertEquals(2, copy.size());
+        Assert.assertEquals(10, copy.get("k1"));
+        Assert.assertEquals(20, copy.get("k2"));
+        int sum = 0;
+        for (ObjIntHashMap.Entry<String> e : copy) {
+            sum += e.value;
+        }
+        Assert.assertEquals(30, sum);
+    }
 }

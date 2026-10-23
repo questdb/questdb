@@ -49,6 +49,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         // this is probably a special case factory
         // NaN is always a double, so this could lead comparisons of all primitive types

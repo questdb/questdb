@@ -308,6 +308,333 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumNormalisationAfterSumReadOnlyInsideExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT sum(x + 1) * 2 a, sum(x + 2) b FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [sum*2,sum1+COUNT*2]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [sum(x+1),sum(x),count(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            a\tb
+                            22\t14
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationCountsRowsOfByteColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT sum(b + 1), sum(b * 2), sum(2 - b), count() FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [sum+count*1,sum*2,count*2-sum,count]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [sum(b),count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            sum\tsum1\tsum2\tcount
+                            20\t30\t-5\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationKeepsSumReadInsideExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT sum(x + 1) s, sum(x + 1) * 2 d FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [sum+COUNT*1,s*2]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [sum(x+1),sum(x),count(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            s\td
+                            11\t22
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationInsideCorrelatedLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k SYMBOL, x INT)");
+            execute("INSERT INTO tab VALUES ('a', 1), ('a', null), ('b', 3), ('b', 4), ('c', null)");
+            assertQuery("SELECT t1.k, l.s FROM tab t1 JOIN LATERAL (SELECT sum(x + 1) AS s FROM tab t2 WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [k]
+                                VirtualRecord
+                                  functions: [t1.k,l.__qdb_count_carrier__0+coalesce(l.__qdb_count_carrier__1,0)*1]
+                                    Hash Left Outer Join Light
+                                      condition: l.__qdb_outer_ref__0_k=t1.k
+                                      symbolKeyJoin: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            VirtualRecord
+                                              functions: [__qdb_outer_ref__0_k,sum,COUNT]
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [sum(x),count(x)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            k\ts
+                            a\t2
+                            a\t2
+                            b\t9
+                            b\t9
+                            c\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationNamesReuseRenamedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (x INT, y INT, z INT)");
+            execute("INSERT INTO tab VALUES (1, 2, 3), (null, 4, null)");
+            assertQuery("SELECT count() COUNT, sum(x + 1) a, sum(y + 1) sum1, sum(z - 1) b, sum(y * 2) Sum2 FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [COUNT,sum+COUNT1*1,sum2+COUNT2*1,sum1-COUNT3*1,sum2*2]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [count(*),sum(x),sum(y),sum(z),count(x),count(y),count(z)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            COUNT\ta\tsum1\tb\tSum2
+                            2\t2\t8\t2\t12
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationReusesLaterColumnSum() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT sum(x + 1) a, sum(x) b FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [b+COUNT*1,b]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [sum(x),count(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            a\tb
+                            11\t8
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationSharesSumAndCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT sum(x + 1), sum(2 - x), sum(x * 3), sum(x - 4), sum(3 * x) FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [sum+COUNT*1,COUNT*2-sum,sum*3,sum-COUNT*4,3*sum]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [sum(x),count(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            sum\tsum1\tsum2\tsum3\tsum4
+                            11\t-2\t24\t-4\t24
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationSkipsSubQueryInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT sum(x + 1) FROM (SELECT x FROM tab)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [sum(x+1)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            sum
+                            11
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWideProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            final int columnCount = 512;
+            final StringBuilder ddl = new StringBuilder("CREATE TABLE tab AS (SELECT ");
+            final StringBuilder query = new StringBuilder("SELECT ");
+            final StringBuilder expected = new StringBuilder();
+            for (int i = 0; i < columnCount; i++) {
+                final String separator = i > 0 ? ", " : "";
+                ddl.append(separator).append(i).append("::INT c").append(i);
+                query.append(separator).append("sum(c").append(i).append(" + 1)");
+                expected.append(i > 0 ? "\tsum" + i : "sum");
+            }
+            expected.append('\n');
+            for (int i = 0; i < columnCount; i++) {
+                expected.append(i > 0 ? "\t" : "").append(i + 1);
+            }
+            expected.append('\n');
+            execute(ddl.append(" FROM long_sequence(1))").toString());
+            assertQuery(query.append(" FROM tab").toString())
+                    .noLeakCheck()
+                    .noMemoryUsageCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected.toString());
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWithDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            createSumNormalisationTable();
+            assertQuery("SELECT DISTINCT sum(x * 2) a, sum(x + 1) b, sum(x - 1) c FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("values: [sum(x),count(x)]")
+                    .returns("""
+                            a\tb\tc
+                            16\t11\t5
+                            """);
+            assertQuery("SELECT DISTINCT sum(x + 1), sum(nocol - 1) FROM tab")
+                    .noLeakCheck()
+                    .fails(32, "Invalid column: nocol");
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWithGroupByAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (k SYMBOL, i INT)");
+            execute("INSERT INTO g VALUES ('a', 1), ('b', null), ('a', 3), ('b', 4), ('a', null)");
+            assertQuery("SELECT k, sum(i * 2) a, sum(i + 1) b, sum(i - 1) c FROM g GROUP BY k ORDER BY sum(i + 1) DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("values: [sum(i),count(i)]")
+                    .returns("""
+                            k\ta\tb\tc
+                            a\t8\t6\t2
+                            b\t8\t5\t3
+                            """);
+            assertQuery("SELECT k, sum(i * 2) a FROM g GROUP BY k ORDER BY sum(i - 1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta
+                            a\t8
+                            b\t8
+                            """);
+            assertQuery("SELECT k, sum(nocol * 2) FROM g GROUP BY k")
+                    .noLeakCheck()
+                    .fails(14, "Invalid column: nocol");
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWithSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('2024-01-01T00:00:00', 1), ('2024-01-01T00:30:00', 2), ('2024-01-01T02:00:00', 3)");
+            assertQuery("SELECT ts, sum(i * 2) a, sum(i + 1) b, sum(i - 1) c FROM s SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("values: [sum(i),count(i)]")
+                    .returns("""
+                            ts\ta\tb\tc
+                            2024-01-01T00:00:00.000000Z\t6\t5\t1
+                            2024-01-01T02:00:00.000000Z\t6\t4\t2
+                            """);
+            assertQuery("SELECT ts, sum(i * 2) a, sum(i + 1) b, sum(i - 1) c FROM s SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("values: [sum(i*2),sum(i+1),sum(i-1)]")
+                    .returns("""
+                            ts\ta\tb\tc
+                            2024-01-01T00:00:00.000000Z\t6\t5\t1
+                            2024-01-01T01:00:00.000000Z\tnull\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\t6\t4\t2
+                            """);
+            assertQuery("SELECT ts, sum(nocol + 1) FROM s SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .fails(15, "Invalid column: nocol");
+        });
+    }
+
+    @Test
     public void testSumOfAddition1() throws Exception {
         assertAggQuery("""
                         r
@@ -644,6 +971,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                 "select sum(null-x) r from y",
                 null
         );
+    }
+
+    private static void createSumNormalisationTable() throws Exception {
+        execute("CREATE TABLE tab (x INT, b BYTE)");
+        execute("INSERT INTO tab VALUES (1, 1), (null, 2), (3, 3), (4, 4), (null, 5)");
     }
 
     private void assertAggQuery(

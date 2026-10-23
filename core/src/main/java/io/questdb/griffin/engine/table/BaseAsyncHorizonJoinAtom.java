@@ -338,13 +338,11 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         }
         if (isSlaveFilterInitialized) {
             isSlaveFilterInitialized = false;
-            cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, ownerSlaveFilter);
-            if (perWorkerSlaveFilters != null) {
-                for (int i = 0, n = perWorkerSlaveFilters.size(); i < n; i++) {
-                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, perWorkerSlaveFilters.getQuick(i));
-                }
-            }
+            cleanupFailure = Function.cursorClosed(cleanupFailure, ownerSlaveFilter);
+            cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerSlaveFilters);
         }
+        cleanupFailure = Function.cursorClosed(cleanupFailure, ownerGroupByFunctions);
+        cleanupFailure = PerWorkerFunctionList.cursorClosedPerWorker(cleanupFailure, perWorkerGroupByFunctions);
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -370,21 +368,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAllocators);
         // ownerGroupByFunctions are freed by the owning factory via
         // recordFunctions/groupByFunctions field, so we only free per-worker clones here.
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                final ObjList<GroupByFunction> workerFunctions = perWorkerGroupByFunctions.getQuick(i);
-                perWorkerGroupByFunctions.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(workerFunctions);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-        }
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerGroupByFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAsOfJoinMap);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAsOfJoinMaps);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameHelper);
@@ -592,22 +576,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         // time, and must not be re-initialized here - init() is stateful for a cursor comparison.
         // The operands are the ones the cursor bound, so the owner's source is unchanged.
         horizonJoinSymbolTableSource.of(masterSymbolTableSource, slavePageFrameCursor);
-        if (perWorkerGroupByFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.init(
-                            perWorkerGroupByFunctions.getQuick(i),
-                            ownerGroupByFunctions,
-                            horizonJoinSymbolTableSource,
-                            executionContext
-                    );
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        PerWorkerFunctionList.initPerWorker(perWorkerGroupByFunctions, ownerGroupByFunctions, horizonJoinSymbolTableSource, executionContext);
 
         // Reopen ASOF maps
         if (ownerAsOfJoinMap != null) {

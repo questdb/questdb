@@ -97,6 +97,9 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args.getQuick(0).isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "table name cannot be NULL");
+        }
         CharSequence tableName = args.get(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);

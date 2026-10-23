@@ -42,14 +42,11 @@ import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
@@ -59,7 +56,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -164,16 +160,15 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     public static void configure(
             @NotNull WindowFunction function,
-            @NotNull WindowExpression window,
+            @NotNull LiveViewWindowDescription window,
             @NotNull CharSequence factorySignature,
             int outputPosition,
             @NotNull RecordMetadata baseMetadata
     ) throws SqlException {
         final int timestampType = baseMetadata.getTimestampType();
-        final String partitionSignature = expressionListSignature(window.getPartitionBy(), null);
-        final String orderSignature = expressionListSignature(window.getOrderBy(), window.getOrderByDirection());
-        final boolean anchored = window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE
-                || window.isResolvedWindowAnchored();
+        final String partitionSignature = window.getPartitionSignature();
+        final String orderSignature = window.getOrderSignature();
+        final boolean anchored = window.isAnchored();
         // The kind of a stateless function follows the function rather than the frame, because
         // the frame is precisely what such a function does not read: last_value over
         // ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW and over ROWS BETWEEN 10 PRECEDING
@@ -250,9 +245,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 StructuralConvergence.EXACT,
                 numericConvergence(function)
         );
-        final String canonicalWindowName = window.getResolvedWindowName() == null
-                ? ""
-                : Chars.toLowerCaseAscii(window.getResolvedWindowName());
+        final String canonicalWindowName = window.getCanonicalWindowName();
         final String codecIdentity = STATE_PAGE_CODEC_FAMILY
                 + "/" + factorySignature
                 + "/v" + function.checkpointStateFormatVersion();
@@ -348,7 +341,7 @@ public final class LiveViewCheckpointFunctionCompiler {
     @Nullable
     public static LiveViewCheckpointRangePlan rangePlan(
             @NotNull ObjList<Function> functions,
-            @NotNull ObjList<QueryColumn> columns
+            @NotNull ObjList<LiveViewWindowDescription> windows
     ) throws SqlException {
         LiveViewCheckpointDependency firstRange = null;
         LiveViewCheckpointDependency firstStateless = null;
@@ -389,7 +382,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                     || !firstRange.getOrderSignature().equals(dependency.getOrderSignature())
                     || firstRange.getTimestampType() != dependency.getTimestampType()) {
                 throw SqlException.$(
-                                columns.getQuick(i).getAst().position,
+                                windows.getQuick(i).getPosition(),
                                 "live view RANGE window functions must use the same PARTITION BY and ORDER BY domain"
                         )
                         .put(" [first=").put(functionLabel(firstIdentity))
@@ -449,31 +442,30 @@ public final class LiveViewCheckpointFunctionCompiler {
      * two searches read the same row from two cursors and have to land on the same key
      * both times, and a key that answers {@code now()} does not.
      *
-     * @param baseMetadata     the base factory's metadata, which the key projector's
-     *                         columns, its key functions and the designated timestamp are
-     *                         resolved against
-     * @param configuration    for the projector's codegen
-     * @param asm              the compiler's bytecode assembler
-     * @param functionParser   compiles an expression key into the plan's own function,
-     *                         separate from the copy the window runtime partitions by
-     * @param executionContext the live-view compile context the key functions parse under
+     * @param baseMetadata  the base factory's metadata, which the key projector's
+     *                      columns, its key functions and the designated timestamp are
+     *                      resolved against
+     * @param configuration for the projector's codegen
+     * @param asm           the compiler's bytecode assembler
+     * @param keyCompiler   compiles an expression key into the plan's own function,
+     *                      separate from the copy the window runtime partitions by
      */
     @Nullable
     public static LiveViewCheckpointRowsPlan rowsPlan(
             @NotNull ObjList<Function> functions,
-            @NotNull ObjList<QueryColumn> columns,
+            @NotNull ObjList<LiveViewWindowDescription> windows,
             @NotNull RecordMetadata baseMetadata,
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
-            @NotNull FunctionParser functionParser,
-            @NotNull SqlExecutionContext executionContext
+            @NotNull PartitionKeyCompiler keyCompiler
     ) throws SqlException {
         final int timestampIndex = baseMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             return null;
         }
         LiveViewCheckpointDependency firstRows = null;
-        ObjList<ExpressionNode> partitionBy = null;
+        LiveViewWindowDescription partitionBy = null;
+        int partitionFunctionIndex = -1;
         int rowsFunctionCount = 0;
         long maxPrecedingRows = 0;
 
@@ -491,13 +483,14 @@ public final class LiveViewCheckpointFunctionCompiler {
             if (!dependency.hasFrameLocalState()) {
                 return null;
             }
-            if (!(columns.getQuick(i) instanceof WindowExpression window)
-                    || !isOrderedByDesignatedTimestampAsc(window, baseMetadata)) {
+            final LiveViewWindowDescription window = windows.getQuick(i);
+            if (window == null || !isOrderedByDesignatedTimestampAsc(window, baseMetadata)) {
                 return null;
             }
             if (firstRows == null) {
                 firstRows = dependency;
-                partitionBy = window.getPartitionBy();
+                partitionBy = window;
+                partitionFunctionIndex = i;
             } else if (!firstRows.getPartitionSignature().equals(dependency.getPartitionSignature())
                     || !firstRows.getOrderSignature().equals(dependency.getOrderSignature())
                     || firstRows.getTimestampType() != dependency.getTimestampType()) {
@@ -511,11 +504,12 @@ public final class LiveViewCheckpointFunctionCompiler {
         // has no look-behind to bound. Neither is reachable through a checkpoint-capable
         // function today - both compile to scalar window functions that carry no
         // checkpoint state - so declining them costs no view its repair path.
-        if (firstRows == null || partitionBy.size() == 0 || maxPrecedingRows < 1) {
+        if (firstRows == null || partitionBy.getPartitionByCount() == 0 || maxPrecedingRows < 1) {
             return null;
         }
-        final IntList partitionByColumnIndexes = new IntList(partitionBy.size());
-        final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
+        final int partitionByCount = partitionBy.getPartitionByCount();
+        final IntList partitionByColumnIndexes = new IntList(partitionByCount);
+        final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionByCount);
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
         // The second projector's shape: what the view's window functions key their own
         // maps by, which is this list with every SYMBOL resolved to a STRING. Left null
@@ -523,17 +517,16 @@ public final class LiveViewCheckpointFunctionCompiler {
         // one and generating a second sink would buy nothing.
         ArrayColumnTypes checkpointKeyColumnTypes = null;
         BitSet writeSymbolAsString = null;
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            final ExpressionNode node = partitionBy.getQuick(i);
-            final int columnIndex = node.type == ExpressionNode.LITERAL
-                    ? SqlUtil.getColumnIndexQuiet(baseMetadata, node.token)
-                    : -1;
+        for (int i = 0; i < partitionByCount; i++) {
+            final CharSequence column = partitionBy.getPartitionColumn(i);
+            final int columnIndex = column != null ? SqlUtil.getColumnIndexQuiet(baseMetadata, column) : -1;
             if (columnIndex == -1) {
                 // One term the sink cannot read off a page-frame record puts every term on
                 // a key function, so the projector stays one shape rather than two halves
                 // whose SYMBOL keys would live in different spaces.
                 return expressionKeyedPlan(
-                        partitionBy,
+                        partitionFunctionIndex,
+                        partitionByCount,
                         firstRows,
                         rowsFunctionCount,
                         maxPrecedingRows,
@@ -541,8 +534,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                         baseMetadata,
                         configuration,
                         asm,
-                        functionParser,
-                        executionContext
+                        keyCompiler
                 );
             }
             final int columnType = baseMetadata.getColumnType(columnIndex);
@@ -608,12 +600,26 @@ public final class LiveViewCheckpointFunctionCompiler {
      * later as a missing-checkpoint-metadata failure.
      */
     public static void validateRange(
-            @NotNull WindowExpression window,
+            @NotNull LiveViewWindowDescription window,
             @NotNull CharSequence functionName,
             @NotNull RecordMetadata baseMetadata
     ) throws SqlException {
-        if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI) {
-            validateRangeOrder(functionName, window, baseMetadata);
+        validateRange(window, functionName, isOrderedByDesignatedTimestampAsc(window, baseMetadata));
+    }
+
+    /**
+     * @param isOrderedByDesignatedTimestampAsc whether the window orders by the designated
+     *                                          timestamp ascending, resolved by the caller
+     */
+    public static void validateRange(
+            @NotNull LiveViewWindowDescription window,
+            @NotNull CharSequence functionName,
+            boolean isOrderedByDesignatedTimestampAsc
+    ) throws SqlException {
+        if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI && !isOrderedByDesignatedTimestampAsc) {
+            final int position = window.getOrderByCount() > 0 ? window.getOrderByPosition() : window.getPosition();
+            throw SqlException.$(position, "live view RANGE window function must ORDER BY the designated timestamp ASC [function=")
+                    .put(functionName).put("()]");
         }
     }
 
@@ -621,8 +627,8 @@ public final class LiveViewCheckpointFunctionCompiler {
      * Points a frame-bound error at the unit token the user wrote, falling back to the window
      * function itself for a bound whose unit position the parser did not record.
      */
-    private static int boundPosition(WindowExpression window, int unitPosition) {
-        return unitPosition > 0 ? unitPosition : window.getAst().position;
+    private static int boundPosition(LiveViewWindowDescription window, int unitPosition) {
+        return unitPosition > 0 ? unitPosition : window.getPosition();
     }
 
     /**
@@ -651,8 +657,8 @@ public final class LiveViewCheckpointFunctionCompiler {
      * output below {@code m}, and neither bound holds. That case stays a visible branch here
      * rather than a sign folded into the eligible test.
      */
-    private static DependencyKind dependencyKind(CharSequence functionName, WindowExpression window) {
-        if (window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE || window.isResolvedWindowAnchored()) {
+    private static DependencyKind dependencyKind(CharSequence functionName, LiveViewWindowDescription window) {
+        if (window.isAnchored()) {
             return DependencyKind.FIXED_ANCHOR_SEGMENT;
         }
         final long rowsHi = effectiveRowsHi(window);
@@ -662,7 +668,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             return DependencyKind.UNANCHORED_RANK;
         }
         // Long.MIN_VALUE is the encoding an unbounded look-behind uses, and
-        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound too - a literal
+        // SqlUtil.normalizeWindowFrame() reaches it on the high bound too - a literal
         // Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its own
         // start. Such a bound names no finite lag, so it is turned away here alongside the
         // unbounded frame starts.
@@ -704,7 +710,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      * {@link #hasSupportedExclusion} is what keeps the other two exclusion modes out; this
      * method describes only the one the runtime turns into a frame adjustment.
      */
-    private static long effectiveRowsHi(WindowExpression window) {
+    private static long effectiveRowsHi(LiveViewWindowDescription window) {
         return effectiveRowsHi(window, window.getRowsHi());
     }
 
@@ -720,7 +726,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      * no time unit and {@link #rangeFrameBound} returns early without one, but the two stop
      * agreeing the moment the parser attaches a unit to a bound that reads as zero.
      */
-    private static long effectiveRowsHi(WindowExpression window, long rowsHi) {
+    private static long effectiveRowsHi(LiveViewWindowDescription window, long rowsHi) {
         return window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW && rowsHi == 0
                 ? -1
                 : rowsHi;
@@ -742,7 +748,8 @@ public final class LiveViewCheckpointFunctionCompiler {
      * a declined key or a codegen failure leaves nothing behind.
      */
     private static @Nullable LiveViewCheckpointRowsPlan expressionKeyedPlan(
-            ObjList<ExpressionNode> partitionBy,
+            int functionIndex,
+            int partitionByCount,
             LiveViewCheckpointDependency firstRows,
             int rowsFunctionCount,
             long maxPrecedingRows,
@@ -750,14 +757,13 @@ public final class LiveViewCheckpointFunctionCompiler {
             RecordMetadata baseMetadata,
             CairoConfiguration configuration,
             BytecodeAssembler asm,
-            FunctionParser functionParser,
-            SqlExecutionContext executionContext
+            PartitionKeyCompiler keyCompiler
     ) throws SqlException {
-        ObjList<Function> keyFunctions = new ObjList<>(partitionBy.size());
+        ObjList<Function> keyFunctions = new ObjList<>(partitionByCount);
         try {
             final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
-            for (int i = 0, n = partitionBy.size(); i < n; i++) {
-                final Function function = functionParser.parseFunction(partitionBy.getQuick(i), baseMetadata, executionContext);
+            for (int i = 0; i < partitionByCount; i++) {
+                final Function function = keyCompiler.compile(functionIndex, i);
                 keyFunctions.add(function);
                 if (function.isNonDeterministic()) {
                     // The forward pass and the backward search read the same base row from
@@ -800,21 +806,6 @@ public final class LiveViewCheckpointFunctionCompiler {
         }
     }
 
-    private static String expressionListSignature(ObjList<ExpressionNode> expressions, IntList directions) {
-        final StringSink sink = new StringSink();
-        sink.put(expressions.size()).putAscii(':');
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            final StringSink expressionSink = new StringSink();
-            expressions.getQuick(i).toSink(expressionSink);
-            sink.put(expressionSink.length()).putAscii(':').put(expressionSink);
-            if (directions != null) {
-                sink.putAscii(':').put(directions.getQuick(i));
-            }
-            sink.putAscii(';');
-        }
-        return sink.toString();
-    }
-
     private static CharSequence functionLabel(LiveViewCheckpointFunctionIdentity identity) {
         if (identity == null) {
             return "unknown";
@@ -834,7 +825,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      * frame start still leaves every accumulator with no floor to discover, and its own arm
      * turns it away here exactly as before.
      */
-    private static boolean hasFiniteStateLookBehind(CharSequence functionName, WindowExpression window, long rowsHi) {
+    private static boolean hasFiniteStateLookBehind(CharSequence functionName, LiveViewWindowDescription window, long rowsHi) {
         return hasHighBoundStateExtent(functionName, window, rowsHi)
                 || (window.getRowsLo() != Long.MIN_VALUE && window.getRowsLo() <= 0);
     }
@@ -876,7 +867,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      * admits that compiles to some other class declines the plan rather than taking one
      * against an extent it does not hold.
      */
-    private static boolean hasHighBoundStateExtent(CharSequence functionName, WindowExpression window, long rowsHi) {
+    private static boolean hasHighBoundStateExtent(CharSequence functionName, LiveViewWindowDescription window, long rowsHi) {
         return rowsHi < 0
                 && window.getFramingMode() == WindowExpression.FRAMING_ROWS
                 && !window.isIgnoreNulls()
@@ -892,7 +883,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      * {@link #effectiveRowsHi} has already folded {@code EXCLUDE CURRENT ROW} into the high
      * bound, which is the whole of what it does to the frame.
      */
-    private static boolean hasSupportedExclusion(WindowExpression window) {
+    private static boolean hasSupportedExclusion(LiveViewWindowDescription window) {
         return window.getExclusionKind() == WindowExpression.EXCLUDE_NO_OTHERS
                 || window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW;
     }
@@ -965,13 +956,12 @@ public final class LiveViewCheckpointFunctionCompiler {
      * so neither the RANGE width nor the ROWS count describes the frame the user asked
      * for.
      */
-    private static boolean isOrderedByDesignatedTimestampAsc(WindowExpression window, RecordMetadata baseMetadata) {
-        final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+    private static boolean isOrderedByDesignatedTimestampAsc(LiveViewWindowDescription window, RecordMetadata baseMetadata) {
         final int timestampIndex = baseMetadata.getTimestampIndex();
         return timestampIndex != -1
-                && orderBy.size() == 1
-                && window.getOrderByDirection().getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING
-                && SqlUtil.getColumnIndexQuiet(baseMetadata, orderBy.getQuick(0).token) == timestampIndex;
+                && window.getOrderByCount() == 1
+                && window.getOrderByDirection() == QueryModel.ORDER_DIRECTION_ASCENDING
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, window.getOrderByName()) == timestampIndex;
     }
 
     private static boolean isRanking(CharSequence name) {
@@ -1022,7 +1012,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      */
     private static long rangeFrameBound(
             CharSequence functionName,
-            WindowExpression window,
+            LiveViewWindowDescription window,
             int timestampType,
             long bound,
             char unit,
@@ -1055,7 +1045,7 @@ public final class LiveViewCheckpointFunctionCompiler {
     /**
      * Resolves the descriptor's {@code frameHi} to the negated finite lag {@code V} the frame
      * ends at, in the designated timestamp's native units, with {@code EXCLUDE CURRENT ROW}
-     * folded in after the conversion - see {@link #effectiveRowsHi(WindowExpression, long)}
+     * folded in after the conversion - see {@link #effectiveRowsHi(LiveViewWindowDescription, long)}
      * for why that order is the one that holds.
      * <p>
      * A frame ending at the current row carries no unit and reaches 0 unchanged, so the
@@ -1063,7 +1053,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      */
     private static long rangeFrameHi(
             CharSequence functionName,
-            WindowExpression window,
+            LiveViewWindowDescription window,
             int timestampType
     ) throws SqlException {
         return effectiveRowsHi(window, rangeFrameBound(
@@ -1084,7 +1074,7 @@ public final class LiveViewCheckpointFunctionCompiler {
      */
     private static long rangeFrameLo(
             CharSequence functionName,
-            WindowExpression window,
+            LiveViewWindowDescription window,
             int timestampType
     ) throws SqlException {
         return rangeFrameBound(
@@ -1133,16 +1123,11 @@ public final class LiveViewCheckpointFunctionCompiler {
         return LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType);
     }
 
-    private static void validateRangeOrder(
-            CharSequence functionName,
-            WindowExpression window,
-            RecordMetadata baseMetadata
-    ) throws SqlException {
-        if (!isOrderedByDesignatedTimestampAsc(window, baseMetadata)) {
-            final ObjList<ExpressionNode> orderBy = window.getOrderBy();
-            final int position = orderBy.size() > 0 ? orderBy.getQuick(0).position : window.getAst().position;
-            throw SqlException.$(position, "live view RANGE window function must ORDER BY the designated timestamp ASC [function=")
-                    .put(functionName).put("()]");
-        }
+    /**
+     * Compiles a PARTITION BY expression of the window at a function index into a key function the plan owns.
+     */
+    @FunctionalInterface
+    public interface PartitionKeyCompiler {
+        Function compile(int functionIndex, int keyIndex) throws SqlException;
     }
 }

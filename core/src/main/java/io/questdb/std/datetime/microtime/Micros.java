@@ -369,7 +369,8 @@ public final class Micros {
         }
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
-        return addMonths(offset, (int) monthsToAdd);
+        final long next = addMonths(offset, (int) (monthsToAdd + stride));
+        return next <= micros ? next : addMonths(offset, (int) monthsToAdd);
     }
 
     public static long floorMM(long micros, int stride) {
@@ -532,7 +533,8 @@ public final class Micros {
         }
         final long yearsDiff = getYearsBetween(micros, offset);
         final long yearsToAdd = yearsDiff - (yearsDiff % stride);
-        return addYears(offset, (int) yearsToAdd);
+        final long next = addYears(offset, (int) (yearsToAdd + stride));
+        return next <= micros ? next : addYears(offset, (int) yearsToAdd);
     }
 
     public static int getCentury(long micros) {

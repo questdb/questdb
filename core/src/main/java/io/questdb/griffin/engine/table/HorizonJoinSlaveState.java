@@ -58,17 +58,6 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     private @Nullable Function filter;
     private @Nullable ObjList<Function> perWorkerFilters;
 
-    static Throwable cursorClosed(Throwable cleanupFailure, @Nullable Function filter) {
-        if (filter != null) {
-            try {
-                filter.cursorClosed();
-            } catch (Throwable th) {
-                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-            }
-        }
-        return cleanupFailure;
-    }
-
     public HorizonJoinSlaveState(
             RecordCursorFactory factory,
             long masterTsScale,
@@ -108,13 +97,8 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     }
 
     Throwable cursorClosed(Throwable cleanupFailure) {
-        cleanupFailure = cursorClosed(cleanupFailure, filter);
-        if (perWorkerFilters != null) {
-            for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
-                cleanupFailure = cursorClosed(cleanupFailure, perWorkerFilters.getQuick(i));
-            }
-        }
-        return cleanupFailure;
+        cleanupFailure = Function.cursorClosed(cleanupFailure, filter);
+        return Function.cursorClosed(cleanupFailure, perWorkerFilters);
     }
 
     void detachFactory() {

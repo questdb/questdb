@@ -52,6 +52,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
+    private VirtualFunctionRecord memoizedRecord;
 
     public VirtualFunctionRecordCursor(
             @NotNull PriorityMetadata priorityMetadata,
@@ -64,14 +65,14 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         this.functions = functions;
         this.memoizers = memoizers;
         this.memoizerCount = memoizers.size();
-        if (supportsRandomAccess) {
-            this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
-            this.recordB = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
+        this.supportsRandomAccess = supportsRandomAccess;
+        if (supportsRandomAccess && memoizerCount > 0) {
+            this.recordA = new MemoizedVirtualFunctionRecord(functions, virtualColumnReservedSlots);
+            this.recordB = new MemoizedVirtualFunctionRecord(functions, virtualColumnReservedSlots);
         } else {
             this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
-            this.recordB = null;
+            this.recordB = supportsRandomAccess ? new VirtualFunctionRecord(functions, virtualColumnReservedSlots) : null;
         }
-        this.supportsRandomAccess = supportsRandomAccess;
     }
 
     @Override
@@ -174,6 +175,12 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long remainingMasterRowCount() {
+        assert baseCursor != null;
+        return baseCursor.remainingMasterRowCount();
+    }
+
+    @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         if (baseCursor != null) {
             baseCursor.setParquetDecodeHint(hint);
@@ -206,9 +213,26 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         GroupByUtils.toTop(functions);
     }
 
-    private void clearMemos() {
+    void clearMemos() {
         for (int i = 0; i < memoizerCount; i++) {
             memoizers.getQuick(i).clearMemo();
         }
     }
+
+    private final class MemoizedVirtualFunctionRecord extends VirtualFunctionRecord {
+        private MemoizedVirtualFunctionRecord(ObjList<Function> functions, int virtualColumnReservedSlots) {
+            super(functions, virtualColumnReservedSlots);
+        }
+
+        @Override
+        protected Function getFunction(int columnIndex) {
+            // A filter can populate record A's cache after recordAt(B), before B is read.
+            if (memoizedRecord != this) {
+                clearMemos();
+                memoizedRecord = this;
+            }
+            return super.getFunction(columnIndex);
+        }
+    }
+
 }

@@ -39,6 +39,11 @@ import io.questdb.std.ObjList;
 
 public class SignDecimalFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.getDecimalType(1, 0);
+    }
+
+    @Override
     public String getSignature() {
         return "sign(Ξ)";
     }

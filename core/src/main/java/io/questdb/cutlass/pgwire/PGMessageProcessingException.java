@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -72,7 +73,7 @@ public class PGMessageProcessingException extends Exception implements Flyweight
             message.put(((FlyweightMessageContainer) e).getFlyweightMessage());
             pe.setErrorMessagePosition(((FlyweightMessageContainer) e).getPosition());
         } else {
-            message.put(e.getMessage());
+            message.put(Misc.getMessageOrClassName(e));
         }
         return this;
     }

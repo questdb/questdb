@@ -37,7 +37,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -50,6 +52,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -338,6 +341,44 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharAsStringInParallelFilter() throws Exception {
+        // A CHAR column converts to text through its own buffers, so each worker reads it through its own clone.
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute("CREATE TABLE x (ts TIMESTAMP, c CHAR) timestamp(ts) PARTITION BY DAY;", sqlExecutionContext);
+                    engine.execute(
+                            "INSERT INTO x SELECT x::timestamp, CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END::char FROM long_sequence("
+                                    + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
+                            sqlExecutionContext
+                    );
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr(0, "a");
+                    assertQuery("SELECT count(*) FROM x WHERE c::string = $1")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
+                            .returns("count\n50000\n");
+                    assertQuery("SELECT count(*) FROM x WHERE concat(c, 'z') = 'az'")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
+                            .returns("count\n50000\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testCountJitDisabled() throws Exception {
         testCount(SqlJitMode.JIT_MODE_DISABLED);
     }
@@ -443,6 +484,52 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     }
 
                     Assert.assertEquals(0, npeCountingCircuitBreaker.npeCounter.get());
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testKeyedCaseWithEqualityConstant() throws Exception {
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab AS (SELECT (x * 60_000_000)::timestamp ts, x % 3 k FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    assertQuery("SELECT count(*) FROM tab WHERE CASE k WHEN 1.5 THEN false WHEN 1 THEN true ELSE false END")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    3334
+                                    """);
+                    assertQuery("SELECT count(*) FROM tab WHERE switch(rnd_int(1, 2, 0), 1, true, 2, true, 1.5, false, false)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    10000
+                                    """);
+                    assertQuery("SELECT CASE k WHEN 1.5 THEN 'fraction' WHEN 1 THEN 'one' ELSE 'other' END g, count(*) FROM tab ORDER BY g")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    g\tcount
+                                    one\t3334
+                                    other\t6666
+                                    """);
                 },
                 configuration,
                 LOG
@@ -873,6 +960,160 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeConstantArgumentsReachWorkerFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, s STRING, sym SYMBOL, x DOUBLE, y DOUBLE, j VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 1, 'a', 'a', 1.0, 1.0, '{"a":1,"b":2}'),
+                    ('2024-01-01T00:00:01', 2, 'b', 'b', 2.5, 2.5, '{"a":3,"b":4}'),
+                    ('2024-01-01T00:00:03', 3, 'c', 'c', 5.0, 5.0, '{"a":5,"b":2}')
+                    """);
+            final String falseSubquery = "NOT (SELECT max(k) > 2 FROM t)";
+            final String[][] cases = {
+                    {"regexp_replace(s, CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END, 'z') = 'z'", "k\n2\n"},
+                    {"regexp_replace(s, 'b', CASE WHEN " + falseSubquery + " THEN 'y' ELSE 'z' END) = 'z'", "k\n2\n"},
+                    {"s ~ CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END", "k\n2\n"},
+                    {"sym ~ CASE WHEN " + falseSubquery + " THEN 'a' ELSE 'b' END", "k\n2\n"},
+                    {"within_box(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 2.0 END, 0.0, 10.0, 10.0)", "k\n2\n3\n"},
+                    {"within_box(CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 2.0 END, 3.0, 0.0, 0.0, 10.0, 10.0)", "k\n1\n2\n3\n"},
+                    {"geo_distance_meters(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0) < 200_000", "k\n1\n"},
+                    {"geo_distance_meters(1.0, 1.0, x, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END) < 200_000", "k\n1\n2\n"},
+                    {"geo_within_radius_latlon(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 200_000)", "k\n1\n"},
+                    {"geo_within_radius_latlon(x, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 1.0, 200_000)", "k\n1\n2\n"},
+                    {"within_radius(x, y, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 1.0)", "k\n1\n"},
+                    {"within_radius(x, CASE WHEN " + falseSubquery + " THEN 0.0 ELSE 1.0 END, 1.0, 1.0, 2.0)", "k\n1\n2\n"},
+                    {"json_extract(j, CASE WHEN " + falseSubquery + " THEN '.a' ELSE '.b' END)::int = 2", "k\n1\n3\n"},
+            };
+            for (String[] filterAndExpected : cases) {
+                assertQuery("SELECT k FROM t WHERE " + filterAndExpected[0])
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Async")
+                        .returns(filterAndExpected[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubQueryFromToBounds() throws Exception {
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE t AS (
+                                SELECT timestamp_sequence('2024-01-01', 3_600_000_000) ts, x::DOUBLE v FROM long_sequence(200)
+                            )""", sqlExecutionContext);
+                    engine.execute("CREATE TABLE b AS (SELECT '2024-01-05'::TIMESTAMP hi FROM long_sequence(1))", sqlExecutionContext);
+                    final String expected = """
+                            ts\tc\ts
+                            2024-01-02T00:00:00.000000Z\t24\t876.0
+                            2024-01-03T00:00:00.000000Z\t24\t1452.0
+                            2024-01-04T00:00:00.000000Z\t24\t2028.0
+                            """;
+                    assertQuery("SELECT ts, count() c, sum(v) s FROM (t TIMESTAMP(ts)) SAMPLE BY 1d FROM '2024-01-02' TO (SELECT hi FROM b)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .withPlan("""
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 4
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1d',ts,'2024-01-02T00:00:00.000Z')]
+                                          values: [count(*),sum(v)]
+                                          filter: (ts>=2024-01-02T00:00:00.000000Z and ts<cursor\s
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                    """)
+                            .returns(expected);
+                    assertQuery("""
+                            SELECT ts, count() c, sum(v) s FROM (t TIMESTAMP(ts))
+                            SAMPLE BY 1d FROM (SELECT hi - 3 * 86_400_000_000 FROM b) TO (SELECT hi FROM b)
+                            """)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .withPlan("""
+                                    Sample By
+                                      fill: none
+                                      range: (cursor\s
+                                        VirtualRecord
+                                          functions: [hi-259200000000L]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b,cursor\s
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b)
+                                      values: [count(*),sum(v)]
+                                        Async Filter workers: 4
+                                          filter: (ts>=cursor\s
+                                            VirtualRecord
+                                              functions: [hi-259200000000L]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b and ts<cursor\s
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                    """)
+                            .returns(expected);
+                    assertQuery("""
+                            SELECT ts, count() c, sum(v) s FROM (t TIMESTAMP(ts))
+                            SAMPLE BY 1d FROM '2024-01-02' TO (SELECT hi + 86_400_000_000 FROM b) FILL(NULL)
+                            """)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .withPlan("""
+                                    Sample By Fill
+                                      range: ('2024-01-02',cursor\s
+                                        VirtualRecord
+                                          functions: [hi+86400000000L]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b)
+                                      stride: '1d'
+                                      fill: null
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 4
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts,'2024-01-02T00:00:00.000Z')]
+                                              values: [count(*),sum(v)]
+                                              filter: (ts>=2024-01-02T00:00:00.000000Z and ts<cursor\s
+                                                VirtualRecord
+                                                  functions: [hi+86400000000L]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                    """)
+                            .returns(expected + "2024-01-05T00:00:00.000000Z\t24\t2604.0\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testStrBindVariable() throws Exception {
         testStrBindVariable("STRING", SqlJitMode.JIT_MODE_ENABLED);
     }
@@ -888,6 +1129,46 @@ public class ParallelFilterTest extends AbstractCairoTest {
         Assume.assumeTrue(JitUtil.isJitSupported());
 
         testStrBindVariable("SYMBOL", SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testSymbolPatternNonThreadSafeResidualBroad() throws Exception {
+        testSymbolPatternNonThreadSafeResidual("c%", 51, false);
+    }
+
+    @Test
+    public void testSymbolPatternNonThreadSafeResidualSelective() throws Exception {
+        testSymbolPatternNonThreadSafeResidual("a%", 1, true);
+    }
+
+    @Test
+    public void testTimestampSequenceConstantStartWithScalarSubquery() throws Exception {
+        testTimestampSequenceScalarSubquery(
+                "0",
+                "CASE WHEN x > (SELECT v FROM b) THEN 0::LONG ELSE 1::LONG END",
+                " = 0",
+                "count\n1\n"
+        );
+    }
+
+    @Test
+    public void testTimestampSequenceScalarSubqueryStart() throws Exception {
+        testTimestampSequenceScalarSubquery(
+                "CASE WHEN x > (SELECT v FROM b) THEN ts ELSE NULL END",
+                "0",
+                " IS NOT NULL",
+                "count\n0\n"
+        );
+    }
+
+    @Test
+    public void testTimestampSequenceVariableStartWithScalarSubquery() throws Exception {
+        testTimestampSequenceScalarSubquery(
+                "ts",
+                "CASE WHEN x > (SELECT v FROM b) THEN 0::LONG ELSE 1::LONG END",
+                " = ts",
+                "count\n1\n"
+        );
     }
 
     @Test
@@ -1445,6 +1726,50 @@ public class ParallelFilterTest extends AbstractCairoTest {
         );
     }
 
+    private void testTimestampSequenceScalarSubquery(
+            String startExpression,
+            String incrementExpression,
+            String comparison,
+            String expectedAfter
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, context) -> {
+                        engine.execute("CREATE TABLE b AS (SELECT 0::LONG v)", context);
+                        for (boolean isNano : new boolean[]{false, true}) {
+                            final String timestampType = isNano ? "TIMESTAMP_NS" : "TIMESTAMP";
+                            final String function = isNano ? "timestamp_sequence_ns" : "timestamp_sequence";
+                            // One frame keeps the sequence independent of which worker evaluates it.
+                            engine.execute("CREATE TABLE t AS (SELECT x, x::" + timestampType
+                                    + " ts FROM long_sequence(" + PAGE_FRAME_MAX_ROWS + "))", context);
+                            for (boolean isParallel : new boolean[]{true, false}) {
+                                ((SqlExecutionContextImpl) context).setParallelFilterEnabled(isParallel);
+                                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR}) {
+                                    context.setJitMode(jitMode);
+                                    engine.execute("UPDATE b SET v = 0", context);
+                                    assertQuery("SELECT count() FROM t WHERE " + function + "("
+                                            + startExpression + ", " + incrementExpression + ")" + comparison)
+                                            .withEngine(engine)
+                                            .withContext(context)
+                                            .noLeakCheck()
+                                            .noRandomAccess()
+                                            .expectSize()
+                                            .withPlanContaining(isParallel ? "Async Filter workers: 2" : "Filter")
+                                            .mutateWith("UPDATE b SET v = NULL")
+                                            .returns("count\n" + PAGE_FRAME_MAX_ROWS + "\n", expectedAfter);
+                                }
+                            }
+                            engine.execute("DROP TABLE t", context);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     private void testStrBindVariable(String columnType, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
@@ -1509,4 +1834,65 @@ public class ParallelFilterTest extends AbstractCairoTest {
             return super.getState();
         }
     }
+
+    private void testSymbolPatternNonThreadSafeResidual(String pattern, int remainder, boolean isIndexRouteExpected) throws Exception {
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (s SYMBOL INDEX, txt STRING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO x SELECT
+                                CASE WHEN x % 100 = 1 THEN 'aa' ELSE 'c' || (x % 7) END,
+                                CASE WHEN x % 50 = 1 THEN 'x' ELSE 'y' END,
+                                x,
+                                timestamp_sequence(0, 60_000_000)
+                            FROM long_sequence(10_000)
+                            """, sqlExecutionContext);
+                    final String filter = "FROM x WHERE s LIKE '" + pattern + "' AND txt = 'x'";
+                    final StringSink expected = new StringSink();
+                    expected.put("v\n");
+                    for (int i = 0; i < 100; i++) {
+                        expected.put(remainder + 100 * i).put('\n');
+                    }
+                    SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
+                    try {
+                        AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                        assertQuery("SELECT v " + filter)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .withPlanContaining("AdaptiveSymbolPattern", "Async Filter workers: 4")
+                                .returns(expected);
+                        Assert.assertEquals(isIndexRouteExpected, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get() == 0);
+                    } finally {
+                        SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+                    }
+                    expected.clear();
+                    expected.put("v\n");
+                    for (int i = 0; i < 5; i++) {
+                        expected.put(remainder + 100 * i).put('\n');
+                    }
+                    assertQuery("SELECT v " + filter + " LIMIT 5")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .withPlanContaining("AdaptiveSymbolPattern", "limit: 5")
+                            .returns(expected);
+                    assertQuery("SELECT count(), sum(v) " + filter)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tsum\n100\t" + (100 * remainder + 495_000) + "\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
 }

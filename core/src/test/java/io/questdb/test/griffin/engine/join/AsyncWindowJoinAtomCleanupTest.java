@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
@@ -184,13 +185,8 @@ public class AsyncWindowJoinAtomCleanupTest extends AbstractCairoTest {
                 valueTypes,
                 new ObjList<GroupByFunction>(),
                 null,
+                new AsyncFilterResources(),
                 null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                false,
                 1,
                 1,
                 WORKER_COUNT

@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CompileViewModel> FACTORY = CompileViewModel::new;
-    private IQueryModel queryModel;
+    private QueryModel queryModel;
     private ExpressionNode viewExpr;
 
     @Override
@@ -47,7 +47,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public IQueryModel getQueryModel() {
+    public QueryModel getQueryModel() {
         return queryModel;
     }
 
@@ -61,7 +61,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
         return viewExpr;
     }
 
-    public void setQueryModel(IQueryModel queryModel) {
+    public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
     }
 

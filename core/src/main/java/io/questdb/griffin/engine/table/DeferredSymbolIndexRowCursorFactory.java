@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -41,6 +42,7 @@ import io.questdb.std.Misc;
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
+    private final ShiftedRowCursor shiftedCursor = new ShiftedRowCursor();
     private final Function symbol;
     private int symbolKey;
 
@@ -72,8 +74,40 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            return EmptyRowCursor.INSTANCE;
+        }
+        final IndexReader reader = pageFrame.getIndexReader(columnIndex, indexDirection);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        if (indexDirection == IndexReader.DIR_BACKWARD) {
+            return reader.getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getIndexRowLo(), firstRow + indexShift);
+        }
+        return shiftedCursor.of(reader.getCursor(TableUtils.toIndexKey(symbolKey), firstRow + indexShift, pageFrame.getIndexRowHi() - 1), firstRow - pageFrame.getPartitionLo());
+    }
+
+    @Override
     public Function getFunction() {
         return symbol;
+    }
+
+    @Override
+    public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
+        final BitmapIndexFwdReader reader = (BitmapIndexFwdReader) pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.getRow(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, indexDirection, rowIndex) - indexShift;
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            return 0;
+        }
+        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        return reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, maxCount);
     }
 
     @Override
@@ -84,13 +118,6 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     @Override
     public boolean isEntity() {
         return false;
-    }
-
-    // Stable within the execution iff the deferred symbol key function is stable (literal/bind yes,
-    // rnd_* no); the key is resolved against the execution-fixed symbol table on every open.
-    @Override
-    public boolean isStableWithinExecution() {
-        return symbol == null || symbol.isStableWithinExecution();
     }
 
     @Override

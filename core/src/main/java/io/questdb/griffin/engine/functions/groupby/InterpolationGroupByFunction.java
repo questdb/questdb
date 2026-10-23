@@ -30,8 +30,12 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -60,6 +64,16 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
+    public void clear() {
+        wrappedFunction.clear();
+    }
+
+    @Override
+    public void close() {
+        wrappedFunction.close();
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         wrappedFunction.computeFirst(mapValue, record, rowId);
     }
@@ -67,6 +81,11 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         wrappedFunction.computeNext(mapValue, record, rowId);
+    }
+
+    @Override
+    public void cursorClosed() {
+        wrappedFunction.cursorClosed();
     }
 
     @Override
@@ -333,6 +352,11 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        wrappedFunction.init(symbolTableSource, executionContext);
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         wrappedFunction.initValueIndex(valueIndex);
     }
@@ -340,6 +364,11 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         wrappedFunction.initValueTypes(columnTypes);
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        wrappedFunction.setAllocator(allocator);
     }
 
     @Override
@@ -367,4 +396,10 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public void toPlan(PlanSink sink) {
         sink.val("Interpolated(").val(wrappedFunction).val(")");
     }
+
+    @Override
+    public void toTop() {
+        wrappedFunction.toTop();
+    }
+
 }

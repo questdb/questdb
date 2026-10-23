@@ -52,6 +52,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -63,7 +64,8 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -74,6 +76,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -85,14 +88,6 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -101,6 +96,15 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -3234,6 +3238,48 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileBatchRetriesStaleTableFromStatementStart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (42)");
+            final ObjList<String> results = new ObjList<>();
+            try (
+                    StaleOnceContext context = new StaleOnceContext();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                compiler.compileBatch("SELECT 1 a; SELECT * FROM t", context, new BatchCallback() {
+                    @Override
+                    public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+                        final StringSink rows = new StringSink();
+                        rows.put(queryText).put(" -> ");
+                        try (
+                                RecordCursorFactory factory = cq.getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(context)
+                        ) {
+                            final RecordMetadata metadata = factory.getMetadata();
+                            CursorPrinter.println(metadata, rows);
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                TestUtils.println(record, metadata, rows);
+                            }
+                        }
+                        results.add(rows.toString());
+                    }
+
+                    @Override
+                    public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+                        return true;
+                    }
+                });
+                Assert.assertTrue("must inject a stale table reference while binding", context.hasInjected);
+            }
+            Assert.assertEquals(2, results.size());
+            TestUtils.assertEquals("SELECT 1 a; -> a\n1\n", results.getQuick(0));
+            TestUtils.assertEquals("SELECT * FROM t -> x\n42\n", results.getQuick(1));
+        });
+    }
+
+    @Test
     public void testCompileBeginTransaction() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -3782,6 +3828,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 .inferRandomAccess()
                 .sizeMayVary()
                 .returns("\n");
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashBitsLiteralWithoutBits() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT ##")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: ##");
+            assertQuery("SELECT ## + 1")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: ##");
+            assertQuery("SELECT 1 FROM long_sequence(1) WHERE ## = ##1")
+                    .noLeakCheck()
+                    .fails(37, "invalid constant: ##");
+            assertQuery("SELECT #")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: #");
+        });
     }
 
     @Test
@@ -4641,23 +4705,36 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctDependencyColumnsThrowError() throws Exception {
+    public void testDistinctDependencyColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            create table tab (
-                              x1 int,
+                            CREATE TABLE tab (
+                              x1 INT,
                               ts TIMESTAMP
-                            ) timestamp(ts);
+                            ) TIMESTAMP(ts);
                             """
             );
+            execute("INSERT INTO tab VALUES (1, 0), (1, 1), (3, 2), (NULL, 3), (NULL, 4)");
 
-            assertQuery("select distinct x1 as a, a from tab")
+            assertQuery("SELECT DISTINCT x1 AS a, a FROM tab ORDER BY a")
                     .noLeakCheck()
-                    .fails(25, "Invalid column: a");
-            assertQuery("select distinct x1 - 1 as a, a + 1 from tab")
+                    .expectSize()
+                    .returns("""
+                            a\ta1
+                            null\tnull
+                            1\t1
+                            3\t3
+                            """);
+            assertQuery("SELECT DISTINCT x1 - 1 AS a, a + 1 FROM tab ORDER BY a")
                     .noLeakCheck()
-                    .fails(29, "Invalid column: a");
+                    .expectSize()
+                    .returns("""
+                            a\tcolumn
+                            null\tnull
+                            0\t1
+                            2\t3
+                            """);
         });
     }
 
@@ -4689,7 +4766,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testEvaluateNullArithmeticColumnExpression() throws Exception {
         // Regression: AddIntFunc.isConstant() used to claim true when one operand was a null
         // constant, even if the other operand was a column reference. This made
-        // FunctionParser.functionToConstant() try to evaluate the expression at compile time
+        // FunctionResolver.functionToConstant() try to evaluate the expression at compile time
         // with a null record, which NPEd on the column's getInt(null). The fuzzer surfaced
         // this via filter and projection expressions like `WHERE c6 >= ((null + c6) + ...)`.
         //
@@ -5319,6 +5396,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
+                @Override
+                public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                    fiddler.run(this);
+                    return super.getReader(tableToken, readerPoolSupervisor);
+                }
+
                 @Override
                 public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                     fiddler.run(this);
@@ -7683,13 +7766,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (null=T2.created or 0<T2.created::long)
-                                    Nested Loop Right Join
-                                      filter: T1.created<T2.created
-                                        Limit value: -1 skip-rows: 2 take-rows: 1
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
+                                Nested Loop Right Join
+                                  filter: T1.created<T2.created
+                                    Limit value: -1 skip-rows: 2 take-rows: 1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    Async Filter workers: 1
+                                      filter: (null=created or 0<created::long)
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -7835,25 +7919,25 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: null=T4.created
-                                    Nested Loop Right Join
-                                      filter: T3.created<T4.created
-                                        Hash Right Outer Join Light
-                                          condition: T3.created=T2.created
-                                            Nested Loop Right Join
-                                              filter: T1.created<T2.created
-                                                Limit value: 2 skip-rows: 0 take-rows: 2
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab
+                                Nested Loop Right Join
+                                  filter: T3.created<T4.created
+                                    Hash Right Outer Join Light
+                                      condition: T3.created=T2.created
+                                        Nested Loop Right Join
+                                          filter: T1.created<T2.created
+                                            Limit value: 2 skip-rows: 0 take-rows: 2
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                            Hash
-                                                Limit value: 3 skip-rows: 0 take-rows: 3
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                        Hash
+                                            Limit value: 3 skip-rows: 0 take-rows: 3
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                    Filter filter: null=created
                                         Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
@@ -8289,7 +8373,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         ")")
                 .returns("""
                         x\tts
-                        2\t2019-10-17T00:00:00.200000Z
                         3\t2019-10-17T00:00:00.700000Z
                         4\t2019-10-17T00:00:00.800000Z
                         """);
@@ -8751,6 +8834,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
+            public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                fiddler.run(this);
+                return super.getReader(tableToken, readerPoolSupervisor);
+            }
+
+            @Override
             public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                 fiddler.run(this);
                 return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
@@ -8964,8 +9053,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     // Runs the given DDL just before the given code generation of a SELECT plan, as a concurrent
-    // client would between the optimiser recording a table's metadata version and the generation
-    // opening a reader at that version.
+    // client would between binding recording a table's metadata version and the generation
+    // checking the table's reader against that version.
     private static class SchemaChangingCompiler extends SqlCompilerImpl {
         private final int schemaChangeGeneration;
         private final String schemaChangeSql;
@@ -8979,14 +9068,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         @Override
         protected RecordCursorFactory generateSelectOneShot(
-                IQueryModel selectQueryModel,
+                QueryModel selectQueryModel,
+                @Nullable Subquery subquery,
                 SqlExecutionContext executionContext,
                 boolean generateProgressLogger
         ) throws SqlException {
             if (++generationCount == schemaChangeGeneration) {
                 engine.execute(schemaChangeSql, executionContext);
             }
-            return super.generateSelectOneShot(selectQueryModel, executionContext, generateProgressLogger);
+            return super.generateSelectOneShot(selectQueryModel, subquery, executionContext, generateProgressLogger);
         }
     }
 
@@ -9084,7 +9174,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public int parseShowSql(GenericLexer lexer, IQueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
@@ -9110,6 +9200,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
             compileDropOtherCalled = true;
             super.compileDropOther(executionContext, tok, position);
+        }
+    }
+
+    private static class StaleOnceContext extends SqlExecutionContextImpl {
+        private boolean hasInjected;
+
+        private StaleOnceContext() {
+            super(engine, 1);
+            with(AllowAllSecurityContext.INSTANCE);
+        }
+
+        @Override
+        public TableReader getReader(TableToken token) {
+            if (!hasInjected && token.getTableName().equals("t")) {
+                hasInjected = true;
+                throw TableReferenceOutOfDateException.of(token);
+            }
+            return super.getReader(token);
         }
     }
 }

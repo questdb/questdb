@@ -52,7 +52,7 @@ class EqIntCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        return negated != (leftFunc.getInt(rec) == value);
+        return isComplemented ? !isMatch(rec) : isMatch(rec);
     }
 
     @Override
@@ -78,5 +78,9 @@ class EqIntCursorFunction extends AbstractScalarCursorFunction {
     @Override
     protected void setNullValue() {
         value = Numbers.INT_NULL;
+    }
+
+    private boolean isMatch(Record rec) {
+        return negated != (leftFunc.getInt(rec) == value);
     }
 }

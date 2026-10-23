@@ -70,7 +70,7 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
-            reader.setActiveColumns(columnIndexes);
+            reader.setActiveColumns(columnIndexes, timestampIndex);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
                     fwdCursor = new IntervalFwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
@@ -98,13 +98,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     @Override
     public boolean isNonDeterministic() {
         return intervalModel.isNonDeterministic();
-    }
-
-    // Compose the weaker within-execution property separately so execution-scoped bounds can
-    // remain stable even when they are non-deterministic across executions.
-    @Override
-    public boolean isStableWithinExecution() {
-        return intervalModel.isStableWithinExecution();
     }
 
     @Override

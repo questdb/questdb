@@ -35,7 +35,7 @@ public class SubTimestampFunctionFactoryTest extends AbstractCairoTest {
         // not an internal UnsupportedOperationException.
         assertMemoryLeak(() -> assertException(
                 "SELECT '2020-01-01T00:00:00.000000Z'::timestamp - 'a'",
-                0,
+                48,
                 "inconvertible value"));
     }
 

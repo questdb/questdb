@@ -343,6 +343,58 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeConstantGatesTheJoinInEveryPlacement() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The fused plan gates both inputs on a runtime constant that gates the join, wherever the query states
+            // it, and runs an outer join's runtime-constant ON condition over the build rows: false, it keeps every
+            // probe row NULL-extended. Each spelling builds p, the smaller table, or the input the join NULL-extends.
+            final String[] froms = {
+                    " FROM r JOIN p ON r.plant_id = p.plant_id",
+                    " FROM r LEFT JOIN p ON r.plant_id = p.plant_id",
+                    " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id"
+            };
+            final String[] keyedSelects = {
+                    "SELECT p.country, count(*) n, count(p.plant_id) m, sum(r.energy_kwh) e",
+                    "SELECT c, count(*) n, count(id) m, sum(e) e FROM (SELECT p.country c, p.plant_id id, r.energy_kwh e"
+            };
+            final String[] keylessSelects = {
+                    "SELECT count(*) n, count(p.plant_id) m, sum(r.energy_kwh) e",
+                    "SELECT count(*) n, count(id) m, sum(e) e FROM (SELECT p.country c, p.plant_id id, r.energy_kwh e"
+            };
+            try (SqlExecutionContextImpl context = bindingContext()) {
+                for (String from : froms) {
+                    final boolean isOuter = from != froms[0];
+                    for (int i = 0; i < 2; i++) {
+                        final boolean isNested = i == 1;
+                        for (String select : new String[]{keyedSelects[i], keylessSelects[i]}) {
+                            final String close = isNested ? ")" : "";
+                            final String order = select == keyedSelects[i] ? (isNested ? " ORDER BY c" : " ORDER BY country") : "";
+                            // The WHERE clause of the join and, nested, of the query over it, and the ON condition.
+                            assertGate(select + from + " WHERE $1 = 1" + close + order, false, context);
+                            if (isNested) {
+                                assertGate(select + from + close + " WHERE $1 = 1" + order, false, context);
+                            }
+                            assertGate(select + from + " AND $1 = 1" + close + order, isOuter, context);
+                        }
+                    }
+                }
+                // A FULL join has no fused operator, gated or not.
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1);
+                final String full = keylessSelects[0] + " FROM r FULL JOIN p ON r.plant_id = p.plant_id WHERE $1 = 1";
+                try (RecordCursorFactory factory = engine.select(full, context)) {
+                    Assert.assertFalse(full, plan(factory, context).contains("Hash Join Group By"));
+                    for (int value : new int[]{1, 2, Numbers.INT_NULL}) {
+                        bindVariableService.setInt(0, value);
+                        assertExecution(full, factory, context);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSampleByBindVariableTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -641,6 +693,33 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
     }
 
     // Compares two reads of one execution with the ordinary plan's rows under the same values.
+    // The fused plan runs a gate over both inputs, or an outer join's ON condition over the build rows, and returns
+    // the ordinary plan's rows whether the gate holds, fails or reads NULL.
+    private void assertGate(String sql, boolean isBuildOnFilter, SqlExecutionContextImpl context) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setInt(0, 1);
+        try (RecordCursorFactory factory = engine.select(sql, context)) {
+            final String plan = assertFusedPlan(sql, factory, context);
+            if (isBuildOnFilter) {
+                Assert.assertTrue(sql + '\n' + plan, plan.contains("buildOnFilter: $0::int=1"));
+            } else {
+                Assert.assertEquals(sql + '\n' + plan, 2, occurrences(plan, "Filter filter: $0::int=1"));
+            }
+            for (int value : new int[]{1, 2, Numbers.INT_NULL, 1}) {
+                bindVariableService.setInt(0, value);
+                assertExecution(sql, factory, context);
+            }
+        }
+    }
+
+    private static int occurrences(String text, String part) {
+        int count = 0;
+        for (int i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) {
+            count++;
+        }
+        return count;
+    }
+
     private String assertExecution(String sql, RecordCursorFactory factory, SqlExecutionContextImpl context) throws Exception {
         final String expected = ordinary(engine, sql, context);
         Assert.assertEquals(sql, expected, result(factory, context));

@@ -111,7 +111,7 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
             TrackingRecordFreer negativeLimitCursor
     ) {
         try {
-            AsyncFilteredRecordCursorFactory.halfCloseForTesting(sequence, cursor, negativeLimitCursor);
+            AsyncFilteredRecordCursorFactory.freeExecutionStateForTesting(sequence, cursor, negativeLimitCursor);
             Assert.fail();
         } catch (RuntimeException e) {
             Assert.assertSame(expected, e);
@@ -137,7 +137,7 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
         sequence.isFailureEnabled = false;
         cursor.isFailureEnabled = false;
         negativeLimitCursor.isFailureEnabled = false;
-        AsyncFilteredRecordCursorFactory.halfCloseForTesting(sequence, cursor, negativeLimitCursor);
+        AsyncFilteredRecordCursorFactory.freeExecutionStateForTesting(sequence, cursor, negativeLimitCursor);
         Assert.assertEquals(2, sequence.closeCount);
         Assert.assertEquals(2, cursor.freeRecordsCount);
         Assert.assertEquals(2, negativeLimitCursor.freeRecordsCount);

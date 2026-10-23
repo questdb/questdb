@@ -25,19 +25,533 @@
 package io.questdb.test.griffin.engine.functions.cast;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
+    // s::symbol compared to a timestamp interns every row through getInt(), so each cursor grows a
+    // dictionary charged to the query's memory tracker. returns() opens the factory more than once,
+    // and each later getCursor() takes the previous query's tracker back from the pool, where
+    // PerQueryMemoryTracker asserts that the cursor owner released every charge.
+    private static final String TS = "'1970-01-01T00:00:03.000000Z'::timestamp";
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInAsOfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT a.v, b.v FROM x a ASOF JOIN (SELECT * FROM y WHERE s::symbol = " + TS + ") b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast")
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            4\t3
+                            5\t3
+                            6\t3
+                            7\t3
+                            8\t8
+                            9\t8
+                            10\t8
+                            """);
+            assertQuery("SELECT a.v, b.v FROM x a ASOF JOIN (SELECT * FROM y WHERE s::symbol = " + TS + ") b ON (k)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "symbolKeyJoin: true")
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            4\tnull
+                            5\t3
+                            6\tnull
+                            7\t3
+                            8\t8
+                            9\t3
+                            10\t8
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v FROM (SELECT * FROM x LIMIT 100) WHERE s::symbol = " + TS)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: s::symbol=")
+                    .returns("""
+                            v
+                            3
+                            8
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInGroupByKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT (s::symbol = " + TS + ") b, count() c FROM x GROUP BY b ORDER BY b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: false")
+                    .returns("""
+                            b\tc
+                            false\t8
+                            true\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInHashOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT a.v, b.v FROM x a LEFT JOIN y b ON a.v = b.v AND b.s::symbol = " + TS)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Left Outer Join Light")
+                    .returns("""
+                            v\tv1
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            4\tnull
+                            5\tnull
+                            6\tnull
+                            7\tnull
+                            8\t8
+                            9\tnull
+                            10\tnull
+                            """);
+            assertQuery("SELECT a.v, b.v FROM x a RIGHT JOIN y b ON a.v = b.v AND a.s::symbol = " + TS + " ORDER BY b.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light")
+                    .returns("""
+                            v\tv1
+                            null\t1
+                            null\t2
+                            3\t3
+                            null\t4
+                            null\t5
+                            null\t6
+                            null\t7
+                            8\t8
+                            null\t9
+                            null\t10
+                            """);
+            assertQuery("SELECT a.v, b.v FROM x a FULL JOIN y b ON a.v = b.v AND a.s::symbol = " + TS + " ORDER BY a.v, b.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light")
+                    .returns("""
+                            v\tv1
+                            null\t1
+                            null\t2
+                            null\t4
+                            null\t5
+                            null\t6
+                            null\t7
+                            null\t9
+                            null\t10
+                            1\tnull
+                            2\tnull
+                            3\t3
+                            4\tnull
+                            5\tnull
+                            6\tnull
+                            7\tnull
+                            8\t8
+                            9\tnull
+                            10\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInHorizonJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT h.offset, first(b.s::symbol) f FROM x a HORIZON JOIN y b ON (k) LIST (0s) AS h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Horizon Join offsets: 1", "keys: [offset]")
+                    .returns("""
+                            offset\tf
+                            0\t1970-01-01T00:00:01.000000Z
+                            """);
+            assertQuery("SELECT first(b.s::symbol) f FROM x a HORIZON JOIN y b ON (k) LIST (0s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Horizon Join offsets: 1")
+                    .returns("""
+                            f
+                            1970-01-01T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInIndexedFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v FROM x WHERE k IN ('0', '1') AND s::symbol = " + TS)
+                    .noLeakCheck()
+                    .withPlanContaining("FilterOnValues")
+                    .returns("""
+                            v
+                            3
+                            8
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInNestedLoopJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT a.v, b.v FROM x a LEFT JOIN y b ON a.v < b.v AND b.s::symbol = " + TS)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            v\tv1
+                            1\t3
+                            1\t8
+                            2\t3
+                            2\t8
+                            3\t8
+                            4\t8
+                            5\t8
+                            6\t8
+                            7\t8
+                            8\tnull
+                            9\tnull
+                            10\tnull
+                            """);
+            assertQuery("SELECT a.v, b.v FROM x a RIGHT JOIN y b ON a.v > b.v AND a.s::symbol = " + TS)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            v\tv1
+                            3\t1
+                            8\t1
+                            3\t2
+                            8\t2
+                            8\t3
+                            8\t4
+                            8\t5
+                            8\t6
+                            8\t7
+                            null\t8
+                            null\t9
+                            null\t10
+                            """);
+            assertQuery("SELECT a.v, b.v FROM x a FULL JOIN y b ON a.v < b.v AND b.s::symbol = " + TS)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            v\tv1
+                            1\t3
+                            1\t8
+                            2\t3
+                            2\t8
+                            3\t8
+                            4\t8
+                            5\t8
+                            6\t8
+                            7\t8
+                            8\tnull
+                            9\tnull
+                            10\tnull
+                            null\t1
+                            null\t2
+                            null\t4
+                            null\t5
+                            null\t6
+                            null\t7
+                            null\t9
+                            null\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInNotKeyedGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT first(s::symbol) f, count_distinct(s::symbol) d FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: false")
+                    .returns("""
+                            f\td
+                            1970-01-01T00:00:01.000000Z\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInParallelFilter() throws Exception {
+        assertParallel((engine, context) -> {
+            assertQuery("SELECT v FROM x WHERE s::symbol = " + TS)
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .withPlanContaining("Async Filter workers: 4")
+                    .returns("""
+                            v
+                            3
+                            8
+                            """);
+            assertQuery("SELECT v FROM x WHERE s::symbol = " + TS + " ORDER BY v DESC LIMIT 3")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Async Top K lo: 3 workers: 4")
+                    .returns("""
+                            v
+                            8
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInParallelGroupBy() throws Exception {
+        assertParallel((engine, context) -> {
+            assertQuery("SELECT k, count() c FROM x WHERE s::symbol = " + TS + " GROUP BY k ORDER BY k")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Async Group By workers: 4")
+                    .returns("""
+                            k\tc
+                            0\t1
+                            1\t1
+                            """);
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE s::symbol = " + TS)
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Async Group By workers: 4")
+                    .returns("""
+                            c\ts
+                            2\t11
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInParallelHorizonJoin() throws Exception {
+        assertParallel((engine, context) -> assertQuery("SELECT h.offset, count() c FROM x a HORIZON JOIN y b ON (k) LIST (0s) AS h WHERE a.s::symbol = " + TS)
+                .withEngine(engine)
+                .withContext(context)
+                .noLeakCheck()
+                .expectSize()
+                .withPlanContaining("Async Horizon Join workers: 4")
+                .returns("""
+                        offset\tc
+                        0\t2
+                        """));
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInParallelWindowJoin() throws Exception {
+        assertParallel((engine, context) -> {
+            assertQuery("SELECT a.v, count() c FROM x a WINDOW JOIN y b ON (a.k = b.k) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW WHERE a.s::symbol = " + TS)
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Async Window Fast Join workers: 4", "master filter: s::symbol=")
+                    .returns("""
+                            v\tc
+                            3\t2
+                            8\t2
+                            """);
+            assertQuery("SELECT a.v, count() c FROM x a WINDOW JOIN y b ON (a.v = b.v AND b.s::symbol = " + TS + ") RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Async Window Join workers: 4", "join filter:")
+                    .returns("""
+                            v\tc
+                            1\t0
+                            2\t0
+                            3\t1
+                            4\t0
+                            5\t0
+                            6\t0
+                            7\t0
+                            8\t1
+                            9\t0
+                            10\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, first(s::symbol) f FROM x SAMPLE BY 3s ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("Sample By")
+                    .returns("""
+                            ts\tf
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z
+                            1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z
+                            1970-01-01T00:00:07.000000Z\t1970-01-01T00:00:02.000000Z
+                            1970-01-01T00:00:10.000000Z\t1970-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryInWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT a.v, first(b.s::symbol) f FROM x a WINDOW JOIN y b ON (a.k = b.k) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Window Fast Join")
+                    .returns("""
+                            v\tf
+                            1\t1970-01-01T00:00:01.000000Z
+                            2\t1970-01-01T00:00:02.000000Z
+                            3\t1970-01-01T00:00:01.000000Z
+                            4\t1970-01-01T00:00:02.000000Z
+                            5\t1970-01-01T00:00:03.000000Z
+                            6\t1970-01-01T00:00:04.000000Z
+                            7\t1970-01-01T00:00:00.000000Z
+                            8\t1970-01-01T00:00:01.000000Z
+                            9\t1970-01-01T00:00:02.000000Z
+                            10\t1970-01-01T00:00:03.000000Z
+                            """);
+            assertQuery("SELECT a.v, first(b.s::symbol) f FROM x a WINDOW JOIN y b RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Window Join")
+                    .returns("""
+                            v\tf
+                            1\t1970-01-01T00:00:01.000000Z
+                            2\t1970-01-01T00:00:01.000000Z
+                            3\t1970-01-01T00:00:02.000000Z
+                            4\t1970-01-01T00:00:03.000000Z
+                            5\t1970-01-01T00:00:04.000000Z
+                            6\t1970-01-01T00:00:00.000000Z
+                            7\t1970-01-01T00:00:01.000000Z
+                            8\t1970-01-01T00:00:02.000000Z
+                            9\t1970-01-01T00:00:03.000000Z
+                            10\t1970-01-01T00:00:04.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryUnderCase() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v, CASE WHEN s::symbol = " + TS + " THEN 'hit' ELSE 'miss' END c FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("case([s::symbol=")
+                    .returns("""
+                            v\tc
+                            1\tmiss
+                            2\tmiss
+                            3\thit
+                            4\tmiss
+                            5\tmiss
+                            6\tmiss
+                            7\tmiss
+                            8\thit
+                            9\tmiss
+                            10\tmiss
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryUnderCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v, coalesce((s::symbol = " + TS + ")::int, v::int, 0) c FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("coalesce([")
+                    .returns("""
+                            v\tc
+                            1\t0
+                            2\t0
+                            3\t1
+                            4\t0
+                            5\t0
+                            6\t0
+                            7\t0
+                            8\t1
+                            9\t0
+                            10\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCursorCloseReleasesDictionaryUnderTimestampSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT v, timestamp_sequence(0, (s::symbol = " + TS + ")::long) t FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("timestamp_sequence(0,")
+                    .returns("""
+                            v\tt
+                            1\t1970-01-01T00:00:00.000000Z
+                            2\t1970-01-01T00:00:00.000000Z
+                            3\t1970-01-01T00:00:00.000000Z
+                            4\t1970-01-01T00:00:00.000001Z
+                            5\t1970-01-01T00:00:00.000001Z
+                            6\t1970-01-01T00:00:00.000001Z
+                            7\t1970-01-01T00:00:00.000001Z
+                            8\t1970-01-01T00:00:00.000001Z
+                            9\t1970-01-01T00:00:00.000002Z
+                            10\t1970-01-01T00:00:00.000002Z
+                            """);
+        });
+    }
 
     // A lazy cast-to-symbol only needs a dictionary to answer the integer-key API
     // (getInt/valueOf). getSymbol()/getSymbolB() are pure pass-throughs: the wire
@@ -277,6 +791,39 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
                 func.close();
             }
         });
+    }
+
+    private static void createTables(CairoEngine engine, SqlExecutionContext context) throws SqlException {
+        for (String table : new String[]{"x", "y"}) {
+            engine.execute("CREATE TABLE " + table + " (ts TIMESTAMP, s STRING, k SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY HOUR", context);
+            engine.execute(
+                    "INSERT INTO " + table + " SELECT (x * 1_000_000L)::timestamp, ((x % 5) * 1_000_000L)::timestamp::string, (x % 2)::symbol, x FROM long_sequence(10)",
+                    context
+            );
+        }
+    }
+
+    private void assertParallel(ParallelAssertion assertion) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        assertMemoryLeak(() -> TestUtils.execute(
+                new TestWorkerPool(4),
+                (engine, compiler, context) -> {
+                    createTables(engine, context);
+                    assertion.run(engine, context);
+                },
+                configuration,
+                LOG
+        ));
+    }
+
+    private void createTables() throws SqlException {
+        createTables(engine, sqlExecutionContext);
+    }
+
+    @FunctionalInterface
+    private interface ParallelAssertion {
+        void run(CairoEngine engine, SqlExecutionContext context) throws Exception;
     }
 
     private static class FeedFunction extends StrFunction {

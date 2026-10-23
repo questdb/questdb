@@ -388,4 +388,8 @@ public class JoinRecord implements Record {
         this.master = master;
         this.slave = slave;
     }
+
+    void setSlave(Record slave) {
+        this.slave = slave;
+    }
 }

@@ -46,13 +46,11 @@ public class HorizonJoinContext implements Mutable {
     public static final int MODE_LIST = 2;
     public static final int MODE_NONE = 0;
     public static final int MODE_RANGE = 1;
-    private final ObjList<QueryColumn> groupingColumns = new ObjList<>();
     private final ObjList<ExpressionNode> listOffsets = new ObjList<>();
     private ExpressionNode alias;
     private int aliasPosition;
-    private boolean isProjection;
     private int mode = MODE_NONE;
-    private IQueryModel parentModel;
+    private QueryModel parentModel;
     private ExpressionNode rangeFrom;
     private int rangeFromPosition;
     private ExpressionNode rangeStep;
@@ -75,8 +73,6 @@ public class HorizonJoinContext implements Mutable {
         alias = null;
         aliasPosition = 0;
         parentModel = null;
-        isProjection = false;
-        groupingColumns.clear();
     }
 
     public void copyFrom(HorizonJoinContext other) {
@@ -90,9 +86,6 @@ public class HorizonJoinContext implements Mutable {
         this.listOffsets.addAll(other.listOffsets);
         this.alias = other.alias;
         this.aliasPosition = other.aliasPosition;
-        this.isProjection = other.isProjection;
-        this.groupingColumns.clear();
-        this.groupingColumns.addAll(other.groupingColumns);
     }
 
     public ExpressionNode getAlias() {
@@ -103,10 +96,6 @@ public class HorizonJoinContext implements Mutable {
         return aliasPosition;
     }
 
-    public ObjList<QueryColumn> getGroupingColumns() {
-        return groupingColumns;
-    }
-
     public ObjList<ExpressionNode> getListOffsets() {
         return listOffsets;
     }
@@ -115,7 +104,7 @@ public class HorizonJoinContext implements Mutable {
         return mode;
     }
 
-    public IQueryModel getParentModel() {
+    public QueryModel getParentModel() {
         return parentModel;
     }
 
@@ -139,10 +128,6 @@ public class HorizonJoinContext implements Mutable {
         return rangeTo;
     }
 
-    public boolean isProjection() {
-        return isProjection;
-    }
-
     public void setAlias(ExpressionNode alias, int position) {
         this.alias = alias;
         this.aliasPosition = position;
@@ -152,12 +137,8 @@ public class HorizonJoinContext implements Mutable {
         this.mode = mode;
     }
 
-    public void setParentModel(IQueryModel parentModel) {
+    public void setParentModel(QueryModel parentModel) {
         this.parentModel = parentModel;
-    }
-
-    public void setProjection(boolean isProjection) {
-        this.isProjection = isProjection;
     }
 
     public void setRangeFrom(ExpressionNode rangeFrom, int position) {

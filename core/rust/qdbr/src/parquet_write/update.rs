@@ -49,7 +49,7 @@ use parquet_format_safe::{
     Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
-use qdb_parquet_meta::convert::resolve_column_id;
+use qdb_parquet_meta::convert::{is_written_by_questdb, resolve_column_id};
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
 use std::fs::File;
@@ -174,7 +174,7 @@ pub struct ParquetUpdater {
     hybrid_encoded_column_chunks: u64,
 }
 
-fn publish_parquet_meta_with_sync<S>(
+pub(crate) fn publish_parquet_meta_with_sync<S>(
     parquet_meta_file: &mut File,
     new_file_size: u64,
     sync: bool,
@@ -1494,6 +1494,7 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                     qdb_meta.squash_tracker,
                     self.seq_txn,
+                    is_written_by_questdb(self.file_metadata.created_by.as_deref()),
                 )?;
                 self.result_parquet_meta_size = parquet_meta_bytes.len() as i64;
                 parquet_meta_file
@@ -1539,6 +1540,7 @@ impl ParquetUpdater {
                     bloom_bitsets,
                     self.result_unused_bytes,
                     self.seq_txn,
+                    is_written_by_questdb(self.file_metadata.created_by.as_deref()),
                 )?;
 
                 // Write the new snapshot at the append base. The header still

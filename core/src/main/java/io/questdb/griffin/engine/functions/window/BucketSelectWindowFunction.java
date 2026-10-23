@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -36,12 +37,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.table.SubsampleAlgorithm;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -118,7 +119,7 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     private long lastTs;
     @Nullable
     private MemoryTracker memoryTracker;
-    private ObjList<ExpressionNode> orderBy;
+    private ObjList<CharSequence> orderBy;
     // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
     // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
     // for both passes, or these counters (and the buffer positions stashed in `selected`) desync
@@ -325,11 +326,14 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
 
     @Override
     public void initRecordComparator(
-            SqlCodeGenerator sqlGenerator,
+            BytecodeAssembler asm,
+            RecordComparatorCompiler comparatorCompiler,
+            ListColumnFilter columnFilter,
             RecordMetadata metadata,
             ArrayColumnTypes chainTypes,
             IntList orderIndices,
-            ObjList<ExpressionNode> orderBy,
+            IntList orderPositions,
+            ObjList<CharSequence> orderBy,
             IntList orderByDirection
     ) throws SqlException {
         // Compile-time half of the ascending-order contract: reject a window ORDER BY that

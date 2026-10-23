@@ -975,7 +975,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-02T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-01T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
                             """);
             assertQuery("price_1h order by sym, ts")
                     .expectSize()
@@ -3075,6 +3075,79 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonDeterministicFunctionPrunedFromSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            execute("CREATE MATERIALIZED VIEW mv1 AS (SELECT ts, max(x) m FROM (SELECT ts, x, now() n FROM t) SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("CREATE MATERIALIZED VIEW mv_kept AS (SELECT ts, max(x) m, max(n) n FROM (SELECT ts, x, now() n FROM t) SAMPLE BY 1d) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(87, "non-deterministic function cannot be used in materialized view: now");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv1");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicFunctionPrunedFromView() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            execute("CREATE VIEW v AS (SELECT ts, x, now() n FROM t)");
+            execute("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, max(x) m FROM v SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("CREATE MATERIALIZED VIEW mv_kept AS (SELECT ts, max(x) m, max(n) n FROM v SAMPLE BY 1d) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(51, "non-deterministic function cannot be used in materialized view: now");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv2");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicTableFunctionArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            final String viewSql = "SELECT * FROM generate_series(now(), now(), 1)";
+            execute("CREATE VIEW gv AS (" + viewSql + ")");
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(t.x) m FROM t CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now_ns(), now_ns(), 1) g SAMPLE BY 1h",
+                    "now_ns()",
+                    "now_ns"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, sum(g.x) s FROM t CROSS JOIN long_sequence(now()::LONG % 2 + 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN (SELECT generate_series FROM generate_series(now(), now(), 1)) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT ts, max(x) m FROM t WHERE x < (SELECT count() FROM generate_series(now(), now(), 1)) SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertQuery("CREATE MATERIALIZED VIEW mv AS (SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN gv g SAMPLE BY 1h) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails("CREATE MATERIALIZED VIEW mv AS (".length() + viewSql.lastIndexOf("now()"), "non-deterministic function cannot be used in materialized view: now");
+
+            execute("CREATE MATERIALIZED VIEW mv_pruned AS (SELECT t.ts, max(t.x) m FROM t CROSS JOIN (SELECT now() n FROM long_sequence(1)) g SAMPLE BY 1d) PARTITION BY DAY");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv_pruned");
+        });
+    }
+
+    @Test
     public void testDedupKeysNoRowsRangeReplace() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3334,6 +3407,26 @@ public class MatViewTest extends AbstractCairoTest {
         // rowsPerBucket = 100M / 108T ≈ 0.00000093
         // bucketsForRows = 1000000 / 0.00000093 ≈ 1,080,000,000,000
         testEstimateBucketsForRows(100_000_000L, 1, Micros.HOUR_MICROS, 30000, 1070000000000L, 1100000000000L);
+    }
+
+    @Test
+    public void testFloorExclusiveHighMicros() throws Exception {
+        assertMemoryLeak(() -> assertFloorExclusiveHigh(false));
+    }
+
+    @Test
+    public void testFloorExclusiveHighNanos() throws Exception {
+        assertMemoryLeak(() -> assertFloorExclusiveHigh(true));
+    }
+
+    @Test
+    public void testFloorUnshiftedControlMicros() throws Exception {
+        assertMemoryLeak(() -> assertFloorUnshiftedControl(false));
+    }
+
+    @Test
+    public void testFloorUnshiftedControlNanos() throws Exception {
+        assertMemoryLeak(() -> assertFloorUnshiftedControl(true));
     }
 
     @Test
@@ -3652,6 +3745,61 @@ public class MatViewTest extends AbstractCairoTest {
             capture.drain();
             capture.assertLoggedRE(" I .*MatViewStateStoreImpl materialized view state not found, request dropped "
                     + "\\[view=missing_view~1, op=full_refresh\\]");
+        });
+    }
+
+    @Test
+    public void testGroupByTimestampFloorRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE base (ts #TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2024-01-01T00:10:00', 'a', 1),
+                        ('2024-01-01T01:10:00', 'b', 2),
+                        ('2024-01-01T03:10:00', 'a', 3),
+                        ('2024-01-02T05:10:00', 'b', 4)
+                    """);
+            drainQueues();
+            final String[] queries = {
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY 1, 2",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY timestamp_floor('2h', ts), sym",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym ORDER BY bucket",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base ORDER BY bucket",
+                    "SELECT bucket, sym, c FROM (SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym)"
+            };
+            final int viewCount = 2 * queries.length;
+            for (int i = 0; i < queries.length; i++) {
+                execute("CREATE MATERIALIZED VIEW mv" + (2 * i) + " AS (" + queries[i] + ") PARTITION BY DAY");
+                execute("CREATE MATERIALIZED VIEW mv" + (2 * i + 1) + " AS (" + queries[i] + ") TIMESTAMP(bucket) PARTITION BY DAY");
+            }
+            drainQueues();
+            assertGroupByTimestampFloorViews(viewCount, """
+                    bucket\tsym\tc
+                    2024-01-01T00:00:00.000000Z\ta\t1
+                    2024-01-01T00:00:00.000000Z\tb\t1
+                    2024-01-01T02:00:00.000000Z\ta\t1
+                    2024-01-02T04:00:00.000000Z\tb\t1
+                    """);
+
+            execute("INSERT INTO base VALUES ('2024-01-01T00:20:00', 'a', 5), ('2024-01-03T01:00:00', 'a', 6)");
+            drainQueues();
+            final String refreshed = """
+                    bucket\tsym\tc
+                    2024-01-01T00:00:00.000000Z\ta\t2
+                    2024-01-01T00:00:00.000000Z\tb\t1
+                    2024-01-01T02:00:00.000000Z\ta\t1
+                    2024-01-02T04:00:00.000000Z\tb\t1
+                    2024-01-03T00:00:00.000000Z\ta\t1
+                    """;
+            assertGroupByTimestampFloorViews(viewCount, refreshed);
+
+            for (int i = 0; i < viewCount; i++) {
+                execute("REFRESH MATERIALIZED VIEW mv" + i + " FULL");
+            }
+            drainQueues();
+            assertGroupByTimestampFloorViews(viewCount, refreshed);
         });
     }
 
@@ -8574,6 +8722,46 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNotKeyed1MNegativeOffset() throws Exception {
+        // A negative OFFSET starts each month at 23:00 on the previous day; the refresh
+        // intervals step one month at a time over that grid.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-01:00'";
+            assertMatViewMatchesSampleBy(viewQuery, "2020-12-30T00:00:00.000000Z", 86_400_000_000L, 200, 4);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1dOffsetInsideDstWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"Europe/Berlin", "02:30", "2026-03-27T12:00:00.000000Z"},
+                    {"Europe/Berlin", "02:30", "2026-10-23T12:00:00.000000Z"},
+                    {"Europe/Berlin", "02:00", "2026-10-23T12:00:00.000000Z"},
+                    {"America/New_York", "01:30", "2026-10-30T18:00:00.000000Z"},
+                    {"America/New_York", "02:30", "2026-03-06T18:00:00.000000Z"},
+                    {"Australia/Sydney", "02:30", "2026-04-03T06:00:00.000000Z"},
+                    {"Australia/Sydney", "02:30", "2026-10-02T06:00:00.000000Z"}
+            };
+            for (String[] c : cases) {
+                final String viewQuery = "select k, count() c from x SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE '" + c[0] + "' WITH OFFSET '" + c[1] + "'";
+                assertMatViewMatchesSampleBy(viewQuery, c[2], 1_800_000_000L, 200, 5);
+                execute("DROP MATERIALIZED VIEW x_view");
+                execute("DROP TABLE x");
+                execute("DROP TABLE tmp");
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1MNegativeOffsetBerlin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'";
+            assertMatViewMatchesSampleBy(viewQuery, "2020-12-30T00:00:00.000000Z", 86_400_000_000L, 200, 4);
+        });
+    }
+
+    @Test
     public void testSampleByNotKeyed15mBerlinSpringForward() throws Exception {
         // 15m stride = minimum DST gap. canSkipDstGapCorrection returns true for
         // 15m when (from+offset) % day == 0 (it is here, offset=0).
@@ -8645,6 +8833,54 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewQuery = "select k, count() c from x SAMPLE BY 1w ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
             assertMatViewMatchesSampleBy(viewQuery, "2021-03-15T00:00:00.000000Z", 3_600_000_000L, 500, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByOrderedOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (sym VARCHAR, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute("CREATE MATERIALIZED VIEW desc_day AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY ts DESC) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW desc_default AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY ts DESC)");
+            execute("CREATE MATERIALIZED VIEW by_sym AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY sym, price DESC)");
+            execute("CREATE MATERIALIZED VIEW outer_desc AS (SELECT * FROM (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h) ORDER BY ts DESC) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW sub_query_desc AS (SELECT sym, last(price) price, ts FROM (SELECT * FROM base_price WHERE price > 0) TIMESTAMP(ts) SAMPLE BY 1h ORDER BY ts DESC) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO base_price VALUES
+                        ('gbpusd', 1.320, '2024-09-10T12:01'),
+                        ('gbpusd', 1.323, '2024-09-10T12:02'),
+                        ('jpyusd', 103.21, '2024-09-10T13:02'),
+                        ('gbpusd', 1.321, '2024-09-10T14:02')
+                    """);
+            drainQueues();
+            assertSampleByOrderedOutputViews("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T13:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T14:00:00.000000Z
+                    """);
+
+            execute("INSERT INTO base_price VALUES ('jpyusd', 103.25, '2024-09-10T13:30'), ('gbpusd', 1.322, '2024-09-11T00:10')");
+            drainQueues();
+            assertSampleByOrderedOutputViews("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.25\t2024-09-10T13:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T14:00:00.000000Z
+                    gbpusd\t1.322\t2024-09-11T00:00:00.000000Z
+                    """);
+            assertQuery("SELECT table_name, designatedTimestamp, partitionBy FROM tables() WHERE table_name <> 'base_price' ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp\tpartitionBy
+                            by_sym\tts\tMONTH
+                            desc_day\tts\tDAY
+                            desc_default\tts\tMONTH
+                            outer_desc\tts\tDAY
+                            sub_query_desc\tts\tDAY
+                            """);
         });
     }
 
@@ -10484,6 +10720,126 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertFloorExclusiveHigh(boolean isNanos) throws Exception {
+        // Recovery needs one query over the widened envelope, not randomized one-day batches.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        createFloorBase(isNanos);
+        final String suffix = isNanos ? ".000000000Z" : ".000000Z";
+        final String query = "SELECT timestamp_floor('1d', to_timezone(ts, 'Europe/Berlin')) bucket, count() c FROM t";
+        final String initial = "bucket\tc\n2024-03-01T00:00:00" + suffix + "\t46\n2024-03-02T00:00:00" + suffix + "\t2\n";
+        assertQuery(query + " ORDER BY bucket").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(initial);
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (" + query + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT count() FROM mv").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        execute("ALTER MATERIALIZED VIEW mv RESUME WAL");
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT count() FROM mv").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+        // Real source data widens the FULL envelope so that every output bucket fits.
+        execute("INSERT INTO t VALUES (99, '2024-03-03T12:00:00Z')");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        final String recovered = initial + "2024-03-03T00:00:00" + suffix + "\t1\n";
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
+
+        // RANGE rounds the high to March 2; rejection must preserve the recovered rows.
+        execute("REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-03-01' TO '2024-03-01T23:59:59."
+                + (isNanos ? "999999999" : "999999") + "Z'");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
+    }
+
+    private void assertFloorRangeError() throws Exception {
+        assertQuery("SELECT invalidation_reason LIKE '[-1]: timestamp out of replace range%' has_range_error FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("has_range_error\ntrue\n");
+    }
+
+    private void assertFloorUnshiftedControl(boolean isNanos) throws Exception {
+        createFloorBase(isNanos);
+        final String suffix = isNanos ? ".000000000Z" : ".000000Z";
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (SELECT timestamp_floor('1d', ts) bucket, count() c FROM t) PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize()
+                .returns("bucket\tc\n2024-03-01T00:00:00" + suffix + "\t48\n");
+        execute("INSERT INTO t VALUES (99, '2024-03-01T12:00:00Z'), (100, '2024-03-02T12:00:00Z')");
+        drainWalAndMatViewQueues();
+        final String expected = "bucket\tc\n2024-03-01T00:00:00" + suffix + "\t49\n2024-03-02T00:00:00" + suffix + "\t1\n";
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(expected);
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(expected);
+    }
+
+    private void assertFloorViewState(String status) throws Exception {
+        assertQuery("SELECT suspended, writerTxn = sequencerTxn caught_up FROM wal_tables() WHERE name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("suspended\tcaught_up\nfalse\ttrue\n");
+        assertQuery("SELECT view_status FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("view_status\n" + status + "\n");
+    }
+
+    private void assertGroupByTimestampFloorViews(int viewCount, String expected) throws Exception {
+        assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("view_name\tinvalidation_reason\n");
+        for (int i = 0; i < viewCount; i++) {
+            assertQuery("SELECT bucket, sym, c FROM mv" + i + " ORDER BY bucket, sym")
+                    .timestamp("bucket")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        }
+    }
+
+    private void assertNonDeterministicFunctionPrunedRows(String viewName) throws Exception {
+        assertQuery(viewName)
+                .timestamp("ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns(replaceExpectedTimestamp("""
+                        ts\tm
+                        2024-01-01T00:00:00.000000Z\t5
+                        2024-01-02T00:00:00.000000Z\t3
+                        """));
+    }
+
+    private void assertNonDeterministicTableFunctionArgument(String select, String offender, String offenderName) throws Exception {
+        final String prefix = "CREATE MATERIALIZED VIEW mv AS (";
+        assertQuery(prefix + select + ") PARTITION BY DAY")
+                .noLeakCheck()
+                .fails(prefix.length() + select.lastIndexOf(offender), "non-deterministic function cannot be used in materialized view: " + offenderName);
+    }
+
+    private void assertSampleByOrderedOutputViews(String expected) throws Exception {
+        assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("view_name\tinvalidation_reason\n");
+        final String[] views = {"by_sym", "desc_day", "desc_default", "outer_desc", "sub_query_desc"};
+        for (String view : views) {
+            assertQuery(view)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        }
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10493,6 +10849,19 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
+    }
+
+    private void createFloorBase(boolean isNanos) throws SqlException {
+        final String type = isNanos ? "TIMESTAMP_NS" : "TIMESTAMP";
+        execute("CREATE TABLE t (v DOUBLE, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t SELECT x, " + (isNanos ? "timestamp_sequence_ns" : "timestamp_sequence")
+                + "('2024-03-01T00:00:00Z'::" + type + ", " + (isNanos ? "1_800_000_000_000L" : "1_800_000_000L") + ") FROM long_sequence(48)");
+        drainWalAndMatViewQueues();
+    }
+
+    private void createNonDeterministicFunctionBase() throws SqlException {
+        executeWithRewriteTimestamp("CREATE TABLE t (ts #TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t VALUES ('2024-01-01T01:00:00Z', 1), ('2024-01-01T02:00:00Z', 5), ('2024-01-02T01:00:00Z', 3)");
     }
 
     private void drainQueues() {

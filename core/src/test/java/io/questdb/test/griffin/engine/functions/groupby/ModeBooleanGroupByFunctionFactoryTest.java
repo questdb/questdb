@@ -40,7 +40,7 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIsThreadSafeDelegatesToArg() {
         // Unlike the other mode functions this one keeps no map, so it once hard-coded isThreadSafe()=true.
-        // But it reads the arg per row, and SqlCodeGenerator.compileWorkerGroupByFunctionsConditionally
+        // But it reads the arg per row, and AggregateFactoryGenerator
         // only builds per-worker copies when some group-by function reports false - so a hard-coded true
         // hands the same instance, and the same non-thread-safe arg, to every parallel GROUP BY worker
         // (AsyncGroupByAtom.getGroupByFunctions returns ownerGroupByFunctions when perWorkerGroupByFunctions

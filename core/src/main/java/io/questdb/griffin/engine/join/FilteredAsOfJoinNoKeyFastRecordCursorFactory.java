@@ -88,21 +88,26 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
-        this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
-                columnSplit,
-                slaveNullRecord,
-                masterFactory.getMetadata().getTimestampIndex(),
-                slaveTimestampIndex,
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
-        if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
-            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
-        } else {
-            this.selectedTimeFrameCursor = null;
+        try {
+            this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
+                    columnSplit,
+                    slaveNullRecord,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    slaveTimestampIndex,
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+            if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
+                this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
+            } else {
+                this.selectedTimeFrameCursor = null;
+            }
+            this.toleranceInterval = toleranceInterval;
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
-        this.toleranceInterval = toleranceInterval;
     }
 
     @Override
@@ -173,6 +178,14 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 int lookahead
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (slaveRecordFilter != null) {
+                slaveRecordFilter.cursorClosed();
+            }
         }
 
         @Override

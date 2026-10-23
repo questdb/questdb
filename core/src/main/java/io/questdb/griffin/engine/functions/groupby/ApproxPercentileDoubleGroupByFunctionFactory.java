@@ -62,6 +62,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return "approx_percentile(DDi)";
     }

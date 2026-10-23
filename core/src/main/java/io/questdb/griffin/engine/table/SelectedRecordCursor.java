@@ -111,6 +111,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long remainingMasterRowCount() {
+        return baseCursor.remainingMasterRowCount();
+    }
+
+    @Override
     public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
         if (columnIndexes == null) {
             baseCursor.setParentUsedColumns(null);

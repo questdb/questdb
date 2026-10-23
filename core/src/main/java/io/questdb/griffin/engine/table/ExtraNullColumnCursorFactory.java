@@ -45,14 +45,11 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFactory {
@@ -67,7 +64,12 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         super(metadata);
         this.base = base;
         this.columnSplit = columnSplit;
-        this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess());
+        try {
+            this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess());
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -78,21 +80,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
-    }
-
-    @Nullable
-    public ObjList<Function> getBindVarFunctions() {
-        return base.getBindVarFunctions();
-    }
-
-    @Nullable
-    public MemoryCARW getBindVarMemory() {
-        return base.getBindVarMemory();
-    }
-
-    @Override
-    public CompiledFilter getCompiledFilter() {
-        return base.getCompiledFilter();
     }
 
     @Override
@@ -149,11 +136,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex());
         }
         return timeFrameCursor.of(baseCursor);
-    }
-
-    @Override
-    public void halfClose() {
-        base.halfClose();
     }
 
     @Override

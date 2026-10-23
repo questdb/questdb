@@ -25,17 +25,21 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class MulDecimalFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.decimalProduct(argTypes.getQuick(0), argTypes.getQuick(1));
+    }
 
     @Override
     public String getSignature() {
@@ -52,11 +56,7 @@ public class MulDecimalFunctionFactory implements FunctionFactory {
     ) {
         final Function left = args.getQuick(0);
         final Function right = args.getQuick(1);
-        final int leftType = left.getType();
-        final int rightType = right.getType();
-        final int precision = Decimals.MAX_PRECISION;
-        final int scale = Math.min(ColumnType.getDecimalScale(leftType) + ColumnType.getDecimalScale(rightType), Decimals.MAX_SCALE);
-        return new Func(left, right, ColumnType.getDecimalType(precision, scale), position);
+        return new Func(left, right, ResultTypes.decimalProduct(left.getType(), right.getType()), position);
     }
 
     private static class Func extends ArithmeticDecimal256Function {

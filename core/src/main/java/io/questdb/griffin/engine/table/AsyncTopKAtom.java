@@ -26,15 +26,14 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -47,7 +46,6 @@ import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyType;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTracker;
@@ -55,7 +53,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 
@@ -87,34 +84,19 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
 
     public AsyncTopKAtom(
             @NotNull CairoConfiguration configuration,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
+            @NotNull AsyncFilterResources filterResources,
             @NotNull @Transient RecordComparatorCompiler recordComparatorCompiler,
             @NotNull @Transient ListColumnFilter orderByFilter,
             @NotNull @Transient RecordMetadata orderByMetadata,
             long lo,
             int workerCount
     ) throws SqlException {
-        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert filterResources.getPerWorkerFilters() == null || filterResources.getPerWorkerFilters().size() == workerCount;
 
+        final IntHashSet filterUsedColumnIndexes = filterResources.getFilterUsedColumnIndexes();
         try {
-            this.filterCtx = new AsyncFilterContext(
-                    configuration,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    ownerFilter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
-                    workerCount,
-                    0,
-                    configuration.getSqlParquetCacheMemorySize(),
-                    0L
-            );
+            final long memoryPoolMaxBytes = configuration.getSqlParquetCacheMemorySize();
+            this.filterCtx = new AsyncFilterContext(configuration, filterResources, workerCount, 0, memoryPoolMaxBytes, 0L);
 
             this.lo = lo;
             this.workerCount = workerCount;
@@ -200,7 +182,8 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
                 }
             }
         } catch (Throwable th) {
-            close();
+            Misc.free(filterResources, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -220,8 +203,18 @@ public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenab
 
     @Override
     public void close() {
-        clear();
-        Misc.free(filterCtx);
+        Throwable failure = Misc.freeObjListBestEffort(null, rankMaps);
+        failure = Misc.freeBestEffort(failure, ownerChain);
+        failure = Misc.freeBestEffort(failure, ownerTopK);
+        failure = Misc.freeBestEffort(failure, ownerEncoder);
+        failure = Misc.freeBestEffort(failure, ownerRecordA);
+        failure = Misc.freeBestEffort(failure, ownerRecordB);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerChains);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerTopK);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerEncoders);
+        failure = Misc.freeObjListBestEffort(failure, perWorkerRecordsB);
+        failure = Misc.freeBestEffort(failure, filterCtx);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public void freePerWorkerChainsAndPools() {

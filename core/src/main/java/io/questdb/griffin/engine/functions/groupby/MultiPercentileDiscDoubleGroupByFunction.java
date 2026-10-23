@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
@@ -81,9 +82,8 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
 
     @Override
     public void close() {
-        Misc.free(arg);
-        Misc.free(percentileFunc);
         Misc.free(out);
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, arg), percentileFunc));
     }
 
     @Override

@@ -179,7 +179,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 );
             }
         } catch (Throwable th) {
-            releaseAdoptedStateOnConstructorFailure();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -333,13 +333,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
      * the join filter, the window bound functions, the group-by functions, the cursor and the map
      * value - in one place.
      */
-    private void releaseAdoptedStateOnConstructorFailure() {
-        masterFactory = null;
-        slaveFactory = null;
-        joinMetadata = null;
-        close();
-    }
-
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         protected final JoinRecord internalJoinRecord;
@@ -421,6 +414,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
             }
+            Throwable failure = Function.cursorClosed(null, joinFilter);
+            failure = Function.cursorClosed(failure, windowLoFunc);
+            failure = Function.cursorClosed(failure, windowHiFunc);
+            CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, groupByFunctions));
         }
 
         @Override

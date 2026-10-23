@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -33,6 +34,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqDateFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "=(MM)";
@@ -45,7 +51,7 @@ public class EqDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
+        return new EqDateFunction(args.getQuick(0), args.getQuick(1));
     }
 
     private static class EqDateFunction extends AbstractEqBinaryFunction {

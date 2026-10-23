@@ -26,27 +26,53 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.FiberLocal;
+import io.questdb.std.Interval;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Long256;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
@@ -55,12 +81,36 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
+    private static final FiberLocal<StringSink> tlKeyError = new FiberLocal<>(StringSink::new);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        int n = argTypes.size();
+        if (n < 2) {
+            return ColumnType.UNDEFINED;
+        }
+        int returnType = -1;
+        if (n % 2 == 0) {
+            returnType = argTypes.getQuick(--n);
+        }
+        for (int i = 2; i < n; i += 2) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            if (returnType == ColumnType.UNDEFINED) {
+                return ColumnType.UNDEFINED;
+            }
+        }
+        return CaseCommon.getCaseFunctionType(returnType);
+    }
 
     @Override
     public String getSignature() {
         return "switch(V)";
     }
 
+    /**
+     * Builds the switch with a resolver of its own for the = of its WHEN constants; {@link FunctionResolver} builds
+     * it with {@link #newInstance(int, ObjList, IntList, CairoConfiguration, EqualityFactory, SqlExecutionContext)}.
+     */
     @Override
     public Function newInstance(
             int position,
@@ -69,6 +119,25 @@ public class SwitchFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        return newInstance(position, args, argPositions, configuration, new FunctionResolver(configuration, sqlExecutionContext.getCairoEngine().getFunctionFactoryCache()), sqlExecutionContext);
+    }
+
+    /**
+     * Builds the switch. The key looks up the WHEN constants its type holds exactly; every other WHEN constant is
+     * compared with the = of the key and the constant, in WHEN order, over the key evaluated once per row. When that
+     * = does not resolve either, the switch reports the error of the key lookup.
+     */
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            EqualityFactory equalityFactory,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (args == null || args.size() < 2) {
+            throw SqlException.$(position, "switch can be used with 2 or more arguments");
+        }
         int n = args.size();
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
@@ -86,40 +155,43 @@ public class SwitchFunctionFactory implements FunctionFactory {
             elseBranchPosition = -1;
         }
 
+        EqualityPicker equalities = null;
         for (int i = 1; i < n; i += 2) {
-            final Function keyFunc = args.getQuick(i);
-            final int keyArgType = keyFunc.getType();
-            if (!keyFunc.isConstant()) {
+            final Function constant = args.getQuick(i);
+            if (!constant.isConstant()) {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
             }
-
-            if (!ColumnType.isConvertibleFrom(keyArgType, keyType)) {
-                throw SqlException.position(argPositions.getQuick(i))
-                        .put("type mismatch [expected=").put(ColumnType.nameOf(keyType))
-                        .put(", actual=").put(ColumnType.nameOf(keyArgType))
-                        .put(']');
+            final int constantPosition = argPositions.getQuick(i);
+            try {
+                args.setQuick(i, getKey(keyType, constant, constantPosition, argPositions.getQuick(0), configuration, sqlExecutionContext));
+            } catch (SqlException | ImplicitCastException keyError) {
+                if (equalities == null) {
+                    final MemoizerFunction memo = MemoizerFunction.newInstance(keyFunction);
+                    if (memo == null) {
+                        throw keyError;
+                    }
+                    equalities = new EqualityPicker(memo);
+                }
+                // the = error may reuse the key error's flyweight
+                final int keyErrorPosition = keyError.getPosition();
+                final StringSink keyErrorMessage = tlKeyError.get();
+                keyErrorMessage.clear();
+                keyErrorMessage.put(keyError.getFlyweightMessage());
+                args.setQuick(i, null);
+                try {
+                    args.setQuick(i, equalities.newArm(equalityFactory, constant, argPositions.getQuick(0), constantPosition, i, sqlExecutionContext));
+                } catch (SqlException | ImplicitCastException equalityError) {
+                    throw SqlException.$(keyErrorPosition, keyErrorMessage);
+                }
             }
-            args.setQuick(
-                    i,
-                    CaseCommon.getCastFunction(
-                            args.getQuick(i),
-                            argPositions.getQuick(i),
-                            keyType,
-                            configuration,
-                            sqlExecutionContext
-                    )
-            );
 
-            // determine common return type
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
         }
 
-        // another loop to create cast functions and replace current value function
-        // start with 2 to avoid offsetting each function position
         for (int i = 2; i < n; i += 2) {
             args.setQuick(
                     i,
-                    CaseCommon.getCastFunction(
+                    CaseCommon.getValueCastFunction(
                             args.getQuick(i),
                             argPositions.getQuick(i),
                             returnType,
@@ -129,9 +201,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
             );
         }
 
-        // don't forget to cast the else branch function
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getCastFunction(
+            elseBranch = CaseCommon.getValueCastFunction(
                     elseBranch,
                     elseBranchPosition,
                     returnType,
@@ -140,41 +211,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
             );
         }
 
-        return switch (ColumnType.tagOf(keyType)) {
-            case ColumnType.CHAR ->
-                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
-            case ColumnType.INT, ColumnType.IPv4 ->
-                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
-            case ColumnType.BYTE ->
-                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
-            case ColumnType.SHORT ->
-                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
-            case ColumnType.LONG ->
-                    getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
-            case ColumnType.FLOAT ->
-                    getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.DOUBLE ->
-                    getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.DATE ->
-                    getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
-            case ColumnType.TIMESTAMP ->
-                    getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
-            case ColumnType.BOOLEAN ->
-                    getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.STRING,
-                 ColumnType.VARCHAR -> // varchar is treated as char sequence, this works, but it's suboptimal
-                    getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.SYMBOL -> {
-                if (keyFunction instanceof SymbolFunction symFunc && symFunc.isSymbolTableStatic()) {
-                    yield getSymbolKeyedFunction(args, argPositions, position, n, symFunc, returnType, elseBranch);
-                }
-                yield getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            }
-            default -> throw SqlException.
-                    $(argPositions.getQuick(0), "type ")
-                    .put(ColumnType.nameOf(keyType))
-                    .put(" is not supported in 'switch' type of 'case' statement");
-        };
+        if (equalities == null) {
+            return getKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+        }
+        return getEqualityFunction(args, argPositions, position, n, equalities, returnType, elseBranch);
     }
 
     @Override
@@ -210,6 +250,97 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getInt(record);
     }
 
+    /**
+     * The constant of the key's type the branch of an integer or temporal WHEN constant matches, or null when no
+     * key value equals it: a narrowing that is not exact, e.g. 1_000 for a BYTE key, matches nothing, as with =.
+     */
+    private static Function getIntegralKey(int keyType, int constantType, long value) {
+        final short keyTag = ColumnType.tagOf(keyType);
+        if (value == Numbers.LONG_NULL) {
+            return keyTag == ColumnType.BYTE || keyTag == ColumnType.SHORT ? null : Constants.getNullConstant(keyType);
+        }
+        if (isTemporal(keyType) && isTemporal(constantType) && keyType != constantType) {
+            final TimestampDriver driver = keyType == ColumnType.DATE ? MillisTimestampDriver.INSTANCE : ColumnType.getTimestampDriver(keyType);
+            if (!driver.isExactFrom(value, constantType)) {
+                return null;
+            }
+            value = driver.ceilFrom(value, constantType);
+        }
+        return switch (keyTag) {
+            case ColumnType.BYTE ->
+                    value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE ? ByteConstant.newInstance((byte) value) : null;
+            case ColumnType.SHORT ->
+                    value >= Short.MIN_VALUE && value <= Short.MAX_VALUE ? ShortConstant.newInstance((short) value) : null;
+            case ColumnType.INT ->
+                    value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE ? IntConstant.newInstance((int) value) : null;
+            case ColumnType.LONG -> LongConstant.newInstance(value);
+            case ColumnType.DATE -> DateConstant.newInstance(value);
+            default -> TimestampConstant.newInstance(value, keyType);
+        };
+    }
+
+    /**
+     * The constant the switch looks the key up by for a WHEN constant, or null when no key value equals the WHEN
+     * constant. Integer and temporal constants, and timestamp text for a temporal key, convert exactly, as = compares
+     * them; a NULL matches no BOOLEAN, BYTE or SHORT key; any other constant takes the CASE value cast. Throws the
+     * error of the lookup when the key type has none or the constant does not convert to it.
+     */
+    private static Function getKey(
+            int keyType,
+            Function constant,
+            int position,
+            int keyPosition,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final int constantType = constant.getType();
+        if (isInconvertibleKey(constantType, keyType)) {
+            throw SqlException.position(position)
+                    .put("type mismatch [expected=").put(ColumnType.nameOf(keyType))
+                    .put(", actual=").put(ColumnType.nameOf(constantType))
+                    .put(']');
+        }
+        final Function key = convertKey(keyType, constant, position, configuration, sqlExecutionContext);
+        if (!isKeyType(keyType)) {
+            throw SqlException.$(keyPosition, "type ")
+                    .put(ColumnType.nameOf(keyType))
+                    .put(" is not supported in 'switch' type of 'case' statement");
+        }
+        if (key != null) {
+            readKey(keyType, key);
+        }
+        return key;
+    }
+
+    private static Function convertKey(
+            int keyType,
+            Function constant,
+            int position,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final int constantType = constant.getType();
+        final short keyTag = ColumnType.tagOf(keyType);
+        if (keyTag == ColumnType.BOOLEAN && ColumnType.isNull(constantType)) {
+            return null;
+        }
+        if (isIntegral(keyTag) || isTemporal(keyType)) {
+            if (ColumnType.isNull(constantType) || isIntegral(ColumnType.tagOf(constantType)) || isTemporal(constantType)) {
+                return getIntegralKey(keyType, constantType, ColumnType.isNull(constantType) ? Numbers.LONG_NULL : constant.getLong(null));
+            }
+            if (isTemporal(keyType) && ColumnType.isVarcharOrString(constantType)) {
+                try (Function timestamp = parseTimestamp(constant.getStrA(null))) {
+                    if (timestamp != null) {
+                        return getIntegralKey(keyType, timestamp.getType(), timestamp.getTimestamp(null));
+                    }
+                }
+            } else if ((keyTag == ColumnType.BYTE || keyTag == ColumnType.SHORT) && isText(constantType) && constant.getStrA(null) == null) {
+                return null;
+            }
+        }
+        return CaseCommon.getCastFunction(constant, position, keyType, configuration, sqlExecutionContext);
+    }
+
     private static long getLong(Function function, Record record) {
         return function.getLong(record);
     }
@@ -220,6 +351,75 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static CharSequence getString(Function function, Record record) {
         return function.getStrA(record);
+    }
+
+    private static boolean isInconvertibleKey(int keyArgType, int keyType) {
+        if (!ColumnType.isConvertibleFrom(keyArgType, keyType)) {
+            return true;
+        }
+        if (ColumnType.isToSameOrWider(keyArgType, keyType) || keyType < ColumnType.BYTE || keyType > ColumnType.LONG) {
+            return false;
+        }
+        // the getter of an integral key type does not narrow a value other than text, e.g. DOUBLE has no getInt()
+        return !ColumnType.isStringyType(keyArgType) && keyArgType != ColumnType.CHAR && !CaseCommon.hasCastFactory(keyArgType, keyType);
+    }
+
+    private static boolean isIntegral(short tag) {
+        return tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.INT || tag == ColumnType.LONG;
+    }
+
+    private static boolean isKeyType(int keyType) {
+        return switch (ColumnType.tagOf(keyType)) {
+            case ColumnType.CHAR, ColumnType.INT, ColumnType.IPv4, ColumnType.BYTE, ColumnType.SHORT, ColumnType.LONG,
+                 ColumnType.FLOAT,
+                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.STRING,
+                 ColumnType.VARCHAR,
+                 ColumnType.SYMBOL -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isTemporal(int type) {
+        return type == ColumnType.DATE || ColumnType.isTimestamp(type);
+    }
+
+    private static boolean isText(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * The TIMESTAMP constant text converts to when = compares it with a TIMESTAMP or DATE, or null when the text
+     * spells no timestamp.
+     */
+    private static @Nullable Function parseTimestamp(@Nullable CharSequence text) {
+        try {
+            return FunctionResolver.timestampConstant(text, ColumnType.TIMESTAMP_MICRO);
+        } catch (NumericException e) {
+            return null;
+        }
+    }
+
+    private static void readKey(int keyType, Function key) {
+        switch (ColumnType.tagOf(keyType)) {
+            case ColumnType.CHAR -> key.getChar(null);
+            case ColumnType.INT, ColumnType.IPv4 -> key.getInt(null);
+            case ColumnType.BYTE -> key.getByte(null);
+            case ColumnType.SHORT -> key.getShort(null);
+            case ColumnType.LONG -> key.getLong(null);
+            case ColumnType.FLOAT -> key.getFloat(null);
+            case ColumnType.DOUBLE -> key.getDouble(null);
+            case ColumnType.DATE -> key.getDate(null);
+            case ColumnType.TIMESTAMP -> key.getTimestamp(null);
+            case ColumnType.BOOLEAN -> key.getBool(null);
+            default -> key.getStrA(null);
+        }
+    }
+
+    private static void removeBranch(ObjList<Function> args, int keyIndex) {
+        args.setQuick(keyIndex + 1, Misc.free(args.getQuick(keyIndex + 1)));
     }
 
     private Function getCharSequenceKeyedFunction(
@@ -234,11 +434,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final CharSequenceObjHashMap<Function> map = new CharSequenceObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         Function nullFunc = null;
+        int nullValueIndex = -1;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final CharSequence key = SwitchFunctionFactory.getString(fun, null);
             if (key == null) {
-                nullFunc = args.getQuick(i + 1);
+                if (nullValueIndex >= 0) {
+                    args.setQuick(nullValueIndex, null);
+                    Misc.free(nullFunc);
+                }
+                nullValueIndex = i + 1;
+                nullFunc = args.getQuick(nullValueIndex);
             } else {
                 final int index = map.keyIndex(key);
                 if (index < 0) {
@@ -293,15 +499,25 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function zeroBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final long key = Double.doubleToLongBits(getDouble(fun, null));
+            final double value = getDouble(fun, null);
+            final long key = Double.doubleToLongBits(value);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
             }
             map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
+            if (value == 0 && zeroBranch == null) {
+                zeroBranch = args.getQuick(i + 1);
+            }
+        }
+        // = finds 0.0 and -0.0 equal, so either zero takes the first zero branch
+        if (zeroBranch != null) {
+            map.put(Double.doubleToLongBits(0.0), zeroBranch);
+            map.put(Double.doubleToLongBits(-0.0), zeroBranch);
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
@@ -322,6 +538,49 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return elseBranch != null ? elseBranch : Constants.getNullConstant(valueType);
     }
 
+    /**
+     * The switch over WHEN constants some of which the key lookup does not hold. A switch of the WHEN ordinals over
+     * the memoizer looks up the constants the key type holds.
+     */
+    private Function getEqualityFunction(
+            ObjList<Function> args,
+            IntList argPositions,
+            int position,
+            int n,
+            EqualityPicker picker,
+            int valueType,
+            Function elseBranch
+    ) throws SqlException {
+        final int whenCount = n / 2;
+        final ObjList<Function> ordinalArgs = new ObjList<>();
+        final IntList ordinalPositions = new IntList();
+        ordinalArgs.add(picker.memo);
+        ordinalPositions.add(argPositions.getQuick(0));
+        for (int i = 1, when = 0; i < n; i += 2, when++) {
+            picker.whens.add(args.getQuick(i));
+            picker.values.add(args.getQuick(i + 1));
+            if (!picker.isArm(when)) {
+                ordinalArgs.add(args.getQuick(i));
+                ordinalArgs.add(IntConstant.newInstance(when));
+                ordinalPositions.add(argPositions.getQuick(i));
+                ordinalPositions.add(argPositions.getQuick(i + 1));
+            }
+        }
+        final Function elseB = getElseFunction(valueType, elseBranch);
+        if (ordinalArgs.size() > 1) {
+            final Function elseOrdinal = IntConstant.newInstance(whenCount);
+            ordinalArgs.add(elseOrdinal);
+            ordinalPositions.add(position);
+            final Function ordinals = getKeyedFunction(ordinalArgs, ordinalPositions, position, ordinalArgs.size() - 1, picker.memo, ColumnType.INT, elseOrdinal);
+            picker.of(ordinals, ordinals, elseB);
+        } else {
+            picker.of(IntConstant.newInstance(whenCount), picker.memo, elseB);
+        }
+        final ObjList<Function> argsToPoke = new ObjList<>(1);
+        argsToPoke.add(picker);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+    }
+
     private Function getFloatKeyedFunction(
             ObjList<Function> args,
             IntList argPositions,
@@ -333,15 +592,25 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function zeroBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final int key = Float.floatToIntBits(getFloat(fun, null));
+            final float value = getFloat(fun, null);
+            final int key = Float.floatToIntBits(value);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
             }
             map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
+            if (value == 0 && zeroBranch == null) {
+                zeroBranch = args.getQuick(i + 1);
+            }
+        }
+        // = finds 0.0 and -0.0 equal, so either zero takes the first zero branch
+        if (zeroBranch != null) {
+            map.put(Float.floatToIntBits(0.0f), zeroBranch);
+            map.put(Float.floatToIntBits(-0.0f), zeroBranch);
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
@@ -359,6 +628,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
+    /**
+     * The switch over a BOOLEAN key, which has at most a TRUE and a FALSE branch; a WHEN null branch matches no row.
+     */
     private Function getIfElseFunction(
             ObjList<Function> args,
             IntList argPositions,
@@ -368,34 +640,31 @@ public class SwitchFunctionFactory implements FunctionFactory {
             int returnType,
             Function elseBranch
     ) throws SqlException {
-        final CaseFunctionPicker picker;
-        final ObjList<Function> argsToPoke;
-        if (n == 3) {
-            // only one conditional branch
-            boolean value = args.getQuick(1).getBool(null);
-            final Function branch = args.getQuick(2);
-
-            final Function elseB = getElseFunction(returnType, elseBranch);
-
-            if (value) {
-                picker = record -> keyFunction.getBool(record) ? branch : elseB;
+        int first = -1;
+        int second = -1;
+        for (int i = 1; i < n; i += 2) {
+            if (args.getQuick(i) == null) {
+                removeBranch(args, i);
+            } else if (first < 0) {
+                first = i;
+            } else if (second < 0) {
+                second = i;
             } else {
-                picker = record -> keyFunction.getBool(record) ? elseB : branch;
+                throw SqlException.$(argPositions.getQuick(i), "too many branches");
             }
+        }
 
-            argsToPoke = new ObjList<>();
-            argsToPoke.add(keyFunction);
-            argsToPoke.add(elseB);
-            argsToPoke.add(branch);
+        final CaseFunctionPicker picker;
+        final ObjList<Function> argsToPoke = new ObjList<>();
+        argsToPoke.add(keyFunction);
+        if (second > 0) {
+            final boolean a = args.getQuick(first).getBool(null);
+            final Function branchA = args.getQuick(first + 1);
+            final boolean b = args.getQuick(second).getBool(null);
+            final Function branchB = args.getQuick(second + 1);
 
-        } else if (n == 5) {
-            final boolean a = args.getQuick(1).getBool(null);
-            final Function branchA = args.getQuick(2);
-            final boolean b = args.getQuick(3).getBool(null);
-            final Function branchB = args.getQuick(4);
-
-            if (a && b || !a && !b) {
-                throw SqlException.$(argPositions.getQuick(3), "duplicate branch");
+            if (a == b) {
+                throw SqlException.$(argPositions.getQuick(second), "duplicate branch");
             }
 
             if (a) {
@@ -404,14 +673,28 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 picker = record -> keyFunction.getBool(record) ? branchB : branchA;
             }
 
-            argsToPoke = new ObjList<>();
-            argsToPoke.add(keyFunction);
             argsToPoke.add(branchA);
             argsToPoke.add(branchB);
+            if (elseBranch != null) {
+                args.setQuick(args.size() - 1, null);
+                Misc.free(elseBranch);
+            }
         } else {
-            throw SqlException.$(argPositions.getQuick(5), "too many branches");
+            final Function elseB = getElseFunction(returnType, elseBranch);
+            argsToPoke.add(elseB);
+            if (first > 0) {
+                final boolean value = args.getQuick(first).getBool(null);
+                final Function branch = args.getQuick(first + 1);
+                if (value) {
+                    picker = record -> keyFunction.getBool(record) ? branch : elseB;
+                } else {
+                    picker = record -> keyFunction.getBool(record) ? elseB : branch;
+                }
+                argsToPoke.add(branch);
+            } else {
+                picker = record -> elseB;
+            }
         }
-
         return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
     }
 
@@ -429,6 +712,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
+            if (fun == null) {
+                removeBranch(args, i);
+                continue;
+            }
             final int key = intMethod.getKey(fun, null);
             final int index = map.keyIndex(key);
             if (index < 0) {
@@ -453,6 +740,52 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
+    private Function getKeyedFunction(
+            ObjList<Function> args,
+            IntList argPositions,
+            int position,
+            int n,
+            Function keyFunction,
+            int returnType,
+            Function elseBranch
+    ) throws SqlException {
+        return switch (ColumnType.tagOf(keyFunction.getType())) {
+            case ColumnType.CHAR ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
+            case ColumnType.INT, ColumnType.IPv4 ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
+            case ColumnType.BYTE ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
+            case ColumnType.SHORT ->
+                    getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
+            case ColumnType.LONG ->
+                    getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
+            case ColumnType.FLOAT ->
+                    getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.DOUBLE ->
+                    getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.DATE ->
+                    getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
+            case ColumnType.TIMESTAMP ->
+                    getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyFunction.getType());
+            case ColumnType.BOOLEAN ->
+                    getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.STRING,
+                 ColumnType.VARCHAR -> // varchar is treated as char sequence, this works, but it's suboptimal
+                    getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.SYMBOL -> {
+                if (keyFunction instanceof SymbolFunction symFunc && symFunc.isSymbolTableStatic()) {
+                    yield getSymbolKeyedFunction(args, argPositions, position, n, symFunc, returnType, elseBranch);
+                }
+                yield getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            }
+            default -> throw SqlException.
+                    $(argPositions.getQuick(0), "type ")
+                    .put(ColumnType.nameOf(keyFunction.getType()))
+                    .put(" is not supported in 'switch' type of 'case' statement");
+        };
+    }
+
     private Function getLongKeyedFunction(
             ObjList<Function> args,
             IntList argPositions,
@@ -467,6 +800,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
+            if (fun == null) {
+                removeBranch(args, i);
+                continue;
+            }
             final long key = longMethod.getKey(fun, null);
             final int index = map.keyIndex(key);
             if (index < 0) {
@@ -503,11 +840,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> keyBranches = new ObjList<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         Function nullFunc = null;
+        int nullValueIndex = -1;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final CharSequence key = getString(fun, null);
             if (key == null) {
-                nullFunc = args.getQuick(i + 1);
+                if (nullValueIndex >= 0) {
+                    args.setQuick(nullValueIndex, null);
+                    Misc.free(nullFunc);
+                }
+                nullValueIndex = i + 1;
+                nullFunc = args.getQuick(nullValueIndex);
             } else {
                 for (int j = 0, m = strKeys.size(); j < m; j++) {
                     if (Chars.equals(strKeys.getQuick(j), key)) {
@@ -523,9 +866,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function elseB = getElseFunction(valueType, elseBranch);
         final int branchCount = strKeys.size();
 
-        // When there's a single WHEN branch, no NULL branch, INT return type, and
-        // both THEN/ELSE are constants, compile into a direct int comparison.
-        // Example: CASE sym WHEN 'buy' THEN 1 ELSE -1 END
         if (branchCount == 1
                 && nullFunc == null
                 && ColumnType.tagOf(valueType) == ColumnType.INT
@@ -581,6 +921,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
         long key;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
+            if (fun == null) {
+                removeBranch(args, i);
+                continue;
+            }
             int funType = fun.getType();
             key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
             final int index = map.keyIndex(key);
@@ -662,16 +1006,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
      * a valid resolved key (>= 0) or VALUE_NOT_FOUND (-2), so NULL naturally maps
      * to the else value without an explicit check.
      */
-    private static class SymbolSwitchConstIntFunction extends IntFunction {
-        // The wide getters serve the same two constants, so widen them once here rather than
-        // per row. A no-ELSE branch yields elseValue == INT_NULL, and Numbers.intToLong /
-        // intToDouble / intToFloat map that onto the matching wide NULL exactly as the base
-        // IntFunction getters do; a raw ternary over the int constants would instead widen
-        // INT_NULL to -2147483648 / -2.147e9 and corrupt a wide-type CAST reading these getters.
-        // getTimestamp() keeps the base IntFunction implementation, which spells it
-        // Numbers.intToLong(getInt()) and so already returns what longThenValue / longElseValue
-        // hold; getDate() and getLong() override it only to read the pre-widened constant instead
-        // of calling Numbers.intToLong per row.
+    private static class SymbolSwitchConstIntFunction extends IntFunction implements UnaryFunction {
+        // Raw int widening would turn INT_NULL into a value instead of a wider NULL.
         private final double doubleElseValue;
         private final double doubleThenValue;
         private final int elseValue;
@@ -700,6 +1036,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             this.doubleElseValue = Numbers.intToDouble(elseValue);
             this.floatThenValue = Numbers.intToFloat(thenValue);
             this.floatElseValue = Numbers.intToFloat(elseValue);
+        }
+
+        @Override
+        public Function getArg() {
+            return keyFunction;
         }
 
         @Override
@@ -733,16 +1074,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
             final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
             assert symbolTable != null;
             resolvedKey = symbolTable.keyOf(strKey);
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return keyFunction.supportsParallelism();
-        }
-
-        @Override
-        public boolean supportsRandomAccess() {
-            return keyFunction.supportsRandomAccess();
         }
 
         @Override
@@ -913,6 +1244,390 @@ public class SwitchFunctionFactory implements FunctionFactory {
             toPlanSwitchPrefix(sink);
             sink.val('\'').val(strKey).val("',").val(branch);
             toPlanSwitchSuffix(sink);
+        }
+    }
+
+    /**
+     * Constructs the = of two operands, as the parser resolves {@code left = right}. Operand ownership is
+     * transferred to the returned function on success, or released on failure.
+     */
+    @FunctionalInterface
+    public interface EqualityFactory {
+        Function createEquality(Function left, int leftPosition, Function right, int rightPosition, SqlExecutionContext executionContext) throws SqlException;
+    }
+
+    /**
+     * Picks the branch of the first WHEN, in WHEN order, whose = holds for the key or whose constant the key looks
+     * up, the key read once per pick through the memoizer the switch owns. Owns the functions of the switch, which
+     * it plans as {@code switch(key, when, value, ..., else)} with each = arm as its equality.
+     */
+    private static final class EqualityPicker extends IntFunction implements CaseFunctionPicker, MultiArgFunction {
+        private final ObjList<Function> args = new ObjList<>();
+        private final IntList armWhens = new IntList();
+        private final ObjList<Function> arms = new ObjList<>();
+        private final MemoizerFunction memo;
+        private final ObjList<Function> values = new ObjList<>();
+        // the key constant, the = arm or, for a constant no key value equals, null, of each WHEN
+        private final ObjList<Function> whens = new ObjList<>();
+        private Function elseFunction;
+        private Function ordinals;
+
+        private EqualityPicker(MemoizerFunction memo) {
+            this.memo = memo;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public @NotNull Function pick(Record record) {
+            memo.clearMemo();
+            final int keyed = ordinals.getInt(record);
+            for (int i = 0, n = arms.size(); i < n; i++) {
+                final int when = armWhens.getQuick(i);
+                if (when > keyed) {
+                    break;
+                }
+                if (arms.getQuick(i).getBool(record)) {
+                    return values.getQuick(when);
+                }
+            }
+            return keyed < values.size() ? values.getQuick(keyed) : elseFunction;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("switch(").val(memo.getArg());
+            for (int i = 0, n = whens.size(); i < n; i++) {
+                final Function when = whens.getQuick(i);
+                if (when != null) {
+                    sink.val(',').val(when).val(',').val(values.getQuick(i));
+                }
+            }
+            sink.val(',').val(elseFunction).val(')');
+        }
+
+        private boolean isArm(int when) {
+            return armWhens.contains(when);
+        }
+
+        private Function newArm(
+                EqualityFactory equalityFactory,
+                Function constant,
+                int keyPosition,
+                int constantPosition,
+                int argIndex,
+                SqlExecutionContext executionContext
+        ) throws SqlException {
+            final Function key = ColumnType.isSymbol(memo.getType()) ? new SymbolKeyView((SymbolFunction) memo) : new KeyView(memo);
+            final Function arm = equalityFactory.createEquality(key, keyPosition, constant, constantPosition, executionContext);
+            arms.add(arm);
+            armWhens.add((argIndex - 1) / 2);
+            return arm;
+        }
+
+        /**
+         * Takes ownership of the values, the ELSE, the key and the = arms.
+         *
+         * @param ordinals the WHEN ordinal of the constant the key looks up, or the WHEN count when it looks up none
+         * @param keyOwner the function that owns the memoizer: the key lookup, or the memoizer when there is none
+         */
+        private void of(Function ordinals, Function keyOwner, Function elseFunction) {
+            this.ordinals = ordinals;
+            this.elseFunction = elseFunction;
+            args.addAll(values);
+            args.add(elseFunction);
+            args.add(keyOwner);
+            args.addAll(arms);
+        }
+    }
+
+    /**
+     * The key of a switch read through the switch's memoizer, which owns, initializes and closes it.
+     */
+    private static final class KeyView implements Function {
+        private final MemoizerFunction memo;
+
+        private KeyView(MemoizerFunction memo) {
+            this.memo = memo;
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            return memo.getArray(rec);
+        }
+
+        @Override
+        public BinarySequence getBin(Record rec) {
+            return memo.getBin(rec);
+        }
+
+        @Override
+        public long getBinLen(Record rec) {
+            return memo.getBinLen(rec);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return memo.getBool(rec);
+        }
+
+        @Override
+        public byte getByte(Record rec) {
+            return memo.getByte(rec);
+        }
+
+        @Override
+        public char getChar(Record rec) {
+            return memo.getChar(rec);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return memo.getDate(rec);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            memo.getDecimal128(rec, sink);
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return memo.getDecimal16(rec);
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            memo.getDecimal256(rec, sink);
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return memo.getDecimal32(rec);
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return memo.getDecimal64(rec);
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return memo.getDecimal8(rec);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return memo.getDouble(rec);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            return memo.getFloat(rec);
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            return memo.getGeoByte(rec);
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return memo.getGeoInt(rec);
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            return memo.getGeoLong(rec);
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return memo.getGeoShort(rec);
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            return memo.getIPv4(rec);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return memo.getInt(rec);
+        }
+
+        @Override
+        public Interval getInterval(Record rec) {
+            return memo.getInterval(rec);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return memo.getLong(rec);
+        }
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            return memo.getLong128Hi(rec);
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            return memo.getLong128Lo(rec);
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink<?> sink) {
+            memo.getLong256(rec, sink);
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            return memo.getLong256A(rec);
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            return memo.getLong256B(rec);
+        }
+
+        @Override
+        public RecordCursorFactory getRecordCursorFactory() {
+            return memo.getRecordCursorFactory();
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            return memo.getShort(rec);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return memo.getStrA(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return memo.getStrB(rec);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            return memo.getStrLen(rec);
+        }
+
+        @Override
+        public CharSequence getSymbol(Record rec) {
+            return memo.getSymbol(rec);
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            return memo.getSymbolB(rec);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return memo.getTimestamp(rec);
+        }
+
+        @Override
+        public int getType() {
+            return memo.getType();
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return memo.getVarcharA(rec);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return memo.getVarcharB(rec);
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            return memo.getVarcharSize(rec);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return memo.isConstant();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(memo.getArg());
+        }
+    }
+
+    /**
+     * The SYMBOL key of a switch read through the switch's memoizer, which owns, initializes and closes it.
+     */
+    private static final class SymbolKeyView extends SymbolFunction {
+        private final SymbolFunction memo;
+
+        private SymbolKeyView(SymbolFunction memo) {
+            this.memo = memo;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return memo.getInt(rec);
+        }
+
+        @Override
+        public StaticSymbolTable getStaticSymbolTable() {
+            return memo.getStaticSymbolTable();
+        }
+
+        @Override
+        public CharSequence getSymbol(Record rec) {
+            return memo.getSymbol(rec);
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            return memo.getSymbolB(rec);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return memo.isConstant();
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return memo.isSymbolTableStatic();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable() {
+            return memo.newSymbolTable();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(((MemoizerFunction) memo).getArg());
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return memo.valueBOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return memo.valueOf(key);
         }
     }
 }

@@ -80,6 +80,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String SIGNATURE = NAME + "(D)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -211,6 +216,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

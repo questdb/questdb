@@ -24,10 +24,27 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
+import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 public class OrderByAdviceTest extends AbstractCairoTest {
 
@@ -180,6 +197,84 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             from long_sequence(1000)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tmaxp\n", expected);
+    }
+
+    @Test
+    public void testInputOrderAggregatesReadIndexKeysInAnyOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedKeyTable();
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE_PER_FRAME, "SELECT sym, arg_max(v, ts) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE_PER_FRAME, "SELECT sym, string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')");
+            assertQuery("SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: false
+                              values: [arg_max(v,ts)]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='b'
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
+                                    Frame forward scan on: t
+                            """);
+            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT mode(v) FROM t WHERE sym IN ('a', 'b')");
+            assertQuery("SELECT mode(v) FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: false
+                              values: [mode(v)]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='b'
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
+                                    Frame forward scan on: t
+                            """);
+            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')");
+            assertQuery("SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: false
+                              values: [string_agg(v::string,,)]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='b'
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
+                                    Frame forward scan on: t
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalSearchOrderByTimestampDescAndColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE v, (x / 3 * 1_000_000)::TIMESTAMP ts FROM long_sequence(9)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, v FROM t WHERE ts IN '1970-01-01' ORDER BY ts DESC, v LIMIT 5")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light lo: 5 partiallySorted: true
+                              keys: [ts desc, v]
+                                PageFrame
+                                    Row backward scan
+                                    Interval backward scan on: t
+                                      intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:03.000000Z\t9.0
+                            1970-01-01T00:00:02.000000Z\t6.0
+                            1970-01-01T00:00:02.000000Z\t7.0
+                            1970-01-01T00:00:02.000000Z\t8.0
+                            1970-01-01T00:00:01.000000Z\t3.0
+                            """);
+        });
     }
 
     @Test
@@ -586,6 +681,58 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderSensitiveAggregatesKeepSubQueryOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, x % 2 g, x % 3 m, (x % 3)::STRING::SYMBOL msym, x::STRING s, x::STRING::SYMBOL sym,
+                            ((x * 7) % 5)::DOUBLE lat, 0.0 lon, 1 k, x::TIMESTAMP ts
+                        FROM long_sequence(12)
+                    ) TIMESTAMP(ts)""");
+            assertQuery("""
+                    SELECT g, string_agg(s, ',') sa, string_agg(s::VARCHAR, ',') va, string_distinct_agg(s, ',') sd,
+                        string_distinct_agg(sym, ',') yd, string_distinct_agg(s::VARCHAR, ',') vd
+                    FROM (SELECT * FROM t ORDER BY id DESC)
+                    GROUP BY g
+                    ORDER BY g""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tsa\tva\tsd\tyd\tvd
+                            0\t12,10,8,6,4,2\t12,10,8,6,4,2\t12,10,8,6,4,2\t12,10,8,6,4,2\t12,10,8,6,4,2
+                            1\t11,9,7,5,3,1\t11,9,7,5,3,1\t11,9,7,5,3,1\t11,9,7,5,3,1\t11,9,7,5,3,1
+                            """);
+            assertQuery("""
+                    SELECT g, mode(m) ml, mode(m::DOUBLE) md, mode(msym) mk, arg_max(id, k) amax, arg_min(id, k) amin,
+                        isOrdered(id) o
+                    FROM (SELECT * FROM t ORDER BY id DESC)
+                    GROUP BY g
+                    ORDER BY g""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tml\tmd\tmk\tamax\tamin\to
+                            0\t0\t0.0\t1\t12\t12\tfalse
+                            1\t0\t0.0\t2\t11\t11\tfalse
+                            """);
+            assertQuery("SELECT g, haversine_dist_deg(lat, lon, ts) dist FROM (SELECT * FROM t ORDER BY lat) GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tdist
+                            0\t444.7858501372019
+                            1\t444.7858501372019
+                            """);
+            assertQuery("SELECT g, twap(m, ts) FROM (SELECT * FROM t ORDER BY ts DESC) GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .fails(10, "twap() requires the base query to provide ascending designated timestamp order");
+            assertQuery("SELECT g, sparkline(m) FROM (SELECT * FROM t ORDER BY ts DESC) GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .fails(10, "sparkline() requires the base query to provide ascending designated timestamp order");
+        });
+    }
+
+    @Test
     public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
         final String expected = """
                 sym\tbid\task\tts
@@ -771,6 +918,91 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleSymbolSearchOrderByTimestampAndColumnNegativeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedTable();
+            assertQuery("SELECT ts, id FROM t WHERE s = 'S1' ORDER BY ts, id LIMIT -4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts, id]
+                                    SelectedRecord
+                                        Encode sort light lo: 4 partiallySorted: true
+                                          keys: [ts desc, id desc]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index backward scan on: s deferred: true
+                                                  filter: s='S1'
+                                                Frame backward scan on: t
+                            """)
+                    .returns("""
+                            ts\tid
+                            2024-01-01T02:40:00.000000Z\t17
+                            2024-01-01T03:00:00.000000Z\t19
+                            2024-01-01T03:20:00.000000Z\t21
+                            2024-01-01T03:40:00.000000Z\t23
+                            """);
+        });
+    }
+
+    @Test
+    public void testSingleSymbolSearchOrderByTimestampDescAndColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedTable();
+            assertQuery("SELECT ts, id FROM t WHERE s = 'S1' ORDER BY ts DESC, id LIMIT 4")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light lo: 4 partiallySorted: true
+                                  keys: [ts desc, id]
+                                    SelectedRecord
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index backward scan on: s deferred: true
+                                              filter: s='S1'
+                                            Frame backward scan on: t
+                            """)
+                    .returns("""
+                            ts\tid
+                            2024-01-01T03:40:00.000000Z\t23
+                            2024-01-01T03:20:00.000000Z\t21
+                            2024-01-01T03:00:00.000000Z\t19
+                            2024-01-01T02:40:00.000000Z\t17
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts t2, id, v FROM t WHERE s = 'S1' AND ts BETWEEN '2024-01-01T01:00:00' AND '2024-01-01T03:00:00') ORDER BY t2 DESC, v DESC LIMIT 2")
+                    .noLeakCheck()
+                    .timestampDesc("t2")
+                    .expectSize()
+                    .returns("""
+                            t2\tid\tv
+                            2024-01-01T03:00:00.000000Z\t19\t19.0
+                            2024-01-01T02:40:00.000000Z\t17\t17.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSingleSymbolSearchOrderByTimestampDescAndComputedColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p AS (SELECT x id, 'a'::SYMBOL s, timestamp_sequence(0, 1_000_000L) ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE p ALTER COLUMN s ADD INDEX");
+            assertQuery("SELECT id + 3 val, ts FROM p WHERE s = 'a' ORDER BY ts DESC, id DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            val\tts
+                            53\t1970-01-01T00:00:49.000000Z
+                            52\t1970-01-01T00:00:48.000000Z
+                            51\t1970-01-01T00:00:47.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSkipDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery("select * from x order by a, t")
                 .ddl("create table x as (" +
@@ -792,6 +1024,828 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         1548800833\t1970-01-01T00:00:00.002000Z
                         1868723706\t1970-01-01T00:00:00.008000Z
                         """);
+    }
+
+    @Test
+    public void testSortOverParquetReadsRowGroupsAfterEviction() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (CASE WHEN x % 7 = 0 THEN NULL WHEN x % 10 < 6 THEN 'a' WHEN x % 10 < 8 THEN 'b' ELSE 'c' END)::SYMBOL sym,"
+                    + " x::TIMESTAMP ts FROM long_sequence(20_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t (ts) VALUES ('1975-01-01')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1975-01-01'");
+            final String query = "SELECT ts, sym FROM (SELECT ts, sym::STRING sym FROM t WHERE sym IN ('a', 'b')"
+                    + " AND (ts BETWEEN 100 AND 2_000 OR ts BETWEEN 5_000 AND 9_000)) ORDER BY sym, ts LIMIT -1";
+            // budgets below the twelve decoded row groups the scan reads evict row groups the sort then reads
+            for (long budget : new long[]{256 * 1024 * 1024, 16_384, 32_768, 65_536, 131_072}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts	sym
+                                1970-01-01T00:00:00.008997Z	b
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable("k", "DAY");
+            sqlExecutionContext.changePageFrameSizes(1, 4);
+            assertQuery("SELECT s, id FROM k WHERE ts IN '2024-01-01' ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                SelectedRecord
+                                    SortedSymbolIndex
+                                        Index forward scan on: s
+                                          symbolOrder: asc
+                                        Interval forward scan on: k
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	6
+                            S0	9
+                            S0	12
+                            S0	15
+                            S0	18
+                            S0	21
+                            S0	24
+                            S1	1
+                            S1	4
+                            S1	7
+                            S1	10
+                            S1	13
+                            S1	16
+                            S1	19
+                            S1	22
+                            S2	2
+                            S2	5
+                            S2	8
+                            S2	11
+                            S2	14
+                            S2	17
+                            S2	20
+                            S2	23
+                            """);
+            assertQuery("SELECT s, id FROM k WHERE ts IN '2024-01-01' ORDER BY s DESC, ts DESC LIMIT 6, 10")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                Limit left: 6 right: 10 skip-rows-max: 6 take-rows-max: 4
+                                    SortedSymbolIndex
+                                        Index backward scan on: s
+                                          symbolOrder: desc
+                                        Interval backward scan on: k
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S2	5
+                            S2	2
+                            S1	22
+                            S1	19
+                            """);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexFindsLateKeyRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n AS (SELECT (CASE WHEN x = 100_000 THEN NULL ELSE 'a' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c AS (SELECT x::TIMESTAMP ts FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE c ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO c SELECT (50_000 + x)::TIMESTAMP, 'a' FROM long_sequence(50_000)");
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            // the only NULL row is the last row
+            String query = "SELECT ts, sym FROM n WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts LIMIT 2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("symbolOrder: asc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z\t
+                            1970-01-01T00:00:00.000001Z	a
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM n WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts DESC LIMIT -2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000001Z	a
+                            1970-01-01T00:00:00.100000Z\t
+                            """);
+            // the column top holds NULL rows in the first half
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000001Z\t
+                            """);
+            assertReadFrames(query, 1);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	a
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 49_999, 50_001";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z	a
+                            1970-01-01T00:00:00.000001Z\t
+                            """);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts DESC LIMIT -1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	a
+                            """);
+
+            // a single page frame holds the scan of n, and one page frame each side of the column top that of c
+            sqlExecutionContext.changePageFrameSizes(1_000_000, 1_000_000);
+            query = "SELECT ts, sym FROM n WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts LIMIT 2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z\t
+                            1970-01-01T00:00:00.000001Z	a
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	a
+                            """);
+            assertReadFrames(query, 2);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexOverParquetDecodesEachRowGroupOnce() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetKeyTable();
+            final String query = "SELECT * FROM k WHERE ts IN '2024-01-01' ORDER BY s";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            SortedSymbolIndex
+                                Index forward scan on: s
+                                  symbolOrder: asc
+                                Interval forward scan on: k
+                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            id	s	ts
+                            3	S0	2024-01-01T00:00:02.000000Z
+                            6	S0	2024-01-01T00:00:05.000000Z
+                            9	S0	2024-01-01T00:00:08.000000Z
+                            12	S0	2024-01-01T00:00:11.000000Z
+                            15	S0	2024-01-01T00:00:14.000000Z
+                            18	S0	2024-01-01T00:00:17.000000Z
+                            21	S0	2024-01-01T00:00:20.000000Z
+                            24	S0	2024-01-01T00:00:23.000000Z
+                            1	S1	2024-01-01T00:00:00.000000Z
+                            4	S1	2024-01-01T00:00:03.000000Z
+                            7	S1	2024-01-01T00:00:06.000000Z
+                            10	S1	2024-01-01T00:00:09.000000Z
+                            13	S1	2024-01-01T00:00:12.000000Z
+                            16	S1	2024-01-01T00:00:15.000000Z
+                            19	S1	2024-01-01T00:00:18.000000Z
+                            22	S1	2024-01-01T00:00:21.000000Z
+                            2	S2	2024-01-01T00:00:01.000000Z
+                            5	S2	2024-01-01T00:00:04.000000Z
+                            8	S2	2024-01-01T00:00:07.000000Z
+                            11	S2	2024-01-01T00:00:10.000000Z
+                            14	S2	2024-01-01T00:00:13.000000Z
+                            17	S2	2024-01-01T00:00:16.000000Z
+                            20	S2	2024-01-01T00:00:19.000000Z
+                            23	S2	2024-01-01T00:00:22.000000Z
+                            """);
+            // the passes of the three keys and the NULL key decode each of the six row groups once
+            assertKeyOrderedDecodes(query, null, ParquetDecodeHint.CYCLIC, 6);
+            assertKeyOrderedDecodes(query, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.SCATTERED, 6);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexOverParquetDoesNotRevisitEarlierIntervals() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+        assertMemoryLeak(() -> {
+            final int intervalCount = 32;
+            execute("CREATE TABLE k AS (SELECT x id, (CASE WHEN (x - 1) % 16 < 4 THEN 'A' ELSE 'B' END)::SYMBOL s, "
+                    + "timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(" + intervalCount * 16 + ")), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (513, 'absent', '2024-01-02')");
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final int[] frameVisits = {0};
+            final SqlExecutionCircuitBreaker countingBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+                    frameVisits[0]++;
+                    super.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                }
+            };
+            for (boolean isFiltered : new boolean[]{true, false}) {
+                for (boolean isSymbolDescending : new boolean[]{false, true}) {
+                    for (boolean isTimestampDescending : new boolean[]{false, true}) {
+                        final String sql = "SELECT id, s FROM k WHERE "
+                                + (isFiltered ? "s IN ('A', 'B') AND " : "")
+                                + "ts IN '2024-01-01T00:00:00;8s;16s;" + intervalCount + "' ORDER BY s"
+                                + (isSymbolDescending ? " DESC" : "") + ", ts" + (isTimestampDescending ? " DESC" : "");
+                        final StringSink expected = new StringSink();
+                        expected.put("id\ts\n");
+                        for (int i = 0; i < 2; i++) {
+                            final int key = isSymbolDescending ? 1 - i : i;
+                            for (int j = 0; j < intervalCount; j++) {
+                                final int interval = isTimestampDescending ? intervalCount - j - 1 : j;
+                                for (int row = 0; row < 4; row++) {
+                                    expected.put(interval * 16 + key * 4 + (isTimestampDescending ? 4 - row : row + 1))
+                                            .put('\t').put(key == 0 ? 'A' : 'B').put('\n');
+                                }
+                            }
+                        }
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .withPlanContaining(isFiltered ? "FilterOnValues symbolOrder:" : "SortedSymbolIndex")
+                                .returns(expected);
+                        try (RecordCursorFactory factory = select(sql)) {
+                            final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(countingBreaker);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                for (int pass = 0; pass < 2; pass++) {
+                                    cursor.toTop();
+                                    frameVisits[0] = 0;
+                                    int rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.assertEquals(intervalCount * 8, rows);
+                                    Assert.assertTrue("frame visits: " + frameVisits[0], frameVisits[0] < intervalCount * 16);
+                                }
+                            } finally {
+                                ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexOverParquetSkipsEmptyRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k AS (SELECT x id, (CASE WHEN x <= 4 THEN null ELSE 'S' || ((x - 1) / 4) END)::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (25, 'absent', '2024-01-02')");
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String query = "SELECT * FROM k WHERE ts IN '2024-01-01' ORDER BY s, ts";
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 2 * decodedRowGroupBytes(query));
+            for (boolean isFiltered : new boolean[]{false, true}) {
+                for (boolean isSymbolDescending : new boolean[]{false, true}) {
+                    for (boolean isTimestampDescending : new boolean[]{false, true}) {
+                        final String sql = " FROM k WHERE "
+                                + (isFiltered ? "s IN ('S1', 'S4') AND " : "")
+                                + "ts IN '2024-01-01' ORDER BY s"
+                                + (isSymbolDescending ? " DESC" : "")
+                                + ", ts" + (isTimestampDescending ? " DESC" : "");
+                        final StringSink expected = new StringSink();
+                        expected.put("id\ts\n");
+                        for (int i = 0; i < 6; i++) {
+                            final int key = isSymbolDescending ? 5 - i : i;
+                            if (isFiltered && key != 1 && key != 4) {
+                                continue;
+                            }
+                            for (int j = 0; j < 4; j++) {
+                                expected.put(key * 4 + (isTimestampDescending ? 4 - j : j + 1)).put('\t');
+                                if (key > 0) {
+                                    expected.put('S').put(key);
+                                }
+                                expected.put('\n');
+                            }
+                        }
+                        assertQuery("SELECT id, s" + sql)
+                                .noLeakCheck()
+                                .withPlanContaining(isFiltered ? "FilterOnValues" : "SortedSymbolIndex")
+                                .returns(expected);
+                        // the rows outgrow half the budget, which keeps two of the six row groups, so the read gathers
+                        // row ids and decodes each row group that holds them once
+                        assertKeyOrderedDecodes("SELECT *" + sql, null, ParquetDecodeHint.CYCLIC, isFiltered ? 2 : 6);
+                        assertKeyOrderedDecodes("SELECT *" + sql, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.CYCLIC, isFiltered ? 2 : 6);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexOverParquetSkipsCachedFrames() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            final int keyCount = 128;
+            execute("CREATE TABLE k AS (SELECT x id, ('S' || (100 + (x - 1) / 4))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(" + keyCount * 4 + ")), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (513, 'absent', '2024-01-02')");
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final int[] frameVisits = {0};
+            final SqlExecutionCircuitBreaker countingBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+                    frameVisits[0]++;
+                    super.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                }
+            };
+            for (boolean isSymbolDescending : new boolean[]{false, true}) {
+                for (boolean isTimestampDescending : new boolean[]{false, true}) {
+                    final String sql = "SELECT id, s FROM k WHERE ts IN '2024-01-01' ORDER BY s"
+                            + (isSymbolDescending ? " DESC" : "") + ", ts" + (isTimestampDescending ? " DESC" : "");
+                    final StringSink expected = new StringSink();
+                    expected.put("id\ts\n");
+                    for (int i = 0; i < keyCount; i++) {
+                        final int key = isSymbolDescending ? keyCount - i - 1 : i;
+                        for (int j = 0; j < 4; j++) {
+                            expected.put(key * 4 + (isTimestampDescending ? 4 - j : j + 1)).put("\tS").put(100 + key).put('\n');
+                        }
+                    }
+                    assertQuery(sql).noLeakCheck().withPlanContaining("SortedSymbolIndex").returns(expected);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(countingBreaker);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            for (int pass = 0; pass < 2; pass++) {
+                                cursor.toTop();
+                                frameVisits[0] = 0;
+                                int rows = 0;
+                                while (cursor.hasNext()) {
+                                    rows++;
+                                }
+                                Assert.assertEquals(keyCount * 4, rows);
+                                // The cursor checks its breaker per visited frame, including undecoded metadata.
+                                Assert.assertTrue("frame visits: " + frameVisits[0], frameVisits[0] < keyCount * 12);
+                            }
+                        } finally {
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSkipsParquetFramesAcrossIntervals() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k AS (SELECT x id, (CASE WHEN (x - 1) % 24 < 4 THEN null ELSE 'S' || (((x - 1) % 24) / 4) END)::SYMBOL s, timestamp_sequence('2024-01-01', 3_600_000_000) ts FROM long_sequence(72)), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (73, 'absent', '2024-01-04')");
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts >= '2024-01-03' AND ts < '2024-01-04'");
+            for (boolean isFiltered : new boolean[]{false, true}) {
+                for (boolean isSymbolDescending : new boolean[]{false, true}) {
+                    for (boolean isTimestampDescending : new boolean[]{false, true}) {
+                        final String sql = "SELECT id, s FROM k WHERE "
+                                + (isFiltered ? "s IN (null, 'S1', 'S4') AND " : "")
+                                + "ts IN '2024-01-01T01:00:00;6h;12h;" + (isFiltered ? 6 : 2) + "' ORDER BY s"
+                                + (isSymbolDescending ? " DESC" : "") + ", ts" + (isTimestampDescending ? " DESC" : "");
+                        final StringSink expected = new StringSink();
+                        expected.put("id\ts\n");
+                        for (int i = 0; i < 6; i++) {
+                            final int key = isSymbolDescending ? 5 - i : i;
+                            if (isFiltered && key != 0 && key != 1 && key != 4) {
+                                continue;
+                            }
+                            final int days = isFiltered ? 3 : 1;
+                            for (int day = 0; day < days; day++) {
+                                for (int j = 0; j < 4; j++) {
+                                    final int hour = key * 4 + (isTimestampDescending ? 3 - j : j);
+                                    if (hour % 12 < 1 || hour % 12 > 6) {
+                                        continue;
+                                    }
+                                    expected.put((isTimestampDescending ? days - day - 1 : day) * 24 + hour + 1).put('\t');
+                                    if (key > 0) {
+                                        expected.put('S').put(key);
+                                    }
+                                    expected.put('\n');
+                                }
+                            }
+                        }
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .withPlanContaining(isFiltered ? "FilterOnValues" : "SortedSymbolIndex")
+                                .returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexKeyWithoutRowsReadsOnePageFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE r AS (SELECT (CASE WHEN x > 50_000 THEN 'b' ELSE 'a' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            // NULL comes first in the key order and has no row
+            String query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("symbolOrder: asc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000001Z	a
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts DESC LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z	a
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000001Z	a
+                            """);
+            assertReadFrames(query, 1);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym, ts LIMIT -2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.099999Z	a
+                            1970-01-01T00:00:00.100000Z	a
+                            """);
+            // 'a' leads the key order with rows only before the interval
+            query = "SELECT ts, sym FROM r WHERE ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	b
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM r WHERE ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts DESC LIMIT 2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z	b
+                            1970-01-01T00:00:00.099999Z	b
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM r WHERE ts >= 50_001 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT -1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z	b
+                            """);
+
+            // a single page frame holds the scan, so the keys after the first pass share one
+            sqlExecutionContext.changePageFrameSizes(1_000_000, 1_000_000);
+            query = "SELECT ts, sym FROM r WHERE ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	b
+                            """);
+            assertReadFrames(query, 2);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexOverParquetGathersRowIdsOverBudget() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetKeyTable();
+            final String query = "SELECT * FROM k WHERE ts IN '2024-01-01' ORDER BY s DESC, ts DESC";
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 3 * decodedRowGroupBytes(query));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            SortedSymbolIndex
+                                Index backward scan on: s
+                                  symbolOrder: desc
+                                Interval backward scan on: k
+                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            id	s	ts
+                            23	S2	2024-01-01T00:00:22.000000Z
+                            20	S2	2024-01-01T00:00:19.000000Z
+                            17	S2	2024-01-01T00:00:16.000000Z
+                            14	S2	2024-01-01T00:00:13.000000Z
+                            11	S2	2024-01-01T00:00:10.000000Z
+                            8	S2	2024-01-01T00:00:07.000000Z
+                            5	S2	2024-01-01T00:00:04.000000Z
+                            2	S2	2024-01-01T00:00:01.000000Z
+                            22	S1	2024-01-01T00:00:21.000000Z
+                            19	S1	2024-01-01T00:00:18.000000Z
+                            16	S1	2024-01-01T00:00:15.000000Z
+                            13	S1	2024-01-01T00:00:12.000000Z
+                            10	S1	2024-01-01T00:00:09.000000Z
+                            7	S1	2024-01-01T00:00:06.000000Z
+                            4	S1	2024-01-01T00:00:03.000000Z
+                            1	S1	2024-01-01T00:00:00.000000Z
+                            24	S0	2024-01-01T00:00:23.000000Z
+                            21	S0	2024-01-01T00:00:20.000000Z
+                            18	S0	2024-01-01T00:00:17.000000Z
+                            15	S0	2024-01-01T00:00:14.000000Z
+                            12	S0	2024-01-01T00:00:11.000000Z
+                            9	S0	2024-01-01T00:00:08.000000Z
+                            6	S0	2024-01-01T00:00:05.000000Z
+                            3	S0	2024-01-01T00:00:02.000000Z
+                            """);
+            // the rows outgrow half the budget, which keeps three of the six row groups, so the read gathers row ids,
+            // and the first two row groups stay decoded across the passes of the three keys
+            assertKeyOrderedDecodes(query, null, ParquetDecodeHint.CYCLIC, 14);
+            assertKeyOrderedDecodes(query, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.CYCLIC, 14);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSmallBackwardSkipCostIsBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int rowCount : new int[]{20_000, 200_000}) {
+                final String table = "t" + rowCount;
+                execute("CREATE TABLE " + table + " AS (SELECT x id, (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(" + rowCount + ")), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+                final String query = "SELECT id, sym FROM " + table + " WHERE ts > " + rowCount / 2 + " AND ts <= " + rowCount + " ORDER BY sym, ts DESC LIMIT 1,2";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withPlanContaining("SortedSymbolIndex")
+                        .returns("id\tsym\n" + (rowCount - 2) + "\ta\n");
+                assertSkipCost(query, 0, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSmallForwardSkipCostIsBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int rowCount : new int[]{20_000, 200_000}) {
+                final String table = "t" + rowCount;
+                execute("CREATE TABLE " + table + " AS (SELECT x id, (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(" + rowCount + ")), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+                final String query = "SELECT id, sym FROM " + table + " WHERE ts >= 0 AND ts < " + (rowCount / 2 + 1) + " ORDER BY sym, ts LIMIT 1,2";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withPlanContaining("SortedSymbolIndex")
+                        .returns("""
+                                id\tsym
+                                4\ta
+                                """);
+                assertSkipCost(query, 0, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSkipCostFollowsLanding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            String query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("SortedSymbolIndex")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000001Z	a
+                            """);
+            assertSkipCost(query, 0, 0);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 5, 7";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000006Z	a
+                            1970-01-01T00:00:00.000007Z	a
+                            """);
+            assertSkipCost(query, 0, 0);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 60_050, 60_052";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.060051Z	a
+                            1970-01-01T00:00:00.060052Z	a
+                            """);
+            assertSkipCost(query, 0, 0);
+            query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts DESC LIMIT 60_050, 60_052";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.039950Z	a
+                            1970-01-01T00:00:00.039949Z	a
+                            """);
+            assertSkipCost(query, 0, 0);
+
+            execute("CREATE TABLE u AS (SELECT ('a' || (x % 2))::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            final long tenPostingListTraversals = 10 * 50_000 / configuration.getIndexValueBlockSize();
+            query = "SELECT ts, sym FROM u WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 30_060, 30_062";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("SortedSymbolIndex")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.060121Z	a1
+                            1970-01-01T00:00:00.060123Z	a1
+                            """);
+            assertSkipCost(query, tenPostingListTraversals, 0);
+            query = "SELECT ts, sym FROM u WHERE ts >= 0 AND ts < 100_001 ORDER BY sym DESC, ts DESC LIMIT 30_060, 30_062";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.039879Z	a1
+                            1970-01-01T00:00:00.039877Z	a1
+                            """);
+            assertSkipCost(query, tenPostingListTraversals, 0);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSkipCountsKeysOfMergedPass() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT ('a' || (x % 3))::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(3_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            // one page frame holds the scan, so a single pass reads every key after the first
+            sqlExecutionContext.changePageFrameSizes(1_000_000, 1_000_000);
+            String query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 3_001 ORDER BY sym, ts LIMIT 2_500, 2_501";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("symbolOrder: asc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001502Z	a2
+                            """);
+            assertSkipCost(query, 64, 0);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 3_001 ORDER BY sym DESC, ts DESC LIMIT 1_250, 1_251";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.002248Z	a1
+                            """);
+            assertSkipCost(query, 64, 0);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSkipCountsOnlyTheInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            // the interval holds the first 2_000 of 99_999 postings of 'a', and 'b' has its only row after it
+            execute("CREATE TABLE p AS (SELECT (CASE WHEN x = 100_000 THEN 'b' ELSE 'a' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final long intervalHops = 8 * (2_000 / configuration.getIndexValueBlockSize() + 1);
+            // the skip ends where the first page frame does
+            String query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym DESC, ts LIMIT 1_000, 1_001";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("symbolOrder: desc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001001Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+            query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym DESC, ts DESC LIMIT 1_000, 1_001";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Index backward scan")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001000Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+            query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym, ts LIMIT 1_000, 1_001";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001001Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+            // the skip ends inside the second page frame
+            query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym DESC, ts LIMIT 1_500, 1_502";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001501Z	a
+                            1970-01-01T00:00:00.001502Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+            query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym, ts DESC LIMIT 1_500, 1_502";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000500Z	a
+                            1970-01-01T00:00:00.000499Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+            query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym DESC, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001998Z	a
+                            1970-01-01T00:00:00.001999Z	a
+                            1970-01-01T00:00:00.002000Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+            query = "SELECT ts, sym FROM p WHERE ts >= 0 AND ts < 2_001 ORDER BY sym DESC, ts DESC LIMIT -1_001, -999";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.001001Z	a
+                            1970-01-01T00:00:00.001000Z	a
+                            """);
+            assertSkipCost(query, intervalHops, 0);
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexSkipsCountedPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT ('a' || (x % 3))::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(1_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c AS (SELECT x::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE c ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO c SELECT (500 + x)::TIMESTAMP, 'b' FROM long_sequence(500)");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            String query = "SELECT ts, sym FROM t WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000998Z	a
+                            1970-01-01T00:00:00.000999Z	a
+                            1970-01-01T00:00:00.001000Z	a
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000992Z	a2
+                            1970-01-01T00:00:00.000995Z	a2
+                            1970-01-01T00:00:00.000998Z	a2
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM m WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym DESC, ts DESC LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000009Z	a0
+                            1970-01-01T00:00:00.000006Z	a0
+                            1970-01-01T00:00:00.000003Z	a0
+                            """);
+            assertWalksFewRows(query);
+            query = "SELECT ts, sym FROM c WHERE ts >= 0 AND ts < 10_000_001 ORDER BY sym, ts LIMIT 498, 503";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.000499Z\t
+                            1970-01-01T00:00:00.000500Z\t
+                            1970-01-01T00:00:00.000501Z	b
+                            1970-01-01T00:00:00.000502Z	b
+                            1970-01-01T00:00:00.000503Z	b
+                            """);
+            assertWalksFewRows(query);
+        });
     }
 
     @Test
@@ -1335,6 +2389,632 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolSearchOrderByKeyAcrossIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable("k", "DAY");
+            assertQuery("SELECT s, id FROM k WHERE s = 'S1' AND (ts IN '2024-01-01T00:00:01;4s' OR ts IN '2024-01-01T00:00:13;4s') ORDER BY s, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index backward scan on: s deferred: true
+                                      filter: s='S1'
+                                    Interval backward scan on: k
+                                      intervals: [("2024-01-01T00:00:01.000000Z","2024-01-01T00:00:04.999999Z"),("2024-01-01T00:00:13.000000Z","2024-01-01T00:00:16.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S1	16
+                            S1	4
+                            """);
+            assertQuery("SELECT s, id FROM k WHERE s IN ('S0', 'S1') AND (ts IN '2024-01-01T00:00:01;4s' OR ts IN '2024-01-01T00:00:13;4s') ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                SelectedRecord
+                                    FilterOnValues symbolOrder: asc
+                                        Cursor-order scan
+                                            Index forward scan on: s deferred: true
+                                              filter: s='S0'
+                                            Index forward scan on: s deferred: true
+                                              filter: s='S1'
+                                        Interval forward scan on: k
+                                          intervals: [("2024-01-01T00:00:01.000000Z","2024-01-01T00:00:04.999999Z"),("2024-01-01T00:00:13.000000Z","2024-01-01T00:00:16.999999Z")]
+                            """)
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	15
+                            S1	4
+                            S1	16
+                            """);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable("n", "NONE");
+            sqlExecutionContext.changePageFrameSizes(1, 4);
+            assertQuery("SELECT s, id FROM n WHERE s IN ('S0', 'S1') ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            FilterOnValues symbolOrder: asc
+                                Cursor-order scan
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S0'
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S1'
+                                Frame forward scan on: n
+                            """)
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	6
+                            S0	9
+                            S0	12
+                            S0	15
+                            S0	18
+                            S0	21
+                            S0	24
+                            S1	1
+                            S1	4
+                            S1	7
+                            S1	10
+                            S1	13
+                            S1	16
+                            S1	19
+                            S1	22
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s IN ('S0', 'S1') ORDER BY s DESC LIMIT 10")
+                    .noLeakCheck()
+                    .returns("""
+                            s	id
+                            S1	1
+                            S1	4
+                            S1	7
+                            S1	10
+                            S1	13
+                            S1	16
+                            S1	19
+                            S1	22
+                            S0	3
+                            S0	6
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s IN ('S0', 'S1') ORDER BY s, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                FilterOnValues symbolOrder: asc
+                                    Cursor-order scan
+                                        Index backward scan on: s deferred: true
+                                          filter: s='S0'
+                                        Index backward scan on: s deferred: true
+                                          filter: s='S1'
+                                    Frame backward scan on: n
+                            """)
+                    .returns("""
+                            s	id
+                            S0	24
+                            S0	21
+                            S0	18
+                            S0	15
+                            S0	12
+                            S0	9
+                            S0	6
+                            S0	3
+                            S1	22
+                            S1	19
+                            S1	16
+                            S1	13
+                            S1	10
+                            S1	7
+                            S1	4
+                            S1	1
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s NOT IN ('S2') ORDER BY s LIMIT 3")
+                    .noLeakCheck()
+                    .returns("""
+                            s	id
+                            S0	3
+                            S0	6
+                            S0	9
+                            """);
+            assertQuery("SELECT s, id FROM n WHERE s = 'S1' ORDER BY s, ts DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index backward scan on: s deferred: true
+                                      filter: s='S1'
+                                    Frame backward scan on: n
+                            """)
+                    .returns("""
+                            s	id
+                            S1	22
+                            S1	19
+                            S1	16
+                            S1	13
+                            S1	10
+                            S1	7
+                            S1	4
+                            S1	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsWhenCountedRowsExceedQueryMemoryLimit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 64);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE g AS (
+                        SELECT x id, (CASE WHEN x % 13 = 0 THEN NULL ELSE 'k' || (x % 7) END)::SYMBOL s, x * 0.5 v,
+                            ('value-' || x)::VARCHAR vc, timestamp_sequence('2024-01-01', 5_000_000) ts
+                        FROM long_sequence(34_560)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            // all rows, or the share of the rows of the first row group that NOT IN and its filter keep, take more than
+            // half the memory limit, so those reads gather row ids; the narrower key lists gather rows
+            assertKeyOrderedReadsMatchSort(
+                    "g",
+                    new String[]{"ts IN '2024-01-01'"},
+                    new String[]{"", "s IN ('k1', 'k3', NULL)", "s NOT IN ('k2') AND v > 0", "s IN ('k1', 'k5') AND id % 3 = 0"},
+                    768 * 1024L
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsWhenRowsOutgrowHalfTheDecodeCache() throws Exception {
+        // 300 row groups of a day, more than the decode cache keeps, so the read gathers whatever the budget
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE m AS (
+                        SELECT ('k' || (x % 4))::SYMBOL s, rpad('v' || x, 2_000, 'x')::VARCHAR vc, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(1_200)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO m VALUES ('k1', 'v', '2024-01-02')");
+            execute("ALTER TABLE m CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String where = " FROM m WHERE ts IN '2024-01-01' AND s IN ('k1', 'k2', 'k3') ORDER BY s, ts";
+            final String tail = "s, left(vc, 6) vc, length(vc) len, ts" + where;
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(m) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            final StringSink actual = new StringSink();
+            // the 900 rows take 1.8 MB, within half of a 4 MB decode cache, which the read gathers them in, decoding
+            // each row group once, and over half of a 1 MB one, where the read gathers their row ids instead and the
+            // passes of the keys decode the row groups past those the cache keeps
+            final long[] decodeCacheBytes = {4 * 1024 * 1024L, 1024 * 1024L};
+            final ParquetDecodeHint[] hints = {ParquetDecodeHint.MONOTONIC, ParquetDecodeHint.CYCLIC};
+            final long[] decodes = {300, 644};
+            final long[] usedBytes = new long[decodeCacheBytes.length];
+            for (int i = 0; i < decodeCacheBytes.length; i++) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, decodeCacheBytes[i]);
+                assertKeyOrderedDecodes("SELECT *" + where, null, hints[i], decodes[i]);
+                try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                    usedBytes[i] = sqlExecutionContext.getMemoryTracker().getUsed();
+                }
+            }
+            Assert.assertTrue("row ids leave the VARCHAR values in the decode cache", usedBytes[1] + 500_000 < usedBytes[0]);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsWhenNonVarcharValuesOutgrowQueryMemoryLimit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE b AS (
+                        SELECT ('k' || (x % 4))::SYMBOL s, rpad('v' || x, 400, 'x')::STRING str, rnd_bin(400, 400, 0) bin,
+                            rnd_double_array(1, 0, 50) arr, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(400)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO b (s, ts) VALUES ('k1', '2024-01-02')");
+            execute("ALTER TABLE b CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String tail = "s, left(str, 6) str, length(str) sl, length(bin) bl, dim_length(arr, 1) al, ts FROM b"
+                    + " WHERE ts IN '2024-01-01' AND s IN ('k1', 'k2', 'k3') ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            // the STRING, BINARY and DOUBLE[] values of the 300 rows outgrow the memory the query may take
+            for (String limit : new String[]{"", " LIMIT -7"}) {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                printSql("SELECT /*+ no_index(b) */ " + tail + limit, expected);
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+                assertQuery("SELECT " + tail + limit)
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("FilterOnValues symbolOrder: asc")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsWhenRowsOutgrowQueryMemoryLimit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE m AS (
+                        SELECT ('k' || (x % 4))::SYMBOL s, rpad('v' || x, 2_000, 'x')::VARCHAR vc, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(400)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO m VALUES ('k1', 'v', '2024-01-02')");
+            execute("ALTER TABLE m CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String tail = "s, left(vc, 6) vc, length(vc) len, ts FROM m WHERE ts IN '2024-01-01' AND s IN ('k1', 'k2', 'k3') ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            // the 300 rows of the read hold 600 KB of VARCHAR, which outgrows the memory the query may take, so the read
+            // gathers their row ids instead
+            for (String limit : new String[]{"", " LIMIT 5", " LIMIT -7", " LIMIT 3, 40", " LIMIT -250, -4"}) {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                printSql("SELECT /*+ no_index(m) */ " + tail + limit, expected);
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
+                assertQuery("SELECT " + tail + limit)
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("FilterOnValues symbolOrder: asc")
+                        .returns(expected);
+            }
+            // a cached factory reads the row ids again with and without the limit
+            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            printSql("SELECT /*+ no_index(m) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            final StringSink actual = new StringSink();
+            try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                for (long memoryLimit : new long[]{0, 512 * 1024L, 0, 512 * 1024L}) {
+                    node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, memoryLimit);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsBesideCompositePartition() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 512);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE g (id LONG, s SYMBOL INDEX CAPACITY 8, v DOUBLE, vc VARCHAR, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    INSERT INTO g
+                    SELECT x, ('k' || (x % 3))::SYMBOL, x * 0.5, ('value-' || x)::VARCHAR, timestamp_sequence('2024-01-01', 1_800_000_000L)
+                    FROM long_sequence(144)""");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO g VALUES
+                        (1001, 'k2', 1.5, 'late-1', '2024-01-02T03:31:00.000000Z'),
+                        (1002, 'k1', 2.5, 'late-2', '2024-01-02T08:31:00.000000Z')""");
+            drainWalQueue();
+            execute("INSERT INTO g VALUES (1003, 'k0', 3.5, 'late-3', '2024-01-02T15:31:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("g"))) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(1));
+            }
+            // the Parquet day gathers row ids, the composite day walks its pieces key by key
+            assertKeyOrderedReadsMatchSort(
+                    "g",
+                    new String[]{"ts IN '2024-01-01'", "ts IN '2024-01-02'"},
+                    new String[]{"", "s IN ('k1', 'k2')", "s NOT IN ('k0')"}
+            );
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts", null, ParquetDecodeHint.CYCLIC, 34);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowsOfManyRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            // more row groups than the decode cache keeps, whatever its budget
+            execute("""
+                    CREATE TABLE g AS (
+                        SELECT x id, ('k' || (x % 5))::SYMBOL s, x * 0.5 v, ('value-' || x)::VARCHAR vc, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(1_040)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO g VALUES (1_041, 'k1', 0.5, 'last', '2024-01-02')");
+            execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s", null, ParquetDecodeHint.MONOTONIC, 260);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' AND s IN ('k1', 'k3') ORDER BY s DESC, ts DESC", null, ParquetDecodeHint.MONOTONIC, 260);
+            assertKeyOrderedReadsMatchSort("g", new String[]{"ts IN '2024-01-01'"}, new String[]{"", "s IN ('k1', 'k3')"});
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsOfPartitionConvertedAfterCompile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 512);
+        assertMemoryLeak(() -> {
+            createGatherTable();
+            final String query = "SELECT * FROM g WHERE ts IN '2024-01-02' AND s IN ('k1', 'k3', NULL) ORDER BY s, ts DESC";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(g) */ * FROM g WHERE ts IN '2024-01-02' AND s IN ('k1', 'k3', NULL) ORDER BY s, ts DESC", expected);
+            final String expectedRows = expected.toString();
+            final StringSink actual = new StringSink();
+            try (RecordCursorFactory factory = select(query)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                }
+                execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-04'");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                }
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // read every row
+                    }
+                    final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+                    Assert.assertEquals(30, pool.getDecodeCount());
+                    Assert.assertEquals(ParquetDecodeHint.CYCLIC, pool.getDecodeHint());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyGathersRowIdsOverDecodeCache() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 512);
+        assertMemoryLeak(() -> {
+            createGatherTable();
+            // two days of twelve row groups each, then native days
+            execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+            // the rows outgrow half the decode cache, so every pass of a key decodes the row groups that hold its rows
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-02' ORDER BY s", null, ParquetDecodeHint.CYCLIC, 86);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-02' AND s IN ('k1', 'k3', NULL) ORDER BY s DESC", null, ParquetDecodeHint.CYCLIC, 30);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts DESC", ParquetDecodeHint.SCATTERED, ParquetDecodeHint.CYCLIC, 85);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' AND s IN ('k1', 'k5') AND id % 3 = 0 ORDER BY s", null, ParquetDecodeHint.CYCLIC, 20);
+            // a Parquet day gathers row ids, a native day walks them key by key
+            assertKeyOrderedReadsMatchSort(
+                    "g",
+                    new String[]{"ts IN '2024-01-02'", "ts IN '2024-01-03'"},
+                    new String[]{"", "s IN ('k1', 'k3', NULL)", "s NOT IN ('k2')", "s IN ('k1', 'k5') AND id % 3 = 0"}
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyOverParquetCountsRowsByIndex() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetKeyTable();
+            final String query = "SELECT * FROM k WHERE s IN ('S0', 'S2') AND ts IN '2024-01-01' ORDER BY s";
+            // the walk keeps the six row groups decoded, a budget of two row groups gathers the rows instead
+            for (long budget : new long[]{256 * 1024 * 1024, 2 * decodedRowGroupBytes(query)}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+                try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(16, counter.get());
+                    Assert.assertEquals(0, ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount());
+                    cursor.toTop();
+                    counter.set(14);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                    Assert.assertEquals(0, counter.get());
+                }
+                assertQuery(query + " LIMIT -3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id	s	ts
+                                17	S2	2024-01-01T00:00:16.000000Z
+                                20	S2	2024-01-01T00:00:19.000000Z
+                                23	S2	2024-01-01T00:00:22.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyOverParquetDecodesEachRowGroupOnce() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetKeyTable();
+            final String expected = """
+                    id	s	ts
+                    3	S0	2024-01-01T00:00:02.000000Z
+                    6	S0	2024-01-01T00:00:05.000000Z
+                    9	S0	2024-01-01T00:00:08.000000Z
+                    12	S0	2024-01-01T00:00:11.000000Z
+                    15	S0	2024-01-01T00:00:14.000000Z
+                    18	S0	2024-01-01T00:00:17.000000Z
+                    21	S0	2024-01-01T00:00:20.000000Z
+                    24	S0	2024-01-01T00:00:23.000000Z
+                    2	S2	2024-01-01T00:00:01.000000Z
+                    5	S2	2024-01-01T00:00:04.000000Z
+                    8	S2	2024-01-01T00:00:07.000000Z
+                    11	S2	2024-01-01T00:00:10.000000Z
+                    14	S2	2024-01-01T00:00:13.000000Z
+                    17	S2	2024-01-01T00:00:16.000000Z
+                    20	S2	2024-01-01T00:00:19.000000Z
+                    23	S2	2024-01-01T00:00:22.000000Z
+                    """;
+            String query = "SELECT * FROM k WHERE s IN ('S0', 'S2') AND ts IN '2024-01-01' ORDER BY s";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            FilterOnValues symbolOrder: asc
+                                Cursor-order scan
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S0'
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S2'
+                                Interval forward scan on: k
+                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns(expected);
+            assertKeyOrderedDecodes(query, null, ParquetDecodeHint.CYCLIC, 6);
+
+            query = "SELECT * FROM k WHERE s NOT IN ('S1') AND ts IN '2024-01-01' ORDER BY s";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            FilterOnExcludedValues symbolOrder: asc
+                              symbolFilter: s not in ['S1']
+                                Cursor-order scan
+                                    Index forward scan on: s
+                                      filter: s=3
+                                    Index forward scan on: s
+                                      filter: s=2
+                                Interval forward scan on: k
+                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns(expected);
+            assertKeyOrderedDecodes(query, null, ParquetDecodeHint.CYCLIC, 6);
+
+            // a single distinct key reads the row groups in one pass
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "S0");
+            bindVariableService.setStr(1, "S0");
+            assertKeyOrderedDecodes("SELECT * FROM k WHERE s IN ($1, $2) AND ts IN '2024-01-01' ORDER BY s", null, ParquetDecodeHint.MONOTONIC, 6);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyOverParquetLandsSkipInsideRowGroup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetKeyTable();
+            // the size of a negative LIMIT reads every row group before the skip lands inside the last one it reads
+            for (long budget : new long[]{256 * 1024 * 1024, 160, 240, 320, 400}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+                assertQuery("SELECT * FROM k WHERE s IN ('S0', 'S1') AND ts IN '2024-01-01' ORDER BY s DESC LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id	s	ts
+                                24	S0	2024-01-01T00:00:23.000000Z
+                                """);
+                assertQuery("SELECT * FROM k WHERE s IN ('S0', 'S1') AND ts IN '2024-01-01' ORDER BY s, ts DESC LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id	s	ts
+                                1	S1	2024-01-01T00:00:00.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyOverParquetPositionsRecordAfterSkip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetKeyTable();
+            final String keyListQuery = "SELECT * FROM k WHERE s IN ('S0', 'S1') AND ts IN '2024-01-01' ORDER BY s DESC";
+            final String sortedIndexQuery = "SELECT * FROM k WHERE ts IN '2024-01-01' ORDER BY s DESC";
+            // five buffers cycle through the six row groups, so each pass decodes a row group into another buffer
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 5 * decodedRowGroupBytes(keyListQuery));
+            assertLastRowAfterSkip(keyListQuery, 16, 24);
+            assertLastRowAfterSkip(sortedIndexQuery, 24, 24);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyWithoutRowsReadsOnePageFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE r AS (SELECT (CASE WHEN x > 50_000 THEN 'b' ELSE 'a' END)::SYMBOL sym, x::TIMESTAMP ts FROM long_sequence(100_000)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            // 'a' leads the key order with rows only before the interval
+            String query = "SELECT ts, sym FROM r WHERE sym IN ('a', 'b') AND ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("FilterOnValues symbolOrder: asc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	b
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM r WHERE sym IN ('a', 'b') AND ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts DESC LIMIT 2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.100000Z	b
+                            1970-01-01T00:00:00.099999Z	b
+                            """);
+            assertReadFrames(query, 2);
+            // 'c' is not a symbol of the table
+            query = "SELECT ts, sym FROM r WHERE sym IN ('c', 'b') AND ts >= 50_001 AND ts < 100_001 ORDER BY sym DESC, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("FilterOnValues symbolOrder: desc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	b
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM r WHERE sym NOT IN ('c') AND ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts LIMIT 1";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("FilterOnExcludedValues symbolOrder: asc")
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.050001Z	b
+                            """);
+            assertReadFrames(query, 2);
+            query = "SELECT ts, sym FROM r WHERE sym IN ('a', 'b') AND ts >= 50_001 AND ts < 100_001 ORDER BY sym, ts LIMIT 30_000, 30_001";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts	sym
+                            1970-01-01T00:00:00.080001Z	b
+                            """);
+            assertSkipCost(query, Long.MAX_VALUE, 0);
+        });
+    }
+
+    @Test
+    public void testTableOrderAggregatesReadIndexKeysInTableOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedKeyTable();
+            final String expected = """
+                    f\tl\taa\ttw\tsp
+                    1\t5\t[1.0,2.0,4.0,5.0]\t2.25\t▁▂▆█
+                    """;
+            assertQuery("SELECT first(v) f, last(v) l, array_agg(v::DOUBLE) aa, twap(v, ts) tw, sparkline(v) sp FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT first(v) f, last(v) l, array_agg(v::DOUBLE) aa, twap(v, ts) tw, sparkline(v) sp FROM t WHERE sym::STRING IN ('a', 'b')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT twap(v, ts) tw FROM t WHERE sym IN ('a', 'b')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tw
+                            2.25
+                            """);
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE, "SELECT twap(v, ts) FROM t WHERE sym IN ('a', 'b')");
+            assertIndexOrder(ScanPlan.IndexOrder.TABLE, "SELECT sym, first(v) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+        });
+    }
+
+    @Test
     public void testTimestampLessThan() throws Exception {
         final String expected = """
                 k\tprice\tts
@@ -1516,5 +3196,153 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                 timestamp_sequence(172800000000, 360000000) ts\s
                             from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tspread\n", expected);
+    }
+
+    private static void assertIndexOrder(ScanPlan.IndexOrder expected, String sql) throws Exception {
+        assertPlanned(engine, sqlExecutionContext, sql, ScanPlan.class, scan -> Assert.assertEquals(expected, scan.getIndexOrder()));
+    }
+
+    private static void assertKeyOrderedDecodes(String query, ParquetDecodeHint consumerHint, ParquetDecodeHint expectedHint, long expectedDecodes) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+            if (consumerHint != null) {
+                cursor.setParquetDecodeHint(consumerHint);
+            }
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+                // read every row
+            }
+            final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+            Assert.assertEquals(expectedDecodes, pool.getDecodeCount());
+            Assert.assertEquals(expectedHint, pool.getDecodeHint());
+        }
+    }
+
+    private static void assertLastRowAfterSkip(String query, long rowCount, long lastId) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+            // a consumer that revisits rows keeps evicting the least recently used row group
+            cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(rowCount, counter.get());
+            cursor.toTop();
+            counter.set(rowCount - 1);
+            cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+            Assert.assertEquals(0, counter.get());
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertEquals(lastId, cursor.getRecord().getLong(0));
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    private static void createIndexedKeyTable() throws Exception {
+        execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('a', 1, '2024-01-01T00:00:01.000000Z'),
+                    ('b', 2, '2024-01-01T00:00:02.000000Z'),
+                    ('c', 3, '2024-01-01T00:00:03.000000Z'),
+                    ('b', 4, '2024-01-01T00:00:04.000000Z'),
+                    ('a', 5, '2024-01-01T00:00:05.000000Z')""");
+    }
+
+    private static void createIndexedTable() throws Exception {
+        execute("CREATE TABLE t AS (SELECT x id, ('S' || (x % 2))::SYMBOL s, x * 1.0 v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY HOUR");
+    }
+
+    private static void createKeyTable(String name, String partitionBy) throws Exception {
+        execute("CREATE TABLE " + name + " AS (SELECT x id, ('S' || (x % 3))::SYMBOL s, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(24)), INDEX(s) TIMESTAMP(ts) PARTITION BY " + partitionBy);
+    }
+
+    /**
+     * Asserts that reads of the table ordered by keys, over the intervals and with the key predicates, return what a
+     * sort of the rows the scan reads without the index returns, for both key orders, both timestamp orders and LIMITs
+     * from either end.
+     */
+    private void assertKeyOrderedReadsMatchSort(String table, String[] intervals, String[] predicates) throws Exception {
+        assertKeyOrderedReadsMatchSort(table, intervals, predicates, 0);
+    }
+
+    private void assertKeyOrderedReadsMatchSort(String table, String[] intervals, String[] predicates, long queryMemoryLimit) throws Exception {
+        final StringSink expected = new StringSink();
+        for (String interval : intervals) {
+            for (String predicate : predicates) {
+                final String where = interval.isEmpty()
+                        ? (predicate.isEmpty() ? "" : " WHERE " + predicate)
+                        : " WHERE " + interval + (predicate.isEmpty() ? "" : " AND " + predicate);
+                for (String order : new String[]{"s, ts", "s DESC, ts DESC", "s, ts DESC", "s DESC, ts"}) {
+                    for (String limit : new String[]{"", " LIMIT 5", " LIMIT -7", " LIMIT 3, 40", " LIMIT -30, -4"}) {
+                        final String tail = "id, s, v, vc, ts FROM " + table + where + " ORDER BY " + order + limit;
+                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                        printSql("SELECT /*+ no_index(" + table + ") */ " + tail, expected);
+                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, queryMemoryLimit);
+                        assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void createGatherTable() throws Exception {
+        execute("""
+                CREATE TABLE g AS (
+                    SELECT x id, (CASE WHEN x % 13 = 0 THEN NULL ELSE 'k' || (x % 7) END)::SYMBOL s, x * 0.5 v,
+                        ('value-' || x)::VARCHAR vc, timestamp_sequence('2024-01-01', 900_000_000) ts
+                    FROM long_sequence(300)
+                ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
+    }
+
+    private void assertReadFrames(String query, long readFrames) throws Exception {
+        PageFrameRecordCursorImpl.testReadFrames.set(0);
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        Assert.assertEquals(readFrames, PageFrameRecordCursorImpl.testReadFrames.get());
+    }
+
+    private static void createParquetKeyTable() throws Exception {
+        createKeyTable("k", "DAY");
+        execute("INSERT INTO k VALUES (25, 'S1', '2024-01-02')");
+        execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    private static long decodedRowGroupBytes(String query) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+                // read every row
+            }
+            final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+            return pool.getCachedBytes() / pool.getCachedFrameCount();
+        }
+    }
+
+    private void assertSkipCost(String query, long maxBlockHops, long walkedRows) throws Exception {
+        BitmapIndexFwdReader.resetTestCounters();
+        PageFrameRecordCursorImpl.testWalkedRows.set(0);
+        BitmapIndexFwdReader.isBlockHopCounterEnabled = true;
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            BitmapIndexFwdReader.isBlockHopCounterEnabled = false;
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        final long blockHops = BitmapIndexFwdReader.testRangeCountBlockHops.get();
+        Assert.assertTrue("block hops: " + blockHops, blockHops <= maxBlockHops);
+        Assert.assertEquals(walkedRows, PageFrameRecordCursorImpl.testWalkedRows.get());
+    }
+
+    private void assertWalksFewRows(String query) throws Exception {
+        PageFrameRecordCursorImpl.testWalkedRows.set(0);
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        Assert.assertTrue("rows walked: " + PageFrameRecordCursorImpl.testWalkedRows.get(), PageFrameRecordCursorImpl.testWalkedRows.get() < 100);
     }
 }

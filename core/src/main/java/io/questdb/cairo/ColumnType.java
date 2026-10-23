@@ -68,7 +68,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
-    public static final int MIGRATION_VERSION = 430;
+    public static final int MIGRATION_VERSION = 431;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
@@ -160,10 +160,11 @@ public final class ColumnType {
     // binary rejects a table stamped MAX_STORAGE_VERSION instead of misreading it, while a
     // table that never went composite (or was compacted back) stays readable.
     //
-    // Fixed literal, deliberately placed above MIGRATION_VERSION (429) so it never collides
-    // with a migration-step number: a stored version in (VERSION, MAX_STORAGE_VERSION] means
-    // "composite", not "needs migration N". A stable on-disk marker must not float with VERSION,
-    // so it is written out as a constant rather than VERSION + 1.
+    // Fixed literal. EngineMigration writes only migration steps up to VERSION into _meta and
+    // records forward-compatible steps above VERSION in _upgrade.d alone, so a stored version in
+    // (VERSION, MAX_STORAGE_VERSION] always means "composite", never "needs migration N", even
+    // where MIGRATION_VERSION reaches or passes this value. A stable on-disk marker must not float
+    // with VERSION, so it is written out as a constant rather than VERSION + 1.
     public static final int MAX_STORAGE_VERSION = 430;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
@@ -381,6 +382,15 @@ public final class ColumnType {
         int rightPriority = getTimestampTypePriority(right);
         // Return the timestamp type with higher precision using explicit priority
         return leftPriority >= rightPriority ? left : right;
+    }
+
+    /**
+     * The timestamp type of a {@code type} value that a timestamp parameter receives through an implicit conversion:
+     * {@link #getTimestampType(int)}, and a microsecond timestamp for the numeric and NULL types, whose
+     * {@code getTimestamp()} returns the value itself.
+     */
+    public static int getImplicitTimestampType(int type) {
+        return getHigherPrecisionTimestampType(getTimestampType(type), TIMESTAMP_MICRO);
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
@@ -919,18 +929,18 @@ public final class ColumnType {
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN    */, {BOOLEAN}
-                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
-                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
+                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL, LONG256}
+                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL, LONG256}
                 /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
+                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL, LONG256}
+                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL, LONG256}
                 /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
                 /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
                 /* 9  FLOAT      */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE     */, {DOUBLE}
                 /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
                 /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256    */, {LONG256, LONG}
+                /* 13 LONG256    */, {LONG256}
                 /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}

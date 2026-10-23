@@ -74,21 +74,15 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * page frames to fit; the owner thread matches the rest of a larger (Parquet) frame itself.
  * <p>
  * The native frames shrink as the slots per master row, offsets times slaves, grow, down to the
- * floor of {@link #MIN_FRAME_BUDGET_DIVISOR}. The code generator picks this factory for at most
- * {@link #MAX_SLOTS_PER_MASTER_ROW} slots and the serial {@link HorizonJoinProjectionRecordCursorFactory}
- * past that, unless the master lacks the random access the serial factory needs, as a covering
- * index scan does.
+ * floor of {@link #MIN_FRAME_BUDGET_DIVISOR}. The planner picks this factory for at most
+ * {@link io.questdb.griffin.plan.logical.PlanToFactoryRules#MAX_HORIZON_SLOTS_PER_MASTER_ROW} slots and the serial
+ * {@link HorizonJoinProjectionRecordCursorFactory} past that, unless the master lacks the random
+ * access the serial factory needs, as a covering index scan does. Within the cap, the task budget
+ * of {@code cairo.sql.page.frame.max.rows} divided by the slots, 10,000 rows or more at the default
+ * of 1,000,000, covers a frame of that floor. Above the cap, the frames of a master without random
+ * access shrink with the task budget.
  */
 public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecordCursorFactory {
-    /**
-     * The most slots per master row, offsets times slaves, for which the code generator picks this
-     * factory over a master with random access. Within the cap, the task budget of
-     * {@code cairo.sql.page.frame.max.rows} divided by the slots, 10,000 rows or more at the
-     * default of 1,000,000, covers a frame of the floor that {@link #MIN_FRAME_BUDGET_DIVISOR}
-     * sets. A master without random access, such as a covering index scan, keeps this factory
-     * above the cap, as the class javadoc says, and its frames shrink with the task budget there.
-     */
-    public static final int MAX_SLOTS_PER_MASTER_ROW = 100;
     private static final PageFrameReducer FILTER_AND_MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::filterAndMatch;
     private static final PageFrameReducer MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::match;
     /**
@@ -203,14 +197,6 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             Misc.free(this, th);
             throw th;
         }
-    }
-
-    /**
-     * Returns whether a projection with the given numbers of offsets and slaves stays within
-     * {@link #MAX_SLOTS_PER_MASTER_ROW}.
-     */
-    public static boolean isWithinSlotCap(int offsetCount, int slaveCount) {
-        return (long) offsetCount * slaveCount <= MAX_SLOTS_PER_MASTER_ROW;
     }
 
     @Override

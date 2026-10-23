@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
@@ -41,6 +42,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
+    private final IntList authorizedColumnIndexes = new IntList();
+    private final IntHashSet authorizedColumns = new IntHashSet();
+    private final IntList checkedColumnIndexes = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final RecordMetadata metadata;
     private final long metadataVersion;
@@ -88,6 +92,16 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
+    public void setAuthorizedColumnIndexes(IntList columnIndexes) {
+        authorizedColumnIndexes.clear();
+        authorizedColumnIndexes.addAll(columnIndexes);
+        authorizedColumns.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            authorizedColumns.add(columnIndexes.getQuick(i));
+        }
+    }
+
+    @Override
     public void setPushdownFilterCondition(
             long partitionTableVersion,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
@@ -115,8 +129,17 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
                 .putAscii("\"}");
     }
 
-    void authorizeSelect(SqlExecutionContext executionContext, @NotNull IntList columnIndexes) throws SqlException {
+    void authorizeSelect(SqlExecutionContext executionContext, @NotNull IntList readColumnIndexes) throws SqlException {
         final SecurityContext securityContext = executionContext.getSecurityContext();
+        final IntList columnIndexes = checkedColumnIndexes;
+        columnIndexes.clear();
+        columnIndexes.addAll(authorizedColumnIndexes);
+        for (int i = 0, n = readColumnIndexes.size(); i < n; i++) {
+            final int columnIndex = readColumnIndexes.getQuick(i);
+            if (authorizedColumns.excludes(columnIndex)) {
+                columnIndexes.add(columnIndex);
+            }
+        }
         if (viewName != null) {
             // reading table via view, check access to view
             final CairoEngine engine = executionContext.getCairoEngine();

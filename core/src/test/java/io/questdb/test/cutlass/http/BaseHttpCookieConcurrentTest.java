@@ -44,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Predicate;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME_UTF8;
@@ -192,6 +193,9 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
     @Test
     public void testConcurrentSingleSessionExpired() throws Exception {
         final AtomicInteger sessionCount = new AtomicInteger();
+        // A request the server verifies before the clock moves extends the session when it is processed after
+        // the move, so the clock moves only while no request is in flight.
+        final ReentrantReadWriteLock clockLock = new ReentrantReadWriteLock();
         runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
             final long timeIncrement = sessionTimeout + 1_000_000L;
             final long expiresAt = currentMicros.get() + sessionTimeout;
@@ -205,13 +209,17 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                     // select a thread to move the clock over expiresAt
                     // the 'i == numOfIterations-1' part of the condition guarantees that the clock
                     // will be moved before any thread finishes
-                    synchronized (this) {
+                    clockLock.writeLock().lock();
+                    try {
                         if ((rnd.nextBoolean() || i == numOfIterations - 1) && currentMicros.get() < expiresAt) {
                             currentMicros.addAndGet(timeIncrement);
                             LOG.info().$("clock moved to " + currentMicros.get()).$();
                         }
+                    } finally {
+                        clockLock.writeLock().unlock();
                     }
 
+                    clockLock.readLock().lock();
                     try {
                         runSuccessfulQuery(httpClient, sessionId);
                     } catch (AssertionError e) {
@@ -223,6 +231,8 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                         // and that the num of open sessions are less or equal to the num of threads
                         sessionId = createSession(httpClient, sessionStore, ADMIN_USER, ADMIN_PWD);
                         sessionCount.incrementAndGet();
+                    } finally {
+                        clockLock.readLock().unlock();
                     }
                 }
             }

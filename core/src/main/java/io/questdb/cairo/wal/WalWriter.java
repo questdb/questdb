@@ -2314,7 +2314,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // Validation only checks the indexed column exists. INCLUDE
             // column validity (existence, no self-reference, no duplicates)
             // is enforced at SQL compile time in
-            // SqlCompilerImpl.validateAndAddCoveringColumns.
+            // SqlCompilerImpl.alterTableColumnAddIndex.
             addIndex(columnName, indexValueBlockSize, indexType);
         }
 

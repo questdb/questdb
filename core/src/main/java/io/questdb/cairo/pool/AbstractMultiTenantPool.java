@@ -487,8 +487,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > e.releaseOrAcquireTimes[i]) {
-                                removed = true;
-                                closeTenant(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
+                                if (closeReason == PoolConstants.CR_IDLE) {
+                                    removed |= releaseIdleTenant(thread, e, i);
+                                } else {
+                                    removed = true;
+                                    closeTenant(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
+                                }
                             }
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
@@ -545,6 +549,15 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         } else {
             return casFailures == 0;
         }
+    }
+
+    /**
+     * Releases what a tenant left in the pool past the inactive TTL holds, while the pool keeps the tenant's slot so
+     * that nobody takes the tenant meanwhile. Returns whether the tenant left the pool; by default the pool closes it.
+     */
+    protected boolean releaseIdleTenant(long thread, Entry<T> entry, int index) {
+        closeTenant(thread, entry, index, PoolListener.EV_EXPIRE, PoolConstants.CR_IDLE);
+        return true;
     }
 
     protected boolean returnToPool(T tenant) {

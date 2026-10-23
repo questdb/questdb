@@ -84,6 +84,10 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         }
     }
 
+    public long headerPtr() {
+        return ptr;
+    }
+
     @Override
     public int intAt(int offset) {
         return Unsafe.getInt(ptr + HEADER_SIZE + offset);
@@ -104,8 +108,9 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         return this;
     }
 
+    @Override
     public long ptr() {
-        return ptr;
+        return ptr != 0 ? ptr + HEADER_SIZE : -1;
     }
 
     @Override

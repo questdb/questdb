@@ -70,6 +70,7 @@ public class GroupByFunctionsUpdaterFactory {
 
         final int computeFirstIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeFirst", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int computeNextIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeNext", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
+        final int recomputeFirstIndex = asm.poolInterfaceMethod(GroupByFunction.class, "recomputeFirst", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int setEmptyIndex = asm.poolInterfaceMethod(GroupByFunction.class, "setEmpty", "(Lio/questdb/cairo/map/MapValue;)V");
         final int mergeFunctionIndex = asm.poolInterfaceMethod(GroupByFunction.class, "merge", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/map/MapValue;)V");
 
@@ -77,6 +78,8 @@ public class GroupByFunctionsUpdaterFactory {
         final int updateNewSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int updateExistingIndex = asm.poolUtf8("updateExisting");
         final int updateExistingSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
+        final int updateRetainedIndex = asm.poolUtf8("updateRetained");
+        final int updateRetainedSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int updateEmptyIndex = asm.poolUtf8("updateEmpty");
         final int updateEmptySigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -95,11 +98,12 @@ public class GroupByFunctionsUpdaterFactory {
         for (int i = 0; i < functionCount; i++) {
             asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
         }
-        asm.methodCount(6);
+        asm.methodCount(7);
         asm.defineDefaultConstructor(superIndex);
 
         generateUpdateNew(asm, functionCount, firstFieldIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
         generateUpdateExisting(asm, functionCount, firstFieldIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
+        generateUpdateNew(asm, functionCount, firstFieldIndex, recomputeFirstIndex, updateRetainedIndex, updateRetainedSigIndex);
         generateUpdateEmpty(asm, functionCount, firstFieldIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
         generateSetFunctions(asm, functionCount, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
         generateMerge(asm, functionCount, firstFieldIndex, mergeFunctionIndex, mergeIndex, mergeSigIndex);
@@ -137,6 +141,7 @@ public class GroupByFunctionsUpdaterFactory {
      * <ul>
      * <li>updateNew(MapValue value, Record record, long rowId) - calls f0, f1, f2 ... fn.computeFirst(value, record, rowId) for each group by function</li>
      * <li>updateExisting(MapValue value, Record record, long rowId) - calls f0, f1, f2 ... fn.computeNext(value, record, rowId) for each group by function</li>
+     * <li>updateRetained(MapValue value, Record record, long rowId) - calls f0, f1, f2 ... fn.recomputeFirst(value, record, rowId) for each group by function</li>
      * <li>updateEmpty(MapValue value) - calls f0, f1, f2 ... fn.setEmpty(value) for each group by function</li>
      * <li>merge(MapValue destValue, MapValue srcValue) - calls fn.merge(destValue, srcValue) for each group by function</li>
      * <li>setFunctions(ObjList&lt;GroupByFunction&gt; groupByFunctions) - sets the group by functions to the fields. This method is called by the factory and should not be called by the caller.</li>
@@ -342,6 +347,13 @@ public class GroupByFunctionsUpdaterFactory {
         public void updateNew(MapValue value, Record record, long rowId) {
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 groupByFunctions.getQuick(i).computeFirst(value, record, rowId);
+            }
+        }
+
+        @Override
+        public void updateRetained(MapValue value, Record record, long rowId) {
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                groupByFunctions.getQuick(i).recomputeFirst(value, record, rowId);
             }
         }
     }

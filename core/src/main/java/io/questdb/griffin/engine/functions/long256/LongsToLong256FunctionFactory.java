@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.long256;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,12 +36,16 @@ import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public final class LongsToLong256FunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG256;
+    }
 
     @Override
     public String getSignature() {
@@ -73,14 +78,6 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
             this.l1 = l1;
             this.l2 = l2;
             this.l3 = l3;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(l0);
-            Misc.free(l1);
-            Misc.free(l2);
-            Misc.free(l3);
         }
 
         @Override

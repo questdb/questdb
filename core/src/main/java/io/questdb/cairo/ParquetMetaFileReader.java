@@ -316,7 +316,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     @Override
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
         assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        return canSkipRowGroup0(
+        return canSkipRowGroupInMeta0(
                 getOrCreateNativeReaderPtr(),
                 rowGroupIndex,
                 filters.getAddress(),
@@ -806,7 +806,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
     }
 
-    private static native boolean canSkipRowGroup0(
+    private static native boolean canSkipRowGroupInMeta0(
             long ptr,
             int rowGroupIndex,
             long filtersPtr,

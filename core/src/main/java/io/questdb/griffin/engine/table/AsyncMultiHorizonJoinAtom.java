@@ -72,7 +72,6 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
-            @NotNull ObjList<Function> keyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -95,7 +94,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
         try {
             // Store key functions for init() and close()
-            this.ownerKeyFunctions = keyFunctions;
+            this.ownerKeyFunctions = resources.takeKeyFunctions();
             this.perWorkerKeyFunctions = resources.takePerWorkerKeyFunctions();
 
             // Create per-worker map sinks to support expression keys
@@ -105,7 +104,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
                     asm,
                     markoutMetadata,
                     groupByColumnFilter,
-                    keyFunctions,
+                    ownerKeyFunctions,
                     null,
                     null,
                     null,
@@ -115,7 +114,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
                     sinkClass,
                     markoutMetadata,
                     groupByColumnFilter,
-                    keyFunctions,
+                    ownerKeyFunctions,
                     null,
                     null,
                     null,
@@ -186,22 +185,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
         // The owner key functions bind in initOwnerFunctions(), at getCursor() time; only their
         // per-worker clones bind here.
         final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
-        if (perWorkerKeyFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.init(
-                            perWorkerKeyFunctions.getQuick(i),
-                            ownerKeyFunctions,
-                            horizonJoinSymbolTableSource,
-                            executionContext
-                    );
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        PerWorkerFunctionList.initPerWorker(perWorkerKeyFunctions, ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext);
     }
 
     @Override
@@ -263,7 +247,12 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
     @Override
     protected void clearAggregationState() {
+        final Throwable failure = PerWorkerFunctionList.cursorClosedPerWorker(
+                Function.cursorClosed(null, ownerKeyFunctions),
+                perWorkerKeyFunctions
+        );
         shardingCtx.clear();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -273,21 +262,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
-        if (perWorkerKeyFunctions != null) {
-            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                final ObjList<Function> functions = perWorkerKeyFunctions.getQuick(i);
-                perWorkerKeyFunctions.setQuick(i, null);
-                try {
-                    PerWorkerFunctionList.close(functions);
-                } catch (Throwable th) {
-                    if (cleanupFailure == null) {
-                        cleanupFailure = th;
-                    } else if (cleanupFailure != th) {
-                        cleanupFailure.addSuppressed(th);
-                    }
-                }
-            }
-        }
+        cleanupFailure = PerWorkerFunctionList.closePerWorker(cleanupFailure, perWorkerKeyFunctions);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

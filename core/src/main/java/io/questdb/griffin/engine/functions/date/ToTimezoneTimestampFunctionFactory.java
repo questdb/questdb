@@ -26,17 +26,20 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
@@ -47,11 +50,42 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
+public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(0));
+    }
+
     @Override
     public String getSignature() {
         return "to_timezone(NS)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(1) instanceof ConstantExpression ? 0 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final int timestampType = call.getDataType();
+        final CharSequence tz = arguments.constant(call.argumentAt(1)).getStrA(null);
+        final TimeZoneRules rules = constantZoneRules(tz, call.argumentAt(1).getPosition(), timestampType);
+        return rules != null
+                ? MonotonicTimestampFunction.invertZoneOffsetShift(io, rules, ColumnType.getTimestampDriver(timestampType), -1)
+                : MonotonicTimestampFunction.invertConstantShift(io, fixedOffset(tz, timestampType),
+                MonotonicTimestampFunction.shiftInputCeiling(isTimestampArgMonotonic, timestampType));
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final Function timezoneFunc = args.getQuick(1);
+        if (timezoneFunc.isConstant()) {
+            constantZoneRules(timezoneFunc.getStrA(null), argPositions.getQuick(1), ResultTypes.timestampAtLeastMicros(args.getQuick(0).getType()));
+        }
+        return true;
     }
 
     @Override
@@ -69,12 +103,47 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
 
         if (timezoneFunc.isConstant()) {
-            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
+            final Function function = toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
+            args.setQuick(0, null);
+            args.setQuick(1, null);
+            try {
+                Misc.free(timezoneFunc);
+                return function;
+            } catch (Throwable th) {
+                Misc.free(function, th);
+                throw th;
+            }
         } else if (timezoneFunc.isRuntimeConstant()) {
             return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else {
             return new Func(timestampFunc, timezoneFunc, timestampType);
         }
+    }
+
+    /**
+     * The rules of the named time zone a constant spells, null when it spells a fixed offset; raises the errors for
+     * a NULL or unknown time zone.
+     */
+    static @Nullable TimeZoneRules constantZoneRules(@Nullable CharSequence tz, int timezonePos, int timestampType) throws SqlException {
+        if (tz == null) {
+            throw SqlException.$(timezonePos, "timezone must not be null");
+        }
+        final int hi = tz.length();
+        if (Dates.parseOffset(tz, 0, hi) != Long.MIN_VALUE) {
+            return null;
+        }
+        try {
+            return DateLocaleFactory.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)),
+                    ColumnType.getTimestampDriver(timestampType).getTZRuleResolution()
+            );
+        } catch (NumericException e) {
+            throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
+        }
+    }
+
+    private static long fixedOffset(CharSequence tz, int timestampType) {
+        return ColumnType.getTimestampDriver(timestampType).fromMinutes(Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length())));
     }
 
     @NotNull
@@ -85,32 +154,11 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             int timestampType
     ) throws SqlException {
         final CharSequence tz = timezoneFunc.getStrA(null);
-        if (tz != null) {
-            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
-            final int hi = tz.length();
-            final long l = Dates.parseOffset(tz, 0, hi);
-            if (l == Long.MIN_VALUE) {
-                try {
-                    return new ConstRulesFunc(
-                            timestampFunc,
-                            DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
-                            ),
-                            timestampType
-                    );
-                } catch (NumericException e) {
-                    Misc.free(timestampFunc);
-                    throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
-                }
-            } else {
-                return new OffsetTimestampFunction(
-                        timestampFunc,
-                        timestampDriver.fromMinutes(Numbers.decodeLowInt(l)),
-                        timestampType
-                );
-            }
+        final TimeZoneRules rules = constantZoneRules(tz, timezonePos, timestampType);
+        if (rules != null) {
+            return new ConstRulesFunc(timestampFunc, rules, timestampType);
         }
-        throw SqlException.$(timezonePos, "timezone must not be null");
+        return new OffsetTimestampFunction(timestampFunc, fixedOffset(tz, timestampType), timestampType);
     }
 
     private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
@@ -136,6 +184,9 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
             return timestamp + tzRules.getOffset(timestamp);
         }
 
@@ -178,6 +229,9 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long timestampValue = timestampFunc.getTimestamp(rec);
+            if (timestampValue == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
                 return tz != null ? timestampDriver.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
@@ -219,6 +273,9 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
             if (tzRules != null) {
                 return timestamp + tzRules.getOffset(timestamp);
             }

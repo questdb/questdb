@@ -4075,6 +4075,54 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredBinaryAndArrayIncludesReadSideBySide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pair (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (b1, b2, a1, a2),
+                        b1 BINARY,
+                        b2 BINARY,
+                        a1 DOUBLE[],
+                        a2 DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pair
+                    SELECT x::TIMESTAMP, 'A', b, CASE WHEN x % 2 = 0 THEN b ELSE rnd_bin(1, 4, 0) END,
+                           ARRAY[x::DOUBLE, 1.0], CASE WHEN x % 2 = 0 THEN ARRAY[x::DOUBLE, 1.0] ELSE ARRAY[2.0, x::DOUBLE, 3.0] END
+                    FROM (SELECT x, rnd_bin(8, 8, 0) b FROM long_sequence(100))
+                    """);
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT b1 = b2 eb, a1 = a2 ea, a1, a2 FROM t_pair WHERE sym = 'A' LIMIT 4")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            eb\tea\ta1\ta2
+                            false\tfalse\t[1.0,1.0]\t[2.0,1.0,3.0]
+                            true\ttrue\t[2.0,1.0]\t[2.0,1.0]
+                            false\tfalse\t[3.0,1.0]\t[2.0,3.0,3.0]
+                            true\ttrue\t[4.0,1.0]\t[4.0,1.0]
+                            """);
+            // The memoized x copies its bytes on the first byte read, after b2 has been read.
+            assertQuery("""
+                    SELECT count() FROM (
+                        SELECT length(x) l, base64(b2, 100) s2, base64(x, 100) s, base64(b1, 100) s1
+                        FROM (SELECT CASE WHEN rnd_boolean() THEN b1 END x, b1, b2 FROM t_pair WHERE sym = 'A')
+                    ) WHERE l > 0 AND s2 IS NOT NULL AND s <> s1
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("memoize(case([rnd_boolean(),b1]))", "CoveringIndex")
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testCoveredFloatAndBinLenDirectRead() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -10899,7 +10947,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Optimizer rewrites DISTINCT → GROUP BY + count(*), but we intercept in
-            // generateSelectGroupBy and replace the entire chain with PostingIndex distinct
+            // AggregateFactoryGenerator and replace the entire chain with PostingIndex distinct
             assertQuery("SELECT DISTINCT sym FROM t_distinct_plan")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -12624,7 +12672,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testInListWithDuplicateBindVarKeys() throws Exception {
-        // Literal IN-list duplicates are deduped upstream by the WhereClauseParser
+        // Literal IN-list duplicates are deduped upstream by SymbolKeyExtractor
         // (see testInListWithDuplicateKeys), so only bind-variable / runtime-constant
         // duplicates reach the multi-key covering build loops. Without a contains()
         // guard there, openPartitionCursors opens one posting cursor per slot and the
@@ -16895,14 +16943,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // The CTE introduces a SelectedRecord layer above the WHERE-driven
+            // The renaming CTE keeps a SelectedRecord layer above the WHERE-driven
             // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
             // group-by on the Async (parallel) keyed path rather than the
             // vectorised one. The key has to be non-NULL: a NULL-capable key gives
             // the factory a backup plan, and a factory carrying one withdraws the
             // page-frame cursor the Async path -- and so this regression -- needs.
-            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
+            String q = "WITH cte0 AS (SELECT sym, k AS kk, v, ts FROM t_bug9) "
+                    + "SELECT t0.kk AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
                     + "ORDER BY e0";
             assertQuery(q)
                     .noLeakCheck()
@@ -16914,9 +16962,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   values: [avg(-1)]
                                   filter: null
                                     SelectedRecord
-                                        SelectedRecord
-                                            CoveringIndex on: sym with: k
-                                              filter: sym='a'
+                                        CoveringIndex on: sym with: k
+                                          filter: sym='a'
                             """);
             assertQuery(q)
                     .expectSize()
@@ -16929,8 +16976,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // The same query on the NULL key, to pin what the backup costs: the
             // covering factory reports no page-frame cursor, so the group-by falls to
             // the serial keyed path. The rows are the same either way.
-            String qNull = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+            String qNull = "WITH cte0 AS (SELECT sym, k AS kk, v, ts FROM t_bug9) "
+                    + "SELECT t0.kk AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
                     + "ORDER BY e0";
             assertQuery(qNull)
                     .noLeakCheck()
@@ -16941,9 +16988,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   keys: [e0]
                                   values: [avg(-1)]
                                     SelectedRecord
-                                        SelectedRecord
-                                            CoveringIndex backup: true on: sym with: k
-                                              filter: sym=null
+                                        CoveringIndex backup: true on: sym with: k
+                                          filter: sym=null
                             """);
             assertQuery(qNull)
                     .expectSize()

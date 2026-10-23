@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,6 +64,11 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
     private static final long INF_BITS = 0x7FF0000000000000L;
     // Approximate meters per degree of latitude (constant everywhere on Earth)
     private static final double METERS_PER_DEG_LAT = 111_320.0;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -199,8 +205,7 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(latFunc);
-            Misc.free(lonFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, latFunc), lonFunc));
         }
 
         @Override
@@ -246,21 +251,6 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof ConstCenterGeoWithinRadiusLatLonFunction that) {
-                return centerLat == that.centerLat
-                        && centerLon == that.centerLon
-                        && radius == that.radius
-                        && latFunc.isEquivalentTo(that.latFunc)
-                        && lonFunc.isEquivalentTo(that.lonFunc);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isNonDeterministic() {
             return latFunc.isNonDeterministic() || lonFunc.isNonDeterministic();
         }
@@ -279,6 +269,14 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return latFunc.isThreadSafe() && lonFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstCenterGeoWithinRadiusLatLonFunction other) {
+                latFunc.offerStateTo(other.latFunc);
+                lonFunc.offerStateTo(other.lonFunc);
+            }
         }
 
         @Override
@@ -348,11 +346,10 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(latFunc);
-            Misc.free(lonFunc);
-            Misc.free(centerLatFunc);
-            Misc.free(centerLonFunc);
-            Misc.free(radiusFunc);
+            Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, latFunc), lonFunc);
+            failure = Misc.freeBestEffort(failure, centerLatFunc);
+            failure = Misc.freeBestEffort(failure, centerLonFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, radiusFunc));
         }
 
         @Override
@@ -431,21 +428,6 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof GeoWithinRadiusLatLonFunction that) {
-                return latFunc.isEquivalentTo(that.latFunc)
-                        && lonFunc.isEquivalentTo(that.lonFunc)
-                        && centerLatFunc.isEquivalentTo(that.centerLatFunc)
-                        && centerLonFunc.isEquivalentTo(that.centerLonFunc)
-                        && radiusFunc.isEquivalentTo(that.radiusFunc);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isNonDeterministic() {
             return latFunc.isNonDeterministic()
                     || lonFunc.isNonDeterministic()
@@ -479,6 +461,17 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                     && centerLatFunc.isThreadSafe()
                     && centerLonFunc.isThreadSafe()
                     && radiusFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoWithinRadiusLatLonFunction other) {
+                centerLatFunc.offerStateTo(other.centerLatFunc);
+                centerLonFunc.offerStateTo(other.centerLonFunc);
+                latFunc.offerStateTo(other.latFunc);
+                lonFunc.offerStateTo(other.lonFunc);
+                radiusFunc.offerStateTo(other.radiusFunc);
+            }
         }
 
         @Override

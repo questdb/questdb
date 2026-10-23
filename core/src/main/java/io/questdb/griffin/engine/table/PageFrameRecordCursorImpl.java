@@ -37,15 +37,40 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Reads the rows of the page frames in frame order. {@link KeyOrderedPageFrameRecordCursor} reads them key by key, so
+ * that the per-row path of this scan stays small enough for the JIT to inline it into the loops that drive it.
+ */
 public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+    // @TestOnly observability for the page frames the cursor opens a row cursor over, which shows whether a read ordered
+    // by keys walks the page frames of a key that has no row there.
+    @TestOnly
+    public static final AtomicLong testReadFrames = new AtomicLong();
+    // @TestOnly observability for the rows the cursor walks one at a time when it sizes itself or skips rows without
+    // page frame arithmetic, which no row it returns reflects. A plain static boolean guards both counters, as in
+    // BitmapIndexFwdReader.
+    @TestOnly
+    public static final AtomicLong testWalkedRows = new AtomicLong();
+    @TestOnly
+    public static boolean isWalkCounterEnabled = false;
     private static final long NO_SKIP_WALK = -1;
+    protected final Function filter;
     private final boolean entityCursor;
-    private final Function filter;
     private final RowCursorFactory rowCursorFactory;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
+    protected boolean isExhausted;
+    protected long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+    protected RowCursor rowCursor;
+    protected long rowsProducedSinceSkip;
     private boolean areCursorsPrepared;
     // The frame ordinal the LAST skip walk started at and the target it skipped, for the skip walk that
     // shaped the frames now in the address cache. NO_SKIP_WALK when an ordinary walk shaped them. A walk
@@ -53,21 +78,18 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     // resetFrameCache().
     private int cachedSkipWalkFrameCount = -1;
     private long cachedSkipWalkTarget = NO_SKIP_WALK;
-    private SqlExecutionCircuitBreaker circuitBreaker;
-    private boolean isExhausted;
-    private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
-    private RowCursor rowCursor;
-    private long rowsProducedSinceSkip;
 
     public PageFrameRecordCursorImpl(
             CairoConfiguration configuration,
             @Transient RecordMetadata metadata,
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
-            // this cursor owns "toTop()" lifecycle of filter
+            // this cursor owns the "init()", "toTop()" and "cursorClosed()" lifecycle of filter
             @Nullable Function filter
     ) {
         super(configuration, metadata);
+        assert !(rowCursorFactory instanceof KeyOrderedRowCursorFactory) || this instanceof KeyOrderedPageFrameRecordCursor
+                : "a key ordered row cursor factory needs KeyOrderedPageFrameRecordCursor";
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;
@@ -81,13 +103,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // parquet row groups, so the metadata-only accounting below would count physical rows
         // the cursor never yields and over-report the size. The row-by-row walk counts exactly
         // the rows hasNext() yields, matching the pruned scan.
-        if (!frameCursor.supportsSizeCalculation()
-                || filter != null
-                || rowCursorFactory.isUsingIndex()
-                || frameCursor.hasActivePushdownFilter()) {
+        if (isSizeWalked()) {
+            long walkedRows = 0;
             while (hasNext()) {
                 counter.inc();
+                walkedRows++;
             }
+            countWalkedRows(walkedRows);
             return;
         }
 
@@ -107,6 +129,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void close() {
+        if (filter != null && frameCursor != null) {
+            filter.cursorClosed();
+        }
         rowCursor = Misc.free(rowCursor);
         super.close();
     }
@@ -136,9 +161,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 return true;
             }
 
-            if (frameCount == 0 && cachedSkipWalkTarget != NO_SKIP_WALK) {
-                // This walk cuts frames where an ordinary walk cuts them, the cached ones are a skip
-                // walk's. Drop them at the first frame, before this walk reads any of them.
+            if (hasSkipWalkFramesAtTop()) {
                 dropSkipWalkFrames();
             }
             PageFrame frame;
@@ -205,6 +228,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         cachedSkipWalkTarget = NO_SKIP_WALK;
         // prepare for page frame iteration
         super.init(sqlExecutionContext.getMemoryTracker());
+        if (filter != null) {
+            filter.init(this, sqlExecutionContext);
+        }
     }
 
     @Override
@@ -227,13 +253,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void skipRows(Counter rowCount, long requestedMaxRowsAfterSkip) {
         prepareRowCursorFactory();
 
-        // The clamp decodes only the leading [0, n) rows of a parquet frame, so it is
-        // sound only for a scan that yields the frame's rows 1:1 in ascending order.
-        // isEntity() is that guarantee; a scattered/index row cursor reports false.
-        // Pushdown pruning does not forfeit the clamp: a page frame never spans more than
-        // one row group, so pruning drops whole frames rather than rows inside a frame,
-        // and every frame the scan does yield stays 1:1.
-        final boolean canClamp = filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
+        final boolean canClamp = isSkipClampable();
         final long postSkipMaxRows = canClamp ? requestedMaxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
 
@@ -276,9 +296,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             // report exhaustion, which skips nothing whenever postSkipMaxRows is 0 -- the
             // value LimitRecordCursor.calculateSize() passes to size a cursor it will not read.
             maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+            final long skipCount = rowCount.get();
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
+            countWalkedRows(skipCount - rowCount.get());
             maxRowsAfterSkip = postSkipMaxRows;
             rowsProducedSinceSkip = 0;
             return;
@@ -375,16 +397,107 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         super.toTop();
     }
 
-    private void dropSkipWalkFrames() {
+    protected static void countWalkedRows(long rows) {
+        if (isWalkCounterEnabled) {
+            testWalkedRows.addAndGet(rows);
+        }
+    }
+
+    /**
+     * Returns the cursor over the rows the per-key row cursor factories find, in the index order the planner chose:
+     * key by key for {@link ScanPlan.IndexOrder#KEY}, otherwise in page frame order, merged by the row cursor factory
+     * that the order names.
+     */
+    static PageFrameRecordCursorImpl newIndexScanCursor(
+            CairoConfiguration configuration,
+            @Transient RecordMetadata metadata,
+            ScanPlan.IndexOrder indexOrder,
+            ObjList<? extends FunctionBasedRowCursorFactory> cursorFactories,
+            int[] cursorFactoriesIdx,
+            int indexDirection,
+            @Nullable Function filter
+    ) {
+        return switch (indexOrder) {
+            case KEY -> new KeyOrderedPageFrameRecordCursor(
+                    configuration,
+                    metadata,
+                    new KeyOrderedSequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx, indexDirection),
+                    false,
+                    filter
+            );
+            case TIMESTAMP, TABLE -> new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    false,
+                    filter
+            );
+            case TABLE_PER_FRAME -> new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new BitSetRowCursorFactory(cursorFactories, cursorFactoriesIdx, filter),
+                    false,
+                    filter
+            );
+            case KEY_PER_FRAME -> new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    false,
+                    filter
+            );
+            case NONE -> throw new UnsupportedOperationException();
+        };
+    }
+
+    protected final void dropSkipWalkFrames() {
         resetFrameCache();
         cachedSkipWalkFrameCount = -1;
         cachedSkipWalkTarget = NO_SKIP_WALK;
     }
 
-    private void prepareRowCursorFactory() {
+    /**
+     * True at the first page frame of a walk while the cached frames are a skip walk's, which cuts frames where an
+     * ordinary walk does not, so the walk drops them with {@link #dropSkipWalkFrames()} before it reads any of them.
+     * The walk tests this in its own row loop, where the JIT profiles the branch as never taken and leaves the drop
+     * out of the compiled loop.
+     */
+    protected final boolean hasSkipWalkFramesAtTop() {
+        return frameCount == 0 && cachedSkipWalkTarget != NO_SKIP_WALK;
+    }
+
+    /**
+     * True when the cursor counts its size by walking its rows rather than by page frame arithmetic.
+     */
+    protected boolean isSizeWalked() {
+        return !frameCursor.supportsSizeCalculation()
+                || filter != null
+                || rowCursorFactory.isUsingIndex()
+                || frameCursor.hasActivePushdownFilter();
+    }
+
+    /**
+     * True when the clamp of a skip may decode only the leading rows of a parquet frame, which is sound only for a
+     * scan that yields the frame's rows 1:1 in ascending order. isEntity() is that guarantee; a scattered/index row
+     * cursor reports false. Pushdown pruning does not forfeit the clamp: a page frame never spans more than one row
+     * group, so pruning drops whole frames rather than rows inside a frame, and every frame the scan does yield stays
+     * 1:1.
+     */
+    protected final boolean isSkipClampable() {
+        return filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
+    }
+
+    /**
+     * Prepares the row cursor factory over the page frames once per {@link #of(PageFrameCursor, SqlExecutionContext)}.
+     *
+     * @return true when this call prepared it
+     */
+    protected final boolean prepareRowCursorFactory() {
         if (!areCursorsPrepared) {
             rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
+            return true;
         }
+        return false;
     }
 }

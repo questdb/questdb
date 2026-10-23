@@ -57,6 +57,15 @@ use crate::types::{
 use crate::writer::ParquetMetaWriter;
 use crate::ParquetFieldId;
 
+/// The `created_by` QuestDB's parquet writer stamps on every file it writes. That writer has
+/// always written NaN as a Parquet null, see `FooterFeatureFlags::WRITTEN_BY_QUESTDB_BIT`.
+pub const QUESTDB_CREATED_BY: &str = "QuestDB version 9.0";
+
+/// Reports whether QuestDB's parquet writer wrote the file with this `created_by`.
+pub fn is_written_by_questdb(created_by: Option<&str>) -> bool {
+    created_by == Some(QUESTDB_CREATED_BY)
+}
+
 /// Resolves a column's QuestDB id, preferring the authoritative id carried in
 /// `QdbMeta` (the table writer index) over the Parquet `field_id`.
 ///
@@ -381,6 +390,7 @@ pub fn convert_from_parquet(
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_ts);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
+    writer.written_by_questdb(is_written_by_questdb(file_metadata.created_by.as_deref()));
     if let Some(meta) = qdb_meta {
         writer.squash_tracker(meta.squash_tracker);
         writer.seq_txn(SeqTxn::new(meta.seq_txn));
@@ -467,7 +477,7 @@ pub fn convert_from_parquet(
         }
 
         let mut rg_builder = RowGroupBlockBuilder::new(col_count as u32);
-        rg_builder.set_num_rows(rg.num_rows().max(0) as u64);
+        rg_builder.set_num_rows(rg.num_rows() as u64);
 
         for (col_idx, col_chunk) in rg_columns.iter().enumerate() {
             let meta = col_chunk.metadata();
@@ -530,6 +540,7 @@ pub fn generate_parquet_metadata(
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
+    is_written_by_questdb: bool,
     bloom_source: &dyn BloomFilterSource,
 ) -> ParquetMetaResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
@@ -538,6 +549,7 @@ pub fn generate_parquet_metadata(
     writer.unused_bytes(unused_bytes);
     writer.squash_tracker(squash_tracker);
     writer.seq_txn(seq_txn);
+    writer.written_by_questdb(is_written_by_questdb);
 
     for &sc_idx in sorting_columns {
         writer.add_sorting_column(sc_idx);

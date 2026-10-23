@@ -43,6 +43,11 @@ import org.jetbrains.annotations.NotNull;
 public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return "count(Ξ)";
     }

@@ -25,9 +25,15 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewState;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -380,6 +386,33 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:10.000000Z\t70
                             1970-01-01T00:01:20.000000Z\t80
                             """);
+        });
+    }
+
+    @Test
+    public void testDeclaredAndSchemaQualifiedViewReferences() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT k, v FROM " + TABLE1 + " WHERE v > 6", TABLE1);
+            final String expected = """
+                    k	v
+                    k7	7
+                    k8	8
+                    """;
+            for (String query : new String[]{
+                    "SELECT * FROM public." + VIEW1,
+                    "SELECT * FROM \"public\".\"" + VIEW1 + "\"",
+                    "DECLARE @src := " + VIEW1 + " SELECT * FROM @src",
+                    "DECLARE @src := public." + VIEW1 + " SELECT * FROM @src"
+            }) {
+                assertQuery(query).noLeakCheck().returns(expected);
+            }
+            for (String query : new String[]{
+                    "SELECT b.k, b.v FROM " + TABLE1 + " a JOIN public." + VIEW1 + " b ON a.v = b.v",
+                    "DECLARE @src := " + VIEW1 + " SELECT b.k, b.v FROM " + TABLE1 + " a JOIN @src b ON a.v = b.v"
+            }) {
+                assertQuery(query).noLeakCheck().noRandomAccess().returns(expected);
+            }
         });
     }
 
@@ -1436,7 +1469,6 @@ public class ViewQueryTest extends AbstractViewTest {
 
             assertQuery("SELECT * FROM " + TABLE1 + " JOIN '" + VIEW1 + "' ON (v)")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tv\tts1\tv1
@@ -1446,7 +1478,6 @@ public class ViewQueryTest extends AbstractViewTest {
 
             assertQuery("SELECT * FROM " + TABLE1 + " JOIN \"" + VIEW1 + "\" ON (v)")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tv\tts1\tv1
@@ -1764,9 +1795,9 @@ public class ViewQueryTest extends AbstractViewTest {
                             v1\tv2\tv10
                             1.0\t2.0\t10.0
                             """);
+            // The smaller input drives each inner hash join, so the join declares no timestamp.
             assertQuery(kpiBody(10))
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
@@ -2122,6 +2153,32 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewUpdateRejectsOutdatedView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT ts, v FROM " + TABLE1, TABLE1);
+            execute("CREATE TABLE plain (ts TIMESTAMP, v LONG)");
+            execute("INSERT INTO plain SELECT ts, 0 FROM " + TABLE1);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "UPDATE plain t SET v = x.v FROM " + VIEW1 + " x WHERE t.ts = x.ts",
+                        sqlExecutionContext
+                );
+                try (UpdateOperation op = cq.getUpdateOperation()) {
+                    alterView("SELECT ts, v * 10 v FROM " + TABLE1, TABLE1);
+                    op.withContext(sqlExecutionContext);
+                    try (TableWriterAPI writer = engine.getTableWriterAPI(op.getTableToken(), "test")) {
+                        writer.apply(op);
+                        Assert.fail();
+                    } catch (TableReferenceOutOfDateException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), VIEW1);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testViewFilterPushedDownToTable() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -2258,7 +2315,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     "select t1.ts, v_max from " + TABLE1 + " t1 join (" + VIEW1 + " where v_max > 6) t2 on t1.v = t2.v_max",
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -2289,7 +2346,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
                             """,
-                    "with t2 as (" + VIEW1 + " where v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max", "ts",
+                    "with t2 as (" + VIEW1 + " where v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max", null,
                     false,
                     false,
                     """

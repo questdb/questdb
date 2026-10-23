@@ -211,6 +211,9 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker && ptr != 0) {
+            Unsafe.chargeHeldMemory(16L * capacity, memoryTag, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

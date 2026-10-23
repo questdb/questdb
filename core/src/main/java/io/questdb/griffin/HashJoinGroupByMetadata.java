@@ -37,8 +37,11 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -50,12 +53,12 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 /**
- * Compiles base-table references into the actual probe projection and pruned build
+ * Resolves bound column ids into the actual probe projection and pruned build
  * payload. Joined columns are the physical probe columns followed by payload fields;
  * expressions retain their logical aliases even when RIGHT becomes LEFT OUTER.
- * Input mappings are compiled-record index -> base-table index, not writer indexes.
+ * Input mappings pair compiled-record indexes with logical column ids.
  * Build SYMBOL payloads keep the build input's symbol keys and its static symbol tables.
- * Construct before the candidate's borrowed models are mutated or the compiler reused.
+ * Construct before the compiler releases the bound plans of the {@link HashJoinAggregation}.
  * <p>
  * A SYMBOL key column compares as an int on both layouts: the probe translates its symbol key
  * into the build's domain, so this class publishes those key columns for the atom to bind a
@@ -78,12 +81,11 @@ public final class HashJoinGroupByMetadata implements Closeable {
     private final BitSet buildKeyStringAsVarchar = new BitSet();
     private final BitSet buildKeySymbolAsString = new BitSet();
     private final BitSet buildKeyTimestampAsNanos = new BitSet();
-    private final ExpressionNode buildOnFilter;
-    private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final OutputSchema input = new OutputSchema();
     private final String condition;
-    private final boolean hasStaticSymbolTables;
     private final boolean isKeyCapacityPresized;
-    private final HashJoinGroupByKeys keys;
+    private final boolean isKeyStaged;
+    private final boolean isSymbolKey;
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final JoinRecordMetadata joinedMetadata;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
@@ -102,40 +104,32 @@ public final class HashJoinGroupByMetadata implements Closeable {
     // Compiled indexes of the SYMBOL key columns, in key order, one entry per SYMBOL pair.
     private final IntList symbolKeyBuildColumns = new IntList();
     private final IntList symbolKeyProbeColumns = new IntList();
-    private ExpressionNode postJoinFilter;
 
     public HashJoinGroupByMetadata(
             CairoConfiguration configuration,
             BytecodeAssembler asm,
-            HashJoinGroupByCandidate candidate,
+            HashJoinAggregation hashJoin,
             RecordMetadata probeMetadata,
             IntList probeBaseColumns,
             RecordMetadata buildMetadata,
             IntList buildBaseColumns
-    ) throws SqlException {
+    ) {
         if (probeBaseColumns.size() != probeMetadata.getColumnCount()
                 || buildBaseColumns.size() != buildMetadata.getColumnCount()) {
-            throw SqlException.$(0, "hash join input mapping size mismatch");
+            throw new IllegalStateException("hash join input mapping size mismatch");
         }
         probeColumnCount = probeMetadata.getColumnCount();
-        keys = candidate.getKeys();
-        isKeyCapacityPresized = candidate.isKeyCapacityPresized();
-        // Symbol keys translate through, and payload symbols resolve with, the inputs' static tables.
-        boolean hasStaticSymbolTables = true;
+        final HashJoinGroupByKeys keys = hashJoin.getKeys();
+        isKeyStaged = !keys.isIntKeyed();
+        isSymbolKey = keys.isSymbolKey();
+        isKeyCapacityPresized = hashJoin.isKeyCapacityPresized();
         StringSink conditionSink = Misc.getThreadLocalSink();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final int probeColumn = requireColumn(probeBaseColumns, keys.getProbeColumn(i));
             final int buildColumn = requireColumn(buildBaseColumns, keys.getBuildColumn(i));
-            // The inputs compiled after the analysis, so they carry the analysed types or nothing.
             if (probeMetadata.getColumnType(probeColumn) != keys.getProbeType(i)
                     || buildMetadata.getColumnType(buildColumn) != keys.getBuildType(i)) {
-                throw SqlException.$(0, "hash join input key type mismatch");
-            }
-            if (ColumnType.isSymbol(keys.getProbeType(i)) && !probeMetadata.isSymbolTableStatic(probeColumn)) {
-                hasStaticSymbolTables = false;
-            }
-            if (ColumnType.isSymbol(keys.getBuildType(i)) && !buildMetadata.isSymbolTableStatic(buildColumn)) {
-                hasStaticSymbolTables = false;
+                throw new IllegalStateException("hash join input key type mismatch");
             }
             probeKeyColumns.add(probeColumn);
             buildKeyColumns.add(buildColumn);
@@ -146,13 +140,13 @@ public final class HashJoinGroupByMetadata implements Closeable {
             if (i > 0) {
                 conditionSink.putAscii(" and ");
             }
-            conditionSink.put(candidate.getProbeModel().getName()).putAscii('.').put(probeMetadata.getColumnName(probeColumn))
-                    .putAscii('=').put(candidate.getBuildModel().getName()).putAscii('.').put(buildMetadata.getColumnName(buildColumn));
+            conditionSink.put(hashJoin.getProbeAlias()).putAscii('.').put(probeMetadata.getColumnName(probeColumn))
+                    .putAscii('=').put(hashJoin.getBuildAlias()).putAscii('.').put(buildMetadata.getColumnName(buildColumn));
         }
         condition = conditionSink.toString();
         probeInputMetadata = probeMetadata;
         buildInputMetadata = buildMetadata;
-        if (keys.isIntKeyed()) {
+        if (!isKeyStaged) {
             // The INT layout reads its key straight off the probe record, translating it when the
             // key is a SYMBOL pair, so it stages nothing and needs no sink.
             probeKeySinkClass = null;
@@ -190,60 +184,40 @@ public final class HashJoinGroupByMetadata implements Closeable {
                     buildKeyFilter, null, null, buildKeySymbolAsString, buildKeyStringAsVarchar, buildKeyTimestampAsNanos);
         }
         joinedMetadata = new JoinRecordMetadata(configuration,
-                probeColumnCount + candidate.getRequiredBuildColumns().size());
+                probeColumnCount + hashJoin.getRequiredBuildColumns().size());
         try {
+            final OutputSchema probeOutput = hashJoin.getProbeOutput();
             for (int i = 0; i < probeColumnCount; i++) {
-                joinedMetadata.add(candidate.getProbeModel().getName(), copyColumn(probeMetadata, i, probeMetadata.isSymbolTableStatic(i)));
+                joinedMetadata.add(hashJoin.getProbeAlias(), copyColumn(probeMetadata, i, probeMetadata.isSymbolTableStatic(i)));
+                int sourceIndex = probeOutput.getColumnIndexById(probeBaseColumns.getQuick(i));
+                if (sourceIndex >= 0) {
+                    if (probeOutput.getColumnType(sourceIndex) != probeMetadata.getColumnType(i)) {
+                        throw new IllegalStateException("hash join input mapping type mismatch");
+                    }
+                    input.addColumnFrom(probeOutput, sourceIndex);
+                } else {
+                    input.addColumnFrom(probeMetadata, i, probeBaseColumns.getQuick(i));
+                }
             }
-            IntList required = candidate.getRequiredBuildColumns();
+            final OutputSchema buildOutput = hashJoin.getBuildOutput();
+            final IntList required = hashJoin.getRequiredBuildColumns();
             for (int i = 0; i < required.size(); i++) {
                 int column = requireColumn(buildBaseColumns, required.getQuick(i));
                 buildColumns.add(column);
                 // The payload stores the input's symbol keys, and probes resolve them through
                 // the open build cursor's tables, so the input's capability carries over.
-                boolean isSymbolTableStatic = buildMetadata.isSymbolTableStatic(column);
-                if (ColumnType.isSymbol(buildMetadata.getColumnType(column)) && !isSymbolTableStatic) {
-                    hasStaticSymbolTables = false;
-                }
-                TableColumnMetadata metadata = copyColumn(buildMetadata, column, isSymbolTableStatic);
+                TableColumnMetadata metadata = copyColumn(buildMetadata, column, buildMetadata.isSymbolTableStatic(column));
                 payloadMetadata.add(metadata);
-                joinedMetadata.add(candidate.getBuildModel().getName(), metadata);
-            }
-            IntList resolvedToJoined = new IntList();
-            RecordMetadata resolved = candidate.getResolvedMetadata();
-            for (int i = 0; i < resolved.getColumnCount(); i++) {
-                int baseColumn = candidate.getBaseColumnIndex(i);
-                boolean isBuildColumn = candidate.isBuildColumn(i);
-                int column = indexOf(isBuildColumn ? buildBaseColumns : probeBaseColumns, baseColumn);
-                if (column >= 0 && (isBuildColumn ? buildMetadata : probeMetadata).getColumnType(column) != resolved.getColumnType(i)) {
-                    throw SqlException.$(0, "hash join input mapping type mismatch [column=").put(baseColumn).put(']');
+                joinedMetadata.add(hashJoin.getBuildAlias(), metadata);
+                final int sourceIndex = buildOutput.getColumnIndexById(required.getQuick(i));
+                if (buildOutput.getColumnType(sourceIndex) != buildMetadata.getColumnType(column)) {
+                    throw new IllegalStateException("hash join input mapping type mismatch");
                 }
-                int payload = isBuildColumn ? indexOf(required, baseColumn) : -1;
-                resolvedToJoined.add(isBuildColumn ? (payload < 0 ? -1 : probeColumnCount + payload) : column);
+                input.addColumnFrom(buildOutput, sourceIndex);
             }
-            IntList resolvedToBuild = new IntList();
-            for (int i = 0; i < resolved.getColumnCount(); i++) {
-                resolvedToBuild.add(candidate.isBuildColumn(i) ? indexOf(buildBaseColumns, candidate.getBaseColumnIndex(i)) : -1);
+            if (!hasInputs(hashJoin, input)) {
+                throw new IllegalStateException("hash join input mapping misses a column");
             }
-            buildOnFilter = remap(candidate.getResolvedBuildOnFilter(), resolved, resolvedToBuild, buildMetadata);
-            for (int i = 0; i < candidate.getResolvedColumns().size(); i++) {
-                QueryColumn column = candidate.getResolvedColumns().getQuick(i);
-                columns.add(QueryColumn.FACTORY.newInstance().of(column.getAlias(),
-                        remap(column.getAst(), resolved, resolvedToJoined, joinedMetadata)));
-            }
-            for (int i = 0; i < candidate.getResolvedPostJoinFilters().size(); i++) {
-                ExpressionNode filter = remap(candidate.getResolvedPostJoinFilters().getQuick(i), resolved, resolvedToJoined, joinedMetadata);
-                if (postJoinFilter == null) {
-                    postJoinFilter = filter;
-                } else {
-                    ExpressionNode and = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.OPERATION, "and", 0, filter.position);
-                    and.paramCount = 2;
-                    and.lhs = postJoinFilter;
-                    and.rhs = filter;
-                    postJoinFilter = and;
-                }
-            }
-            this.hasStaticSymbolTables = hasStaticSymbolTables;
         } catch (Throwable th) {
             Misc.free(joinedMetadata, th);
             throw th;
@@ -282,13 +256,6 @@ public final class HashJoinGroupByMetadata implements Closeable {
 
     public RecordMetadata getJoinedMetadata() {
         return joinedMetadata;
-    }
-
-    /**
-     * Reconciled equality keys, whose column indexes address the analysed base tables.
-     */
-    public HashJoinGroupByKeys getKeys() {
-        return keys;
     }
 
     /**
@@ -339,25 +306,15 @@ public final class HashJoinGroupByMetadata implements Closeable {
     }
 
     /**
-     * False when a SYMBOL key column of either input, or a build SYMBOL payload column, lacks a
-     * static symbol table. Base-table columns always have one; the planner keeps the ordinary
-     * plan otherwise. Both sides of a SYMBOL key need one: the probe resolves its key's text and
-     * the build answers {@code keyOf()} for it, whichever layout carries the key.
-     */
-    public boolean hasStaticSymbolTables() {
-        return hasStaticSymbolTables;
-    }
-
-    /**
      * The INT layout's lone SYMBOL pair, whose probe keys translate into the build's domain.
      */
     public boolean isSymbolKey() {
-        return keys.isSymbolKey();
+        return isSymbolKey;
     }
 
     /**
      * True when the build may size its key table by its row count; see
-     * {@link HashJoinGroupByCandidate#isKeyCapacityPresized()}.
+     * {@link HashJoinAggregation#isKeyCapacityPresized()}.
      */
     public boolean isKeyCapacityPresized() {
         return isKeyCapacityPresized;
@@ -367,7 +324,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
      * True when the key reaches its map through the two key sinks rather than the INT layout.
      */
     public boolean isKeyStaged() {
-        return !keys.isIntKeyed();
+        return isKeyStaged;
     }
 
     /**
@@ -392,16 +349,63 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return new HashJoinGroupByRecord(probeColumnCount, payloadMetadata);
     }
 
-    ExpressionNode getBuildOnFilter() {
-        return buildOnFilter;
+    public OutputSchema getInput() {
+        return input;
     }
 
-    ObjList<QueryColumn> getColumns() {
-        return columns;
+    /**
+     * Build payload types: the row heap copies a build column, so only a build column answers to
+     * this set. A probe column reaches the joined record straight off its page frame and takes no
+     * type check at all, and a key column and a grouping expression answer to
+     * {@link HashJoinGroupByKeys#isSupportedKeyType(int)} instead. A build column that only the
+     * build's filters read, its scan's WHERE filter and an outer join's ON condition on the build
+     * alone, takes no type check either: the build runs them over its page frames, before the row
+     * heap copies a row.
+     */
+    public static boolean isSupportedValueType(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
+                 ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
+                 ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL, ColumnType.IPv4,
+                 ColumnType.UUID, ColumnType.LONG256, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
+                 ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL256 -> true;
+            // STRING, VARCHAR, BINARY and ARRAY are variable-size, so the row heap cannot copy
+            // them. INTERVAL is not persisted, so no base-table column carries one.
+            default -> false;
+        };
     }
 
-    ExpressionNode getPostJoinFilter() {
-        return postJoinFilter;
+    private static boolean hasInputs(HashJoinAggregation hashJoin, OutputSchema input) {
+        final ObjList<BoundExpression> keys = hashJoin.getAggregate().getGroupingExpressions();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (!hasInputs(keys.getQuick(i), input)) {
+                return false;
+            }
+        }
+        final ObjList<FunctionExpression> aggregates = hashJoin.getAggregate().getAggregates();
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (!hasInputs(aggregates.getQuick(i), input)) {
+                return false;
+            }
+        }
+        return hashJoin.getPostJoinFilter() == null || hasInputs(hashJoin.getPostJoinFilter(), input);
+    }
+
+    private static boolean hasInputs(BoundExpression expression, OutputSchema input) {
+        if (expression instanceof ColumnExpression column) {
+            final int index = input.getColumnIndexById(column.getColumnId());
+            return index >= 0 && input.getColumnType(index) == column.getDataType();
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (!hasInputs(call.argumentAt(i), input)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // The generated class is nullable by contract: null asks for the looping sink, which
@@ -427,32 +431,10 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return columns.indexOf(value, 0, columns.size());
     }
 
-    private static ExpressionNode remap(ExpressionNode node, RecordMetadata resolved, IntList indexes, RecordMetadata target) throws SqlException {
-        if (node == null) {
-            return null;
-        }
-        CharSequence token = node.token;
-        if (node.type == ExpressionNode.LITERAL) {
-            int index = indexes.getQuick(resolved.getColumnIndex(node.token));
-            if (index < 0) {
-                throw SqlException.$(node.position, "missing hash join input column: ").put(node.token);
-            }
-            token = target.getColumnName(index);
-        }
-        ExpressionNode copy = ExpressionNode.FACTORY.newInstance().of(node.type, token, node.precedence, node.position);
-        copy.paramCount = node.paramCount;
-        copy.lhs = remap(node.lhs, resolved, indexes, target);
-        copy.rhs = remap(node.rhs, resolved, indexes, target);
-        for (int i = 0; i < node.args.size(); i++) {
-            copy.args.add(remap(node.args.getQuick(i), resolved, indexes, target));
-        }
-        return copy;
-    }
-
-    private static int requireColumn(IntList columns, int baseColumn) throws SqlException {
+    private static int requireColumn(IntList columns, int baseColumn) {
         int index = indexOf(columns, baseColumn);
         if (index < 0) {
-            throw SqlException.$(0, "missing hash join input column: ").put(baseColumn);
+            throw new IllegalStateException("missing hash join input column");
         }
         return index;
     }

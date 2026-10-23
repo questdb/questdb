@@ -460,7 +460,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewCursorFunctionClosedOnPostOptimiseRejection() throws Exception {
+    public void testCreateMatViewCursorFunctionClosedOnPostBindRejection() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -481,19 +481,17 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 sql.indexOf(functionName + "()"),
                                 "administrative function cannot be used in materialized view: " + functionName
                         );
-                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
-                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
-                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
-                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
-                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
-                // after optimise() returned and before generation takes ownership of the factory, so the
-                // compile path itself has to close it - exactly once, since a second close would be a
-                // use-after-free.
+                // Binding instantiates a FROM/JOIN cursor function while CREATE MATERIALIZED VIEW defers the
+                // checks of the functions the view may not store, so FunctionResolver's check - which rejects
+                // before newInstance() - cannot fire here. A constructed factory therefore pins the rejection on
+                // SqlCompilerImpl.compileCreateSelect, which decides the deferred functions after binding
+                // returned and before generation takes ownership of the factory, so the compile path itself has
+                // to close it - exactly once, since a second close would be a use-after-free.
                 assertEquals(1, factories.size());
                 assertEquals(1, factories.getQuick(0).getCloseCount());
                 assertNull(getMatViewDefinition("test"));
 
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // The next compile borrows the same pooled compiler and clears its planning state. A
                 // reference left behind in that state must not close the factory a second time.
                 execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
                 assertEquals(1, factories.getQuick(0).getCloseCount());
@@ -523,7 +521,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(1, factories.getQuick(i).getCloseCount());
                 }
 
-                // Clearing the pooled compiler's optimiser state on the next compile must not close the
+                // Clearing the pooled compiler's planning state on the next compile must not close the
                 // factories the compiled tree already owned and released.
                 execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
                 for (int i = 0, n = factories.size(); i < n; i++) {
@@ -536,7 +534,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewCursorFunctionFromViewClosedOnPostOptimiseRejection() throws Exception {
+    public void testCreateMatViewCursorFunctionFromViewClosedOnPostBindRejection() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -549,8 +547,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final int viewFactoryCount = factories.size();
 
                 // A materialized view may use a function that discloses objects only where a SYSTEM ADMIN writes
-                // it, never through a regular view. The optimiser instantiates the function in the view's FROM
-                // clause, so the post-optimise backstop rejects it, and has to close it exactly once.
+                // it, never through a regular view. Binding instantiates the function in the view's FROM clause,
+                // so the check that runs after binding rejects it, and has to close it exactly once.
                 final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
                         " t1 cross join v sample by 30s) partition by day";
                 assertQuery(sql)
@@ -1264,6 +1262,52 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test as (" + to + ") partition by day")
                     .noLeakCheck()
                     .fails(91, "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByOrderedOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String desc = "SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY ts DESC";
+            final String aliasDesc = "SELECT ts AS bucket, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY bucket DESC";
+            final String byKey = "SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY k";
+            final String outerDesc = "SELECT * FROM (SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s) ORDER BY ts DESC";
+            execute("CREATE MATERIALIZED VIEW desc_day AS (" + desc + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW desc_default AS (" + desc + ")");
+            execute("CREATE MATERIALIZED VIEW alias_desc AS (" + aliasDesc + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW by_key AS (" + byKey + ")");
+            execute("CREATE MATERIALIZED VIEW outer_desc AS (" + outerDesc + ") PARTITION BY DAY");
+
+            assertQuery0("ts\tk\tavg_v\n", "desc_day", "ts");
+            assertQuery0("ts\tk\tavg_v\n", "desc_default", "ts");
+            assertQuery0("bucket\tk\tavg_v\n", "alias_desc", "bucket");
+            assertQuery0("ts\tk\tavg_v\n", "by_key", "ts");
+            assertQuery0("ts\tk\tavg_v\n", "outer_desc", "ts");
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("desc_default"))) {
+                assertEquals(PartitionBy.DAY, metadata.getPartitionBy());
+            }
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "desc_day", desc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "desc_default", desc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "alias_desc", aliasDesc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "by_key", byKey, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "outer_desc", outerDesc, TABLE1, 30, 's', null, null);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleBySubQueryOrderByTimestampDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "SELECT ts, k, avg(v) avg_v FROM (SELECT * FROM " + TABLE1 + " WHERE v > 0) SAMPLE BY 30s ORDER BY ts DESC";
+            assertQuery("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query is required to have designated timestamp");
+            assertNull(getMatViewDefinition("test"));
+            assertQuery("CREATE MATERIALIZED VIEW test AS (" + query + ")")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query is required to have designated timestamp");
+            assertNull(getMatViewDefinition("test"));
         });
     }
 

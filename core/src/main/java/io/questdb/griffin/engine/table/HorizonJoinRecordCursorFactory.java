@@ -404,8 +404,11 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
                 if (isSlaveFilterInitialized) {
                     isSlaveFilterInitialized = false;
-                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, slaveFilter);
+                    cleanupFailure = Function.cursorClosed(cleanupFailure, slaveFilter);
                 }
+                cleanupFailure = Function.cursorClosed(cleanupFailure, recordFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, keyFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, groupByFunctions);
                 CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }

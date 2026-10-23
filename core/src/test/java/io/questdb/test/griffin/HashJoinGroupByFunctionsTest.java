@@ -43,13 +43,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.HashJoinGroupByCandidate;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.HashJoinGroupByFunctions;
 import io.questdb.griffin.HashJoinGroupByMetadata;
-import io.questdb.griffin.PostOrderTreeTraversalAlgo;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -60,17 +60,16 @@ import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -126,8 +125,8 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
     public void testInitializationStateIsOfferedOncePerExecution() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            TrackingParser parser = new TrackingParser();
-            String sql = "select year(r.reading_ts) yr, sum(r.energy_kwh) energy" + OUTER + " where p.installed_kwp is null";
+            TrackingResolver parser = new TrackingResolver();
+            String sql = "select abs(r.energy_kwh) energy_key, sum(r.energy_kwh) energy" + OUTER + " where p.installed_kwp is null";
             try (Fixture fixture = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), parser);
                  RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext)) {
                 ObjList<SymbolTableSource> sources = new ObjList<>();
@@ -167,8 +166,8 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
     public void testInitializationFailureRestoresContextAndAllowsReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            TrackingParser parser = new TrackingParser();
-            String sql = "select year(r.reading_ts) yr, sum(r.energy_kwh) energy" + OUTER + " where p.installed_kwp is null";
+            TrackingResolver parser = new TrackingResolver();
+            String sql = "select abs(r.energy_kwh) energy_key, sum(r.energy_kwh) energy" + OUTER + " where p.installed_kwp is null";
             try (Fixture fixture = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), parser);
                  RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext)) {
                 ObjList<SymbolTableSource> sources = new ObjList<>();
@@ -223,9 +222,9 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             createTables();
             // Fail after owner assembly and partway through either projection or filter clones.
             for (int failAt : new int[]{4, 11}) {
-                TrackingParser parser = new TrackingParser();
+                TrackingResolver parser = new TrackingResolver();
                 parser.failAt = failAt;
-                String sql = "select year(r.reading_ts) yr, sum(r.energy_kwh) energy" + OUTER + " where p.installed_kwp is null";
+                String sql = "select abs(r.energy_kwh) energy_key, sum(r.energy_kwh) energy" + OUTER + " where p.installed_kwp is null";
                 try (Fixture ignored = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), parser)) {
                     Assert.fail();
                 } catch (SqlException expected) {
@@ -257,7 +256,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             createTables();
             String sql = AGGREGATES + OUTER;
             try (Fixture fixture = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2),
-                    new FunctionParser(configuration, engine.getFunctionFactoryCache()), 0)) {
+                    new FunctionResolver(configuration, engine.getFunctionFactoryCache()), 0)) {
                 fixture.assertResults(sql);
             }
         });
@@ -319,9 +318,8 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             for (IntList mapping : new IntList[]{ints(1, 0, 2, 3), ints(0, 1, 2, 9), ints(0, 1, 2)}) {
                 try (Fixture ignored = new Fixture(AGGREGATES + INNER, "r", mapping, "p", ints(0, 1, 2))) {
                     Assert.fail("invalid mapping accepted: " + mapping);
-                } catch (SqlException expected) {
-                    Assert.assertTrue(expected.getFlyweightMessage().toString(),
-                            expected.getFlyweightMessage().toString().contains("hash join input"));
+                } catch (IllegalStateException expected) {
+                    TestUtils.assertContains(expected.getMessage(), "hash join input");
                 }
             }
         });
@@ -420,7 +418,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
     ) throws SqlException {
         // Wrappers such as the query progress tracker neither expose frames nor filter.
         RecordCursorFactory input = buildFactory;
-        while (!input.supportsPageFrameCursor() && !input.supportsFilterStealing()) {
+        while (!input.supportsPageFrameCursor() && input.getFilter() == null) {
             input = input.getBaseFactory();
         }
         final RecordCursorFactory frameFactory = input.supportsPageFrameCursor() ? input : input.getBaseFactory();
@@ -592,26 +590,29 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
         }
     }
 
-    private static class TrackingParser extends FunctionParser {
+    private static class TrackingResolver extends FunctionResolver {
         private final ObjList<State> states = new ObjList<>();
         private int failAt = -1;
         private int parseCount;
 
-        private TrackingParser() {
+        private TrackingResolver() {
             super(configuration, engine.getFunctionFactoryCache());
         }
 
         @Override
-        public Function parseFunction(ExpressionNode node, RecordMetadata metadata, SqlExecutionContext context) throws SqlException {
+        public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                       ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+            Misc.freeObjList(args);
+            args.clear();
             if (++parseCount == failAt) {
                 throw SqlException.$(0, "injected compile failure");
             }
             State state = new State();
             states.add(state);
-            if ("sum".contentEquals(node.token)) {
+            if ("sum".contentEquals(name)) {
                 return new SumDoubleGroupByFunction(new TrackingDouble(state));
             }
-            if ("year".contentEquals(node.token)) {
+            if ("abs".contentEquals(name)) {
                 return new TrackingDouble(state);
             }
             return new TrackingBoolean(state);
@@ -637,31 +638,26 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
         }
 
         private Fixture(String sql, String probeSql, IntList probeColumns, String buildSql, IntList buildColumns) throws Exception {
-            this(sql, probeSql, probeColumns, buildSql, buildColumns, new FunctionParser(configuration, engine.getFunctionFactoryCache()));
+            this(sql, probeSql, probeColumns, buildSql, buildColumns, new FunctionResolver(configuration, engine.getFunctionFactoryCache()));
         }
 
-        private Fixture(String sql, String probeSql, IntList probeColumns, String buildSql, IntList buildColumns, FunctionParser parser) throws Exception {
+        private Fixture(String sql, String probeSql, IntList probeColumns, String buildSql, IntList buildColumns, FunctionResolver parser) throws Exception {
             this(sql, probeSql, probeColumns, buildSql, buildColumns, parser, WORKERS);
         }
 
-        private Fixture(String sql, String probeSql, IntList probeColumns, String buildSql, IntList buildColumns, FunctionParser parser, int workers) throws Exception {
+        private Fixture(String sql, String probeSql, IntList probeColumns, String buildSql, IntList buildColumns, FunctionResolver parser, int workers) throws Exception {
             this.workers = workers;
             try {
                 probeFactory = select(probeSql);
                 buildFactory = select(buildSql);
-                try (SqlCompiler compiler = engine.getSqlCompiler();
-                     SqlCodeGenerator generator = new SqlCodeGenerator(configuration, parser, new PostOrderTreeTraversalAlgo(),
-                             new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16), null, null)) {
-                    IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-                    while (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY) {
-                        model = model.getNestedModel();
-                    }
-                    HashJoinGroupByCandidate candidate = SqlCodeGenerator.getHashJoinGroupByCandidate(model, new FunctionParser(configuration, engine.getFunctionFactoryCache()), sqlExecutionContext);
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    HashJoinAggregation candidate = HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
-                    isOuter = candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER;
-                    metadata = new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate, probeFactory.getMetadata(), probeColumns,
-                            buildFactory.getMetadata(), buildColumns);
-                    functions = generator.compileHashJoinGroupByFunctions(model, metadata, workers, sqlExecutionContext);
+                    isOuter = candidate.getJoinType() != JoinKind.INNER;
+                    metadata = HashJoinGroupByTestSupport.metadata(configuration, new BytecodeAssembler(), candidate,
+                            probeFactory.getMetadata(), probeColumns, buildFactory.getMetadata(), buildColumns);
+                    functions = new HashJoinGroupByFunctions(configuration, new BytecodeAssembler(),
+                            HashJoinGroupByTestSupport.instantiator(compiler, parser), candidate, metadata, workers, sqlExecutionContext);
                 }
             } catch (Throwable th) {
                 Misc.free(this, th);

@@ -547,6 +547,30 @@ public class TableVisibilityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVisibleViewLateralJoinReadsInvisibleTableNameFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("""
+                    CREATE VIEW visible_lateral AS (
+                        SELECT c."column", x.n
+                        FROM table_columns('secret_t') c,
+                        LATERAL (SELECT count() n FROM visible_t WHERE visible_col::VARCHAR <> c."column") x
+                    )""");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertQuery("SELECT * FROM visible_lateral ORDER BY 1")
+                        .withContext(hidingContext)
+                        .noLeakCheck()
+                        .returns("""
+                                column\tn
+                                secret_col\t1
+                                ts\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testVisibleViewProjectionReadsInvisibleTableNameFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createObjects();

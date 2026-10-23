@@ -39,6 +39,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneRules;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -48,6 +50,26 @@ import java.util.Set;
 
 public class TimeZoneRulesNanosTest {
     private static final Log LOG = LogFactory.getLog(TimeZoneRulesNanosTest.class);
+
+    private static void assertFirstInstant(String zone, ZoneRules zoneRules, TimeZoneRulesNanos rules, long local) {
+        final LocalDateTime ldt = LocalDateTime.ofEpochSecond(Math.floorDiv(local, Nanos.SECOND_NANOS), (int) Math.floorMod(local, Nanos.SECOND_NANOS), ZoneOffset.UTC);
+        final List<ZoneOffset> offsets = zoneRules.getValidOffsets(ldt);
+        final long expected = offsets.isEmpty()
+                ? zoneRules.getTransition(ldt).getInstant().getEpochSecond() * Nanos.SECOND_NANOS
+                : local - Math.max(offsets.get(0).getTotalSeconds(), offsets.get(offsets.size() - 1).getTotalSeconds()) * Nanos.SECOND_NANOS;
+        Assert.assertEquals(zone + " " + ldt, expected, rules.getFirstInstantAtOrAfter(local));
+    }
+
+    private static void assertHighWater(String zone, ZoneRules zoneRules, TimeZoneRulesNanos rules, long utc) {
+        final Instant instant = Instant.ofEpochSecond(Math.floorDiv(utc, Nanos.SECOND_NANOS), Math.floorMod(utc, Nanos.SECOND_NANOS));
+        long expected = utc + zoneRules.getOffset(instant).getTotalSeconds() * Nanos.SECOND_NANOS;
+        final ZoneOffsetTransition previous = zoneRules.previousTransition(instant.plusNanos(1));
+        if (previous != null && previous.isOverlap()) {
+            final long localBefore = previous.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Nanos.SECOND_NANOS;
+            expected = Math.max(expected, localBefore - 1);
+        }
+        Assert.assertEquals(zone + " " + instant, expected, rules.getWallClockHighWater(utc));
+    }
 
     @Test
     public void testCompatibility() {
@@ -94,6 +116,39 @@ public class TimeZoneRulesNanosTest {
     }
 
     @Test
+    public void testFirstInstantAndWallClockHighWaterAroundTransitions() {
+        final String[] zones = {
+                "Europe/Berlin", "America/New_York", "Australia/Sydney", "Australia/Lord_Howe", "Europe/Dublin",
+                "America/Havana", "Pacific/Apia", "America/Sao_Paulo", "Asia/Tehran", "UTC"
+        };
+        final long minute = Nanos.MINUTE_NANOS;
+        final long[] fractions = {0, 1, 999, 1_000, 123_456_789, Nanos.SECOND_NANOS - 1};
+        for (String id : zones) {
+            final ZoneRules zoneRules = ZoneId.of(id).getRules();
+            final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(zoneRules);
+            ZoneOffsetTransition tr = zoneRules.nextTransition(Instant.parse("1970-01-01T00:00:00Z"));
+            while (tr != null && tr.getInstant().isBefore(Instant.parse("2045-01-01T00:00:00Z"))) {
+                final long transition = tr.getInstant().getEpochSecond() * Nanos.SECOND_NANOS;
+                final long localBefore = tr.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Nanos.SECOND_NANOS;
+                final long localAfter = tr.getDateTimeAfter().toEpochSecond(ZoneOffset.UTC) * Nanos.SECOND_NANOS;
+                for (long d = -26 * 60; d <= 26 * 60; d += 7) {
+                    final long fraction = fractions[(int) Math.floorMod(d, fractions.length)];
+                    assertHighWater(id, zoneRules, rules, transition + d * minute + fraction);
+                    assertFirstInstant(id, zoneRules, rules, localBefore + d * minute + fraction);
+                }
+                final long repeatEnd = transition + localBefore - localAfter;
+                for (long edge : new long[]{transition - 1, transition, transition + 1, transition + 1_000, repeatEnd - 1_001, repeatEnd - 1_000, repeatEnd - 999, repeatEnd - 1, repeatEnd}) {
+                    assertHighWater(id, zoneRules, rules, edge);
+                }
+                for (long edge : new long[]{localBefore - 1, localBefore, localBefore + 1, localAfter - 1_001, localAfter - 1, localAfter, localAfter + 1}) {
+                    assertFirstInstant(id, zoneRules, rules, edge);
+                }
+                tr = zoneRules.nextTransition(tr.getInstant());
+            }
+        }
+    }
+
+    @Test
     public void testGapDuration() throws NumericException {
         final ZoneId zone = ZoneId.of("Europe/Berlin");
         final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(zone.getRules());
@@ -120,6 +175,48 @@ public class TimeZoneRulesNanosTest {
         Assert.assertEquals(0, rules.getDstGapOffset(NanosTimestampDriver.INSTANCE.parseFloorLiteral("1997-10-26T01:01:00.000Z")));
         Assert.assertEquals(0, rules.getDstGapOffset(NanosTimestampDriver.INSTANCE.parseFloorLiteral("1997-10-26T02:01:00.000Z")));
         Assert.assertEquals(0, rules.getDstGapOffset(NanosTimestampDriver.INSTANCE.parseFloorLiteral("1997-10-26T03:01:00.000Z")));
+    }
+
+    @Test
+    public void testGapNanosecondPrecision() throws NumericException {
+        assertGapNanosecondPrecision("Europe/Berlin", "1893-04-01T00:00:00Z", 392 * Nanos.SECOND_NANOS);
+        assertGapNanosecondPrecision("Europe/Berlin", "2021-03-28T02:00:00Z", Nanos.HOUR_NANOS);
+        final ZoneId zone = ZoneId.of("America/New_York");
+        final LocalDateTime gapStart = zone.getRules().nextTransition(Instant.parse("2262-01-01T00:00:00Z")).getDateTimeBefore();
+        assertGapNanosecondPrecision(zone.getId(), gapStart.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + "Z", Nanos.HOUR_NANOS);
+    }
+
+    @Test
+    public void testNegativeTransitionNanosecondPrecision() throws NumericException {
+        final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(ZoneId.of("Europe/Berlin").getRules());
+        final long transition = NanosTimestampDriver.INSTANCE.parseFloorLiteral("1893-03-31T23:06:32Z");
+        Assert.assertEquals(3208 * Nanos.SECOND_NANOS, rules.getOffset(transition - 1));
+        Assert.assertEquals(Nanos.HOUR_NANOS, rules.getOffset(transition));
+        Assert.assertEquals(transition, rules.getNextDST(transition - 1));
+        final long gapEnd = NanosTimestampDriver.INSTANCE.parseFloorLiteral("1893-04-01T00:06:32Z");
+        Assert.assertEquals(3208 * Nanos.SECOND_NANOS, rules.getLocalOffset(gapEnd - 1));
+        Assert.assertEquals(Nanos.HOUR_NANOS, rules.getLocalOffset(gapEnd));
+    }
+
+    @Test
+    public void testRangeBoundaryCompatibility() {
+        final List<String> zones = new ArrayList<>(ZoneId.getAvailableZoneIds());
+        Collections.sort(zones);
+        for (String zoneName : zones) {
+            final ZoneId zone = ZoneId.of(zoneName);
+            final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(zone.getRules());
+            for (long epoch : new long[]{Long.MIN_VALUE + 1, Long.MAX_VALUE}) {
+                final Instant instant = Instant.ofEpochSecond(Math.floorDiv(epoch, Nanos.SECOND_NANOS), Math.floorMod(epoch, Nanos.SECOND_NANOS));
+                final LocalDateTime local = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+                final long offset = zone.getRules().getOffset(instant).getTotalSeconds() * Nanos.SECOND_NANOS;
+                Assert.assertEquals(zoneName, offset, rules.getOffset(epoch));
+                Assert.assertEquals(zoneName, offset, rules.getOffset(epoch, local.getYear()));
+                final List<ZoneOffset> validOffsets = zone.getRules().getValidOffsets(local);
+                final ZoneOffset localOffset = validOffsets.isEmpty() ? zone.getRules().getTransition(local).getOffsetBefore() : validOffsets.get(0);
+                Assert.assertEquals(zoneName, localOffset.getTotalSeconds() * Nanos.SECOND_NANOS, rules.getLocalOffset(epoch));
+                Assert.assertEquals(zoneName, localOffset.getTotalSeconds() * Nanos.SECOND_NANOS, rules.getLocalOffset(epoch, local.getYear()));
+            }
+        }
     }
 
     @Test
@@ -229,5 +326,48 @@ public class TimeZoneRulesNanosTest {
             }
             nanos += step;
         }
+    }
+
+    @Test
+    public void testUpperRangeLocalOffset() {
+        final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(ZoneId.of("America/New_York").getRules());
+        final long local = Nanos.toNanos(2262, 4, 9, 0, 0);
+        Assert.assertEquals(-4 * Nanos.HOUR_NANOS, rules.getLocalOffset(local));
+        Assert.assertEquals(-4 * Nanos.HOUR_NANOS, rules.getLocalOffset(local, 2262));
+    }
+
+    @Test
+    public void testUpperRangeNextDST() {
+        final ZoneId zone = ZoneId.of("America/New_York");
+        final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(zone.getRules());
+        final long transition = zone.getRules().nextTransition(Instant.parse("2262-01-01T00:00:00Z")).toEpochSecond() * Nanos.SECOND_NANOS;
+        Assert.assertEquals(transition, rules.getNextDST(transition - 1));
+        Assert.assertEquals(transition, rules.getNextDST(transition - 1, 2262));
+        Assert.assertEquals(Long.MAX_VALUE, rules.getNextDST(transition));
+        Assert.assertEquals(Long.MAX_VALUE, rules.getNextDST(transition, 2262));
+        Assert.assertEquals(Long.MAX_VALUE, rules.getNextDST(Long.MAX_VALUE));
+        Assert.assertEquals(Long.MAX_VALUE, new TimeZoneRulesNanos(ZoneId.of("GMT").getRules()).getNextDST(0));
+    }
+
+    @Test
+    public void testUpperRangeOffset() {
+        final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(ZoneId.of("America/New_York").getRules());
+        final long utc = Nanos.toNanos(2262, 4, 9, 6, 0);
+        Assert.assertEquals(-4 * Nanos.HOUR_NANOS, rules.getOffset(utc));
+        Assert.assertEquals(-4 * Nanos.HOUR_NANOS, rules.getOffset(utc, 2262));
+    }
+
+    private static void assertGapNanosecondPrecision(String zoneName, String localStart, long duration) throws NumericException {
+        final TimeZoneRulesNanos rules = new TimeZoneRulesNanos(ZoneId.of(zoneName).getRules());
+        final long start = NanosTimestampDriver.INSTANCE.parseFloorLiteral(localStart);
+        Assert.assertEquals(0, rules.getDstGapOffset(start - 1));
+        Assert.assertEquals(0, rules.getDstGapOffset(start));
+        Assert.assertEquals(1, rules.getDstGapOffset(start + 1));
+        Assert.assertEquals(999, rules.getDstGapOffset(start + 999));
+        Assert.assertEquals(1000, rules.getDstGapOffset(start + 1000));
+        Assert.assertEquals(123456789, rules.getDstGapOffset(start + 123456789));
+        Assert.assertEquals(duration - 1, rules.getDstGapOffset(start + duration - 1));
+        Assert.assertEquals(0, rules.getDstGapOffset(start + duration));
+        Assert.assertEquals(0, rules.getDstGapOffset(start + duration + 1));
     }
 }

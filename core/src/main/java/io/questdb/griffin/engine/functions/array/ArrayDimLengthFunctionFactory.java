@@ -49,6 +49,11 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "dim_length";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]I)";
     }

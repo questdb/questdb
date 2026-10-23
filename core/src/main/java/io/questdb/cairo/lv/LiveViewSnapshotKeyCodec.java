@@ -50,7 +50,7 @@ import io.questdb.cairo.vm.api.MemoryR;
  * containing function or anchor map onto the head-miss path. STRING is
  * supported because live-view partition-by RecordSinks rewrite SYMBOL
  * partition columns as resolved STRING values (see {@code LiveViewWindow.build}
- * and the live-view path in {@code SqlCodeGenerator.generateSelectWindow}),
+ * and the live-view path in {@code WindowFactoryGenerator.generateWindow}),
  * so the live-view partition-key key types end up as STRING for any LV that
  * partitions by SYMBOL. Callers should gate {@code supportsCheckpointState()} on
  * {@link #isAllTypesSupported(ColumnTypes)}.

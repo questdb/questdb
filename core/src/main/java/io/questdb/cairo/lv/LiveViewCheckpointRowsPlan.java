@@ -163,7 +163,7 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
      * column-keyed path: a SYMBOL partition column is written as its resolved string
      * rather than as the reader's table-local integer, because that is what the
      * live-view partition-by sinks write (see {@code LiveViewWindow.build} and the
-     * live-view arm of {@code SqlCodeGenerator.generateSelectWindow}). Everything else
+     * live-view arm of {@code WindowFactoryGenerator.generateWindow}). Everything else
      * encodes identically, and an expression-keyed plan already writes a SYMBOL key
      * function through its resolved string, so there the two projectors are one object.
      * <p>

@@ -26,12 +26,14 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -40,12 +42,16 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     // Rows createRepeatedFloatPartialParquet() writes into the parquet partition. The value is large
@@ -58,6 +64,61 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
+    }
+
+    @Test
+    public void testAttachedIntegerSentinelsInNegatedRangeComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (id LONG, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO p VALUES (1, 1, 1, 0), (2, 1, 1, 1), (3, 9, 9, 86_400_000_000)");
+            execute("ALTER TABLE p DETACH PARTITION LIST '1970-01-01'");
+            Path table = Path.of(configuration.getDbRoot().toString(), engine.verifyTableName("p").getDirName());
+            Path attach = table.resolve("1970-01-01" + configuration.getAttachPartitionSuffix());
+            Files.move(table.resolve("1970-01-01.detached"), attach);
+            for (String column : new String[]{"id", "i", "l", "ts"}) {
+                Files.delete(attach.resolve(column + ".d"));
+            }
+            // The external writer stores INT_MIN/LONG_MIN as values and reports null_count=0.
+            Files.copy(Path.of(TestUtils.getTestResourcePath("/parquet/attached_int_sentinels.parquet")), attach.resolve("data.parquet"));
+            execute("ALTER TABLE p ATTACH PARTITION LIST '1970-01-01'");
+            assertQuery("SELECT id, i, l, i = NULL AS ni, l = NULL AS nl FROM p ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ti\tl\tni\tnl
+                            1\tnull\tnull\ttrue\ttrue
+                            2\t1\t1\tfalse\tfalse
+                            3\t9\t9\tfalse\tfalse
+                            """);
+            final int savedJitMode = sqlExecutionContext.getJitMode();
+            final boolean isPruningEnabled = sqlExecutionContext.isParquetRowGroupPruningEnabled();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    for (boolean isPruning : new boolean[]{false, true}) {
+                        sqlExecutionContext.setParquetRowGroupPruningEnabled(isPruning);
+                        for (String column : new String[]{"i", "l"}) {
+                            ParquetRowGroupFilter.resetRowGroupsSkipped();
+                            assertQuery("SELECT p.id FROM long_sequence(2) q JOIN p ON q.x = p.id AND NOT (p." + column + " < 2)")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .returns("id\n1\n");
+                            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+                            ParquetRowGroupFilter.resetRowGroupsSkipped();
+                            assertQuery("SELECT p.id FROM long_sequence(2) q JOIN p ON q.x = p.id AND p.id > 2 AND NOT (p." + column + " < 2)")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .returns("id\n");
+                            Assert.assertEquals(isPruning, ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(savedJitMode);
+                sqlExecutionContext.setParquetRowGroupPruningEnabled(isPruningEnabled);
+            }
+        });
     }
 
     @Test
@@ -367,10 +428,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT val FROM x WHERE val = '2020-06-15T00:00:00.000000001Z'")
                     .noLeakCheck()
-                    .returns("""
-                            val
-                            2020-06-15T00:00:00.000Z
-                            """);
+                    .returns("val\n");
         });
     }
 
@@ -3694,6 +3752,142 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedDecimalRangeComparisonPrunesOnlyNullFreeRowGroups() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT x id,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(2,0) d2,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(4,0) d4,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(9,0) d9,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(18,0) d18,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(38,0) d38,
+                            (CASE WHEN x = 15 THEN NULL ELSE x END)::DECIMAL(76,0) d76,
+                            timestamp_sequence('2024-01-01', 10_000) ts
+                        FROM long_sequence(90)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO x VALUES (91, 1, 1, 1, 1, 1, 1, '2024-01-02')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            for (int precision : new int[]{2, 4, 9, 18, 38, 76}) {
+                final String column = "d" + precision;
+                final String boundary = "81::DECIMAL(" + precision + ",0)";
+                final String predicate = "NOT (" + column + " < " + boundary + ")";
+                assertQuery("SELECT id, " + column + " = NULL AS is_null FROM x WHERE " + predicate + " ORDER BY ts")
+                        .noLeakCheck()
+                        .returns("""
+                                id	is_null
+                                15	true
+                                81	false
+                                82	false
+                                83	false
+                                84	false
+                                85	false
+                                86	false
+                                87	false
+                                88	false
+                                89	false
+                                90	false
+                                """);
+                assertPrunedCount(predicate, "count\n11\n", 7);
+                assertPrunedCount(column + " >= " + boundary, "count\n10\n", 8);
+            }
+        });
+    }
+
+    @Test
+    public void testNegatedFloatingPointRangePrunesOnlyQuestDBWrittenFiniteRowGroups() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            // Rows 101-150 hold NULLs, row 250 +Infinity and row 350 -Infinity, which QuestDB also reads as NULL.
+            final String values = """
+                    SELECT
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL WHEN x = 250 THEN power(10.0, 400)
+                            WHEN x = 350 THEN -power(10.0, 400) ELSE x::DOUBLE END d,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL WHEN x = 250 THEN power(10.0, 400)::FLOAT
+                            WHEN x = 350 THEN -power(10.0, 400)::FLOAT ELSE x::FLOAT END f,
+                        timestamp_sequence('2024-01-01', 10_000) ts
+                    FROM long_sequence(5_000)
+                    """;
+            execute("CREATE TABLE x AS (" + values + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE oracle AS (" + values + ")");
+            execute("INSERT INTO x VALUES (1.0, 1.0, '2024-01-02')");
+            execute("INSERT INTO oracle VALUES (1.0, 1.0, '2024-01-02')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final String[] predicates = {"NOT (d < 4901.0)", "NOT (4901.0 > d)", "NOT (f < 4901.0)"};
+            // Every row group below 4901 fails the negation except the three holding NULLs and infinities.
+            for (String predicate : predicates) {
+                Assert.assertEquals(predicate, 46, prunedCountMatchingOracle(predicate));
+            }
+
+            // An O3 write rewrites the parquet partition and keeps the writer QuestDB's.
+            execute("INSERT INTO x VALUES (2.0, 2.0, '2024-01-01T00:00:00.000001Z')");
+            execute("INSERT INTO oracle VALUES (2.0, 2.0, '2024-01-01T00:00:00.000001Z')");
+            for (String predicate : predicates) {
+                Assert.assertTrue(predicate, prunedCountMatchingOracle(predicate) > 0);
+            }
+
+            // ATTACH builds the _pm of a parquet partition from its footer, and trusts NaN to be a Parquet null only
+            // when QuestDB's writer wrote the file.
+            for (boolean isWrittenByQuestDB : new boolean[]{true, false}) {
+                execute("ALTER TABLE x DETACH PARTITION LIST '2024-01-01'");
+                final Path table = Path.of(configuration.getDbRoot().toString(), engine.verifyTableName("x").getDirName());
+                final Path attach = table.resolve("2024-01-01" + configuration.getAttachPartitionSuffix());
+                Files.move(table.resolve("2024-01-01.detached"), attach);
+                Files.delete(attach.resolve(TableUtils.PARQUET_METADATA_FILE_NAME));
+                if (!isWrittenByQuestDB) {
+                    TestUtils.rewriteParquetCreatedBy(attach.resolve(TableUtils.PARQUET_PARTITION_NAME).toString());
+                }
+                execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
+                for (String predicate : predicates) {
+                    final int pruned = prunedCountMatchingOracle(predicate);
+                    Assert.assertEquals(predicate, isWrittenByQuestDB, pruned > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegatedRangeComparisonPrunesOnlyNullFreeRowGroups() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, d DOUBLE, s VARCHAR, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Rows 101-150 hold NULLs, so the second row group has them and the other 49 do not.
+            execute("""
+                    INSERT INTO x
+                    SELECT
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE x::INT END,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE x::DOUBLE END,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE lpad(x::VARCHAR, 4, '0') END,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE 'a' END,
+                        timestamp_sequence('2024-01-01', 10_000)
+                    FROM long_sequence(5_000)
+                    """);
+            execute("INSERT INTO x VALUES (1, 1.0, '0001', 'a', '2024-01-02')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            // The negation keeps the 100 rows from 4901 up and the 50 NULL rows. Every row group below 4901
+            // fails it, except the one holding NULLs.
+            for (String predicate : new String[]{"NOT (val < 4901)", "NOT (4901 > val)", "NOT (val <= 4900)",
+                    "NOT (s < '4901')"}) {
+                assertPrunedCount(predicate, "count\n150\n", 48);
+            }
+            // QuestDB's writer writes a DOUBLE NULL as a Parquet null, so the null count proves the other groups
+            // NULL-free.
+            assertPrunedCount("NOT (d < 4901.0)", "count\n150\n", 48);
+            assertPrunedCount("val >= 4901", "count\n100\n", 49);
+            // CHAR stores its NULL as a value the null count misses, which keeps the group holding them unpruned.
+            assertPrunedCount("NOT (c < 'b')", "count\n50\n", 49);
+            assertPrunedCount("NOT (val < NULL)", "count\n5001\n", 0);
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertPrunedCount("NOT (val < $1)", "count\n5001\n", 0);
+            bindVariableService.setInt(0, 4901);
+            assertPrunedCount("NOT (val < $1)", "count\n150\n", 48);
+        });
+    }
+
+    @Test
     public void testNativePlanInvalidatedAfterParquetConversion() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -5641,6 +5835,30 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxPruningMicroTimestampColumnWithNanoBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "0", "5");
+            final String zero = "c6\n1970-01-01T00:00:00.000000Z\n";
+            final String five = "c6\n1970-01-01T00:00:00.000005Z\n";
+            final String both = "c6\n1970-01-01T00:00:00.000000Z\n1970-01-01T00:00:00.000005Z\n";
+            assertNanoBindVarBoundMatchesNative("<", 1, zero);
+            assertNanoBindVarBoundMatchesNative("<=", 1, zero);
+            assertNanoBindVarBoundMatchesNative(">", 1, five);
+            assertNanoBindVarBoundMatchesNative(">=", 1, five);
+            assertNanoBindVarBoundMatchesNative("<", -1, "c6\n");
+            assertNanoBindVarBoundMatchesNative("<=", -1, "c6\n");
+            assertNanoBindVarBoundMatchesNative(">", -1, both);
+            assertNanoBindVarBoundMatchesNative(">=", -1, both);
+            assertNanoBindVarBoundMatchesNative("<", 5_001, both);
+            assertNanoBindVarBoundMatchesNative("<=", 4_999, zero);
+            assertNanoBindVarBoundMatchesNative(">", 4_999, five);
+            assertNanoBindVarBoundMatchesNative(">=", 5_001, "c6\n");
+            assertNanoBindVarBoundMatchesNative("=", 0, zero);
+            assertNanoBindVarBoundMatchesNative("=", 1, "c6\n");
+        });
+    }
+
+    @Test
     public void testMinMaxPruningSkippedAfterAlterColumnTypeTimestampToTimestampNs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -6721,6 +6939,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertNanoBindVarBoundMatchesNative(String op, long boundNanos, String expected) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setTimestampWithType(0, ColumnType.TIMESTAMP_NANO, boundNanos);
+        assertQuery("SELECT c6 FROM tn WHERE c6 " + op + " $1 ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+        bindVariableService.clear();
+        bindVariableService.setTimestampWithType(0, ColumnType.TIMESTAMP_NANO, boundNanos);
+        assertQuery("SELECT c6 FROM tp WHERE c6 " + op + " $1 ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
     // Reading only the filtered column avoids parquet late materialization and its Java fallback.
     // Check exact per-mode rows with Java, scalar JIT and vector JIT for both storage formats.
     // The partition scan order is deterministic without ORDER BY.
@@ -6789,6 +7020,38 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         execute("INSERT INTO tn VALUES (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("INSERT INTO tp VALUES (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    private void assertPrunedCount(String predicate, String expected, int expectedSkipped) throws Exception {
+        try (RecordCursorFactory factory = select("SELECT count() FROM x WHERE " + predicate)) {
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            final StringSink sink = new StringSink();
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), sink);
+            }
+            TestUtils.assertEquals(expected, sink);
+            Assert.assertEquals(predicate, expectedSkipped, ParquetRowGroupFilter.getRowGroupsSkipped());
+        }
+    }
+
+    private int prunedCountMatchingOracle(String predicate) throws Exception {
+        final StringSink expected = new StringSink();
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM oracle WHERE " + predicate);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), expected);
+        }
+        assertQuery("SELECT count() FROM x WHERE " + predicate).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+        // returns() reads the cursor more than once; count the row groups one read skips.
+        ParquetRowGroupFilter.resetRowGroupsSkipped();
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM x WHERE " + predicate);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), new StringSink());
+        }
+        return ParquetRowGroupFilter.getRowGroupsSkipped();
     }
 
     private void assertHasParquetPartitions(String tableName, boolean expected) {

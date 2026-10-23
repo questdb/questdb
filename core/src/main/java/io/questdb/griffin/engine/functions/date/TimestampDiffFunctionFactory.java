@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -82,6 +83,12 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                 }
                 return new DiffVarVarFunction(start, end, driver, diffMethod, startType, endType, period);
             }
+            // This result retains neither timestamp argument. Detach each slot
+            // before closing so caller cleanup cannot close it again on failure.
+            args.setQuick(1, null);
+            Misc.free(start);
+            args.setQuick(2, null);
+            Misc.free(end);
             return driver.getTimestampConstantNull();
         }
         return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2), driver, startType, endType);

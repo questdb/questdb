@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -39,7 +40,12 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void close() {
-        Misc.freeObjList(args());
+        CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args()));
+    }
+
+    @Override
+    default void cursorClosed() {
+        Function.cursorClosed(args());
     }
 
     @Override
@@ -57,35 +63,26 @@ public interface MultiArgFunction extends Function {
         Function.init(args(), symbolTableSource, executionContext, null);
     }
 
+    /**
+     * Checks the leaf arguments before the composite ones, so a non-constant leaf settles the answer without walking
+     * an argument subtree.
+     */
     @Override
     default boolean isConstant() {
-        ObjList<Function> args = args();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
-            if (!args.getQuick(i).isConstant()) {
+            final Function arg = args.getQuick(i);
+            if (!RuntimeConstFunction.isComposite(arg) && !arg.isConstant()) {
+                return false;
+            }
+        }
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function arg = args.getQuick(i);
+            if (RuntimeConstFunction.isComposite(arg) && !arg.isConstant()) {
                 return false;
             }
         }
         return true;
-    }
-
-    @Override
-    default boolean isEquivalentTo(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof MultiArgFunction that) {
-            ObjList<Function> thatArgs = that.args();
-            ObjList<Function> thisArgs = args();
-            if (thatArgs.size() == thisArgs.size()) {
-                for (int i = 0, n = thisArgs.size(); i < n; i++) {
-                    if (!thisArgs.getQuick(i).isEquivalentTo(thatArgs.getQuick(i))) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -126,12 +123,21 @@ public interface MultiArgFunction extends Function {
         return false;
     }
 
+    /**
+     * Checks the leaf arguments before the composite ones, as {@link #isConstant()} does.
+     */
     @Override
     default boolean isRuntimeConstant() {
         final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.isRuntimeConstant() && !function.isConstant()) {
+            final Function arg = args.getQuick(i);
+            if (!RuntimeConstFunction.isComposite(arg) && !arg.isRuntimeConstant() && !arg.isConstant()) {
+                return false;
+            }
+        }
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function arg = args.getQuick(i);
+            if (RuntimeConstFunction.isComposite(arg) && !arg.isRuntimeConstant() && !arg.isConstant()) {
                 return false;
             }
         }
@@ -181,6 +187,17 @@ public interface MultiArgFunction extends Function {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.supportsParallelism()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        final ObjList<Function> args = args();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (!args.getQuick(i).supportsRandomAccess()) {
                 return false;
             }
         }

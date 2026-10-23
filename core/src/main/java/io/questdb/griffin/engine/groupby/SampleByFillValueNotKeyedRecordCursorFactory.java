@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -34,9 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -44,19 +41,23 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private SampleByFillValueNotKeyedRecordCursor cursor;
+    private ObjList<Function> fillValues;
     private SimpleMapValue value;
     private SimpleMapValue valueB;
 
+    /**
+     * Owns fillValues. Placeholders borrow fill values, functions owned through recordFunctions or resource-free constants.
+     */
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
-            @Transient @NotNull ObjList<ExpressionNode> fillValues,
+            @NotNull ObjList<Function> placeholderFunctions,
+            @NotNull ObjList<Function> fillValues,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            @Transient IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex,
             int timestampType,
@@ -68,20 +69,11 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             int sampleFromFuncPos,
             Function sampleToFunc,
             int sampleToFuncPos,
-            boolean isFromToUtc,
-            boolean isSubDayUnit,
-            boolean isRuntimeBoundUtc
+            char samplingIntervalUnit
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
+        this.fillValues = fillValues;
         try {
-            final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
-                    ColumnType.getTimestampDriver(timestampType),
-                    groupByFunctions,
-                    recordFunctions,
-                    recordFunctionPositions,
-                    fillValues,
-                    true
-            );
             this.value = new SimpleMapValue(valueCount);
             this.valueB = new SimpleMapValue(valueCount);
             final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(value, valueB);
@@ -105,10 +97,8 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     sampleFromFuncPos,
                     sampleToFunc,
                     sampleToFuncPos,
-                    isFromToUtc,
-                    isSubDayUnit
+                    samplingIntervalUnit
             );
-            cursor.setRuntimeBoundUtc(isRuntimeBoundUtc);
             peeker.setCursor(cursor);
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -131,11 +121,14 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     @Override
     protected void _close() {
         final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final ObjList<Function> fillValues = this.fillValues;
+        this.fillValues = null;
         final SimpleMapValue value = this.value;
         this.value = null;
         final SimpleMapValue valueB = this.valueB;
         this.valueB = null;
         Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeObjListBestEffort(failure, fillValues);
         failure = Misc.freeBestEffort(failure, value);
         if (valueB != value) {
             failure = Misc.freeBestEffort(failure, valueB);

@@ -110,6 +110,7 @@ pub fn generate_parquet_metadata(
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
+    is_written_by_questdb: bool,
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
     qdb_parquet_meta::convert::generate_parquet_metadata(
@@ -122,6 +123,7 @@ pub fn generate_parquet_metadata(
         unused_bytes,
         squash_tracker,
         seq_txn,
+        is_written_by_questdb,
         &bloom_source,
     )
     .map_err(ParquetError::from)
@@ -155,6 +157,7 @@ pub fn update_parquet_metadata(
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
     seq_txn: SeqTxn,
+    is_written_by_questdb: bool,
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // append_base (the published header, >= the parse anchor) bounds the new
     // footer's position; the buffer must reach it so finish folds any dead
@@ -245,6 +248,7 @@ pub fn update_parquet_metadata(
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
     updater.seq_txn(seq_txn);
+    updater.written_by_questdb(is_written_by_questdb);
     let (append_bytes, new_file_size) = updater.finish_appending_at(append_base)?;
     debug_assert_eq!(new_file_size, append_base + append_bytes.len() as u64);
 
@@ -380,6 +384,27 @@ mod tests {
         // Without QdbMeta, the type is inferred from the parquet schema.
         // The test parquet has a Timestamp(Micros) column → ColumnTypeTag::Timestamp (8).
         assert_eq!(desc.col_type, ColumnTypeTag::Timestamp as i32);
+    }
+
+    #[test]
+    fn convert_records_questdb_writer_from_created_by() {
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let is_written_by_questdb = |metadata: &FileMetaData| {
+            let (parquet_meta_bytes, parquet_meta_file_size) =
+                convert_from_parquet(metadata, None, 0, 0, &NoBloomFilterSource, None).unwrap();
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)
+                .unwrap()
+                .footer()
+                .feature_flags()
+                .is_written_by_questdb()
+        };
+        assert!(is_written_by_questdb(&metadata));
+        metadata.created_by = Some("parquet-cpp-arrow version 15.0.0".to_string());
+        assert!(!is_written_by_questdb(&metadata));
+        metadata.created_by = None;
+        assert!(!is_written_by_questdb(&metadata));
     }
 
     #[test]
@@ -1612,6 +1637,7 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
 
@@ -1630,6 +1656,25 @@ mod tests {
         assert_eq!(rg.num_rows(), 80);
         assert!(reader.verify_checksum().is_ok());
         assert_eq!(parquet_meta_file_size, parquet_meta_bytes.len() as u64);
+        assert!(reader.footer().feature_flags().is_written_by_questdb());
+
+        let (parquet_meta_bytes, parquet_meta_file_size) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            parquet_footer_offset,
+            parquet_footer_length,
+            &[],
+            0,
+            -1,
+            SeqTxn::UNSET,
+            false,
+        )
+        .unwrap();
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        assert!(!reader.footer().feature_flags().is_written_by_questdb());
     }
 
     #[test]
@@ -1657,6 +1702,7 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
 
@@ -1683,6 +1729,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
 
@@ -1746,6 +1793,7 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
         let initial_size = initial_pm.len() as u64;
@@ -1764,6 +1812,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            true,
         );
 
         let err = match result {
@@ -1808,6 +1857,7 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
         let parse_anchor = initial_pm.len() as u64;
@@ -1836,6 +1886,7 @@ mod tests {
                 &[],
                 0,
                 SeqTxn::UNSET,
+                true,
             );
             let err = match result {
                 Ok(_) => panic!("append base {bad_base} must be rejected"),
@@ -1953,6 +2004,7 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
 
@@ -2064,6 +2116,7 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
+            true,
         )
         .unwrap();
 

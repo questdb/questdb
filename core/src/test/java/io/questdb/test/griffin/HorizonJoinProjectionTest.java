@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
@@ -197,6 +198,33 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctFusesIntoHorizonAggregate() throws Exception {
+        // DISTINCT groups the horizon rows by the selected columns in the fused horizon aggregate,
+        // as GROUP BY does, so the grouped rows keep no designated timestamp.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String distinct = "SELECT DISTINCT t.ts, t.sym FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT * FROM (" + distinct + ") ORDER BY ts, sym")
+                        .withPlanContaining("keys: [ts,sym]")
+                        .withPlanNotContaining("Distinct", "Projection")
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym
+                                2026-01-01T00:00:00.000000Z\tA
+                                2026-01-01T00:00:02.000000Z\tA
+                                2026-01-01T00:00:02.000000Z\tB
+                                2026-01-01T00:00:02.000000Z\tC
+                                """);
+                assertQuery("SELECT ts, count() FROM (" + distinct + ") SAMPLE BY 1s")
+                        .fails(0, "base query does not provide designated TIMESTAMP column");
+            }
+        });
+    }
+
+    @Test
     public void testEmptyInputs() throws Exception {
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
@@ -223,6 +251,68 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         SELECT t.ts, h.offset, q.bid FROM TaqTrade t
                         HORIZON JOIN TaqQuote q ON (sym) LIST (1s, 5s) AS h
                         """).noRandomAccess().expectSize().timestamp("ts").returns("ts\toffset\tbid\n");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonWildcards() throws Exception {
+        // h.* lists the offset and timestamp columns of the horizon pseudo-table where the
+        // wildcard stands among the other select items. * lists them just before the last
+        // right-hand table, whether a projection or an aggregate reads the join.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String join = " FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s) AS h";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT h.*" + join)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                offset\ttimestamp
+                                0\t2026-01-01T00:00:00.000000Z
+                                0\t2026-01-01T00:00:00.000000Z
+                                0\t2026-01-01T00:00:02.000000Z
+                                0\t2026-01-01T00:00:02.000000Z
+                                0\t2026-01-01T00:00:02.000000Z
+                                0\t2026-01-01T00:00:02.000000Z
+                                """);
+                assertQuery("SELECT q.*, h.*, t.*" + join)
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts1")
+                        .returns("""
+                                ts\tsym\tbid\task\toffset\ttimestamp\tts1\tsym1\tprice
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tA\t10.0
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tA\t10.0
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\tA\t10.0
+                                2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\tB\t20.0
+                                \t\tnull\tnull\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\tC\t30.0
+                                \t\tnull\tnull\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\tC\t30.0
+                                """);
+                assertQuery("SELECT h.*, avg(q.bid)" + join + " ORDER BY 1, 2")
+                        .expectSize()
+                        .returns("""
+                                offset\ttimestamp\tavg
+                                0\t2026-01-01T00:00:00.000000Z\t10.0
+                                0\t2026-01-01T00:00:02.000000Z\t15.0
+                                """);
+                final String twoSlaves = " FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) HORIZON JOIN TaqQuote r LIST (0s) AS h ORDER BY 1, 2";
+                final String header = "ts\tsym\tprice\tts1\tsym1\tbid\task\toffset\ttimestamp\tts2\tsym2\tbid1\task1";
+                final String[] rows = {
+                        "2026-01-01T00:00:00.000000Z\tA\t10.0\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0",
+                        "2026-01-01T00:00:02.000000Z\tA\t10.0\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0",
+                        "2026-01-01T00:00:02.000000Z\tB\t20.0\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0",
+                        "2026-01-01T00:00:02.000000Z\tC\t30.0\t\t\tnull\tnull\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0"
+                };
+                assertQuery("SELECT DISTINCT *" + twoSlaves)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(header + "\n" + String.join("\n", rows) + "\n");
+                assertQuery("SELECT *, count() c" + twoSlaves)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(header + "\tc\n" + rows[0] + "\t2\n" + rows[1] + "\t1\n" + rows[2] + "\t1\n" + rows[3] + "\t2\n");
             }
         });
     }
@@ -410,6 +500,54 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         GROUP BY seconds
                         ORDER BY seconds
                         """).expectSize().withPlanContaining(projectionPlan(isParallel, 5)).returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionAndAggregateRejectInputsAlike() throws Exception {
+        // A right-hand side that serves no time frames, and a serial join over a left-hand side
+        // without random access, such as a covering index scan, fail the same way whether a
+        // projection or an aggregate reads the join.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)
+                    TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO cov VALUES ('2026-01-01T00:00:01Z', 'A', 1), ('2026-01-01T00:00:02Z', 'B', 2)");
+            execute("INSERT INTO quotes VALUES ('2026-01-01T00:00:00Z', 'A', 10), ('2026-01-01T00:00:00Z', 'B', 20)");
+            engine.releaseAllWriters();
+            final String covering = " FROM cov t HORIZON JOIN quotes q ON (sym) LIST (0s) AS h WHERE t.sym = 'A'";
+            final String sampled = " FROM cov t HORIZON JOIN (SELECT ts, sym, max(bid) bid FROM quotes SAMPLE BY 1s) q ON (sym) LIST (0s) AS h";
+            final String leftMessage = "left-hand side of HORIZON JOIN can only be a table with an optional filter";
+            final String rightMessage = "right-hand side of HORIZON JOIN can only be a table with an optional filter";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String select : List.of("SELECT t.px, h.offset, q.bid", "SELECT h.offset, avg(q.bid) bid")) {
+                    final String sampledSql = select + sampled;
+                    assertQuery(sampledSql).fails(sampledSql.indexOf("HORIZON"), rightMessage);
+                    final String coveringSql = select + covering;
+                    if (isParallel) {
+                        final boolean isAggregate = select.contains("avg");
+                        assertQuery(coveringSql)
+                                .withPlanContaining("CoveringIndex on: sym")
+                                .supportsRandomAccess(isAggregate)
+                                .expectSize()
+                                .returns(isAggregate ? """
+                                        offset\tbid
+                                        0\t10.0
+                                        """ : """
+                                        px\toffset\tbid
+                                        1.0\t0\t10.0
+                                        """);
+                    } else {
+                        assertQuery(coveringSql).fails(coveringSql.indexOf("HORIZON"), leftMessage);
+                    }
+                }
+                // string_agg() cannot run on workers, so the fused aggregate reads the master serially
+                final String serialAggregate = "SELECT string_agg(q.sym::STRING, ',') s" + covering;
+                assertQuery(serialAggregate).fails(serialAggregate.indexOf("HORIZON"), leftMessage);
             }
         });
     }
@@ -953,7 +1091,8 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             final JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 1);
             final MemoryCARW bindVarMemory = Vm.getCARWInstance(1_024, 1, MemoryTag.NATIVE_JIT);
             bindVarMemory.putLong(42);
-            final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, bindVarMemory, null, null, null, null);
+            final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null,
+                    new AsyncFilterResources(null, null, bindVarMemory, null, null, null, null), null);
             try {
                 new AsyncHorizonJoinProjectionRecordCursorFactory(
                         configuration,
@@ -2265,9 +2404,8 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .timestamp("ts")
                         .withPlan("""
-                                Filter filter: 11<bid
-                                    VirtualRecord
-                                      functions: [t.ts,t.sym,h.offset,q.bid]
+                                SelectedRecord
+                                    Filter filter: 11<q.bid
                                 """ + projectionNode + scans)
                         .returns("""
                                 ts\tsym\toffset\tbid
@@ -2280,9 +2418,8 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .timestamp("ts")
                         .withPlan("""
-                                Filter filter: 0<offset
-                                    VirtualRecord
-                                      functions: [t.ts,t.sym,h.offset,q.bid]
+                                SelectedRecord
+                                    Filter filter: 0<h.offset
                                 """ + projectionNode + scans)
                         .returns("""
                                 ts\tsym\toffset\tbid
@@ -2799,8 +2936,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             final String oneSlave = "SELECT t.ts, h.offset, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) ";
             for (String horizon : List.of("RANGE FROM 0s TO 99s STEP 1s AS h", listOffsets(100))) {
                 assertQuery(oneSlave + horizon + " WHERE t.price > 15").assertsPlan("""
-                        VirtualRecord
-                          functions: [t.ts,h.offset,q.bid]
+                        SelectedRecord
                             Async JIT Horizon Join Projection workers: 1 offsets: 100
                               filter: 15<price
                                 PageFrame
@@ -2813,8 +2949,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             }
             for (String horizon : List.of("RANGE FROM 0s TO 100s STEP 1s AS h", listOffsets(101))) {
                 assertQuery(oneSlave + horizon + " WHERE t.price > 15").assertsPlan("""
-                        VirtualRecord
-                          functions: [t.ts,h.offset,q.bid]
+                        SelectedRecord
                             Horizon Join Projection offsets: 101
                                 Async JIT Filter workers: 1
                                   filter: 15<price
@@ -2826,8 +2961,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                                     Frame forward scan on: TaqQuote
                         """);
                 assertQuery(oneSlave + horizon).assertsPlan("""
-                        VirtualRecord
-                          functions: [t.ts,h.offset,q.bid]
+                        SelectedRecord
                             Horizon Join Projection offsets: 101
                                 PageFrame
                                     Row forward scan
@@ -2840,8 +2974,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
 
             final String twoSlaves = "SELECT t.ts, h.offset, q.bid, p.px FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) HORIZON JOIN TaqPrint p ";
             assertQuery(twoSlaves + "RANGE FROM 0s TO 49s STEP 1s AS h WHERE concat(t.sym, '') = 'A'").assertsPlan("""
-                    VirtualRecord
-                      functions: [t.ts,h.offset,q.bid,p.px]
+                    SelectedRecord
                         Async Horizon Join Projection workers: 1 offsets: 50
                           filter: concat([sym,''])='A'
                             PageFrame
@@ -2855,8 +2988,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                                 Frame forward scan on: TaqPrint
                     """);
             assertQuery(twoSlaves + "RANGE FROM 0s TO 50s STEP 1s AS h WHERE concat(t.sym, '') = 'A'").assertsPlan("""
-                    VirtualRecord
-                      functions: [t.ts,h.offset,q.bid,p.px]
+                    SelectedRecord
                         Horizon Join Projection offsets: 51
                             Async Filter workers: 1
                               filter: concat([sym,''])='A'
@@ -2888,8 +3020,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
 
             sqlExecutionContext.setParallelHorizonJoinEnabled(false);
             assertQuery(oneSlave + "RANGE FROM 0s TO 99s STEP 1s AS h WHERE t.price > 15").assertsPlan("""
-                    VirtualRecord
-                      functions: [t.ts,h.offset,q.bid]
+                    SelectedRecord
                         Horizon Join Projection offsets: 100
                             Async JIT Filter workers: 1
                               filter: 15<price

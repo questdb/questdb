@@ -168,11 +168,9 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                 Assert.assertEquals(2, model.getDynamicRangeList().size());
                 Assert.assertNull(model.getDynamicRangeList().getQuick(1));
                 Assert.assertFalse(model.isNonDeterministic());
-                Assert.assertTrue(model.isStableWithinExecution());
             }
 
-            assertRuntimeStabilityClassification(true);
-            assertRuntimeStabilityClassification(false);
+            assertNonDeterministicClassification();
         });
     }
 
@@ -419,8 +417,8 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     // NULL the run's value is the empty set and the accumulator sits at divider == 0 with
     // firstFuncApplied already true. A following negated NULL bound (`ts != $n`) must subtract
     // from that established empty set and stay empty - it must NOT be mistaken for the first
-    // applied expression and seed [MIN, MAX]. The residual predicate is already removed from the
-    // filter by WhereClauseParser (intrinsicValue = TRUE), so a full-domain seed here returns
+    // applied expression and seed [MIN, MAX]. IntervalExtractor has already removed the residual
+    // predicate from the filter, so a full-domain seed here returns
     // every row of the table for an identically-false predicate.
     @Test
     public void testUnionLeafRunAllNullLeavesFollowingNegatedNullYieldsEmptySet() throws Exception {
@@ -604,9 +602,9 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertRuntimeStabilityClassification(boolean isStableWithinExecution) {
+    private static void assertNonDeterministicClassification() {
         final ObjList<Function> dynamicFunctions = new ObjList<>();
-        dynamicFunctions.add(new StabilityFunction(isStableWithinExecution));
+        dynamicFunctions.add(new NonDeterministicFunction());
         dynamicFunctions.add(null);
         try (RuntimeIntervalModel model = new RuntimeIntervalModel(
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
@@ -615,7 +613,6 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                 dynamicFunctions
         )) {
             Assert.assertTrue(model.isNonDeterministic());
-            Assert.assertEquals(isStableWithinExecution, model.isStableWithinExecution());
         }
     }
 
@@ -786,12 +783,10 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         }
     }
 
-    private static class StabilityFunction extends TimestampFunction {
-        private final boolean isStableWithinExecution;
+    private static class NonDeterministicFunction extends TimestampFunction {
 
-        private StabilityFunction(boolean isStableWithinExecution) {
+        private NonDeterministicFunction() {
             super(ColumnType.TIMESTAMP);
-            this.isStableWithinExecution = isStableWithinExecution;
         }
 
         @Override
@@ -802,11 +797,6 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         @Override
         public boolean isNonDeterministic() {
             return true;
-        }
-
-        @Override
-        public boolean isStableWithinExecution() {
-            return isStableWithinExecution;
         }
     }
 }

@@ -50,8 +50,6 @@ import org.jetbrains.annotations.Nullable;
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
-    private final Function hiFunction;
-    private final Function loFunction;
     private final ObjList<DirectIntList> rankMaps;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
@@ -60,8 +58,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or LimitedSizePartiallySortedLightRecordCursor
+    private Function hiFunction;
     private boolean isFirstN;
     private long limit;
+    private Function loFunction;
     private long skipFirst;
     private long skipLast;
 
@@ -83,7 +83,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+        try {
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -102,17 +107,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             return true;
         }
         return base.isNonDeterministic();
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        if (loFunction != null && !loFunction.isStableWithinExecution()) {
-            return false;
-        }
-        if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
-            return false;
-        }
-        return base.isStableWithinExecution();
     }
 
     @Override
@@ -295,8 +289,16 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.base = null;
         final DelegatingRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final Function loFunction = this.loFunction;
+        this.loFunction = null;
+        final Function hiFunction = this.hiFunction;
+        this.hiFunction = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, loFunction);
+        if (hiFunction != loFunction) {
+            failure = Misc.freeBestEffort(failure, hiFunction);
+        }
         CairoException.rethrowCleanupFailure(failure);
     }
 }

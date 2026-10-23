@@ -176,7 +176,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private boolean isCountedByMatch;
     // True when the open cursor's build counted its key rows on the workers, in a round of tasks.
     private boolean isCountedInRounds;
-    private boolean isFiltersInitialized;
     private boolean isFunctionsInitialized;
     private boolean isPayloadCopied;
     // The rows of the open cursor's build that come from Parquet frames, among the rows the build
@@ -333,56 +332,33 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 failure = th;
             }
         }
-        if (isFiltersInitialized) {
-            isFiltersInitialized = false;
-            Function ownerFilter = filterContext.getFilter(-1);
-            failure = cursorClosed(failure, ownerFilter);
-            for (int i = 0; i < slots.size() - 1; i++) {
-                Function workerFilter = filterContext.getFilter(i);
-                if (workerFilter != ownerFilter) {
-                    failure = cursorClosed(failure, workerFilter);
-                }
-            }
-        }
         if (isBuildFiltersInitialized) {
             isBuildFiltersInitialized = false;
-            Function ownerBuildFilter = buildFilterContext.getFilter(-1);
-            failure = cursorClosed(failure, ownerBuildFilter);
-            for (int i = 0, n = buildFilterContext.getPerWorkerMemoryPools().size(); i < n; i++) {
-                Function workerBuildFilter = buildFilterContext.getFilter(i);
-                if (workerBuildFilter != ownerBuildFilter) {
-                    failure = cursorClosed(failure, workerBuildFilter);
-                }
-            }
-            failure = cursorClosed(failure, buildOnFilter);
-            if (workerBuildOnFilters != null) {
-                for (int i = 0, n = workerBuildOnFilters.size(); i < n; i++) {
-                    failure = cursorClosed(failure, workerBuildOnFilters.getQuick(i));
-                }
-            }
+            failure = Function.cursorClosed(failure, buildOnFilter);
+            failure = Function.cursorClosed(failure, workerBuildOnFilters);
         }
         for (int i = 0; i < slots.size(); i++) {
             try {
                 slots.getQuick(i).clear(functions.getUpdater(i - 1));
             } catch (Throwable th) {
-                failure = addFailure(failure, th);
+                failure = Misc.foldCleanupFailure(failure, th);
             }
         }
         try {
             filterContext.clear();
         } catch (Throwable th) {
-            failure = addFailure(failure, th);
+            failure = Misc.foldCleanupFailure(failure, th);
         }
         try {
             buildFilterContext.clear();
         } catch (Throwable th) {
-            failure = addFailure(failure, th);
+            failure = Misc.foldCleanupFailure(failure, th);
         }
         if (shardingContext != null) {
             try {
                 shardingContext.clear();
             } catch (Throwable th) {
-                failure = addFailure(failure, th);
+                failure = Misc.foldCleanupFailure(failure, th);
             }
         }
         frozen = null;
@@ -406,7 +382,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         try {
             buildFrames.clear();
         } catch (Throwable th) {
-            failure = addFailure(failure, th);
+            failure = Misc.foldCleanupFailure(failure, th);
         }
         memoryTracker = null;
         probeSymbols = null;
@@ -600,7 +576,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 }
                 slot.bindSymbols(symbolTableSource, buildSymbols);
             }
-            isFiltersInitialized = true;
             filterContext.initFilters(symbolTableSource, executionContext);
             isFunctionsInitialized = true;
             // A slot resolves a function's symbol tables through the two open scans, so the
@@ -616,27 +591,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             throw th;
         }
-    }
-
-    private static Throwable addFailure(Throwable failure, Throwable th) {
-        if (failure == null) {
-            return th;
-        }
-        if (failure != th) {
-            failure.addSuppressed(th);
-        }
-        return failure;
-    }
-
-    private static Throwable cursorClosed(Throwable failure, Function function) {
-        if (function != null) {
-            try {
-                function.cursorClosed();
-            } catch (Throwable th) {
-                return addFailure(failure, th);
-            }
-        }
-        return failure;
     }
 
     /**

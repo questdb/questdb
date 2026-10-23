@@ -88,7 +88,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             mapSink = RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter);
             cursor = new DistinctRecordCursor(configuration, metadata, limitLoFunction, limitHiFunction);
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }

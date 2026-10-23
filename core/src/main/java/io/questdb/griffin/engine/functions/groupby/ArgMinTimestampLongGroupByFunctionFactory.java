@@ -34,6 +34,16 @@ import io.questdb.std.ObjList;
 
 public class ArgMinTimestampLongGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.INPUT_ORDER;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(0));
+    }
+
+    @Override
     public String getSignature() {
         return "arg_min(NL)";
     }
@@ -46,6 +56,6 @@ public class ArgMinTimestampLongGroupByFunctionFactory implements FunctionFactor
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function valueArg = args.getQuick(0);
-        return new ArgMinTimestampLongGroupByFunction(valueArg, args.getQuick(1), ColumnType.getTimestampType(valueArg.getType()));
+        return new ArgMinTimestampLongGroupByFunction(valueArg, args.getQuick(1), ColumnType.getImplicitTimestampType(valueArg.getType()));
     }
 }

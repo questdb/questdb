@@ -45,6 +45,11 @@ import io.questdb.std.Transient;
 public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(argTypes.getQuick(0)), 1);
+    }
+
+    @Override
     public String getSignature() {
         return "flatten(D[])";
     }
@@ -73,8 +78,8 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             outArray = Misc.free(outArray);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -85,6 +90,9 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull()) {
+                return array;
+            }
             if (array.isVanilla()) {
                 derivedView.of(array);
                 derivedView.flatten();

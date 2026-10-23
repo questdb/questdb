@@ -25,14 +25,21 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
+import io.questdb.std.IntList;
 import io.questdb.std.str.CharSink;
 
 public class CastByteToLong256FunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG256;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Bh)";
@@ -43,7 +50,7 @@ public class CastByteToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLong256Function {
+    public static class Func extends AbstractCastToLong256Function {
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
 

@@ -27,6 +27,7 @@ package io.questdb.cairo.mig;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -45,7 +46,7 @@ import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
 public class EngineMigration {
 
-    private static final Log LOG = LogFactory.getLog(EngineMigration.class);
+    private static Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final IntObjHashMap<MigrationAction> MIGRATIONS = new IntObjHashMap<>();
 
     /**
@@ -181,17 +182,17 @@ public class EngineMigration {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
+                            // A version in (latestTableVersion, ColumnType.MAX_STORAGE_VERSION] is not a migration
+                            // step: it marks a table that holds composite partitions and has received what
+                            // _upgrade.d records. Such a table takes only storage-version agnostic migrations
+                            // and keeps its _meta version. Migration leaves a table from a newer binary alone.
+                            final boolean hasCompositePartitions = currentTableVersion > latestTableVersion;
+                            final int tableVersion = Math.min(currentTableVersion, latestTableVersion);
                             // _upgrade.d records the compatible migrations every table at the table version has received
-                            final int firstVersion = currentTableVersion < latestTableVersion
-                                    ? currentTableVersion + 1
-                                    : Math.max(currentTableVersion, recordedMigrationVersion) + 1;
-                            // A version above latestTableVersion is an elevated storage version (a table
-                            // that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION).
-                            // It is not a migration-version number, so migration must leave it alone: the table
-                            // is already current, and re-running backward-compatible migrations against it is
-                            // neither needed nor guaranteed safe. The writer folds such a table back to plain
-                            // and restores latestTableVersion on its own when composite partitions go away.
-                            if (currentTableVersion <= latestTableVersion && firstVersion <= latestMigrationVersion) {
+                            final int firstVersion = tableVersion < latestTableVersion
+                                    ? tableVersion + 1
+                                    : Math.max(tableVersion, recordedMigrationVersion) + 1;
+                            if (currentTableVersion <= ColumnType.MAX_STORAGE_VERSION && firstVersion <= latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())
                                         .$(", fromVersion=").$(firstVersion - 1)
@@ -213,7 +214,11 @@ public class EngineMigration {
 
                                 for (int ver = firstVersion; ver <= latestMigrationVersion; ver++) {
                                     final MigrationAction migration = getMigrationToVersion(ver);
-                                    if (migration != null) {
+                                    if (migration != null && hasCompositePartitions && !(migration instanceof MigrationAction.StorageVersionAgnostic)) {
+                                        LOG.info().$("skipping storage version dependent migration on table with composite partitions [path=").$(path)
+                                                .$(", toVersion=").$(ver)
+                                                .I$();
+                                    } else if (migration != null) {
                                         try {
                                             LOG.info().$("upgrading table [path=").$(path)
                                                     .$(", toVersion=").$(ver)
@@ -286,5 +291,6 @@ public class EngineMigration {
         MIGRATIONS.put(426, Mig620::migrate);
         MIGRATIONS.put(429, Mig941::migrate);
         MIGRATIONS.put(430, Mig1002::migrate);
+        MIGRATIONS.put(431, (MigrationAction.StorageVersionAgnostic) Mig1011::migrate);
     }
 }

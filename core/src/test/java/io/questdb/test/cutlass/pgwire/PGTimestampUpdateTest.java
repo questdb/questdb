@@ -24,9 +24,13 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -78,6 +82,77 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 throw new RuntimeException(e);
             }
         }, "2025-12-04T15:58:45.000004");
+    }
+
+    @Test
+    public void testShortAndByteBindsOnDesignatedTimestamp() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE s (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.executeUpdate("INSERT INTO s VALUES (3, 1), (3, 2), (5, 3), (7, 4)");
+            }
+            drainWalQueue();
+            final StringSink sink = new StringSink();
+
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts, v FROM s WHERE ts = ?")) {
+                select.setShort(1, (short) 3);
+                try (ResultSet rs = select.executeQuery()) {
+                    assertResultSet("""
+                            ts[TIMESTAMP],v[INTEGER]
+                            1970-01-01 00:00:00.000003,1
+                            1970-01-01 00:00:00.000003,2
+                            """, sink, rs);
+                }
+            }
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts, v FROM s WHERE ts = ? OR ts = ?")) {
+                select.setShort(1, (short) 3);
+                select.setByte(2, (byte) 7);
+                try (ResultSet rs = select.executeQuery()) {
+                    assertResultSet("""
+                            ts[TIMESTAMP],v[INTEGER]
+                            1970-01-01 00:00:00.000003,1
+                            1970-01-01 00:00:00.000003,2
+                            1970-01-01 00:00:00.000007,4
+                            """, sink, rs);
+                }
+            }
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts, v FROM s WHERE ts > ?")) {
+                select.setShort(1, (short) 3);
+                select.executeQuery();
+                Assert.fail("SHORT range bound must be rejected");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "Invalid date");
+            }
+            try (PreparedStatement update = connection.prepareStatement("UPDATE s SET v = 0 WHERE ts > ?")) {
+                update.setDouble(1, 3.5);
+                update.executeUpdate();
+                Assert.fail("DOUBLE range bound must be rejected before the UPDATE is sequenced");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "Invalid date");
+            }
+
+            try (PreparedStatement update = connection.prepareStatement("UPDATE s SET v = 100 WHERE ts = ?")) {
+                update.setShort(1, (short) 3);
+                update.executeUpdate();
+            }
+            try (PreparedStatement update = connection.prepareStatement("UPDATE s SET v = 200 WHERE ts != ?")) {
+                update.setByte(1, (byte) 3);
+                update.executeUpdate();
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("s")));
+            assertQuery("s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000003Z\t100
+                            1970-01-01T00:00:00.000003Z\t100
+                            1970-01-01T00:00:00.000005Z\t200
+                            1970-01-01T00:00:00.000007Z\t200
+                            """);
+        });
     }
 
     @Test

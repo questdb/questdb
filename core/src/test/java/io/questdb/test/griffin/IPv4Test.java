@@ -2475,6 +2475,23 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4EqSymbolConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT '1.2.3.4'::ipv4 ip FROM long_sequence(1))");
+            assertQuery("SELECT ip = '1.2.3.4'::symbol eq, ip = '1.2.3.5'::symbol ne, ip & '255.0.0.0'::symbol masked FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            eq\tne\tmasked
+                            true\tfalse\t1.0.0.0
+                            """);
+            assertQuery("SELECT ip = 'abc'::symbol FROM x")
+                    .noLeakCheck()
+                    .fails(0, "invalid IPv4 format: abc");
+        });
+    }
+
+    @Test
     public void testIPv4Except() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (col1 ipv4)");
@@ -6503,6 +6520,26 @@ public class IPv4Test extends AbstractCairoTest {
                             212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29
                             4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21
                             """);
+        });
+    }
+
+    @Test
+    public void testVarcharFunctionsOverIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, CASE WHEN x = 1 THEN '12.1.0.7'::IPv4 END ip, '1.0'::VARCHAR vc, '12.'::VARCHAR p FROM long_sequence(2)
+                    )""");
+            final String expected = """
+                    pos\tsp\tsw\tlb\tni\tlen\tleft\tup
+                    4\t0\ttrue\t8\t1.0\t8\t12.1\t12.1.0.7
+                    null\tnull\tfalse\t-1\t1.0\t-1\t\t
+                    """;
+            final String select = """
+                    SELECT position(ip, vc) pos, strpos(vc, ip) sp, starts_with(ip, p) sw, length_bytes(ip) lb, nullif(vc, ip) ni,
+                    length(ip) len, left(ip, 4) left, upper(ip) up FROM\s""";
+            assertQuery(select + "t ORDER BY x").noLeakCheck().expectSize().returns(expected);
+            assertQuery(select + "(SELECT * FROM t) ORDER BY x").noLeakCheck().expectSize().returns(expected);
         });
     }
 

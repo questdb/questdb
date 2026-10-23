@@ -307,6 +307,13 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns true when the function requires its input in ascending designated timestamp order.
+     */
+    default boolean isAscendingTimestampRequired() {
+        return false;
+    }
+
+    /**
      * Returns true if {@link #earlyExit(MapValue)} method can be used.
      * Only makes sense for non-keyed, single-threaded group by.
      *
@@ -325,6 +332,13 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns true when the function requires the designated timestamp of its input as its second argument.
+     */
+    default boolean isTimestampArgumentRequired() {
+        return false;
+    }
+
+    /**
      * Used in parallel GROUP BY to merge partial results. Both values are guaranteed to be not new
      * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
      *
@@ -333,6 +347,21 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Performs the first aggregation of a new group in a map value that holds an earlier group's state, set by
+     * {@link #setNull(MapValue)} or computed since the last {@link #toTop()}. A keyed SAMPLE BY that fills keys from
+     * their previous buckets keeps one value per key across its buckets, without {@link #toTop()} between them, and
+     * recomputes the value for each bucket with rows of the key. A function that keeps a group's state in storage the
+     * map value refers to reuses the storage the value holds, so that no other group takes it.
+     *
+     * @param mapValue map value holding the earlier group
+     * @param record   record holding the aggregated row
+     * @param rowId    row id; the value may be different from record.getRowId()
+     */
+    default void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        computeFirst(mapValue, record, rowId);
     }
 
     /**

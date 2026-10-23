@@ -172,7 +172,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );
@@ -201,7 +201,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );
@@ -230,7 +230,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );

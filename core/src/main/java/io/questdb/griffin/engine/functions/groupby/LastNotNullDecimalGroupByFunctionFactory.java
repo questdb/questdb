@@ -42,6 +42,16 @@ import io.questdb.std.Transient;
 public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "last_not_null(Ξ)";
     }

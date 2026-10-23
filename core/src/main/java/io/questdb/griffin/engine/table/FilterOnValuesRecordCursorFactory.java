@@ -32,11 +32,11 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -53,16 +53,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private final int columnIndex;
     private final int[] cursorFactoriesIdx;
     private final boolean followedOrderByAdvice;
-    private final boolean heapCursorUsed;
-    // Drives the cursorFactories sort and the plan's symbolOrder attribute. It keeps reading the
-    // withdrawn key-column claim on purpose: initRecordCursor sorts so that findDuplicates() sees
-    // equal symbols adjacently, and the sort direction is plan-visible, so it must not follow
-    // followedOrderByAdvice() into "false".
-    private final boolean symbolOrderAsc;
+    private final boolean isTableOrder;
+    private final int orderDirection;
     private PageFrameRecordCursorImpl cursor;
     private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private Function filter;
-    private RowCursorFactory rowCursorFactory;
 
     public FilterOnValuesRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -71,9 +66,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @Nullable Function filter,
-            int orderByMnemonic,
-            boolean orderByKeyColumn,
-            boolean orderByTimestamp,
+            @NotNull ScanPlan.IndexOrder indexOrder,
             int orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes,
@@ -84,26 +77,33 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.symbolOrderAsc = (orderByKeyColumn || orderByTimestamp) && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
+        this.orderDirection = orderDirection;
         cursorFactories = new ObjList<>(nKeyValues);
-        cursorFactoriesIdx = new int[]{0};
-        for (int i = 0; i < nKeyValues; i++) {
-            addSymbolKey(keyValues.get(i), indexDirection);
+        try {
+            cursorFactoriesIdx = new int[]{0};
+            // the bit set applies the filter to the merged rows
+            final Function keyFilter = indexOrder == ScanPlan.IndexOrder.TABLE_PER_FRAME ? null : filter;
+            for (int i = 0; i < nKeyValues; i++) {
+                addSymbolKey(keyValues.get(i), indexDirection, keyFilter);
+            }
+            cursor = PageFrameRecordCursorImpl.newIndexScanCursor(
+                    configuration,
+                    metadata,
+                    indexOrder,
+                    cursorFactories,
+                    cursorFactoriesIdx,
+                    indexDirection,
+                    filter
+            );
+            followedOrderByAdvice = indexOrder.isRequested();
+            isTableOrder = indexOrder.isTableOrder();
+        } catch (Throwable th) {
+            for (int i = cursorFactories.size(); i < nKeyValues; i++) {
+                Misc.free(keyValues.getQuick(i), th);
+            }
+            Misc.free(this, th);
+            throw th;
         }
-        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
-            heapCursorUsed = false;
-            rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-        } else {
-            heapCursorUsed = true;
-            rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-        }
-        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
-        // SequentialRowCursorFactory rebuilds one cursor per key for the page frame it is handed and
-        // restarts at key 0 on the next frame, so an "ORDER BY key" claim would hold only while the
-        // scan produced a single frame. Only the timestamp claim survives frame concatenation: it
-        // forces HeapRowCursorFactory, which emits rows in row-id order within a frame, and the
-        // frames themselves arrive in timestamp order.
-        this.followedOrderByAdvice = orderByTimestamp;
     }
 
     @Override
@@ -113,7 +113,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
     @Override
     public int getScanDirection() {
-        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && isTableOrder) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -127,10 +127,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
-        if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
-            sink.meta("symbolOrder").val(symbolOrderAsc ? "asc" : "desc");
+        if (!isTableOrder) { // sorting symbols makes no sense for a table-order scan
+            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
-        sink.child(rowCursorFactory);
+        sink.child(cursor.getRowCursorFactory());
         sink.child(partitionFrameCursorFactory);
     }
 
@@ -155,7 +155,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         }
     }
 
-    private void addSymbolKey(Function symbolFunction, int indexDirection) {
+    private void addSymbolKey(Function symbolFunction, int indexDirection, @Nullable Function filter) {
         final FunctionBasedRowCursorFactory rowCursorFactory;
         if (filter == null) {
             rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, symbolFunction, indexDirection);
@@ -203,8 +203,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         this.cursorFactories = null;
         final Function filter = this.filter;
         this.filter = null;
-        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
-        this.rowCursorFactory = null;
+        final RowCursorFactory rowCursorFactory = cursor != null ? cursor.getRowCursorFactory() : null;
         Throwable failure = null;
         try {
             super._close();
@@ -229,7 +228,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
         // sort values to facilitate duplicate removal (even for heap row cursor)
         // sorting here can produce order of cursorFactories different from one shown by explain command       
-        if (symbolOrderAsc) {
+        if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {
             cursorFactories.sort(COMPARATOR_DESC);
@@ -238,9 +237,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         findDuplicates();
 
         cursor.of(pageFrameCursor, sqlExecutionContext);
-        if (filter != null) {
-            filter.init(cursor, sqlExecutionContext);
-        }
         return cursor;
     }
 }

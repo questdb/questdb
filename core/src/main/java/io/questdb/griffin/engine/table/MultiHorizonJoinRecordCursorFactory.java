@@ -387,6 +387,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 for (int s = 0; s < count; s++) {
                     cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
                 }
+                cleanupFailure = Function.cursorClosed(cleanupFailure, recordFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, keyFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, groupByFunctions);
                 CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }

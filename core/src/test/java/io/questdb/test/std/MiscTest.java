@@ -117,6 +117,30 @@ public class MiscTest {
     }
 
     @Test
+    public void testClearWithPrimarySuppressesClearFailure() {
+        final RuntimeException primary = new RuntimeException("primary");
+        Misc.clear(null, primary);
+
+        final TestMutable successful = new TestMutable(null);
+        Misc.clear(successful, primary);
+        Assert.assertEquals(1, successful.clearCount);
+        Assert.assertEquals(0, primary.getSuppressed().length);
+
+        final RuntimeException runtimeFailure = new RuntimeException("runtime");
+        final TestMutable runtimeThrowing = new TestMutable(runtimeFailure);
+        Misc.clear(runtimeThrowing, primary);
+        Assert.assertEquals(1, runtimeThrowing.clearCount);
+
+        final Error errorFailure = new AssertionError("error");
+        Misc.clear(new TestMutable(errorFailure), primary);
+        Assert.assertArrayEquals(new Throwable[]{runtimeFailure, errorFailure}, primary.getSuppressed());
+
+        // clear() rethrowing the primary itself must not self-suppress
+        Misc.clear(new TestMutable(primary), primary);
+        Assert.assertEquals(2, primary.getSuppressed().length);
+    }
+
+    @Test
     public void testFoldCleanupFailureChainsAndRejectsSelfSuppression() {
         // with no primary yet the failure becomes the primary
         final RuntimeException failure = new RuntimeException("failure");

@@ -35,7 +35,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.griffin.HashJoinGroupByCandidate;
+import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
@@ -348,7 +348,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         // although the key sinks stage it.
         for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY,
                 ColumnType.ARRAY, ColumnType.RECORD, ColumnType.INTERVAL, ColumnType.LONG128}) {
-            Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByCandidate.isSupportedValueType(type));
+            Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByMetadata.isSupportedValueType(type));
         }
         // Fixed-size types the row heap copies, each at its own width.
         for (int type : new int[]{ColumnType.IPv4, ColumnType.UUID, ColumnType.LONG256,
@@ -357,7 +357,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 ColumnType.getDecimalType(2, 1), ColumnType.getDecimalType(4, 1),
                 ColumnType.getDecimalType(9, 2), ColumnType.getDecimalType(18, 2),
                 ColumnType.getDecimalType(38, 2), ColumnType.getDecimalType(50, 2)}) {
-            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByCandidate.isSupportedValueType(type));
+            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByMetadata.isSupportedValueType(type));
         }
     }
 

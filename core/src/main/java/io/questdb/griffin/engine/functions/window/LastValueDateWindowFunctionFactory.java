@@ -48,6 +48,11 @@ public class LastValueDateWindowFunctionFactory extends AbstractWindowFunctionFa
     private static final String SIGNATURE = LastValueWindowFunctionFactoryHelper.NAME + "(M)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

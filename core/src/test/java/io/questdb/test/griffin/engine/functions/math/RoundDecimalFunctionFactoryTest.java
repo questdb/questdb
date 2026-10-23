@@ -78,6 +78,27 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundAtMaximumPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DECIMAL(76,0), f DECIMAL(76,2), k INT)");
+            execute("INSERT INTO t VALUES (" + "9".repeat(76) + "m, " + "9".repeat(74) + ".99m, -1)");
+            assertQuery("SELECT floor(v, -1) a, floor(v, k) b, floor(f, k + 1) c FROM t")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.getDecimalType(76, 0))
+                    .columnType(1, ColumnType.getDecimalType(76, 0))
+                    .columnType(2, ColumnType.getDecimalType(76, 2))
+                    .expectSize()
+                    .returns("a\tb\tc\n" + "9".repeat(75) + "0\t" + "9".repeat(75) + "0\t" + "9".repeat(74) + ".00\n");
+            assertQuery("SELECT ceil(v, -1) FROM t").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(76,0)");
+            assertQuery("SELECT ceil(v, k) FROM t").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(76,0)");
+            assertQuery("SELECT ceil(f, k + 1) FROM t").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(76,2)");
+        });
+    }
+
+    @Test
     public void testRoundAtPrecisionBoundaries() {
         // Test rounding at the exact precision boundaries of each type
 
@@ -698,6 +719,26 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundDownWithoutIntegerDigits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(2,2))");
+            execute("INSERT INTO t VALUES (0.99m), (-0.99m), (NULL)");
+            assertQuery("SELECT round_down(d) a, round_down(d, 0) b, round_down(d, -1) c FROM t")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.getDecimalType(1, 0))
+                    .columnType(1, ColumnType.getDecimalType(1, 0))
+                    .columnType(2, ColumnType.getDecimalType(1, 0))
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            0\t0\t0
+                            0\t0\t0
+                            \t\t
+                            """);
+        });
+    }
+
+    @Test
     public void testRoundDynamicNullScale() {
         createDynamicFunctionAndAssertNull(
                 new Decimal8Constant((byte) 1, ColumnType.getDecimalType(1, 1)),
@@ -851,6 +892,25 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundHugeNegativeScales() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(3,2), k INT)");
+            execute("INSERT INTO t VALUES (9.99m, -2_147_483_647)");
+            assertQuery("SELECT round(d, -100) a, round_down(d, -2_147_483_647) b, round(d, k) c, floor(d, k) e FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\te
+                            0\t0\t0.00\t0.00
+                            """);
+            assertQuery("SELECT ceil(d, -100) FROM t").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(2,0)");
+            assertQuery("SELECT ceil(d, k) FROM t").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(4,2)");
+        });
+    }
+
+    @Test
     public void testRoundLargeNegativeScales() {
         // Test rounding with large negative scales
 
@@ -1001,6 +1061,101 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
                 1000000000L,
                 ColumnType.getDecimalType(11, 0)
         );
+    }
+
+    @Test
+    public void testRoundPastIntegerDigits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(3,2), k INT)");
+            execute("INSERT INTO t VALUES (-9.99m, -3), (9.99m, -3), (NULL, -3), (9.99m, NULL), (9.99m, 1)");
+
+            assertQuery("SELECT floor(-9.99m::DECIMAL(3,2), -3)").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(2,0)");
+            assertQuery("SELECT round_up(9.99m::DECIMAL(3,2), -3)").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(2,0)");
+            assertQuery("SELECT floor(d, k) FROM t WHERE d < 0").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(4,2)");
+            assertQuery("SELECT round_up(d, k) FROM t WHERE d > 0 AND k < 0").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(4,2)");
+            assertQuery("SELECT round_up(9.99m::DECIMAL(3,2), k) FROM t WHERE k < 0").noLeakCheck()
+                    .fails(7, "'round' operation failed: Overflow in rounding: result exceeds DECIMAL(4,2)");
+
+            assertQuery("SELECT d, round(d, -3) r, round_half_even(d, -3) e, round_down(d, -3) z, ceil(d, -3) c, floor(-d, -3) f FROM t WHERE d < 0 OR d IS NULL")
+                    .noLeakCheck()
+                    .returns("""
+                            d\tr\te\tz\tc\tf
+                            -9.99\t0\t0\t0\t0\t0
+                            \t\t\t\t\t
+                            """);
+            assertQuery("SELECT d, k, round(d, k) r, round_half_even(d, k) e, round_down(d, k) z, ceil(d, k) c FROM t WHERE d < 0 OR d IS NULL OR k IS NULL OR k > 0")
+                    .noLeakCheck()
+                    .returns("""
+                            d\tk\tr\te\tz\tc
+                            -9.99\t-3\t0.00\t0.00\t0.00\t0.00
+                            \t-3\t\t\t\t
+                            9.99\tnull\t\t\t\t
+                            9.99\t1\t10.00\t10.00\t9.90\t10.00
+                            """);
+            assertQuery("SELECT k, round_up(9.99m::DECIMAL(3,2), k) u FROM t WHERE k IS NULL OR k > 0")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tu
+                            null\t
+                            1\t10.00
+                            """);
+        });
+    }
+
+    @Test
+    public void testRoundPastIntegerDigitsEveryStorage() throws Exception {
+        // The integer digits of each source type put the constant-scale result in every storage up to the source's
+        // own and, without a fraction, in the next one; the column-scale result sits in the source's or the next one.
+        final int[][] types = {
+                {2, 1}, {2, 0},
+                {4, 3}, {4, 1}, {4, 0},
+                {9, 8}, {9, 6}, {9, 1}, {9, 0},
+                {18, 17}, {18, 15}, {18, 10}, {18, 1}, {18, 0},
+                {38, 37}, {38, 35}, {38, 30}, {38, 21}, {38, 1}, {38, 0},
+                {76, 75}, {76, 73}, {76, 68}, {76, 59}, {76, 39}, {76, 1}, {76, 0}
+        };
+        assertMemoryLeak(() -> {
+            for (int[] type : types) {
+                final int precision = type[0];
+                final int scale = type[1];
+                final int roundingScale = scale - precision - 1;
+                final String max = "9".repeat(precision - scale) + (scale > 0 ? "." + "9".repeat(scale) : "") + "m";
+                final String zero = scale > 0 ? "0." + "0".repeat(scale) : "0";
+                final String constantOverflow = "'round' operation failed: Overflow in rounding: result exceeds DECIMAL("
+                        + Math.min(precision - scale + 1, Decimals.MAX_PRECISION) + ",0)";
+                final String columnOverflow = "'round' operation failed: Overflow in rounding: result exceeds DECIMAL("
+                        + Math.min(precision + 1, Decimals.MAX_PRECISION) + "," + scale + ")";
+
+                execute("CREATE TABLE t (v DECIMAL(" + precision + "," + scale + "), k INT)");
+                execute("INSERT INTO t VALUES (" + max + ", " + roundingScale + "), (-" + max + ", " + roundingScale + "), (NULL, " + roundingScale + ")");
+
+                assertQuery("SELECT ceil(v, " + roundingScale + ") FROM t WHERE v > 0").noLeakCheck().fails(7, constantOverflow);
+                assertQuery("SELECT floor(v, " + roundingScale + ") FROM t WHERE v < 0").noLeakCheck().fails(7, constantOverflow);
+                assertQuery("SELECT round_up(v, " + roundingScale + ") FROM t WHERE v < 0").noLeakCheck().fails(7, constantOverflow);
+                assertQuery("SELECT ceil(v, k) FROM t WHERE v > 0").noLeakCheck().fails(7, columnOverflow);
+                assertQuery("SELECT floor(v, k) FROM t WHERE v < 0").noLeakCheck().fails(7, columnOverflow);
+                assertQuery("SELECT round_up(v, k) FROM t WHERE v > 0").noLeakCheck().fails(7, columnOverflow);
+
+                assertQuery("SELECT round(v, " + roundingScale + ") a, round_half_even(v, " + roundingScale + ") b, round_down(v, " + roundingScale + ") c,"
+                        + " round(v, k) d, round_half_even(v, k) e, round_down(v, k) f FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("a\tb\tc\td\te\tf\n"
+                                + "0\t0\t0\t" + zero + "\t" + zero + "\t" + zero + "\n"
+                                + "0\t0\t0\t" + zero + "\t" + zero + "\t" + zero + "\n"
+                                + "\t\t\t\t\t\n");
+                assertQuery("SELECT ceil(v, " + roundingScale + ") a, floor(-v, " + roundingScale + ") b, ceil(v, k) c, floor(-v, k) d FROM t WHERE v < 0 OR v IS NULL")
+                        .noLeakCheck()
+                        .returns("a\tb\tc\td\n"
+                                + "0\t0\t" + zero + "\t" + zero + "\n"
+                                + "\t\t\t\n");
+                execute("DROP TABLE t");
+            }
+        });
     }
 
     @Test

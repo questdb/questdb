@@ -36,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -57,6 +58,9 @@ public final class ParquetRowGroupFilter {
     public static final int FILTER_BUFFER_MAX_PAGES = 1_048_576; // 128MB with 128-byte pages
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 3;
+    // Set in a filter's op when NULL rows satisfy the filter as well, as they do a negated range comparison. The
+    // native pruner then lets the filter prune only a row group whose statistics prove it holds no SQL NULL.
+    public static final int NULL_MATCHING_OP_FLAG = 0x80;
     // The compiled filter's f32 tolerance (jit/impl/consts.h FLOAT_EPSILON). It is
     // (float) DOUBLE_TOLERANCE, i.e. 1.0000000133514320e-10 - slightly LARGER than the double one,
     // and the f32 arm applies it to a difference computed at f32 as well.
@@ -205,7 +209,7 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                if (valueCount == 0) {
+                if (valueCount == 0 || condition.isNullMatching() && hasNullValue(valueFunctions)) {
                     continue;
                 }
 
@@ -385,11 +389,12 @@ public final class ParquetRowGroupFilter {
                                 Function f = valueFunctions.getQuick(j);
                                 int vType = f.getType();
                                 if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
-                                    if (columnType == vType) {
-                                        filterValues.putLong(f.getTimestamp(null));
-                                    } else {
-                                        filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
-                                    }
+                                    // A finer bound rounds to the column's precision on the side that
+                                    // keeps every row the predicate keeps.
+                                    final long value = f.getTimestamp(null);
+                                    final int valueType = ColumnType.getTimestampType(vType);
+                                    filterValues.putLong(opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE
+                                            ? driver.ceilFrom(value, valueType) : driver.floorFrom(value, valueType));
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
                                     // compares this column at double width, so the bound takes the same
@@ -594,7 +599,11 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                filterList.add(encodeColumnCountAndOp(columnIndex, effectiveCount, effectiveOp));
+                filterList.add(encodeColumnCountAndOp(
+                        columnIndex,
+                        effectiveCount,
+                        condition.isNullMatching() ? effectiveOp | NULL_MATCHING_OP_FLAG : effectiveOp
+                ));
                 filterList.add(valuesOffset);
                 filterList.add(columnType);
             }
@@ -670,6 +679,15 @@ public final class ParquetRowGroupFilter {
             default: // OP_GE
                 return Math.nextDown(bound);
         }
+    }
+
+    private static boolean hasNullValue(ObjList<Function> valueFunctions) {
+        for (int i = 0, n = valueFunctions.size(); i < n; i++) {
+            if (isNullValue(valueFunctions.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -773,6 +791,39 @@ public final class ParquetRowGroupFilter {
     // for why the model carries both.
     private static boolean isFloatEqStrictAtSinglePrecision(float l, float bound) {
         return FLOAT_TOLERANCE > Math.abs(l - bound);
+    }
+
+    // A type without a NULL check here reads as NULL, which only costs the pruning of a null-matching condition.
+    private static boolean isNullValue(Function value) {
+        return switch (ColumnType.tagOf(value.getType())) {
+            case ColumnType.BYTE, ColumnType.SHORT -> false;
+            case ColumnType.CHAR -> value.getChar(null) == Numbers.CHAR_NULL;
+            case ColumnType.INT -> value.getInt(null) == Numbers.INT_NULL;
+            case ColumnType.IPv4 -> value.getIPv4(null) == Numbers.IPv4_NULL;
+            case ColumnType.LONG -> value.getLong(null) == Numbers.LONG_NULL;
+            case ColumnType.DATE -> value.getDate(null) == Numbers.LONG_NULL;
+            case ColumnType.TIMESTAMP -> value.getTimestamp(null) == Numbers.LONG_NULL;
+            case ColumnType.FLOAT -> Numbers.isNull(value.getFloat(null));
+            case ColumnType.DOUBLE -> Numbers.isNull(value.getDouble(null));
+            case ColumnType.STRING, ColumnType.SYMBOL -> value.getStrA(null) == null;
+            case ColumnType.VARCHAR -> value.getVarcharA(null) == null;
+            case ColumnType.UUID -> Uuid.isNull(value.getLong128Lo(null), value.getLong128Hi(null));
+            case ColumnType.DECIMAL8 -> value.getDecimal8(null) == Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> value.getDecimal16(null) == Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> value.getDecimal32(null) == Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> value.getDecimal64(null) == Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> {
+                final Decimal128 d = Misc.getThreadLocalDecimal128();
+                value.getDecimal128(null, d);
+                yield d.isNull();
+            }
+            case ColumnType.DECIMAL256 -> {
+                final Decimal256 d = Misc.getThreadLocalDecimal256();
+                value.getDecimal256(null, d);
+                yield d.isNull();
+            }
+            default -> true;
+        };
     }
 
     /**

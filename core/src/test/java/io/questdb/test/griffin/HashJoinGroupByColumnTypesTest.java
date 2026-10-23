@@ -42,7 +42,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
  * never reaches the build's row heap - the reducer reads it straight off the page frame - so a
  * probe column of any type may appear in a filter, a grouping key or an aggregate argument. A
  * build column does reach the heap, so it answers to
- * {@link io.questdb.griffin.HashJoinGroupByCandidate#isSupportedValueType(int)}, which now holds
+ * {@link io.questdb.griffin.HashJoinGroupByMetadata#isSupportedValueType(int)}, which now holds
  * every fixed-size type and leaves out the variable-size ones. A build column that only the build's
  * filters read never reaches the heap: the build runs its scan's WHERE filter and an outer join's ON
  * condition on the build alone over its page frames, so such a filter may read a column of any type.

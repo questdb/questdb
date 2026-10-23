@@ -75,6 +75,8 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
+    // The fused plan without a probe filter, which assertOutcome() expects.
+    private static final String NO_PROBE_FILTER = "";
     private static final String SELECT = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
             + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
             + "sum(r.energy_kwh)/nullif(sum(p.installed_kwp),0) yield";
@@ -815,7 +817,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .timestamp("reading_ts")
                         .withPlanContaining("Sample By Fill")
-                        .withPlanNotContaining("Hash Join Group By")
+                        .withPlanContaining("Hash Join Group By")
                         .returns("""
                                 reading_ts\tpairs\tenergy
                                 2020-01-01T00:00:00.000000Z\t3\t30.0
@@ -2913,35 +2915,37 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // The ordinary plan compiles each WHERE clause that it keeps above the join into one
             // filter, and evaluates a filter that is a runtime constant once per execution: a false
             // value returns no row without opening the join, so b's scan never runs the cast. The
-            // fused plan evaluates such a clause per joined row, after its probe filter, so the
-            // analysis keeps the ordinary plan. $1 is bound to 2 and now() reads the current time,
-            // so each of these runtime constants is false until assertOutcome() binds $1 to 1.
+            // fused plan gates both of its inputs on that filter: false, neither input serves a
+            // frame, so b's scan never runs the cast either, and the aggregate still returns its
+            // row. $1 is bound to 2 and now() reads the current time, so each of these runtime
+            // constants is false until assertOutcome() binds $1 to 1. The RIGHT spelling preserves
+            // b, so it keeps the ordinary plan wherever a conjunct on b lands in b's scan.
             final String select = "SELECT count(*), count(a.v)";
             final String[][] gatedQueries = {
                     // Each spelling runs the cast in b's scan and leaves the runtime constant alone
                     // above the join, after a constant-true conjunct folds away.
                     {select + froms[0] + " WHERE " + cast + " AND $1 = 1", null},
-                    {select + froms[1] + " WHERE " + cast + " AND $1 = 1", null},
-                    {select + froms[2] + " WHERE " + cast + " AND $1 = 1", null},
+                    {select + froms[1] + " WHERE " + cast + " AND $1 = 1", castFilter},
+                    {select + froms[2] + " WHERE " + cast + " AND $1 = 1", castFilter},
                     {select + froms[0] + " WHERE $1 = 1 AND " + cast, null},
                     {select + froms[0] + " WHERE " + cast + " AND now() < '1970-01-02'", null},
-                    {select + froms[1] + " WHERE " + cast + " AND now() < '1970-01-02'", null},
-                    {select + froms[2] + " WHERE " + cast + " AND now() < '1970-01-02'", null},
+                    {select + froms[1] + " WHERE " + cast + " AND now() < '1970-01-02'", castFilter},
+                    {select + froms[2] + " WHERE " + cast + " AND now() < '1970-01-02'", castFilter},
                     {select + froms[0] + " WHERE " + cast + " AND $1 = 1 AND " + constTrue, null},
-                    {select + froms[1] + " WHERE " + cast + " AND $1 = 1 AND " + constTrue, null},
+                    {select + froms[1] + " WHERE " + cast + " AND $1 = 1 AND " + constTrue, castFilter},
                     {select + froms[0] + " WHERE b.c1 > 0 AND $1 = 1", null},
-                    // An INNER join pushes a.v > 0 into a's scan as well.
-                    {select + froms[2] + " WHERE a.v > 0 AND $1 = 1", null},
-                    {select + froms[0] + " WHERE $1 = 1", null},
-                    {select + froms[0] + " WHERE now() < '1970-01-02'", null},
-                    // The outer query's WHERE clause is a filter of its own, above the join's.
-                    {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE a.v > 0 AND " + cast + ") WHERE $1 = 1", null},
+                    // An INNER join pushes a.v > 0 into the scan of a, which it builds.
+                    {select + froms[2] + " WHERE a.v > 0 AND $1 = 1", NO_PROBE_FILTER},
+                    {select + froms[0] + " WHERE $1 = 1", NO_PROBE_FILTER},
+                    {select + froms[0] + " WHERE now() < '1970-01-02'", NO_PROBE_FILTER},
+                    // The outer query's WHERE clause gates the join as well.
+                    {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE a.v > 0 AND " + cast + ") WHERE $1 = 1", castFilter},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, b.c0, a.v" + froms[0] + " WHERE a.v > 0)"
                             + " WHERE $1 = 1 AND 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", null},
-                    // A filter that also reads a column is not a runtime constant, so it keeps the
-                    // fused plan: a.v > 0 reads the NULL-extended input, which an outer join keeps
-                    // above the join. The RIGHT spelling pushes the cast into the scan of b, which
-                    // it preserves, so it keeps the ordinary plan.
+                    // A filter that also reads a column is not a runtime constant, so the fused plan
+                    // runs it over the joined rows: a.v > 0 reads the NULL-extended input, which an
+                    // outer join keeps above the join. The last query gates both inputs on $1 = 1 and
+                    // filters the joined rows on v > 0.
                     {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, null},
                     {select + froms[1] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE " + cast + " AND $1 = 1) WHERE v > 0", castFilter}
@@ -2971,47 +2975,42 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
                 // The plans below name the filter factory that runs without JIT.
                 context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                // Each spelling keeps its ordinary plan, with the folded filter above the join and
-                // the cast in b's scan, below it. The RIGHT spelling hashes b.
+                // The false filter prevents both the join and any scan filter from executing.
                 final String constFalseWhere = " WHERE " + cast + " AND " + constFalse;
                 assertQuery("SELECT count(*), count(a.v)" + froms[0] + constFalseWhere)
                         .withContext(context)
                         .noLeakCheck()
                         .assertsPlan("""
                                 GroupBy vectorized: false
-                                  values: [count(*),count(v)]
-                                    SelectedRecord
-                                        Filter filter: false
-                                            Hash Right Outer Join Light
-                                              condition: b.k=a.k
-                                              symbolKeyJoin: true
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: a
-                                                Hash
-                                                    Async Filter workers: 4
-                                                      filter: 0.62>=c0::DECIMAL(4,2)
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: b
-                                """);
-                final String pushedPlan = """
-                        GroupBy vectorized: false
-                          values: [count(*),count(v)]
-                            SelectedRecord
-                                Filter filter: false
-                                    %s
-                                      condition: a.k=b.k
-                                      symbolKeyJoin: true
-                                        Async Filter workers: 4
-                                          filter: 0.62>=c0::DECIMAL(4,2)
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
-                                        Hash
+                                  values: [count(*),count(a.v)]
+                                    Filter filter: false
+                                        Hash Right Outer Join Light
+                                          condition: b.k=a.k
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                """);
+                final String pushedPlan = """
+                        GroupBy vectorized: false
+                          values: [count(*),count(a.v)]
+                            Filter filter: false
+                                %s
+                                  condition: a.k=b.k
+                                  symbolKeyJoin: true
+                                    Async Filter workers: 4
+                                      filter: 0.62>=c0::DECIMAL(4,2)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                         """;
                 assertQuery("SELECT count(*), count(a.v)" + froms[1] + constFalseWhere)
                         .withContext(context)
@@ -3021,32 +3020,38 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         .withContext(context)
                         .noLeakCheck()
                         .assertsPlan(pushedPlan.formatted("Hash Join Light"));
-                // A runtime-constant filter gates the ordinary join, over b's scan with the cast.
+                // A runtime-constant filter gates both inputs of the fused join, b's scan under the
+                // cast it steals.
                 assertQuery(select + froms[1] + " WHERE " + cast + " AND $1 = 1")
                         .withContext(context)
                         .noLeakCheck()
                         .assertsPlan("""
-                                GroupBy vectorized: false
-                                  values: [count(*),count(v)]
-                                    SelectedRecord
+                                Async Hash Join Group By workers: 4
+                                  logicalJoinType: left outer
+                                  physicalJoinType: left outer
+                                  inputSwapped: false
+                                  condition: b.k=a.k
+                                  symbolKeyJoin: true
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [count(*),count(a.v)]
+                                  probeFilter: 0.62>=c0::DECIMAL(4,2)
+                                    Probe
                                         Filter filter: $0::int=1
-                                            Hash Left Outer Join Light
-                                              condition: a.k=b.k
-                                              symbolKeyJoin: true
-                                                Async Filter workers: 4
-                                                  filter: 0.62>=c0::DECIMAL(4,2)
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                    Build
+                                        Filter filter: $0::int=1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
                                 """);
-                // One factory serves every bind value, so a gated shape keeps the ordinary plan
-                // when $1 = 1 holds too, and then returns the joined rows.
+                // One factory serves every bind value: the gate decides on each execution whether
+                // the inputs serve their rows.
                 try (RecordCursorFactory factory = engine.select(select + froms[2] + " WHERE a.v > 0 AND $1 = 1", context)) {
-                    Assert.assertFalse(plan(factory, context).contains("Hash Join Group By"));
+                    Assert.assertTrue(plan(factory, context).contains("Hash Join Group By"));
                     assertFactory(factory).withContext(context).expectSize().noRandomAccess().returns("""
                             count\tcount1
                             0\t0
@@ -3109,6 +3114,68 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                     2\t0\t3
                                     """);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testInputEmptiedByFoldedFilterKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"fuzz_t0", "fuzz_t1"}) {
+                execute("CREATE TABLE " + table + " (sym SYMBOL, k INT, lk LONG, vk VARCHAR, c0 TIMESTAMP, c1 DATE, c2 STRING, c3 INT,"
+                        + " c4 BOOLEAN, c5 DOUBLE, c6 VARCHAR, c7 BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + """
+                         SELECT ('s' || (x % 3))::SYMBOL, (x % 5)::INT, x % 4, (x * 37_000)::VARCHAR,
+                            (x * 3_600_000_000)::TIMESTAMP, (x * 86_400_000)::DATE, (x % 7)::STRING, (x % 6)::INT, x % 2 = 0,
+                            x / 10.0, (x % 9)::VARCHAR, (x % 100)::BYTE, '2024-01-02'::TIMESTAMP + x * 1_800_000_000
+                        FROM long_sequence(48)
+                        """);
+            }
+            // A self-comparison folds to false, so the scan of the input it filters builds an empty table, which
+            // serves no page frames.
+            final String[] queries = {
+                    "SELECT 'L' AS e0, l.k AS e1, max(l.lk) AS a0, count(r.c3) AS a1, count() AS a2, count(r.k) AS a3"
+                            + " FROM fuzz_t0 l JOIN fuzz_t1 r ON l.lk = r.lk AND (l.c0 < l.c0)"
+                            + " WHERE ((114541L)::SYMBOL < l.vk) AND (l.ts >= '2024-01-02T16:00:00.000000Z' AND l.ts < '2024-01-02T19:00:00.000000Z')"
+                            + " GROUP BY e0, e1 ORDER BY a1 DESC, a2 ASC LIMIT 1",
+                    "SELECT bit_xor(l.c1_v) AS a0, count() AS a1, count(r.k) AS a2"
+                            + " FROM (SELECT sym, k, lk, vk AS vk_v, c0 AS c0_v, c1 AS c1_v, c2, c3, c4, c5 AS c5_v, c6, ts FROM fuzz_t1"
+                            + " WHERE ((c3)::DOUBLE = lk AND c0 != c0)) l JOIN fuzz_t0 r ON r.vk = l.vk_v AND ((r.ts <= r.c1 AND null >= r.ts))"
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (String sql : queries) {
+                    assertDifferential(sql, context, false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinOverInputEmptiedByFoldedFilterKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fuzz_t0 (sym SYMBOL, k INT, lk LONG, vk VARCHAR, c0 TIMESTAMP, c1 DOUBLE[][], c2 IPv4, c3 CHAR, c4 SHORT,"
+                    + " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fuzz_t1 (sym SYMBOL, k INT, lk LONG, vk VARCHAR, c0 SYMBOL, c1 VARCHAR, c2 DOUBLE, c3 DECIMAL(38, 2),"
+                    + " c4 STRING, c5 BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fuzz_t0
+                    SELECT ('s' || (x % 6))::SYMBOL, (x % 5)::INT, x % 4, (x * 37)::VARCHAR, (x * 3_600_000_000)::TIMESTAMP, NULL,
+                        ('10.0.0.' || (x % 9))::IPv4, 'c', (x % 300)::SHORT, '2024-01-10'::TIMESTAMP + x * 1_800_000_000
+                    FROM long_sequence(48)
+                    """);
+            execute("""
+                    INSERT INTO fuzz_t1
+                    SELECT ('s' || (x % 6))::SYMBOL, (x % 5)::INT, x % 4, (x * 37)::VARCHAR, ('s' || (x % 7))::SYMBOL, (x % 9)::VARCHAR,
+                        x / 10.0, (x * 1.25)::DECIMAL(38, 2), (x % 7)::STRING, (x % 100)::BYTE, '2024-01-10'::TIMESTAMP + x * 1_800_000_000
+                    FROM long_sequence(48)
+                    """);
+            // A self-comparison folds to false, so the scan of the build the RIGHT join NULL-extends builds an empty
+            // table, which serves no page frames.
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertDifferential("SELECT '2024-01-10'::DATE AS e0, sum(r.c4) AS a0, avg(l.lk_v::DOUBLE) AS a1, max(l.c2_v) AS a2,"
+                        + " count() AS a3, count(l.k) AS a4"
+                        + " FROM (SELECT sym, k, lk AS lk_v, vk, c0, c1, c2 AS c2_v, c3, c4, c5, ts FROM fuzz_t1 WHERE c2 < c2) l"
+                        + " RIGHT JOIN fuzz_t0 r ON l.sym = r.sym AND (('VYL'::VARCHAR IS NOT NULL OR 's5' < l.c0))", context, false);
             }
         });
     }
@@ -3239,8 +3306,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // The ordinary plan evaluates the sub-query's WHERE clause below the projection and the
             // outer one above it, so b.c1 > 5 rejects every row before the cast runs. The outer
             // conjunct names c0, a computed column whose name also names b.c0 below the projection,
-            // so each query keeps the ordinary plan, and the fused probe filter never holds
-            // conjuncts from two WHERE clauses.
+            // so computed projections keep the ordinary plan. A no-op SHORT cast can be removed,
+            // allowing both filters to run in their original order on the fused probe.
             final String[] queries = {
                     "SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 + 0 c0%s WHERE b.c1 > 5) WHERE " + cast + "c0::DECIMAL(4, 2)",
                     "SELECT count(*), count(v) FROM (SELECT b.k, a.v, abs(b.c0) c0%s WHERE b.c1 > 5) WHERE " + cast + "c0::DECIMAL(4, 2)",
@@ -3255,7 +3322,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     context.setJitMode(jit);
                     for (String from : froms) {
                         for (String query : queries) {
-                            assertOutcome(query.formatted(from), null, context);
+                            final String filter = from != froms[0] && query.contains("b.c0::SHORT")
+                                    ? "(5<c1 and 0.62>=c0::DECIMAL(4,2))" : null;
+                            assertOutcome(query.formatted(from), filter, context);
                         }
                     }
                 }
@@ -3303,9 +3372,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     {"SELECT count(*), count(a.v)%s WHERE a.v > 0 AND " + cast + " AND " + interval, castFilter},
                     // The runtime constant is alone in the sub-query's WHERE clause, above the join,
                     // and the optimizer moves the outer cast into b's scan, so the ordinary plan gates
-                    // the join on it and the fused analysis keeps the ordinary plan.
+                    // the join on it and the fused plan gates both of its inputs.
                     {"SELECT count(*), count(v) FROM (SELECT b.k, b.c0, a.v%s WHERE now() < '1970-01-02')"
-                            + " WHERE 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", null}
+                            + " WHERE 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", castFilter}
             };
             try (SqlExecutionContextImpl context = enabledContext()) {
                 context.initNow();
@@ -3642,7 +3711,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     /**
      * Checks that both plans fail with the same error or return the same rows, with $1 bound to 2
      * and then, on the same factories, to 1, and then the fused plan's probe filter. A null probe
-     * filter expects the ordinary plan.
+     * filter expects the ordinary plan, and {@link #NO_PROBE_FILTER} the fused plan without one.
      */
     private static void assertOutcome(String sql, @Nullable String probeFilter, SqlExecutionContextImpl context) throws Exception {
         String expected;
@@ -3665,7 +3734,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertEquals(sql + "\n" + plan, expectedRebound, outcome(factory, context));
             Assert.assertEquals(sql + "\n" + plan, probeFilter != null, plan.contains("Hash Join Group By"));
             if (probeFilter != null) {
-                Assert.assertTrue(sql + "\n" + plan, plan.contains("probeFilter: " + probeFilter));
+                Assert.assertEquals(sql + "\n" + plan, !probeFilter.isEmpty(), plan.contains("probeFilter: " + probeFilter));
             }
         } finally {
             bindVariableService.setInt(0, 2);

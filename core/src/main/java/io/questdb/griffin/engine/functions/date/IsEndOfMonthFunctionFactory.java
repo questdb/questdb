@@ -40,6 +40,11 @@ import io.questdb.std.ObjList;
 public class IsEndOfMonthFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "is_end_of_month(N)";
     }

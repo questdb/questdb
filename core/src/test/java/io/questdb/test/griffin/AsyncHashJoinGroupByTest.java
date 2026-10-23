@@ -54,14 +54,14 @@ import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.HashJoinGroupByCandidate;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.HashJoinGroupByFunctions;
 import io.questdb.griffin.HashJoinGroupByMetadata;
-import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PriorityMetadata;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -76,13 +76,14 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
+import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.Job;
 import io.questdb.std.BytecodeAssembler;
@@ -92,7 +93,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
@@ -2417,7 +2417,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private AsyncFilterContext buildFilterContext(Hook hook) {
         final int slotCount = isParallelBuild ? WORKERS : 0;
         if (hook == null || !hook.isBuildFiltered) {
-            return new AsyncFilterContext(configuration, null, null, null, null, null, null, slotCount, 0, 0, 0);
+            return filterContext(null, null, null, null, null, slotCount);
         }
         Function filter = new BooleanFunction() {
             @Override
@@ -2443,20 +2443,27 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             // function list keeps prepareBindVarMemory() a no-op.
             MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                     configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
-            return new AsyncFilterContext(configuration, compiledFilter, bindVarMemory, new ObjList<>(), filter,
-                    null, null, slotCount, 0, 0, 0);
+            return filterContext(compiledFilter, bindVarMemory, new ObjList<>(), filter, null, slotCount);
         }
-        return new AsyncFilterContext(configuration, null, null, null, filter, null, null, slotCount, 0, 0, 0);
+        return filterContext(null, null, null, filter, null, slotCount);
     }
 
     private RecordCursorFactory childFactory(String sql) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler();
-             SqlCodeGenerator generator = new SqlCodeGenerator(configuration,
-                     new FunctionParser(configuration, engine.getFunctionFactoryCache()), new PostOrderTreeTraversalAlgo(),
-                     new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16), null, null)) {
-            return generator.generate((IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext), sqlExecutionContext);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            QueryModel model = (QueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
+            return compiler.generateSelectWithRetries(model, sqlExecutionContext, false);
         }
     }
+
+    private static AsyncFilterContext filterContext(CompiledFilter compiledFilter, MemoryCARW bindVarMemory,
+                                                    ObjList<Function> bindVarFunctions, Function filter,
+                                                    ObjList<Function> workerFilters, int workers) {
+        try (AsyncFilterResources resources = new AsyncFilterResources(compiledFilter, null, bindVarMemory,
+                bindVarFunctions, filter, null, workerFilters)) {
+            return new AsyncFilterContext(configuration, resources, workers, 0, 0, 0);
+        }
+    }
+
 
     private static List<String> rows(RecordCursor cursor, RecordMetadata metadata) {
         List<String> rows = new ArrayList<>();
@@ -2949,21 +2956,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             AsyncFilterContext buildFilterContext = null;
             try {
                 probeFactory = childFactory(probeSql);
-                buildFactory = childFactory(buildSql);
-                if (!buildFactory.supportsPageFrameCursor()) {
-                    // The build walks page frames, so the fixture steals the build filter as the planner does.
-                    RecordCursorFactory filterFactory = buildFactory;
-                    Function filter = filterFactory.getFilter();
-                    CompiledFilter compiledFilter = filterFactory.getCompiledFilter();
-                    MemoryCARW bindVarMemory = filterFactory.getBindVarMemory();
-                    ObjList<Function> bindVarFunctions = filterFactory.getBindVarFunctions();
-                    filterFactory.halfClose();
-                    buildFactory = filterFactory.getBaseFactory();
-                    // Without per-worker copies, only a thread-safe filter lets the build run on the workers.
-                    buildFilterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory,
-                            bindVarFunctions, filter, null, null, isParallelBuild ? WORKERS : 0, 0, 0, 0);
-                } else {
+                final int where = buildSql.indexOf(" where ");
+                buildFactory = childFactory(where < 0 ? buildSql : buildSql.substring(0, where));
+                if (where < 0) {
                     buildFilterContext = buildFilterContext(hook);
+                } else {
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        ExpressionNode predicate = compiler.testParseExpression(buildSql.substring(where + 7), QueryModel.FACTORY.newInstance());
+                        Function filter = new FunctionParser(configuration, engine.getFunctionFactoryCache())
+                                .parseFunction(predicate, buildFactory.getMetadata(), sqlExecutionContext);
+                        buildFilterContext = filterContext(null, null, null, filter, null, isParallelBuild ? WORKERS : 0);
+                    }
                 }
                 if (hook != null && hook.isBuildInstrumented) {
                     buildFactory = new FaultyBuildFactory(buildFactory, hook);
@@ -2978,22 +2981,26 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         return hook != null && function.getType() == ColumnType.BOOLEAN ? new HookFilter(function, hook) : function;
                     }
                 };
-                try (SqlCompiler compiler = engine.getSqlCompiler();
-                     SqlCodeGenerator generator = new SqlCodeGenerator(configuration, parser, new PostOrderTreeTraversalAlgo(),
-                             new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16), null, null)) {
-                    IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-                    while (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY) {
-                        model = model.getNestedModel();
-                    }
-                    HashJoinGroupByCandidate candidate = SqlCodeGenerator.getHashJoinGroupByCandidate(model,
-                            new FunctionParser(configuration, engine.getFunctionFactoryCache()), sqlExecutionContext);
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    HashJoinAggregation candidate = HashJoinGroupByTestSupport.candidate(compiler, sql, sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
-                    // The fixture compiles r as the probe. An INNER join builds the smaller table,
-                    // so a test that grows p must keep r at least as large.
-                    Assert.assertEquals(sql, "r", String.valueOf(candidate.getProbeModel().getName()));
-                    try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate,
+                    Assert.assertEquals(sql, "r", HashJoinGroupByTestSupport.tableName(candidate.getProbeInput()));
+                    // The candidate lives until the compiler parses again, which the probe filter below does.
+                    final boolean isOuter = candidate.getJoinType() != JoinKind.INNER;
+                    FunctionResolver resolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+                        @Override
+                        public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                                       ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                            Function function = super.createFunction(overload, position, name, args, positions, context);
+                            return hook != null && function.getType() == ColumnType.BOOLEAN
+                                    && candidate.getPostJoinFilter() != null && position == candidate.getPostJoinFilter().getPosition()
+                                    ? new HookFilter(function, hook) : function;
+                        }
+                    };
+                    try (HashJoinGroupByMetadata metadata = HashJoinGroupByTestSupport.metadata(configuration, new BytecodeAssembler(), candidate,
                             probeFactory.getMetadata(), probeColumns, buildFactory.getMetadata(), buildColumns)) {
-                        functions = generator.compileHashJoinGroupByFunctions(model, metadata, WORKERS, sqlExecutionContext);
+                        functions = new HashJoinGroupByFunctions(configuration, new BytecodeAssembler(),
+                                HashJoinGroupByTestSupport.instantiator(compiler, resolver), candidate, metadata, WORKERS, sqlExecutionContext);
                         if (hook != null) {
                             // Decorate only the updater's borrowed function list, after eligibility.
                             // The function container retains ownership and normal initialization.
@@ -3043,8 +3050,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                     configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
                             bindVarFunctions = new ObjList<>();
                         }
-                        filterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory,
-                                bindVarFunctions, probeFilter, null, workerFilters, WORKERS, 0, 0, 0);
+                        filterContext = filterContext(compiledFilter, bindVarMemory, bindVarFunctions, probeFilter, workerFilters, WORKERS);
                         RecordCursorFactory probeOwned = probeFactory;
                         RecordCursorFactory buildOwned = buildFactory;
                         AsyncFilterContext buildFiltersOwned = buildFilterContext;
@@ -3057,7 +3063,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         filterContext = null;
                         factory = new AsyncHashJoinGroupByRecordCursorFactory(engine, probeOwned, buildOwned, buildFiltersOwned,
                                 null, metadata, functionsOwned, filtersOwned,
-                                candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, factoryWorkerCount);
+                                isOuter, factoryWorkerCount);
                     }
                     queryFactory = new QueryProgress(engine.getQueryRegistry(), sql, factory);
                 }

@@ -42,7 +42,7 @@ import org.junit.Test;
 /**
  * Pins the generator-side ownership of the LIMIT advice function on the async filter paths.
  * <p>
- * {@code SqlCodeGenerator} creates it with {@code getLimitLoFunctionOnly()} and owns it until a
+ * {@code FilterFactoryGenerator} instantiates it from the limit advice and owns it until a
  * factory constructor returns holding it; neither constructor frees its inputs on its own failure.
  * The JIT branch and the Java fallback each build one and each can still throw afterwards - from
  * the per-worker filter compile, from {@code deepClone}, or from the constructor itself - so both

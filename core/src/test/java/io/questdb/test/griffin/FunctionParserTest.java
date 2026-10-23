@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -56,7 +56,9 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
@@ -93,6 +95,18 @@ import io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxCharLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxDoubleLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxLongDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxLongTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMaxTimestampLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinDoubleLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinLongDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinLongTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.ArgMinTimestampLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.BitAndByteGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.BitAndIntGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.BitAndShortGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
@@ -113,14 +127,15 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.security.NoSystemAdminSecurityContext;
@@ -139,6 +154,25 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
         assertEquals(7, ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE));
+    }
+
+    @Test
+    public void overloadFromIntegerToLong256IsTheWidestConversion() {
+        for (short from : new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG}) {
+            final int toLong256 = ColumnType.overloadDistance(from, ColumnType.LONG256);
+            assertNotEquals(OVERLOAD_NONE, toLong256);
+            for (short to = ColumnType.BOOLEAN; to <= ColumnType.NULL; to++) {
+                final int distance = ColumnType.overloadDistance(from, to);
+                if (to != ColumnType.LONG256 && distance != OVERLOAD_NONE) {
+                    assertTrue(distance < toLong256);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void overloadFromLong256ToLongDoesNotExist() {
+        assertEquals(OVERLOAD_NONE, ColumnType.overloadDistance(ColumnType.LONG256, ColumnType.LONG));
     }
 
     @Test
@@ -215,6 +249,75 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Function f = parseFunction("a + c", metadata, functionParser);
         assertEquals(123.123f, f.getFloat(null), 0.0001);
+    }
+
+    @Test
+    public void testArgMinMaxCastTieKeepsValueType() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("d", ColumnType.DATE));
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            for (boolean isValueTypeFirst : new boolean[]{true, false}) {
+                functions.clear();
+                if (isValueTypeFirst) {
+                    functions.add(new ArgMaxLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMaxTimestampLongGroupByFunctionFactory());
+                    functions.add(new ArgMinLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMinTimestampLongGroupByFunctionFactory());
+                }
+                functions.add(new ArgMaxDoubleLongGroupByFunctionFactory());
+                functions.add(new ArgMaxLongTimestampGroupByFunctionFactory());
+                functions.add(new ArgMinDoubleLongGroupByFunctionFactory());
+                functions.add(new ArgMinLongTimestampGroupByFunctionFactory());
+                if (!isValueTypeFirst) {
+                    functions.add(new ArgMaxLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMaxTimestampLongGroupByFunctionFactory());
+                    functions.add(new ArgMinLongDoubleGroupByFunctionFactory());
+                    functions.add(new ArgMinTimestampLongGroupByFunctionFactory());
+                }
+                final FunctionParser functionParser = createFunctionParser();
+                for (String call : new String[]{"arg_max(i, i)", "arg_max(l, l)", "arg_min(i, i)", "arg_min(l, l)"}) {
+                    try (Function function = parseFunction(call, metadata, functionParser)) {
+                        assertEquals(call, ColumnType.LONG, function.getType());
+                    }
+                }
+                for (String call : new String[]{"arg_max(d, d)", "arg_max(ts, ts)", "arg_min(d, d)", "arg_min(ts, ts)"}) {
+                    try (Function function = parseFunction(call, metadata, functionParser)) {
+                        assertEquals(call, ColumnType.TIMESTAMP, function.getType());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArgMinResolvesLikeArgMax() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("k", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
+            metadata.add(new TableColumnMetadata("s", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("c", ColumnType.CHAR));
+            metadata.add(new TableColumnMetadata("d", ColumnType.DOUBLE));
+            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            final FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (String value : new String[]{"k", "s", "v", "c", "null"}) {
+                for (String key : new String[]{"d", "i", "l", "ts"}) {
+                    final String args = "(" + value + ", " + key + ")";
+                    expected.put(args).put(" -> ")
+                            .put(describeResolution("arg_max" + args, metadata, functionParser).replace("ArgMax", "ArgMin"))
+                            .put('\n');
+                    actual.put(args).put(" -> ").put(describeResolution("arg_min" + args, metadata, functionParser)).put('\n');
+                }
+            }
+            TestUtils.assertEquals(expected, actual);
+        });
     }
 
     @Test
@@ -987,6 +1090,28 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFoldedTextConstantsPreserveDecodedValues() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> values = new ObjList<>();
+            values.add(null);
+            values.add("");
+            values.add("'");
+            values.add("'edge'");
+            values.add("'leading");
+            values.add("O'Reilly");
+            values.add("True");
+            values.add("fAlSe");
+            values.add("'\u03bb\u4e2d'");
+            for (int i = 0, n = values.size(); i < n; i++) {
+                final String value = values.getQuick(i);
+                assertFoldedTextValue(ColumnType.STRING, value);
+                assertFoldedTextValue(ColumnType.VARCHAR, value);
+                assertFoldedTextValue(ColumnType.SYMBOL, value);
+            }
+        });
+    }
+
+    @Test
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
@@ -1028,7 +1153,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertFail(0, "bad function factory (NULL), check log", "x()", metadata);
     }
 
-    // The next three tests pin the cleanup contract of FunctionParser.checkAndCreateFunction():
+    // The next three tests pin the cleanup contract of FunctionResolver.createFunction():
     // when a factory fails to construct (throwing SqlException, throwing a generic exception, or
     // returning null), every already-parsed argument must be closed and the intended validation
     // error must survive. Functions can allocate native memory, so a fail-fast cleanup that
@@ -1102,6 +1227,33 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testUnknownFunctionClosesArgsAndKeepsError() {
         // invalidFunction(): the function name has no overloads at all.
         assertResolutionFailureClosesArgs(2, "unknown function name", "nonexistent(bad_arg(), bad_arg())", null);
+    }
+
+    @Test
+    public void testUntypedNullPrefersNullableOverload() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+            final ObjList<FunctionFactory> factories = new ObjList<>();
+            factories.add(new ArgMaxCharLongGroupByFunctionFactory());
+            factories.add(new ArgMaxDoubleLongGroupByFunctionFactory());
+            factories.add(new BitAndByteGroupByFunctionFactory());
+            factories.add(new BitAndIntGroupByFunctionFactory());
+            factories.add(new BitAndShortGroupByFunctionFactory());
+            for (boolean isReversed : new boolean[]{false, true}) {
+                functions.clear();
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    functions.add(factories.getQuick(isReversed ? n - 1 - i : i));
+                }
+                final FunctionParser functionParser = createFunctionParser();
+                try (Function function = parseFunction("arg_max(null, l)", metadata, functionParser)) {
+                    assertEquals(ColumnType.DOUBLE, function.getType());
+                }
+                try (Function function = parseFunction("bit_and(null)", metadata, functionParser)) {
+                    assertEquals(ColumnType.INT, function.getType());
+                }
+            }
+        });
     }
 
     @Test
@@ -1873,97 +2025,73 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNonDeterministicRejectionFreesFunctionNativeMemory() throws Exception {
-        // A context that forbids non-deterministic functions (e.g. materialized-view validation)
-        // rejects such a function AFTER it is successfully constructed. The rejection must close the
-        // returned function - not merely free its argument list - so a function that owns native
-        // memory it allocated during construction (over and above its arguments) does not leak.
-        //
-        // No production function currently reaches this exact path: rnd_* functions allocate lazily
-        // in init() (rejected before init), and the diff's InLongConstFunction derives its
-        // non-determinism from its key, which is rejected at the key node before the IN function is
-        // ever built. This test therefore uses a synthetic function that both allocates native memory
-        // in its constructor and reports isNonDeterministic()==true, exercising the FunctionParser
-        // rejection path directly and guarding it against future functions with that shape.
-        functions.add(new FunctionFactory() {
+    public void testSelectedFunctionConstructsWithoutParsingOrOverloadLookup() throws SqlException {
+        final AtomicInteger constructionCount = new AtomicInteger();
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new AddIntFunctionFactory() {
             @Override
-            public String getSignature() {
-                return "nondet_alloc()";
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS;
             }
 
             @Override
-            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return new NonDeterministicAllocatingFunction();
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                constructionCount.incrementAndGet();
+                assertEquals(17, position);
+                assertEquals(11, argPositions.getQuick(0));
+                assertEquals(19, argPositions.getQuick(1));
+                assertSame(sqlExecutionContext, executionContext);
+                return super.newInstance(position, args, argPositions, configuration, executionContext);
             }
         });
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        assertMemoryLeak(() -> {
-            final FunctionParser functionParser = createFunctionParser();
-            final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
-            sqlExecutionContext.setAllowNonDeterministicFunction(false);
-            try {
-                parseFunction("nondet_alloc()", metadata, functionParser);
-                fail("expected non-deterministic rejection");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view");
-            } finally {
-                sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
-            }
-        });
+        // The selected descriptor need not be in this parser's overload cache. No parse call
+        // initializes its execution context, and construction must not repeat overload lookup.
+        final FunctionParser parser = createFunctionParser();
+        final ObjList<Function> args = new ObjList<>();
+        args.add(new IntConstant(40));
+        args.add(new IntConstant(2));
+        final IntList argPositions = new IntList();
+        argPositions.add(11);
+        argPositions.add(19);
+        try (Function function = parser.getFunctionResolver().createFunction(overload, 17, "+", args, argPositions, sqlExecutionContext)) {
+            assertEquals(1, constructionCount.get());
+            assertEquals(0, args.size());
+            assertEquals(17, parser.getFunctionResolver().getExecutionRequirements().getLiveWalProgressPosition());
+            parser.clear();
+            assertEquals(42, function.getInt(null));
+        }
     }
 
     @Test
-    public void testNonDeterministicFunctionIsClosedWhenRejected() throws Exception {
-        final AtomicInteger closeCount = new AtomicInteger();
-        functions.add(new FunctionFactory() {
+    public void testSelectedFunctionRejectsAdministrativeFactoryBeforeConstruction() throws SqlException {
+        final AtomicInteger constructionCount = new AtomicInteger();
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+            }
+
             @Override
             public String getSignature() {
-                return "test_non_deterministic()";
+                return "ent_secure()";
             }
 
             @Override
-            public Function newInstance(
-                    int position,
-                    ObjList<Function> args,
-                    IntList argPositions,
-                    CairoConfiguration configuration,
-                    SqlExecutionContext sqlExecutionContext
-            ) {
-                return new BooleanFunction() {
-                    @Override
-                    public void close() {
-                        closeCount.incrementAndGet();
-                    }
-
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isNonDeterministic() {
-                        return true;
-                    }
-                };
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                constructionCount.incrementAndGet();
+                return BooleanConstant.TRUE;
             }
         });
-
-        final boolean isAllowed = sqlExecutionContext.allowNonDeterministicFunctions();
+        final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
         sqlExecutionContext.setAllowNonDeterministicFunction(false);
         try {
-            try {
-                parseFunction("test_non_deterministic()", new GenericRecordMetadata(), createFunctionParser());
-                fail("expected non-deterministic function rejection");
-            } catch (SqlException e) {
-                assertEquals(0, e.getPosition());
-                TestUtils.assertContains(
-                        e.getFlyweightMessage(),
-                        "non-deterministic function cannot be used in materialized view: test_non_deterministic"
-                );
-            }
-            assertEquals(1, closeCount.get());
+            createFunctionParser().getFunctionResolver().createFunction(overload, 23, "admin_alias", null, null, sqlExecutionContext);
+            fail("expected administrative function rejection");
+        } catch (SqlException e) {
+            assertEquals(23, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "administrative function cannot be used in materialized view: admin_alias");
+            assertEquals(0, constructionCount.get());
         } finally {
-            sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
+            sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
         }
     }
 
@@ -1973,7 +2101,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(countingFactory("list_objects()", SqlExecutionRequirements.DISCLOSES_OBJECTS, constructionCount));
         try (SqlExecutionContextImpl nonAdmin = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
             // outside materialized and live views, the function lists what the caller may see
-            Misc.free(createFunctionParser().parseFunction(expr("list_objects()"), new GenericRecordMetadata(), nonAdmin));
+            Misc.free(parseFunction("list_objects()", new GenericRecordMetadata(), createFunctionParser(), nonAdmin));
             assertEquals(1, constructionCount.get());
 
             // NoSystemAdminSecurityContext.isSystemAdmin() is true: authorizeSystemAdmin() decides
@@ -2010,7 +2138,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         // and the refresh, which has no caller to authorize, compiles what CREATE accepted
         try (SqlExecutionContext refreshContext = new MatViewRefreshLikeContext(new NoSystemAdminSecurityContext())) {
-            Misc.free(createFunctionParser().parseFunction(expr("list_objects()"), new GenericRecordMetadata(), refreshContext));
+            Misc.free(parseFunction("list_objects()", new GenericRecordMetadata(), createFunctionParser(), refreshContext));
         }
         assertEquals(3, constructionCount.get());
     }
@@ -2529,6 +2657,102 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertEquals(expected, function.getDouble(record), 0.00001);
     }
 
+    private void assertFoldedTextValue(int type, String value) throws SqlException {
+        functions.clear();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "decoded_text()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext executionContext) {
+                return switch (type) {
+                    case ColumnType.STRING -> new StrFunction() {
+                        @Override
+                        public CharSequence getStrA(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public CharSequence getStrB(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public boolean isConstant() {
+                            return true;
+                        }
+                    };
+                    case ColumnType.VARCHAR -> new VarcharFunction() {
+                        private final Utf8String utf8Value = value == null ? null : new Utf8String(value);
+
+                        @Override
+                        public Utf8Sequence getVarcharA(Record rec) {
+                            return utf8Value;
+                        }
+
+                        @Override
+                        public Utf8Sequence getVarcharB(Record rec) {
+                            return utf8Value;
+                        }
+
+                        @Override
+                        public boolean isConstant() {
+                            return true;
+                        }
+                    };
+                    default -> new SymbolFunction() {
+                        @Override
+                        public int getInt(Record rec) {
+                            return value == null ? SymbolTable.VALUE_IS_NULL : 0;
+                        }
+
+                        @Override
+                        public CharSequence getSymbol(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public CharSequence getSymbolB(Record rec) {
+                            return value;
+                        }
+
+                        @Override
+                        public boolean isConstant() {
+                            return true;
+                        }
+
+                        @Override
+                        public boolean isSymbolTableStatic() {
+                            return false;
+                        }
+
+                        @Override
+                        public CharSequence valueBOf(int key) {
+                            return key == SymbolTable.VALUE_IS_NULL ? null : value;
+                        }
+
+                        @Override
+                        public CharSequence valueOf(int key) {
+                            return key == SymbolTable.VALUE_IS_NULL ? null : value;
+                        }
+                    };
+                };
+            }
+        });
+        try (Function function = parseFunction("decoded_text()", new GenericRecordMetadata(), createFunctionParser())) {
+            assertEquals(type, function.getType());
+            TestUtils.assertEquals(value, function.getStrA(null));
+            TestUtils.assertEquals(value, function.getStrB(null));
+            if (type == ColumnType.SYMBOL) {
+                final int key = value == null ? SymbolTable.VALUE_IS_NULL : 0;
+                assertEquals(key, function.getInt(null));
+                TestUtils.assertEquals(value, ((SymbolFunction) function).valueOf(key));
+            }
+        }
+    }
+
     private void assertCastToFloat(Record record) throws SqlException {
         functions.add(new AddFloatFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -2605,6 +2829,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 return BooleanConstant.TRUE;
             }
         };
+    }
+
+    private static String describeResolution(String call, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
+        try (Function function = parseFunction(call, metadata, functionParser)) {
+            return function.getClass().getSimpleName() + ' ' + ColumnType.nameOf(function.getType());
+        }
     }
 
     // A parent factory that matches on signature but must never have newInstance() invoked, used for
@@ -2705,7 +2935,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     private void assertParseFails(String expression, SqlExecutionContext context, int expectedPos, String expectedMessage) throws SqlException {
         try {
-            Misc.free(createFunctionParser().parseFunction(expr(expression), new GenericRecordMetadata(), context));
+            Misc.free(parseFunction(expression, new GenericRecordMetadata(), createFunctionParser(), context));
             fail("expected rejection of " + expression);
         } catch (SqlException e) {
             assertEquals(expectedPos, e.getPosition());
@@ -2780,38 +3010,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         @Override
         public boolean isMatViewRefresh() {
             return true;
-        }
-    }
-
-    /**
-     * A non-deterministic function that allocates tracked native memory in its constructor and frees
-     * it in {@link #close()}. Used to prove that FunctionParser closes the returned function when it
-     * rejects a non-deterministic function, rather than leaking the memory the function owns.
-     */
-    private static class NonDeterministicAllocatingFunction extends LongFunction {
-        private static final long ALLOC_BYTES = 1024;
-        private long addr = Unsafe.malloc(ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
-
-        @Override
-        public void close() {
-            if (addr != 0) {
-                addr = Unsafe.free(addr, ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return 42;
-        }
-
-        @Override
-        public boolean isNonDeterministic() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("nondet_alloc()");
         }
     }
 }

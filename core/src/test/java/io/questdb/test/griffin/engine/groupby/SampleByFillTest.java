@@ -12,12 +12,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.BindVarTuple;
@@ -54,21 +57,22 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                          values: [sum(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: x
+                                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
                             """);
         });
     }
@@ -222,7 +226,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL('a') ALIGN TO CALENDAR";
             assertQuery(sql)
                     .noLeakCheck()
-                    .fails(sql.indexOf("'a'"), "inconvertible value: `a` [CHAR -> DECIMAL(10,2)]");
+                    .fails(sql.indexOf("'a'"), "invalid fill value: 'a'");
         });
     }
 
@@ -273,21 +277,643 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillConstLong256ValueRejectedAgainstLongTarget() throws Exception {
         assertMemoryLeak(() -> {
-            // first(LONG256) silently resolves to first(L) (no first(H) factory
-            // exists), so the aggregate output type is LONG. A LONG256 fill
-            // expression is not formally convertible to LONG via
-            // ColumnType.isConvertibleFrom even though Long256Function.getLong()
-            // happens to return the low 64 bits at runtime. The upfront type
-            // check correctly rejects this so the user sees a clean error
-            // rather than relying on an undocumented narrowing path.
+            // A LONG256 fill expression is not convertible to the LONG output of
+            // count() via ColumnType.isConvertibleFrom, so the upfront type check
+            // rejects it with a clean error. first(val) no longer provides a LONG
+            // target: it returns the LONG256 value instead of its low 64 bits.
             execute("CREATE TABLE x (val LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(cast('0x01' AS LONG256), '2024-01-01T00:00:00.000000Z')," +
                     "(cast('0x03' AS LONG256), '2024-01-01T02:00:00.000000Z')");
-            String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR";
+            String sql = "SELECT count(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR";
             assertQuery(sql)
                     .noLeakCheck()
                     .fails(sql.indexOf("cast('0x42'"), "fill value of type LONG256 cannot fill column of type LONG");
+        });
+    }
+
+    @Test
+    public void testFillCursorPathOuterProjectionDropsAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, i INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1, 10.0, '2024-01-01T00:15:00.000000Z'),
+                    ('b', 2, 20.0, '2024-01-01T00:30:00.000000Z'),
+                    ('a', 3, 30.0, '2024-01-01T02:20:00.000000Z'),
+                    ('b', 4, 40.0, '2024-01-01T03:40:00.000000Z')
+                    """);
+            final String firstObservation = "SELECT ts, sum(v) sv, last(i) ls FROM t SAMPLE BY 1h %s ALIGN TO FIRST OBSERVATION";
+            final String subQuery = "SELECT ts, sum(v) sv, last(i) ls FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h %s";
+            assertDroppedAggregate(firstObservation, "FILL(NULL)", """
+                    ts\tls
+                    2024-01-01T00:15:00.000000Z\t2
+                    2024-01-01T01:15:00.000000Z\tnull
+                    2024-01-01T02:15:00.000000Z\t3
+                    2024-01-01T03:15:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(firstObservation, "FILL(PREV)", """
+                    ts\tls
+                    2024-01-01T00:15:00.000000Z\t2
+                    2024-01-01T01:15:00.000000Z\t2
+                    2024-01-01T02:15:00.000000Z\t3
+                    2024-01-01T03:15:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(firstObservation, "FILL(7)", """
+                    ts\tls
+                    2024-01-01T00:15:00.000000Z\t2
+                    2024-01-01T01:15:00.000000Z\t7
+                    2024-01-01T02:15:00.000000Z\t3
+                    2024-01-01T03:15:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(subQuery, "FILL(NULL)", """
+                    ts\tls
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-01T01:00:00.000000Z\tnull
+                    2024-01-01T02:00:00.000000Z\t3
+                    2024-01-01T03:00:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(subQuery, "FILL(PREV)", """
+                    ts\tls
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-01T01:00:00.000000Z\t2
+                    2024-01-01T02:00:00.000000Z\t3
+                    2024-01-01T03:00:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(subQuery, "FILL(7)", """
+                    ts\tls
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-01T01:00:00.000000Z\t7
+                    2024-01-01T02:00:00.000000Z\t3
+                    2024-01-01T03:00:00.000000Z\t4
+                    """);
+
+            final String nullFill = String.format(firstObservation, "FILL(NULL)");
+            execute("CREATE VIEW fo AS (" + nullFill + ")");
+            assertQuery("SELECT ts, ls FROM fo")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T00:15:00.000000Z\t2
+                            2024-01-01T01:15:00.000000Z\tnull
+                            2024-01-01T02:15:00.000000Z\t3
+                            2024-01-01T03:15:00.000000Z\t4
+                            """);
+            assertQuery("SELECT ts, ls FROM (" + nullFill + ") WHERE ls > 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T02:15:00.000000Z\t3
+                            2024-01-01T03:15:00.000000Z\t4
+                            """);
+            assertQuery("SELECT ts, ls FROM (" + nullFill + ") LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T00:15:00.000000Z\t2
+                            2024-01-01T01:15:00.000000Z\tnull
+                            """);
+            assertQuery("SELECT ts, k, ls FROM (SELECT ts, k, sum(v) sv, last(i) ls FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION) ORDER BY ts, k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tls
+                            2024-01-01T00:15:00.000000Z\ta\t1
+                            2024-01-01T00:15:00.000000Z\tb\t2
+                            2024-01-01T01:15:00.000000Z\ta\t1
+                            2024-01-01T01:15:00.000000Z\tb\t2
+                            2024-01-01T02:15:00.000000Z\ta\t3
+                            2024-01-01T02:15:00.000000Z\tb\t2
+                            2024-01-01T03:15:00.000000Z\ta\t3
+                            2024-01-01T03:15:00.000000Z\tb\t4
+                            """);
+            assertQuery("SELECT ts, ls FROM (" + nullFill + ")")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Sample By
+                                  fill: none
+                                  values: [last(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillDayStrideAcrossDstOverSampleByCursor() throws Exception {
+        // Day strides over a SAMPLE BY cursor keep local midnights on both sides of a DST transition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dd (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO dd VALUES
+                    ('2024-03-29T12:00:00.000000Z', 'A', 1),
+                    ('2024-04-02T12:00:00.000000Z', 'B', 2)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-28T23:00:00.000000Z\t1.0
+                            2024-03-29T23:00:00.000000Z\t1.0
+                            2024-03-30T23:00:00.000000Z\t1.0
+                            2024-03-31T22:00:00.000000Z\t1.0
+                            2024-04-01T22:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T05:00:00.000000Z\t1.0
+                            2024-03-30T05:00:00.000000Z\tnull
+                            2024-03-31T04:00:00.000000Z\tnull
+                            2024-04-01T04:00:00.000000Z\tnull
+                            2024-04-02T04:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM dd) SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-28T23:00:00.000000Z\tA\t1.0
+                            2024-03-28T23:00:00.000000Z\tB\tnull
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\tnull
+                            2024-03-30T23:00:00.000000Z\tA\t1.0
+                            2024-03-30T23:00:00.000000Z\tB\tnull
+                            2024-03-31T22:00:00.000000Z\tA\t1.0
+                            2024-03-31T22:00:00.000000Z\tB\tnull
+                            2024-04-01T22:00:00.000000Z\tA\t1.0
+                            2024-04-01T22:00:00.000000Z\tB\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM dd) SAMPLE BY 2d FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-27T23:00:00.000000Z\tA\t1.0
+                            2024-03-27T23:00:00.000000Z\tB\t10.0
+                            2024-03-29T23:00:00.000000Z\tA\t10.0
+                            2024-03-29T23:00:00.000000Z\tB\t10.0
+                            2024-03-31T22:00:00.000000Z\tA\t10.0
+                            2024-03-31T22:00:00.000000Z\tB\t2.0
+                            """);
+            execute("CREATE TABLE df (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO df VALUES
+                    ('2024-10-25T12:00:00.000000Z', 'A', 1),
+                    ('2024-10-29T12:00:00.000000Z', 'B', 2)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM df) SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-10-24T22:00:00.000000Z\t1.0
+                            2024-10-25T22:00:00.000000Z\t1.0
+                            2024-10-26T22:00:00.000000Z\t1.0
+                            2024-10-27T23:00:00.000000Z\t1.0
+                            2024-10-28T23:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM df) SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-10-25T04:00:00.000000Z\tA\t1.0
+                            2024-10-25T04:00:00.000000Z\tB\tnull
+                            2024-10-26T04:00:00.000000Z\tA\tnull
+                            2024-10-26T04:00:00.000000Z\tB\tnull
+                            2024-10-27T05:00:00.000000Z\tA\tnull
+                            2024-10-27T05:00:00.000000Z\tB\tnull
+                            2024-10-28T05:00:00.000000Z\tA\tnull
+                            2024-10-28T05:00:00.000000Z\tB\tnull
+                            2024-10-29T05:00:00.000000Z\tA\tnull
+                            2024-10-29T05:00:00.000000Z\tB\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillDstFallBackOverSampleByCursor() throws Exception {
+        // A sub-query source buckets and fills on the grid of a table source: sub-day strides step
+        // uniformly in UTC from the zone's standard offset.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fa (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fa VALUES
+                    ('2024-10-26T21:15:00.000000Z', 'A', 1),
+                    ('2024-10-27T00:30:00.000000Z', 'A', 2),
+                    ('2024-10-27T01:30:00.000000Z', 'B', 3),
+                    ('2024-10-27T05:00:00.000000Z', 'B', 4)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 3h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-10-26T20:00:00.000000Z\t1.0
+                            2024-10-26T23:00:00.000000Z\t5.0
+                            2024-10-27T02:00:00.000000Z\t5.0
+                            2024-10-27T05:00:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 3h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-10-26T20:00:00.000000Z\t1.0
+                            2024-10-26T23:00:00.000000Z\t5.0
+                            2024-10-27T05:00:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 2h FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-10-26T19:30:00.000000Z\t1.0
+                            2024-10-26T21:30:00.000000Z\t10.0
+                            2024-10-26T23:30:00.000000Z\t2.0
+                            2024-10-27T01:30:00.000000Z\t3.0
+                            2024-10-27T03:30:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-10-26T21:00:00.000000Z\tA\t1.0
+                            2024-10-26T21:00:00.000000Z\tB\tnull
+                            2024-10-26T23:00:00.000000Z\tA\t2.0
+                            2024-10-26T23:00:00.000000Z\tB\tnull
+                            2024-10-27T01:00:00.000000Z\tA\t2.0
+                            2024-10-27T01:00:00.000000Z\tB\t3.0
+                            2024-10-27T03:00:00.000000Z\tA\t2.0
+                            2024-10-27T03:00:00.000000Z\tB\t3.0
+                            2024-10-27T05:00:00.000000Z\tA\t2.0
+                            2024-10-27T05:00:00.000000Z\tB\t4.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM fa) SAMPLE BY 3h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-10-26T20:00:00.000000Z\tA\t1.0
+                            2024-10-26T20:00:00.000000Z\tB\tnull
+                            2024-10-26T23:00:00.000000Z\tA\t2.0
+                            2024-10-26T23:00:00.000000Z\tB\t3.0
+                            2024-10-27T02:00:00.000000Z\tA\tnull
+                            2024-10-27T02:00:00.000000Z\tB\tnull
+                            2024-10-27T05:00:00.000000Z\tA\tnull
+                            2024-10-27T05:00:00.000000Z\tB\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillDstSpringForwardOverSampleByCursor() throws Exception {
+        // A sub-query source buckets and fills on the grid of a table source: sub-day strides step
+        // uniformly in UTC from the zone's standard offset.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sp (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO sp VALUES
+                    ('2024-03-31T00:30:00.000000Z', 'A', 1),
+                    ('2024-03-31T05:00:00.000000Z', 'B', 2),
+                    ('2024-03-31T08:10:00.000000Z', 'A', 3)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T23:00:00.000000Z\t1.0
+                            2024-03-31T01:00:00.000000Z\t1.0
+                            2024-03-31T03:00:00.000000Z\t1.0
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T07:00:00.000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T23:00:00.000000Z\t1.0
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T07:00:00.000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T23:30:00.000000Z\t1.0
+                            2024-03-31T01:30:00.000000Z\tnull
+                            2024-03-31T03:30:00.000000Z\t2.0
+                            2024-03-31T05:30:00.000000Z\tnull
+                            2024-03-31T07:30:00.000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 3h FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T23:00:00.000000Z\t1.0
+                            2024-03-31T02:00:00.000000Z\t10.0
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T08:00:00.000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T23:00:00.000000Z\t1.0
+                            2024-03-31T01:00:00.000000Z\t1.3333333333333333
+                            2024-03-31T03:00:00.000000Z\t1.6666666666666667
+                            2024-03-31T05:00:00.000000Z\t2.0
+                            2024-03-31T07:00:00.000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-30T23:00:00.000000Z\tA\t1.0
+                            2024-03-30T23:00:00.000000Z\tB\tnull
+                            2024-03-31T01:00:00.000000Z\tA\t1.0
+                            2024-03-31T01:00:00.000000Z\tB\tnull
+                            2024-03-31T03:00:00.000000Z\tA\t1.0
+                            2024-03-31T03:00:00.000000Z\tB\tnull
+                            2024-03-31T05:00:00.000000Z\tA\t1.0
+                            2024-03-31T05:00:00.000000Z\tB\t2.0
+                            2024-03-31T07:00:00.000000Z\tA\t3.0
+                            2024-03-31T07:00:00.000000Z\tB\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-30T23:30:00.000000Z\tA\t1.0
+                            2024-03-30T23:30:00.000000Z\tB\tnull
+                            2024-03-31T01:30:00.000000Z\tA\tnull
+                            2024-03-31T01:30:00.000000Z\tB\tnull
+                            2024-03-31T03:30:00.000000Z\tA\tnull
+                            2024-03-31T03:30:00.000000Z\tB\t2.0
+                            2024-03-31T05:30:00.000000Z\tA\tnull
+                            2024-03-31T05:30:00.000000Z\tB\tnull
+                            2024-03-31T07:30:00.000000Z\tA\t3.0
+                            2024-03-31T07:30:00.000000Z\tB\tnull
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp) SAMPLE BY 3h FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-30T23:00:00.000000Z\tA\t1.0
+                            2024-03-30T23:00:00.000000Z\tB\t10.0
+                            2024-03-31T02:00:00.000000Z\tA\t10.0
+                            2024-03-31T02:00:00.000000Z\tB\t10.0
+                            2024-03-31T05:00:00.000000Z\tA\t10.0
+                            2024-03-31T05:00:00.000000Z\tB\t2.0
+                            2024-03-31T08:00:00.000000Z\tA\t3.0
+                            2024-03-31T08:00:00.000000Z\tB\t10.0
+                            """);
+            execute("CREATE TABLE ny (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ny VALUES
+                    ('2024-03-10T05:30:00.000000Z', 'A', 1),
+                    ('2024-03-10T09:10:00.000000Z', 'B', 2)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM ny) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-10T05:00:00.000000Z\t1.0
+                            2024-03-10T07:00:00.000000Z\t1.0
+                            2024-03-10T09:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM ny) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-10T05:00:00.000000Z\tA\t1.0
+                            2024-03-10T05:00:00.000000Z\tB\tnull
+                            2024-03-10T07:00:00.000000Z\tA\tnull
+                            2024-03-10T07:00:00.000000Z\tB\tnull
+                            2024-03-10T09:00:00.000000Z\tA\tnull
+                            2024-03-10T09:00:00.000000Z\tB\t2.0
+                            """);
+            execute("CREATE TABLE sp2 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO sp2 VALUES
+                    ('2024-03-31T05:00:00.000000Z', 'A', 3),
+                    ('2024-03-31T09:45:00.000000Z', 'B', 4)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T21:00:00.000000Z\tnull
+                            2024-03-30T23:00:00.000000Z\tnull
+                            2024-03-31T01:00:00.000000Z\tnull
+                            2024-03-31T03:00:00.000000Z\tnull
+                            2024-03-31T05:00:00.000000Z\t3.0
+                            2024-03-31T07:00:00.000000Z\tnull
+                            2024-03-31T09:00:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-30T21:00:00.000000Z\tA\tnull
+                            2024-03-30T21:00:00.000000Z\tB\tnull
+                            2024-03-30T23:00:00.000000Z\tA\tnull
+                            2024-03-30T23:00:00.000000Z\tB\tnull
+                            2024-03-31T01:00:00.000000Z\tA\tnull
+                            2024-03-31T01:00:00.000000Z\tB\tnull
+                            2024-03-31T03:00:00.000000Z\tA\tnull
+                            2024-03-31T03:00:00.000000Z\tB\tnull
+                            2024-03-31T05:00:00.000000Z\tA\t3.0
+                            2024-03-31T05:00:00.000000Z\tB\tnull
+                            2024-03-31T07:00:00.000000Z\tA\t3.0
+                            2024-03-31T07:00:00.000000Z\tB\tnull
+                            2024-03-31T09:00:00.000000Z\tA\t3.0
+                            2024-03-31T09:00:00.000000Z\tB\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 3h FROM '2024-03-30T22:00:00' TO '2024-03-31T14:00:00' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T21:00:00.000000Z\tnull
+                            2024-03-31T00:00:00.000000Z\tnull
+                            2024-03-31T03:00:00.000000Z\t3.0
+                            2024-03-31T06:00:00.000000Z\t3.0
+                            2024-03-31T09:00:00.000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillFromDayStrideTimezoneOverSampleByCursor() throws Exception {
+        // A day-or-longer stride over a SAMPLE BY cursor anchors FROM at local time, like the table route.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dd (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO dd VALUES
+                    ('2024-03-29T12:00:00.000000Z', 'A', 1),
+                    ('2024-04-02T12:00:00.000000Z', 'B', 2)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-28T23:00:00.000000Z\t1.0
+                            2024-04-01T23:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-26T23:00:00.000000Z\tnull
+                            2024-03-27T23:00:00.000000Z\tnull
+                            2024-03-28T23:00:00.000000Z\t1.0
+                            2024-03-29T23:00:00.000000Z\tnull
+                            2024-03-30T23:00:00.000000Z\tnull
+                            2024-03-31T23:00:00.000000Z\tnull
+                            2024-04-01T23:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-26T23:00:00.000000Z\tA\tnull
+                            2024-03-26T23:00:00.000000Z\tB\tnull
+                            2024-03-27T23:00:00.000000Z\tA\tnull
+                            2024-03-27T23:00:00.000000Z\tB\tnull
+                            2024-03-28T23:00:00.000000Z\tA\t1.0
+                            2024-03-28T23:00:00.000000Z\tB\tnull
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\tnull
+                            2024-03-30T23:00:00.000000Z\tA\t1.0
+                            2024-03-30T23:00:00.000000Z\tB\tnull
+                            2024-03-31T23:00:00.000000Z\tA\t1.0
+                            2024-03-31T23:00:00.000000Z\tB\tnull
+                            2024-04-01T23:00:00.000000Z\tA\t1.0
+                            2024-04-01T23:00:00.000000Z\tB\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-28T23:00:00.000000Z\t1.0
+                            2024-04-01T22:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-26T23:00:00.000000Z\tnull
+                            2024-03-27T23:00:00.000000Z\tnull
+                            2024-03-28T23:00:00.000000Z\t1.0
+                            2024-03-29T23:00:00.000000Z\t1.0
+                            2024-03-30T23:00:00.000000Z\t1.0
+                            2024-03-31T22:00:00.000000Z\t1.0
+                            2024-04-01T22:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-31T12:00:00' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-04-02T10:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd WHERE ts > '2024-04-01') TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-20' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-04-01T22:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 2d FROM '2024-03-27' TO '2024-04-04' FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-26T23:00:00.000000Z\tA\t10.0
+                            2024-03-26T23:00:00.000000Z\tB\t10.0
+                            2024-03-28T23:00:00.000000Z\tA\t1.0
+                            2024-03-28T23:00:00.000000Z\tB\t10.0
+                            2024-03-30T23:00:00.000000Z\tA\t10.0
+                            2024-03-30T23:00:00.000000Z\tB\t10.0
+                            2024-04-01T22:00:00.000000Z\tA\t10.0
+                            2024-04-01T22:00:00.000000Z\tB\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1M FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2023-12-31T23:00:00.000000Z\tnull
+                            2024-01-31T23:00:00.000000Z\tnull
+                            2024-02-29T23:00:00.000000Z\t1.0
+                            2024-03-31T22:00:00.000000Z\t2.0
+                            """);
         });
     }
 
@@ -345,6 +971,176 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertQuery(keyedSql)
                     .noLeakCheck()
                     .fails(keyedSql.indexOf("'2024-01-05'"), "TO timestamp must not be earlier than FROM timestamp");
+        });
+    }
+
+    @Test
+    public void testFillFromGreaterThanToRejectedAtRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-05T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_844_800_000_000L);
+            bindVariableService.setTimestamp(1, 1_704_412_800_000_000L);
+            final String bindSql = "SELECT ts, sum(val) FROM t SAMPLE BY 1d FROM $1 TO $2 FILL(NULL)";
+            assertQuery(bindSql)
+                    .noLeakCheck()
+                    .fails(bindSql.indexOf("$2"), "TO timestamp must not be earlier than FROM timestamp");
+            final String functionSql = "SELECT ts, sum(val) FROM t SAMPLE BY 1d FROM dateadd('d', 4, now()) TO now() FILL(PREV)";
+            assertQuery(functionSql)
+                    .noLeakCheck()
+                    .fails(functionSql.indexOf("TO now()") + 3, "TO timestamp must not be earlier than FROM timestamp");
+            assertQuery("SELECT ts, sum(val) FROM t SAMPLE BY 1d FROM $1 TO $2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tsum\n");
+        });
+    }
+
+    @Test
+    public void testFillFromWithOffsetOverSampleByCursor() throws Exception {
+        // A SAMPLE BY cursor anchors its buckets at FROM plus OFFSET, as the GROUP BY path does, and its fill grid
+        // does the same.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sp2 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO sp2 VALUES
+                    ('2024-03-31T05:00:00.000000Z', 'A', 3),
+                    ('2024-03-31T09:45:00.000000Z', 'B', 4)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' ALIGN TO CALENDAR WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-31T04:30:00.000000Z\t3.0
+                            2024-03-31T08:30:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T22:30:00.000000Z\tnull
+                            2024-03-31T00:30:00.000000Z\tnull
+                            2024-03-31T02:30:00.000000Z\tnull
+                            2024-03-31T04:30:00.000000Z\t3.0
+                            2024-03-31T06:30:00.000000Z\tnull
+                            2024-03-31T08:30:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(PREV) ALIGN TO CALENDAR WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-30T22:30:00.000000Z\tA\tnull
+                            2024-03-30T22:30:00.000000Z\tB\tnull
+                            2024-03-31T00:30:00.000000Z\tA\tnull
+                            2024-03-31T00:30:00.000000Z\tB\tnull
+                            2024-03-31T02:30:00.000000Z\tA\tnull
+                            2024-03-31T02:30:00.000000Z\tB\tnull
+                            2024-03-31T04:30:00.000000Z\tA\t3.0
+                            2024-03-31T04:30:00.000000Z\tB\tnull
+                            2024-03-31T06:30:00.000000Z\tA\t3.0
+                            2024-03-31T06:30:00.000000Z\tB\tnull
+                            2024-03-31T08:30:00.000000Z\tA\t3.0
+                            2024-03-31T08:30:00.000000Z\tB\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-31T03:30:00.000000Z\t3.0
+                            2024-03-31T09:30:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T21:30:00.000000Z\tnull
+                            2024-03-30T23:30:00.000000Z\tnull
+                            2024-03-31T01:30:00.000000Z\tnull
+                            2024-03-31T03:30:00.000000Z\t3.0
+                            2024-03-31T05:30:00.000000Z\tnull
+                            2024-03-31T07:30:00.000000Z\tnull
+                            2024-03-31T09:30:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM sp2) TIMESTAMP(ts) SAMPLE BY 2h FROM '2024-03-30T22:00:00' FILL(10) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-30T21:30:00.000000Z\t10.0
+                            2024-03-30T23:30:00.000000Z\t10.0
+                            2024-03-31T01:30:00.000000Z\t10.0
+                            2024-03-31T03:30:00.000000Z\t3.0
+                            2024-03-31T05:30:00.000000Z\t10.0
+                            2024-03-31T07:30:00.000000Z\t10.0
+                            2024-03-31T09:30:00.000000Z\t4.0
+                            """);
+            execute("CREATE TABLE dd (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO dd VALUES
+                    ('2024-03-29T12:00:00.000000Z', 'A', 1),
+                    ('2024-04-02T12:00:00.000000Z', 'B', 2)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T05:00:00.000000Z\t1.0
+                            2024-04-02T04:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-27T05:00:00.000000Z\tnull
+                            2024-03-28T05:00:00.000000Z\tnull
+                            2024-03-29T05:00:00.000000Z\t1.0
+                            2024-03-30T05:00:00.000000Z\tnull
+                            2024-03-31T04:00:00.000000Z\tnull
+                            2024-04-01T04:00:00.000000Z\tnull
+                            2024-04-02T04:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM dd) TIMESTAMP(ts) SAMPLE BY 1d FROM '2024-03-27' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-27T05:00:00.000000Z\tA\tnull
+                            2024-03-27T05:00:00.000000Z\tB\tnull
+                            2024-03-28T05:00:00.000000Z\tA\tnull
+                            2024-03-28T05:00:00.000000Z\tB\tnull
+                            2024-03-29T05:00:00.000000Z\tA\t1.0
+                            2024-03-29T05:00:00.000000Z\tB\tnull
+                            2024-03-30T05:00:00.000000Z\tA\t1.0
+                            2024-03-30T05:00:00.000000Z\tB\tnull
+                            2024-03-31T04:00:00.000000Z\tA\t1.0
+                            2024-03-31T04:00:00.000000Z\tB\tnull
+                            2024-04-01T04:00:00.000000Z\tA\t1.0
+                            2024-04-01T04:00:00.000000Z\tB\tnull
+                            2024-04-02T04:00:00.000000Z\tA\t1.0
+                            2024-04-02T04:00:00.000000Z\tB\t2.0
+                            """);
         });
     }
 
@@ -1251,6 +2047,268 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillLinearMixedArrayValueClosesConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE, arr DOUBLE[]) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1.0, ARRAY[1.0]), ('2024-01-01T02:00:00', 3.0, ARRAY[3.0])");
+            final String sql = "SELECT ts, sum(v), array_elem_sum(arr) FROM t SAMPLE BY 1h FILL(LINEAR, ARRAY[9.0]) ALIGN TO FIRST OBSERVATION";
+            for (int i = 0; i < 3; i++) {
+                select(sql).close();
+            }
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum\tarray_elem_sum
+                            2024-01-01T00:00:00.000000Z\t1.0\t[1.0]
+                            2024-01-01T01:00:00.000000Z\t2.0\t[9.0]
+                            2024-01-01T02:00:00.000000Z\t3.0\t[3.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillLinearMixedArrayValuePrevAndNullClosesConstantOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE, arr DOUBLE[]) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1.0, ARRAY[1.0]), ('2024-01-01T02:00:00', 3.0, ARRAY[3.0])");
+            final String sql = """
+                    SELECT ts, sum(v), array_elem_sum(arr) a, array_elem_sum(arr) b, array_elem_sum(arr) c
+                    FROM t SAMPLE BY 1h FILL(LINEAR, ARRAY[7.0, 8.0], PREV, NULL) ALIGN TO FIRST OBSERVATION
+                    """;
+            select(sql).close();
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum\ta\tb\tc
+                            2024-01-01T00:00:00.000000Z\t1.0\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T01:00:00.000000Z\t2.0\t[7.0,8.0]\t[1.0]\tnull
+                            2024-01-01T02:00:00.000000Z\t3.0\t[3.0]\t[3.0]\t[3.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillLinearNumericTimezoneKeyedOverSampleByCursor() throws Exception {
+        // Keyed FILL(LINEAR) over a SAMPLE BY cursor aligns its buckets as the non-keyed and table routes do.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lt (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO lt VALUES
+                    ('2024-03-30T00:30:00.000000Z', 'A', 1),
+                    ('2024-03-30T05:00:00.000000Z', 'B', 2),
+                    ('2024-03-30T09:10:00.000000Z', 'A', 5)
+                    """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM lt) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\tnull
+                            2024-03-30T01:00:00.000000Z\tA\t1.8
+                            2024-03-30T01:00:00.000000Z\tB\tnull
+                            2024-03-30T03:00:00.000000Z\tA\t2.6
+                            2024-03-30T03:00:00.000000Z\tB\tnull
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
+                            2024-03-30T05:00:00.000000Z\tA\t3.4
+                            2024-03-30T07:00:00.000000Z\tA\t4.2
+                            2024-03-30T07:00:00.000000Z\tB\tnull
+                            2024-03-30T09:00:00.000000Z\tA\t5.0
+                            2024-03-30T09:00:00.000000Z\tB\tnull
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM lt SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\tnull
+                            2024-03-30T01:00:00.000000Z\tA\t1.8
+                            2024-03-30T01:00:00.000000Z\tB\tnull
+                            2024-03-30T03:00:00.000000Z\tA\t2.6
+                            2024-03-30T03:00:00.000000Z\tB\tnull
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
+                            2024-03-30T05:00:00.000000Z\tA\t3.4
+                            2024-03-30T07:00:00.000000Z\tA\t4.2
+                            2024-03-30T07:00:00.000000Z\tB\tnull
+                            2024-03-30T09:00:00.000000Z\tA\t5.0
+                            2024-03-30T09:00:00.000000Z\tB\tnull
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM lt) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T23:00:00.000000Z\t1.0
+                            2024-03-30T01:00:00.000000Z\t1.3333333333333333
+                            2024-03-30T03:00:00.000000Z\t1.6666666666666667
+                            2024-03-30T05:00:00.000000Z\t2.0
+                            2024-03-30T07:00:00.000000Z\t3.5
+                            2024-03-30T09:00:00.000000Z\t5.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM lt) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Etc/GMT-1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\tnull
+                            2024-03-30T01:00:00.000000Z\tA\t1.8
+                            2024-03-30T01:00:00.000000Z\tB\tnull
+                            2024-03-30T03:00:00.000000Z\tA\t2.6
+                            2024-03-30T03:00:00.000000Z\tB\tnull
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
+                            2024-03-30T05:00:00.000000Z\tA\t3.4
+                            2024-03-30T07:00:00.000000Z\tA\t4.2
+                            2024-03-30T07:00:00.000000Z\tB\tnull
+                            2024-03-30T09:00:00.000000Z\tA\t5.0
+                            2024-03-30T09:00:00.000000Z\tB\tnull
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM lt) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:15'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:15:00.000000Z\tA\t1.0
+                            2024-03-29T23:15:00.000000Z\tB\tnull
+                            2024-03-30T01:15:00.000000Z\tA\t2.0
+                            2024-03-30T01:15:00.000000Z\tB\tnull
+                            2024-03-30T03:15:00.000000Z\tB\t2.0
+                            2024-03-30T03:15:00.000000Z\tA\t3.0
+                            2024-03-30T05:15:00.000000Z\tA\t4.0
+                            2024-03-30T05:15:00.000000Z\tB\tnull
+                            2024-03-30T07:15:00.000000Z\tA\t5.0
+                            2024-03-30T07:15:00.000000Z\tB\tnull
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM lt SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:15'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:15:00.000000Z\tA\t1.0
+                            2024-03-29T23:15:00.000000Z\tB\tnull
+                            2024-03-30T01:15:00.000000Z\tA\t2.0
+                            2024-03-30T01:15:00.000000Z\tB\tnull
+                            2024-03-30T03:15:00.000000Z\tB\t2.0
+                            2024-03-30T03:15:00.000000Z\tA\t3.0
+                            2024-03-30T05:15:00.000000Z\tA\t4.0
+                            2024-03-30T05:15:00.000000Z\tB\tnull
+                            2024-03-30T07:15:00.000000Z\tA\t5.0
+                            2024-03-30T07:15:00.000000Z\tB\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNumericTimezoneOverSampleByCursor() throws Exception {
+        // A numeric TIME ZONE offset survives the rewind the fill makes before reading the first row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-03-30T00:30:00.000000Z', 'A', 1),
+                    ('2024-03-30T05:00:00.000000Z', 'B', 2)
+                    """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T23:00:00.000000Z\t1.0
+                            2024-03-30T01:00:00.000000Z\tnull
+                            2024-03-30T03:00:00.000000Z\tnull
+                            2024-03-30T05:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T23:00:00.000000Z\t1.0
+                            2024-03-30T01:00:00.000000Z\t1.0
+                            2024-03-30T03:00:00.000000Z\t1.0
+                            2024-03-30T05:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(10) ALIGN TO CALENDAR TIME ZONE '+01:00' WITH OFFSET '00:15'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T23:15:00.000000Z\t1.0
+                            2024-03-30T01:15:00.000000Z\t10.0
+                            2024-03-30T03:15:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2024-03-29T23:00:00.000000Z\t1.0
+                            2024-03-30T01:00:00.000000Z\t1.3333333333333333
+                            2024-03-30T03:00:00.000000Z\t1.6666666666666667
+                            2024-03-30T05:00:00.000000Z\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\tnull
+                            2024-03-30T01:00:00.000000Z\tA\tnull
+                            2024-03-30T01:00:00.000000Z\tB\tnull
+                            2024-03-30T03:00:00.000000Z\tA\tnull
+                            2024-03-30T03:00:00.000000Z\tB\tnull
+                            2024-03-30T05:00:00.000000Z\tA\tnull
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-03:30'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:30:00.000000Z\tA\t1.0
+                            2024-03-29T23:30:00.000000Z\tB\tnull
+                            2024-03-30T01:30:00.000000Z\tA\t1.0
+                            2024-03-30T01:30:00.000000Z\tB\tnull
+                            2024-03-30T03:30:00.000000Z\tA\t1.0
+                            2024-03-30T03:30:00.000000Z\tB\t2.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(v) FROM (SELECT * FROM t) SAMPLE BY 2h FILL(10) ALIGN TO CALENDAR TIME ZONE '+01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum
+                            2024-03-29T23:00:00.000000Z\tA\t1.0
+                            2024-03-29T23:00:00.000000Z\tB\t10.0
+                            2024-03-30T01:00:00.000000Z\tA\t10.0
+                            2024-03-30T01:00:00.000000Z\tB\t10.0
+                            2024-03-30T03:00:00.000000Z\tA\t10.0
+                            2024-03-30T03:00:00.000000Z\tB\t10.0
+                            2024-03-30T05:00:00.000000Z\tA\t10.0
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillOffsetInvalidString() throws Exception {
         // Bind variable holding an unparseable offset value: SqlException at
         // cursor.of() time (runtime), pointing at the offset bind-variable
@@ -1359,6 +2417,28 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tnull\tnull
                             2024-01-01T03:00:00.000000Z\t1\t20.0
                             2024-01-01T04:00:00.000000Z\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevLong256First() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (0x8000000000000000000000000000000000000000000000000000000000000001, '2024-01-01T00:00:00.000000Z'),
+                        (0x03, '2024-01-01T02:00:00.000000Z')
+                    """);
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tts
+                            0x8000000000000000000000000000000000000000000000000000000000000001\t2024-01-01T00:00:00.000000Z
+                            0x8000000000000000000000000000000000000000000000000000000000000001\t2024-01-01T01:00:00.000000Z
+                            0x03\t2024-01-01T02:00:00.000000Z
                             """);
         });
     }
@@ -1571,9 +2651,61 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillReExecutionTimezoneBindWithFromToBinds() throws Exception {
+        // FROM/TO binds keep the SAMPLE BY cursor, which takes FROM/TO in UTC for a
+        // sub-day stride. The TIME ZONE bind converts them on every execution of the
+        // same factory; the expected rows match the query with literal values.
+        final String expectedBerlin = """
+                ts\tc\ts
+                2021-03-27T23:00:00.000000Z\t1\t1.0
+                2021-03-28T00:00:00.000000Z\t1\t2.0
+                2021-03-28T01:00:00.000000Z\t1\t2.0
+                """;
+        final String expectedNewYork = """
+                ts\tc\ts
+                2021-03-28T04:00:00.000000Z\tnull\tnull
+                2021-03-28T05:00:00.000000Z\tnull\tnull
+                2021-03-28T06:00:00.000000Z\t1\t4.0
+                2021-03-28T07:00:00.000000Z\t1\t4.0
+                """;
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("Europe/Berlin", expectedBerlin, bindVariableService -> {
+            bindVariableService.setStr(0, "Europe/Berlin");
+            bindVariableService.setStr(1, "2021-03-28");
+            bindVariableService.setStr(2, "2021-03-28T04");
+        }));
+        cases.add(BindVarTuple.ok("America/New_York", expectedNewYork, bindVariableService -> {
+            bindVariableService.setStr(0, "America/New_York");
+            bindVariableService.setStr(1, "2021-03-28");
+            bindVariableService.setStr(2, "2021-03-28T04");
+        }));
+        cases.add(BindVarTuple.ok("back to Europe/Berlin", expectedBerlin, bindVariableService -> {
+            bindVariableService.setStr(0, "Europe/Berlin");
+            bindVariableService.setStr(1, "2021-03-28");
+            bindVariableService.setStr(2, "2021-03-28T04");
+        }));
+
+        assertQuery("SELECT ts, count() c, sum(v) s FROM x SAMPLE BY 1h FROM $2 TO $3 FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1")
+                .ddl(
+                        "CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO x VALUES
+                                (1.0, '2021-03-27T23:30:00.000000Z'),
+                                (2.0, '2021-03-28T00:30:00.000000Z'),
+                                (3.0, '2021-03-28T02:30:00.000000Z'),
+                                (4.0, '2021-03-28T06:30:00.000000Z'),
+                                (5.0, '2021-03-28T09:30:00.000000Z')
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
+    }
+
+    @Test
     public void testFillRejectInvalidOffsetAtRuntime() throws Exception {
         // Bind-variable OFFSET with an unparseable runtime value on a
-        // keyed FILL(PREV) shape. The rewriteSampleBy path threads the
+        // keyed FILL(PREV) shape. The SampleByBinder.bindSampleBy path threads the
         // offset through timestamp_floor_utc as an AGB key function; the
         // function's init() validates the offset and surfaces SqlException
         // before SampleByFillCursor.of() gets to evaluate its own offset
@@ -1622,7 +2754,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testFillRejectInvalidTimezoneAtRuntime() throws Exception {
         // Bind-variable TIME ZONE with an unparseable runtime value on a
         // keyed FILL(PREV) 1d shape. As with testFillRejectInvalidOffsetAtRuntime,
-        // the rewriteSampleBy path threads the timezone through
+        // the SampleByBinder.bindSampleBy path threads the timezone through
         // timestamp_floor_utc as an AGB key function; that function's
         // init() validates the zone and throws before SampleByFillCursor.of()
         // gets to its own tz-resolution branch. Diversifies
@@ -1665,6 +2797,46 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .fails(badPos, "fill value must be a constant expression");
+        });
+    }
+
+    @Test
+    public void testFillSemanticsSameOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            final String[][] cases = {
+                    {"sum(i), avg(d)", "FILL(0)"},
+                    {"sum(i), first(str)", "FILL(NULL)"},
+                    {"sum(i), first(str)", "FILL(PREV)"},
+                    {"sum(i) a, sum(l) b", "FILL(PREV(b), PREV)"},
+                    {"sum(i) a, sum(l) b", "FILL(PREV, PREV(a))"},
+                    {"sym, sum(i) a, sum(l) b", "FILL(PREV, PREV(a)) ORDER BY ts, sym"},
+                    {"sum(i)", "FROM '2024-01-01T01:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(5)"},
+                    {"sym, sum(i)", "FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(5) ORDER BY ts, sym"},
+                    {"sum(i)", "FROM '2023-12-31T22:00:00.000000Z' TO '2024-01-01T04:00:00.000000Z' FILL(PREV)"},
+            };
+            final StringSink bucket = new StringSink();
+            for (String[] c : cases) {
+                final String sql = "SELECT ts, " + c[0] + " FROM t_fv SAMPLE BY %s " + c[1];
+                printSql(String.format(sql, "1h"), bucket);
+                printSql(String.format(sql, "(0+1)h"));
+                TestUtils.assertEquals(sql, bucket, sink);
+            }
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(1 + 1)", "+", "not enough fill values");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) a, sum(l) b FROM t_fv SAMPLE BY 1h FILL(PREV(missing), PREV)", "missing",
+                    "PREV(col): column not found in output: missing");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) a, sum(l) b FROM t_fv SAMPLE BY 1h FILL(PREV(b), 7)", "PREV(b)",
+                    "FILL(PREV) cannot reference a column that is itself filled with a constant");
+            assertQuery("SELECT ts, sum(i) a, sum(l) b FROM t_fv SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ta\tb
+                            2024-01-01T00:00:00.000000Z\t1\t1
+                            2024-01-01T01:00:00.000000Z\t1\t1
+                            2024-01-01T02:00:00.000000Z\t3\t3
+                            """);
         });
     }
 
@@ -2017,19 +3189,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: mixed
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: mixed
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(a),first(b),first(c)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [first(a),first(b),first(c)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """)
                     .returns("""
                             first\tfirst1\tfirst2\tts
@@ -2094,6 +3267,56 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueInvalidFailsAtCompileTimeOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            final String[] aggregates = {"sum(i)", "min(i)", "sum(l)", "avg(d)", "max(f)", "first(ip)", "first(dt)", "first(ch)", "first(dec)", "first(u)"};
+            final String[] fills = {"'abc'", "'2024-01-01'"};
+            for (String aggregate : aggregates) {
+                for (String fill : fills) {
+                    assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL(" + fill + ")", fill);
+                }
+            }
+            final String[] integerAggregates = {"sum(i)", "min(i)", "sum(l)", "first(ch)"};
+            for (String aggregate : integerAggregates) {
+                assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL(1.5)", "1.5");
+                assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL('1.5')", "'1.5'");
+            }
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL('')", "''");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(0, 'abc')", "'abc'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(PREV, 'abc')", "'abc'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sym, sum(i) FROM t_fv SAMPLE BY 1h FILL('abc')", "'abc'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(zz)", "zz");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(sum(i))", "sum");
+            assertFillCompileError("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-02' FILL('abc')", "'abc'");
+            assertFillCompileError("SELECT ts, sum(i) FROM t_fv SAMPLE BY (0+1)h FROM '2024-01-01' TO '2024-01-02' FILL('abc')", "'abc'");
+        });
+    }
+
+    @Test
+    public void testFillValueMessagesAreShapeIndependent() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(true)", "true",
+                    "fill value of type BOOLEAN cannot fill column of type LONG");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(str) FROM t_fv SAMPLE BY 1h FILL(0)", "0",
+                    "fill value of type INT cannot fill column of type STRING");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(rnd_int())", "rnd_int",
+                    "fill value must be a constant expression");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(now())", "now",
+                    "fill value must be a constant expression");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "5");
+            assertFillCompileErrorOnAllShapes("SELECT ts, avg(d) FROM t_fv SAMPLE BY 1h FILL($1)", "$1",
+                    "fill value must be a constant expression");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(bo) FROM t_fv SAMPLE BY 1h FILL(NULL)", "NULL",
+                    "fill value of type NULL cannot fill column of type BOOLEAN");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(ts) FROM t_fv SAMPLE BY 1h FILL(0)", "0",
+                    "Invalid fill value: '0'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
+        });
+    }
+
+    @Test
     public void testFillValueRejectedForArrayAggregate() throws Exception {
         // first(array) returns DOUBLE[]. FirstArrayGroupByFunction omits
         // SAMPLE_BY_FILL_VALUE from getSampleByFlags(), so the GroupByUtils
@@ -2102,8 +3325,7 @@ public class SampleByFillTest extends AbstractCairoTest {
         // would have produced "fill value of type INT cannot fill column of
         // type DOUBLE[]". Both messages reject the same query; the flag-based
         // one is the active rejection point on the array_agg branch because
-        // rewriteSelectClause0 now re-exposes the rewritten FILL list onto
-        // groupByModel.sampleByFill for validation.
+        // SampleByBinder validates the FILL list against each aggregate.
         assertQuery("SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)")
                 .ddl("CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(52, "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]");
@@ -2151,6 +3373,41 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueSameOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            final String[][] cases = {
+                    {"sum(i)", "-1"}, {"sum(i)", "'1'"}, {"sum(i)", "1 + 1"}, {"sum(i)", "NaN"}, {"sum(i)", "null::int"},
+                    {"avg(d)", "'1.5'"}, {"avg(d)", "-0.5"}, {"avg(d)", "length('ab')"}, {"max(f)", "'2.5'"},
+                    {"first(ip)", "'1.1.1.1'"}, {"first(ip)", "NULL"}, {"first(dt)", "0"}, {"first(dt)", "'2024-01-01'::date"},
+                    {"first(dt)", "NULL"}, {"first(ch)", "'z'"}, {"first(str)", "'q'"}, {"first(str)", "NULL"},
+                    {"first(vc)", "'q'"}, {"first(vc)", "NULL"}, {"first(sym)", "'q'"}, {"first(sym)", "NULL"},
+                    {"first(bo)", "true"}, {"first(u)", "'11111111-1111-1111-1111-111111111111'"}, {"first(u)", "NULL"},
+                    {"first(dec)", "1 + 1"}, {"first(dec)", "'1.5'"}, {"first(dec)", "1.5m"}, {"first(dec)", "NULL"},
+                    {"first(ts)", "'2024-01-01T00:00:00.000Z'"}, {"first(tn)", "'2024-01-01T00:00:00.000000001Z'"},
+                    {"sum(i), avg(d)", "NULL, '7'"}, {"sum(i), first(str)", "-1, 'q'"}
+            };
+            final StringSink bucket = new StringSink();
+            for (String[] c : cases) {
+                final String sql = "SELECT ts, " + c[0] + " FROM t_fv SAMPLE BY %s FILL(" + c[1] + ")";
+                printSql(String.format(sql, "1h"), bucket);
+                printSql(String.format(sql, "(0+1)h"));
+                TestUtils.assertEquals(sql, bucket, sink);
+            }
+            assertQuery("SELECT ts, first(tn), first(str) FROM t_fv SAMPLE BY (0+1)h FILL('2024-01-01T00:00:00.000000001Z', 'q')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tfirst\tfirst1
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000001Z\tx
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000001Z\tq
+                            2024-01-01T02:00:00.000000Z\t2024-01-03T00:00:00.000000001Z\tz
+                            """);
+        });
+    }
+
+    @Test
     public void testFillValueStringCastsToDecimalAggregate() throws Exception {
         // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
         assertMemoryLeak(() -> {
@@ -2161,8 +3418,27 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueUuidStringValidatedOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(u) FROM t_fv SAMPLE BY 1h FILL('not-a-uuid')", "'not-a-uuid'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(u) FROM t_fv SAMPLE BY 1h FILL('1.1.1.1')", "'1.1.1.1'");
+            final String expected = """
+                    ts\tfirst
+                    2024-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111
+                    2024-01-01T01:00:00.000000Z\t22222222-2222-2222-2222-222222222222
+                    2024-01-01T02:00:00.000000Z\t33333333-3333-3333-3333-333333333333
+                    """;
+            assertQuery("SELECT ts, first(u) FROM t_fv SAMPLE BY 1h FILL('22222222-2222-2222-2222-222222222222')")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().returns(expected);
+            assertQuery("SELECT ts, first(u) FROM t_fv SAMPLE BY (0+1)h FILL('22222222-2222-2222-2222-222222222222')")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().returns(expected);
+        });
+    }
+
+    @Test
     public void testFillValueWithSumMinusConstantOverFill() throws Exception {
-        // SqlOptimiser.rewriteAggregate would normally split sum(c - K) into sum(c) -
+        // AggregateRewrite would normally split sum(c - K) into sum(c) -
         // count(*) * K when K is an integer constant. Under SAMPLE BY FILL the rewrite
         // is unsafe: the per-aggregate FILL value would land on both inner aggregates
         // and the outer arithmetic would yield v - v * K instead of the user-visible
@@ -2180,19 +3456,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c-1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_minus
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c-1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_minus
                             """)
                     .returns("""
                             s\tts
@@ -2217,19 +3494,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c+1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_plus
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c+1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_plus
                             """)
                     .returns("""
                             s\tts
@@ -2256,19 +3534,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c*1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_mul
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c*1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_mul
                             """)
                     .returns("""
                             s\tts
@@ -2364,22 +3643,25 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoutingAlignToFirstObservationStaysOnLegacyPath() throws Exception {
+    public void testRoutingAlignToFirstObservationFillsAboveSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            // ALIGN TO FIRST OBSERVATION forces the legacy cursor path because
-            // the fast-path bucket grid depends on timestamp_floor_utc's
-            // calendar alignment, which is incompatible with observation-anchored
-            // buckets. The plan must show "Sample By" without the "Fill" suffix.
+            // ALIGN TO FIRST OBSERVATION keeps the Sample By cursor, because
+            // timestamp_floor_utc cannot express observation-anchored buckets;
+            // the unified fill cursor fills its gaps.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: null
-                              values: [first(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sample By
+                                      fill: none
+                                      values: [first(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -2388,8 +3670,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testRoutingFillLinearStaysOnInterpolatePath() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(LINEAR) needs forward-looking interpolation that the streaming
-            // fast path cannot provide; SqlOptimiser.hasLinearFill disables the
-            // rewrite. The plan must show "Sample By" without the "Fill" suffix.
+            // fast path cannot provide, so SampleByFactoryGenerator keeps it off
+            // that path. The plan must show "Sample By" without the "Fill" suffix.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
                     .noLeakCheck()
@@ -2405,11 +3687,10 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoutingFromBindVariableStaysOnLegacyPath() throws Exception {
+    public void testRoutingFromBindVariableKeepsSampleByCursor() throws Exception {
         assertMemoryLeak(() -> {
-            // A bind variable as the FROM lower bound disables the rewriteSampleBy
-            // gate in SqlOptimiser (sampleByFrom.type == BIND_VARIABLE). The query
-            // must execute on the legacy cursor path and produce correct rows.
+            // A bind variable as the FROM lower bound keeps the Sample By cursor
+            // (SampleByBinder.requiresSampleByCursor); the unified fill cursor fills it.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2637,4 +3918,66 @@ public class SampleByFillTest extends AbstractCairoTest {
             }
         });
     }
+
+    private static void assertFillCompileError(String sql, String fill) throws Exception {
+        assertFillCompileError(sql, fill, "invalid fill value: " + fill);
+    }
+
+    private static void assertFillCompileError(String sql, String fill, String message) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            Assert.fail("expected compile-time error: " + sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(sql, sql.lastIndexOf(fill), e.getPosition());
+            TestUtils.assertEquals(message, e.getFlyweightMessage());
+        }
+    }
+
+    private static void assertFillCompileErrorOnAllShapes(String sql, String fill) throws Exception {
+        assertFillCompileErrorOnAllShapes(sql, fill, "invalid fill value: " + fill);
+    }
+
+    private static void assertFillCompileErrorOnAllShapes(String sql, String fill, String message) throws Exception {
+        assertFillCompileError(sql, fill, message);
+        assertFillCompileError(sql.replace("SAMPLE BY 1h", "SAMPLE BY (0+1)h"), fill, message);
+        assertFillCompileError(sql + " ALIGN TO FIRST OBSERVATION", fill, message);
+    }
+
+    private static void createFillValueTable() throws SqlException {
+        execute("""
+                CREATE TABLE t_fv (i INT, l LONG, d DOUBLE, f FLOAT, ip IPv4, dt DATE, ch CHAR, bo BOOLEAN, sym SYMBOL,
+                str STRING, vc VARCHAR, u UUID, dec DECIMAL(10,2), tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY""");
+        execute("""
+                INSERT INTO t_fv VALUES
+                (1, 1, 1.0, 1.0, '1.1.1.1', '2024-01-01', 'a', true, 'a', 'x', 'x', '11111111-1111-1111-1111-111111111111', 1.25m,
+                 '2024-01-01T00:00:00.000000001Z', '2024-01-01T00:00:00.000000Z'),
+                (3, 3, 3.0, 3.0, '3.3.3.3', '2024-01-03', 'c', false, 'b', 'z', 'z', '33333333-3333-3333-3333-333333333333', 3.75m,
+                 '2024-01-03T00:00:00.000000001Z', '2024-01-01T02:00:00.000000Z')
+                """);
+    }
+
+    private void assertDroppedAggregate(String sql, String fill, String expected) throws Exception {
+        final String sampleBy = String.format(sql, fill);
+        assertQuery("SELECT ts, ls FROM (" + sampleBy + ")")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("WITH c AS (" + sampleBy + ") SELECT ts, ls FROM c")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("SELECT count() FROM (" + sampleBy + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        4
+                        """);
+    }
+
 }

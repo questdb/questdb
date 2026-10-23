@@ -221,6 +221,43 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String type = timestampType.getTypeName();
+            assertQuery("SELECT to_timezone(NULL::" + type + ", 'Europe/Berlin') a, to_timezone(NULL::" + type + ", '+01:00') b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            \t
+                            """);
+            execute("CREATE TABLE x (t " + type + ", zone STRING)");
+            execute("""
+                    INSERT INTO x VALUES
+                        (NULL, 'Europe/Berlin'),
+                        (NULL, '+01:00'),
+                        (NULL, NULL),
+                        ('2020-03-12T15:30:00.000000Z', 'Europe/Berlin'),
+                        ('2020-03-12T15:30:00.000000Z', NULL)
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Berlin");
+            bindVariableService.setStr(1, "+01:00");
+            assertQuery("SELECT to_timezone(t, 'Europe/Berlin') a, to_timezone(t, '+01:00') b, to_timezone(t, $1) c, to_timezone(t, $2) d, to_timezone(t, zone) e FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
+                            a\tb\tc\td\te
+                            \t\t\t\t
+                            \t\t\t\t
+                            \t\t\t\t
+                            2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z
+                            2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z\t2020-03-12T16:30:00.000000Z\t2020-03-12T15:30:00.000000Z
+                            """, type));
+        });
+    }
+
+    @Test
     public void testTimeOffset() throws Exception {
         assertMemoryLeak(() -> assertToTimezone(
                 """

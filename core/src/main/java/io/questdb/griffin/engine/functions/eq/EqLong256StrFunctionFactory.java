@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -42,10 +43,16 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final FiberLocal<Long256ConstDecoder> DECODER = new FiberLocal<>(Long256ConstDecoder::new);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -54,6 +61,12 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
 
     @Override
     public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        constantValue(args.getQuick(1), argPositions.getQuick(1));
         return true;
     }
 
@@ -68,16 +81,31 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         Function long256Func = args.getQuick(0);
         int strFuncPosition = argPositions.getQuick(1);
         Function strFunc = args.getQuick(1);
+        final Long256ConstDecoder decoder = constantValue(strFunc, strFuncPosition);
         if (strFunc.isConstant()) {
-            CharSequence value = strFunc.getStrA(null);
+            return decoder == null
+                    ? new ConstStrFunc(long256Func)
+                    : new ConstStrFunc(long256Func, decoder.long0, decoder.long1, decoder.long2, decoder.long3);
+        }
+        return new RuntimeConstStrFunc(long256Func, strFunc);
+    }
+
+    /**
+     * The value a constant text operand spells, in this fiber's decoder; null for NULL text and for a bind variable.
+     * Raises the errors for text that is no LONG256 and for an operand that is neither.
+     */
+    private static @Nullable Long256ConstDecoder constantValue(Function strFunc, int strFuncPosition) throws SqlException {
+        if (strFunc.isConstant()) {
+            final CharSequence value = strFunc.getStrA(null);
             if (value == null) {
-                return new ConstStrFunc(long256Func);
+                return null;
             }
-            Long256ConstDecoder decoder = DECODER.get();
+            final Long256ConstDecoder decoder = DECODER.get();
             decoder.decode(value);
-            return new ConstStrFunc(long256Func, decoder.long0, decoder.long1, decoder.long2, decoder.long3);
-        } else if (strFunc.isRuntimeConstant()) {
-            return new RuntimeConstStrFunc(long256Func, strFunc);
+            return decoder;
+        }
+        if (strFunc.isRuntimeConstant()) {
+            return null;
         }
         throw SqlException.$(strFuncPosition, "STRING constant expected");
     }

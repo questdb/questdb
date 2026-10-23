@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -37,6 +38,11 @@ public class WaitWalTableSeqTxnFunctionFactory implements FunctionFactory {
     @Override
     public int getExecutionRequirements() {
         return SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

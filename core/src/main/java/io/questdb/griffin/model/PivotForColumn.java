@@ -33,7 +33,6 @@ public final class PivotForColumn implements Mutable {
     private final ObjList<CharSequence> valueAliases = new ObjList<>();
     private final ObjList<ExpressionNode> valueList = new ObjList<>();
     private ExpressionNode inExpr;
-    private CharSequence inExprAlias;
     private boolean isValueList = true;
     private ExpressionNode selectSubqueryExpr;
 
@@ -49,15 +48,10 @@ public final class PivotForColumn implements Mutable {
         inExpr = null;
         selectSubqueryExpr = null;
         isValueList = true;
-        inExprAlias = null;
     }
 
     public ExpressionNode getInExpr() {
         return inExpr;
-    }
-
-    public CharSequence getInExprAlias() {
-        return inExprAlias;
     }
 
     public ExpressionNode getSelectSubqueryExpr() {
@@ -80,10 +74,6 @@ public final class PivotForColumn implements Mutable {
         this.inExpr = inExpr;
         this.isValueList = isValueList;
         return this;
-    }
-
-    public void setInExprAlias(CharSequence inExprAlias) {
-        this.inExprAlias = inExprAlias;
     }
 
     public void setIsValueList(boolean isValueList) {

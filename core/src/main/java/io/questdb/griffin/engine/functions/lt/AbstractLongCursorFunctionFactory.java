@@ -65,8 +65,7 @@ public abstract class AbstractLongCursorFunctionFactory implements FunctionFacto
         // sentinel-null comparison convention on whichever typed path the cursor selects
         final int arg0Tag = ColumnType.tagOf(arg0.getType());
         if (arg0Tag != ColumnType.LONG && arg0Tag != ColumnType.NULL) {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a LONG, found: ")
-                    .put(ColumnType.nameOf(arg0.getType()));
+            throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), arg0.getType());
         }
         final int cursorTag = ColumnType.tagOf(metadata.getColumnType(0));
         return switch (cursorTag) {

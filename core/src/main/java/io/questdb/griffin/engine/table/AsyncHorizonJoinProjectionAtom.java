@@ -163,6 +163,9 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         for (int s = 0; s < count; s++) {
             failure = slaveStates.getQuick(s).cursorClosed(failure);
         }
+        failure = Function.cursorClosed(failure, ownerFilter);
+        failure = Function.cursorClosed(failure, perWorkerFilters);
+        failure = Function.cursorClosed(failure, bindVarFunctions);
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
     }

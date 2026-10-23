@@ -41,7 +41,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Decimal128;
@@ -90,7 +90,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             boolean isOrdered,
             int scanDirection,
             int orderByDirection,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUnit,
@@ -317,7 +316,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the
     // tombstone value-layout slot that drives anchor-driven compaction)
-    // and lets WhereClauseParser suppress indexed-symbol key
+    // and lets the planner suppress indexed-symbol key
     // extraction so the planner falls back to a plain FilteredRecordCursorFactory
     // shape that the incremental refresh path can handle.
     default boolean isLiveViewCompile() {
@@ -328,6 +327,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // a catalogue function written in that SQL needs no SYSTEM ADMIN here, see
     // SqlExecutionRequirements.DISCLOSES_OBJECTS.
     default boolean isLiveViewRefresh() {
+        return false;
+    }
+
+    // Returns true while CREATE MATERIALIZED VIEW binds its SELECT. FunctionResolver then defers the checks of the
+    // functions the view may not store, which the compiler decides once binding finished, see
+    // SqlExecutionRequirements.checkDeferred().
+    default boolean isMatViewCompile() {
         return false;
     }
 
@@ -459,10 +465,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return 0;
     }
 
-    // This method is used to override intrinsic values in the query execution context
-    // Its initial usage is in the materialized view refresh
-    // where the queried timestamp of the base table is limited to the range affected since last refresh
-    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
+    /**
+     * Overrides the extracted designated-timestamp intervals of a scan. Materialized view refresh
+     * uses it to limit the base table scan to the range affected since the last refresh.
+     */
+    default void overrideWhereIntervals(TableToken tableToken, RuntimeIntervalModelBuilder intervals, int timestampType) {
     }
 
     RuntimeIntrinsicIntervalModel peekIntervalModel();
@@ -534,6 +541,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setJitMode(int jitMode);
 
     default void setLiveViewCompile(boolean value) {
+    }
+
+    default void setMatViewCompile(boolean value) {
     }
 
     /**

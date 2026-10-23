@@ -163,6 +163,33 @@ public class TableColumnMetadata implements Plannable {
         this.originalWriterIndex = originalWriterIndex >= 0 ? originalWriterIndex : writerIndex;
     }
 
+    /**
+     * A copy of column {@code index} of {@code metadata} named {@code name}, which a metadata owner that changes its
+     * columns in place cannot change.
+     */
+    public static TableColumnMetadata copyOf(RecordMetadata metadata, int index, String name) {
+        final TableColumnMetadata source = metadata.getColumnMetadata(index);
+        final TableColumnMetadata copy = new TableColumnMetadata(
+                name,
+                metadata.getColumnType(index),
+                metadata.getColumnIndexType(index),
+                metadata.getIndexValueBlockCapacity(index),
+                metadata.isSymbolTableStatic(index),
+                metadata.getMetadata(index),
+                source.getWriterIndex(),
+                source.isDedupKeyFlag(),
+                source.getReplacingIndex(),
+                source.isSymbolCacheFlag(),
+                source.getSymbolCapacity(),
+                source.getOriginalWriterIndex()
+        );
+        copy.setParquetEncodingConfig(source.getParquetEncodingConfig());
+        if (source.getCoveringColumnIndices() != null) {
+            copy.setCoveringColumnIndices(new IntList(source.getCoveringColumnIndices()));
+        }
+        return copy;
+    }
+
     public String getColumnName() {
         return columnName;
     }

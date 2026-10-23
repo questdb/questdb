@@ -42,6 +42,28 @@ import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class InsertAsSelectTest extends AbstractCairoTest {
     @Test
+    public void testInsertAsSelectLateralOverTableFunctionWithSubqueryArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = """
+                    SELECT s.generate_series g, l.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END, 1) s
+                    CROSS JOIN LATERAL (SELECT count(*) AS c FROM long_sequence(3) WHERE x < s.generate_series) l
+                    """;
+            final String expected = """
+                    g\tc
+                    1\t0
+                    2\t1
+                    3\t2
+                    """;
+            execute("CREATE TABLE dst (g LONG, c LONG)");
+            execute("INSERT INTO dst " + query);
+            assertQuery("dst").noLeakCheck().expectSize().returns(expected);
+            execute("CREATE TABLE ctas AS (" + query + ")");
+            assertQuery("ctas").noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
     public void testInsertAsSelectStrToDecimal() throws Exception {
         try {
             ColumnType.makeUtf16DefaultString();

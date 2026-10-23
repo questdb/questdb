@@ -186,6 +186,36 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
+    public void testNegativeOffsetOneHourWalk() throws Exception {
+        // OFFSET '-01:00' starts each month at 23:00 on the last day of the previous month.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setOffset(-timestampDriver.fromHours(1));
+        final String[] buckets = {
+                "2020-12-31T23:00:00.000000Z",
+                "2021-01-31T23:00:00.000000Z",
+                "2021-02-28T23:00:00.000000Z",
+                "2021-03-31T23:00:00.000000Z",
+        };
+        for (int i = 0; i < buckets.length; i++) {
+            final long bucket = timestampDriver.parseFloorLiteral(buckets[i]);
+            Assert.assertEquals(buckets[i], bucket, sampler.round(bucket));
+            Assert.assertEquals(buckets[i], bucket, sampler.round(bucket + timestampDriver.fromHours(2)));
+            if (i > 0) {
+                Assert.assertEquals(buckets[i], timestampDriver.parseFloorLiteral(buckets[i - 1]), sampler.round(bucket - 1));
+                Assert.assertEquals(buckets[i], timestampDriver.parseFloorLiteral(buckets[i - 1]), sampler.previousTimestamp(bucket));
+            }
+            if (i < buckets.length - 1) {
+                Assert.assertEquals(buckets[i], timestampDriver.parseFloorLiteral(buckets[i + 1]), sampler.nextTimestamp(bucket));
+            }
+        }
+        Assert.assertEquals(
+                timestampDriver.parseFloorLiteral(buckets[3]),
+                sampler.nextTimestamp(timestampDriver.parseFloorLiteral(buckets[0]), 3)
+        );
+    }
+
+    @Test
     public void testNextTimestampWithStep() throws Exception {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
@@ -249,7 +279,7 @@ public class MonthTimestampSamplerTest {
                 "2014-02-01T00:00:00.000000Z",
                 "2022-02-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
-                "2024-11-01T00:00:00.000000Z",
+                "2024-03-01T00:00:00.000000Z",
         };
         final int[] strides = new int[]{
                 1,

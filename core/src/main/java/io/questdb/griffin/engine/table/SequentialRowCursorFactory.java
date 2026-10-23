@@ -42,9 +42,9 @@ import io.questdb.std.ObjList;
  * until all cursors are exhausted.
  */
 public class SequentialRowCursorFactory implements RowCursorFactory {
+    protected final int[] cursorFactoriesIdx;
     private final SequentialRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
-    private final int[] cursorFactoriesIdx;
     private final ObjList<RowCursor> cursors;
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
@@ -61,9 +61,31 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        return getCursor(pageFrame, pageFrameMemory, 0, cursorFactoriesIdx[0]);
+    }
+
+    /**
+     * The cursor over the rows in the page frame of the cursors at {@code cursorLo}, inclusive, to {@code cursorHi},
+     * exclusive, one cursor after another.
+     */
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int cursorLo, int cursorHi) {
         Misc.freeObjListAndClear(cursors);
-        for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+        for (int i = cursorLo; i < cursorHi; i++) {
+            cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+        }
+        cursor.init();
+        return cursor;
+    }
+
+    /**
+     * The cursor over the rows in the page frame of {@code firstCursor}, then of the cursors at {@code cursorLo + 1},
+     * inclusive, to {@code cursorHi}, exclusive, one cursor after another.
+     */
+    protected RowCursor getCursor(RowCursor firstCursor, PageFrame pageFrame, PageFrameMemory pageFrameMemory, int cursorLo, int cursorHi) {
+        Misc.freeObjListAndClear(cursors);
+        cursors.add(firstCursor);
+        for (int i = cursorLo + 1; i < cursorHi; i++) {
+            cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
         cursor.init();
         return cursor;
@@ -117,7 +139,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
                 return true;
             }
 
-            while (cursorIndex < cursorFactoriesIdx[0] - 1) {
+            while (cursorIndex < cursors.size() - 1) {
                 currentCursor = cursors.getQuick(++cursorIndex);
                 if (currentCursor.hasNext()) {
                     return true;
@@ -134,9 +156,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
         private void init() {
             cursorIndex = 0;
-            if (cursorIndex < cursorFactoriesIdx[0]) {
-                currentCursor = cursors.getQuick(cursorIndex);
-            }
+            currentCursor = cursors.size() > 0 ? cursors.getQuick(0) : null;
         }
     }
 }

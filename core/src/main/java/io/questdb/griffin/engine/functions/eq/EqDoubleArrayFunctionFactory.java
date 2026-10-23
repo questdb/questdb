@@ -39,6 +39,11 @@ import io.questdb.std.Transient;
 public class EqDoubleArrayFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "=(D[]D[])";
     }

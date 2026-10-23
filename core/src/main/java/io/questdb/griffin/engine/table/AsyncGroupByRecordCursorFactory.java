@@ -49,7 +49,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -60,7 +59,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -99,12 +97,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             int workerCount,
             @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
@@ -113,6 +106,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.base = base;
             this.recordFunctions = recordFunctions;
             this.sharedRecordFunctions = sharedRecordFunctions;
+            final boolean hasFilter = filterResources.getFilter() != null;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
@@ -124,12 +118,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerGroupByFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    filterResources,
                     workerCount
             );
             this.frameSequence = new UnorderedPageFrameSequence<>(
@@ -137,13 +126,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                    hasFilter ? FILTER_AND_AGGREGATE : AGGREGATE,
                     workerCount
             );
             this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             Misc.free(this, th);
+            Misc.free(filterResources, th);
             throw th;
         }
     }
@@ -161,17 +151,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        frameSequence.of(base, executionContext, order);
-        try {
-            cursor.of(frameSequence, executionContext);
+        if (cursor.isOpenedByShared()) {
+            cursor.setOpenedByShared(false);
             return cursor;
-        } catch (Throwable th) {
-            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
-            // so the cached factory stays reusable.
-            cursor.close();
-            throw th;
         }
+        return openCursor(executionContext);
     }
 
     @Override
@@ -180,17 +164,36 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
         int idx = sharedId - 1;
         AsyncGroupBySharedCursor shared = sharedCursors.getQuiet(idx);
+        assert sharedRecordFunctions != null;
+        assert idx < sharedRecordFunctions.size();
+        final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
         if (shared == null) {
-            assert sharedRecordFunctions != null;
-            assert idx < sharedRecordFunctions.size();
-            shared = new AsyncGroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
+            shared = new AsyncGroupBySharedCursor(sharedFunctions);
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // A shared consumer on the build side of a hash join opens before the primary cursor and reads its
+        // symbol tables as it opens; getCursor then hands over the open primary.
+        final boolean isPrimaryOpened = !cursor.isOpen();
+        if (isPrimaryOpened) {
+            openCursor(executionContext);
+            cursor.setOpenedByShared(true);
+        }
+        try {
+            for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+                recordFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+            }
+            Function.init(sharedFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+        } catch (Throwable th) {
+            if (isPrimaryOpened) {
+                cursor.close();
+            }
+            throw th;
         }
         shared.of(cursor);
         return shared;
@@ -611,5 +614,19 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    private RecordCursor openCursor(SqlExecutionContext executionContext) throws SqlException {
+        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        frameSequence.of(base, executionContext, order);
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 }

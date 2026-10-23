@@ -820,12 +820,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 }
                 errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
-                String msg = th.getMessage();
-                if (msg != null) {
-                    getErrorMessageSink().put(msg);
-                } else {
-                    getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
-                }
+                getErrorMessageSink().put(Misc.getMessageOrClassName(th));
             }
             if (th instanceof AssertionError) {
                 // assertion errors means either a questdb bug or data corruption ->
@@ -2552,12 +2547,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     errorMsgSink.put(message);
                 }
             } else {
-                String msg = th.getMessage();
-                if (msg != null) {
-                    getErrorMessageSink().put(msg);
-                } else {
-                    getErrorMessageSink().putAscii("no message provided (internal error)");
-                }
+                getErrorMessageSink().put(Misc.getMessageOrClassName(th));
                 if (th instanceof AssertionError || th instanceof NullPointerException) {
                     // an assertion error or an NPE mean either a questdb bug or data corruption ->
                     // we want to see a full stack trace in server logs and log it as critical

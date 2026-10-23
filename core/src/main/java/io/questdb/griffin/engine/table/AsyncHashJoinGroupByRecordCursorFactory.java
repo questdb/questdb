@@ -51,7 +51,7 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -80,7 +80,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private final boolean isInputSwapped;
     private final boolean isOuter;
     private final RecordMetadata joinedMetadata;
-    private final int logicalJoinType;
+    private final JoinKind logicalJoinType;
     private final int workerCount;
     private RecordCursorFactory buildFactory;
     private AsyncFilterContext buildFilterContext;
@@ -107,7 +107,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             int workerCount
     ) {
         this(engine, probeFactory, buildFactory, buildFilterContext, buildOnFilter, null, metadata, functions, filterContext,
-                isOuter, workerCount, isOuter ? IQueryModel.JOIN_LEFT_OUTER : IQueryModel.JOIN_INNER, false);
+                isOuter, workerCount, isOuter ? JoinKind.LEFT_OUTER : JoinKind.INNER, false);
     }
 
     public AsyncHashJoinGroupByRecordCursorFactory(
@@ -122,7 +122,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             AsyncFilterContext filterContext,
             boolean isOuter,
             int workerCount,
-            int logicalJoinType,
+            JoinKind logicalJoinType,
             boolean isInputSwapped
     ) {
         super(functions.getOutputMetadata());
@@ -216,8 +216,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             sink.type("Async Hash Join Group By");
         }
         sink.meta("workers").val(workerCount);
-        sink.attr("logicalJoinType").val(logicalJoinType == IQueryModel.JOIN_RIGHT_OUTER ? "right outer"
-                : logicalJoinType == IQueryModel.JOIN_LEFT_OUTER ? "left outer" : "inner");
+        sink.attr("logicalJoinType").val(logicalJoinType == JoinKind.RIGHT_OUTER ? "right outer"
+                : logicalJoinType == JoinKind.LEFT_OUTER ? "left outer" : "inner");
         sink.attr("physicalJoinType").val(isOuter ? "left outer" : "inner");
         sink.attr("inputSwapped").val(isInputSwapped);
         sink.attr("condition").val(condition);

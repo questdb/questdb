@@ -39,8 +39,18 @@ public class ToNanoTimestampVCFunctionFactory implements FunctionFactory {
     private static final String NAME = "to_timestamp_ns";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return "to_timestamp_ns(Ss)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        return ToTimestampVCFunctionFactory.isDeferrable(args, argPositions, ColumnType.TIMESTAMP_NANO);
     }
 
     @Override
@@ -52,10 +62,7 @@ public class ToNanoTimestampVCFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStrA(null);
-        if (pattern == null) {
-            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
-        }
+        final CharSequence pattern = ToTimestampVCFunctionFactory.pattern(args.getQuick(1), argPositions);
         if (arg.isConstant()) {
             return evaluateConstant(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_NANO);
         } else {
