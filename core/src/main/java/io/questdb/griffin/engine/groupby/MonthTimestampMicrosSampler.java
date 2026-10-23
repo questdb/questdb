@@ -33,7 +33,11 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.datetime.microtime.Micros.toMicros;
 
 public class MonthTimestampMicrosSampler implements TimestampSampler {
+    // the calendar grid counts its months from January 1970, as Micros.floorMM() does
+    private static final long EPOCH_MONTH_INDEX = Micros.EPOCH_YEAR_0 * 12L;
     private final int stepMonths;
+    // The month of a bucket start, as 12 * year + month - 1. The buckets start every stepMonths months from it.
+    private long anchorMonthIndex = EPOCH_MONTH_INDEX;
     // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
     // long before the start of its calendar month, on the last day of the previous month.
     private long dayMod;
@@ -74,21 +78,27 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        // a negative offset moves each bucket start into the previous month, so the bucket of a value
-        // follows the calendar month of the value shifted by the offset
-        final long shifted = value - Math.min(dayMod, 0);
-        int y = Micros.getYear(shifted);
-        final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Micros.getMonthOfYear(shifted, y, leap);
-        // target month
-        int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
-        int d = startDay > 0 ? startDay : 1;
-        return toMicros(y, leap, nextMonth, d) + dayMod;
+        // Returns the last bucket start at or before the value. The bucket that starts in the calendar month of the
+        // value, counted from the anchor month in whole strides, can start after the value, when the value comes
+        // earlier in its month than the day and time of the grid. A negative offset moves each bucket start into
+        // the month before, so the next bucket can start in the calendar month of the value as well. The offset
+        // is far shorter than a month, so one step either way finds the bucket.
+        final int y = Micros.getYear(value);
+        final long monthIndex = 12L * y + Micros.getMonthOfYear(value, y, CommonUtils.isLeapYear(y)) - 1;
+        final long bucketMonthIndex = anchorMonthIndex + Math.floorDiv(monthIndex - anchorMonthIndex, stepMonths) * stepMonths;
+        final long bucketStart = bucketStart(bucketMonthIndex);
+        if (bucketStart > value) {
+            return bucketStart(bucketMonthIndex - stepMonths);
+        }
+        final long nextBucketStart = bucketStart(bucketMonthIndex + stepMonths);
+        // the comparison with bucketStart guards against an overflow at the end of the timestamp range
+        return nextBucketStart > bucketStart && nextBucketStart <= value ? nextBucketStart : bucketStart;
     }
 
     @Override
     public void setOffset(long timestamp) {
         // the offset applies to the calendar grid, which starts on the first day of the month
+        this.anchorMonthIndex = EPOCH_MONTH_INDEX;
         this.startDay = 0;
         this.dayMod = timestamp;
     }
@@ -97,7 +107,9 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     public void setStart(long timestamp) {
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
-        this.startDay = Micros.getDayOfMonth(timestamp, y, Micros.getMonthOfYear(timestamp, y, leap), leap);
+        final int m = Micros.getMonthOfYear(timestamp, y, leap);
+        this.anchorMonthIndex = 12L * y + m - 1;
+        this.startDay = Micros.getDayOfMonth(timestamp, y, m, leap);
         long dayMod = timestamp % Micros.DAY_MICROS;
         if (dayMod < 0) {
             dayMod += Micros.DAY_MICROS;
@@ -143,5 +155,13 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
             }
         }
         return Micros.toMicros(_y, _m, _d) + dayMod;
+    }
+
+    // Returns the start of the bucket in the given month, as 12 * year + month - 1. A start day past the end of the
+    // month moves to its last day, as in addMonth().
+    private long bucketStart(long monthIndex) {
+        final int y = (int) Math.floorDiv(monthIndex, 12);
+        final int m = (int) Math.floorMod(monthIndex, 12) + 1;
+        return toMicros(y, CommonUtils.isLeapYear(y), m, startDay > 0 ? startDay : 1) + dayMod;
     }
 }

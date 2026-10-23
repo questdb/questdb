@@ -367,9 +367,20 @@ public final class Micros {
         if (micros < offset) {
             return offset;
         }
-        final long monthsDiff = getMonthsBetween(micros, offset);
-        final long monthsToAdd = monthsDiff - (monthsDiff % stride);
-        return addMonths(offset, (int) monthsToAdd);
+        // Counts the calendar months from the offset to the value. The bucket that starts in the month of the
+        // value, or in the last month of the stride before it, starts after the value when the value comes earlier
+        // in its month, and the value then belongs to the bucket before. The check compares with the bucket start,
+        // which addMonths() moves to the last day of a month shorter than the day of the offset. getMonthsBetween()
+        // compared the positions within the month without that move, and put 2024-04-30T23:45 into the bucket
+        // before the one that starts at 2024-04-30T23:00 for the offset 1969-12-31T23:00 (GitHub issue #7798).
+        final int offsetYear = getYear(offset);
+        final int year = getYear(micros);
+        final long months = 12L * (year - offsetYear)
+                + getMonthOfYear(micros, year, CommonUtils.isLeapYear(year))
+                - getMonthOfYear(offset, offsetYear, CommonUtils.isLeapYear(offsetYear));
+        final long monthsToAdd = months - (months % stride);
+        final long bucketStart = addMonths(offset, (int) monthsToAdd);
+        return bucketStart <= micros ? bucketStart : addMonths(offset, (int) (monthsToAdd - stride));
     }
 
     public static long floorMM(long micros, int stride) {
@@ -530,9 +541,13 @@ public final class Micros {
         if (micros < offset) {
             return offset;
         }
-        final long yearsDiff = getYearsBetween(micros, offset);
-        final long yearsToAdd = yearsDiff - (yearsDiff % stride);
-        return addYears(offset, (int) yearsToAdd);
+        // Counts the calendar years, as floorMM() counts the months. addYears() moves an offset on Feb 29 to Feb 28
+        // in a year that is not a leap year, and getYearsBetween() put a value on Feb 28 after the moved bucket start
+        // into the bucket before.
+        final int years = getYear(micros) - getYear(offset);
+        final int yearsToAdd = years - (years % stride);
+        final long bucketStart = addYears(offset, yearsToAdd);
+        return bucketStart <= micros ? bucketStart : addYears(offset, yearsToAdd - stride);
     }
 
     public static int getCentury(long micros) {

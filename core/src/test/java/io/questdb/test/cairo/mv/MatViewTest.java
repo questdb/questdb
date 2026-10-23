@@ -3957,6 +3957,126 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithPositiveOffset() throws Exception {
+        // GitHub issue #7769. A positive offset moves each bucket start after the start of its month or year. The
+        // refresh interval iterator rounded the lower bound of the new rows up to the bucket start in their month,
+        // past a row that comes before it, and the incremental refresh left that row out of the view. Such a
+        // refresh also found no interval to query, leaked the view's query factory and left the view 'refreshing'
+        // (GitHub issue #7772). Each insert below lands right before a bucket start of one of the views.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            final String[] strides = {"1M", "3M", "1y"};
+            for (String stride : strides) {
+                execute(
+                        "create materialized view price_" + stride + " as (" +
+                                "select ts, count() c, sum(price) s from base_price sample by " + stride +
+                                " align to calendar with offset '10:00'" +
+                                ") partition by year"
+                );
+            }
+            execute("insert into base_price(price, ts) values (1.0, '2024-01-15T08:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (8.0, '2025-01-01T06:00')");
+            drainQueues();
+
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t2\t3.0
+                            2024-03-01T10:00:00.000000Z\t1\t4.0
+                            2024-12-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t3\t7.0
+                            2024-10-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t4\t15.0
+                            """
+            };
+            for (int i = 0; i < strides.length; i++) {
+                assertQuery("price_" + strides[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view holds what its query returns over the base table
+                assertQuery("select ts, count() c, sum(price) s from base_price sample by " + strides[i] + " align to calendar with offset '10:00'")
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t4\t4
+                            price_1y\tvalid\t4\t4
+                            price_3M\tvalid\t4\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthStrideWithNegativeOffset() throws Exception {
+        // GitHub issue #7798. With a negative offset, the view's query put a row at the end of a month shorter than 31
+        // days, after the bucket start on its last day, into the bucket before. The incremental refresh queries only
+        // the buckets of the new rows, so the row came out of the query outside of them, and the refresh failed with
+        // "timestamp out of replace range" and invalidated the view.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1M as (" +
+                            "select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'" +
+                            ") partition by year"
+            );
+            execute("insert into base_price(price, ts) values (1.0, '2024-03-10T12:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-04-30T23:45')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-30T22:00')");
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tc\ts
+                    2024-02-29T23:00:00.000000Z\t1\t1.0
+                    2024-03-31T23:00:00.000000Z\t1\t4.0
+                    2024-04-30T23:00:00.000000Z\t1\t2.0
+                    """);
+            assertQuery("price_1M")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'")
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -4010,6 +4130,59 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     jpyusd\t103.21\t2024-09-10T14:00:00.000000Z
                                     """));
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
+        // GitHub issue #7772. The period cuts off the txn interval of the row in the incomplete period, and the
+        // refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
+        // interval although the refresh range is not empty. The refresh took the view's query factory, leaked it,
+        // and never advanced the watermark, so the view stayed 'refreshing'.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("alter materialized view price_1h set refresh limit 2h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // a row older than the refresh limit and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
         });
     }
 
