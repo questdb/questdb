@@ -488,6 +488,26 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * An index added to a column of an already-converted parquet partition gets no column name txn in
+     * {@code _cv}, so its files carry no txn suffix. The sweep must still recognise them as the live version
+     * and carry them into the rewritten partition.
+     */
+    @Test
+    public void testIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversionBitmap() throws Exception {
+        assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion("ALTER TABLE ni ALTER COLUMN s ADD INDEX", "s.k", false);
+    }
+
+    @Test
+    public void testIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversionPosting() throws Exception {
+        assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion("ALTER TABLE ni ALTER COLUMN s ADD INDEX TYPE POSTING", "s.pk", false);
+    }
+
+    @Test
+    public void testIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversionPostingCovering() throws Exception {
+        assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion("ALTER TABLE ni ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (a)", "s.pci", true);
+    }
+
+    /**
      * The counterpart of the skip test: once the idle timeout has passed since the last write, the same
      * partition IS a candidate and one sweep reclaims its dead bytes. The job's clock is moved two hours
      * ahead of the file's modification time rather than waiting. The writer is idle, so the job applies
@@ -1131,6 +1151,62 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    private void assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion(
+            String addIndexSql,
+            String expectedKeyFile,
+            boolean isCovering
+    ) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("ni", true, "");
+            execute(addIndexSql);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final TableToken tableToken = engine.verifyTableName("ni");
+            Assert.assertEquals(
+                    "the added index got a column name txn",
+                    TableUtils.COLUMN_NAME_TXN_NONE,
+                    parquetPartitionColumnNameTxn(tableToken, "s")
+            );
+            assertUnusedBytesPositive(tableToken);
+            final String indexFilesBefore = liveIndexFileNames(tableToken, "s");
+            Assert.assertTrue(
+                    "no " + expectedKeyFile + " in " + indexFilesBefore,
+                    Arrays.asList(indexFilesBefore.split(",")).contains(expectedKeyFile)
+            );
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals(
+                    "the sweep did not carry the live unsuffixed index files",
+                    indexFilesBefore,
+                    liveIndexFileNames(tableToken, "s")
+            );
+
+            assertQuery("SELECT a, s, ts FROM ni WHERE s = 'k2'")
+                    .noLeakCheck()
+                    .expectSize(isCovering)
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    2\tk2\t2020-01-01T01:00:00.000000Z
+                                    102\tk2\t2020-01-01T02:30:00.000000Z
+                                    4\tk2\t2020-01-01T03:00:00.000000Z
+                                    6\tk2\t2020-01-01T05:00:00.000000Z
+                                    8\tk2\t2020-01-01T07:00:00.000000Z
+                                    10\tk2\t2020-01-01T09:00:00.000000Z
+                                    12\tk2\t2020-01-01T11:00:00.000000Z
+                                    """
+                    );
+        });
+    }
+
     /**
      * The index build stages covered values in scratch column files and seals over a pre-seal generation; neither
      * belongs in the published partition.
@@ -1314,6 +1390,25 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             }
         }
         return -1;
+    }
+
+    /**
+     * The sorted, comma-separated names of {@code columnName}'s index files in the live parquet partition.
+     */
+    private String liveIndexFileNames(TableToken tableToken, String columnName) {
+        final String[] files = new File(liveParquetPartitionDir(tableToken)).list();
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        final StringBuilder names = new StringBuilder();
+        for (String file : files) {
+            if (file.startsWith(columnName + ".")) {
+                if (!names.isEmpty()) {
+                    names.append(',');
+                }
+                names.append(file);
+            }
+        }
+        return names.toString();
     }
 
     private String liveParquetPartitionDir(TableToken tableToken) {
