@@ -162,6 +162,9 @@ public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends Abstract
     }
 
     private void runDifferential(Rnd rnd) throws Exception {
+        // The single-transaction straddle split is a native-path O3 shortcut; a merge-append
+        // table writes the straddle through the composite executor instead.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 134_217_728);
         setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 134_217_728);

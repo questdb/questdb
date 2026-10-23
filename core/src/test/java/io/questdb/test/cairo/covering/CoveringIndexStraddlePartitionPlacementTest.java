@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -51,6 +52,9 @@ public class CoveringIndexStraddlePartitionPlacementTest extends AbstractCairoTe
 
     @Test
     public void testStraddleDoesNotMisplaceRows() throws Exception {
+        // The single-transaction straddle split is a native-path O3 shortcut; a merge-append
+        // table writes the straddle through the composite executor instead.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
 

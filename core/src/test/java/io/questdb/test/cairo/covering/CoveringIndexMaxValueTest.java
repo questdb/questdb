@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -164,6 +165,9 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
 
     @Test
     public void testCoveredMaxValuesWalStraddleLeavesUnsealedGeneration() throws Exception {
+        // The single-transaction straddle split is a native-path O3 shortcut; a merge-append
+        // table writes the straddle through the composite executor instead.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // One WAL transaction straddling 2024-01-01/02: the single-transaction straddle split
         // (#7574) appends the 2024-01-01 prefix in order, and the deferred compaction (#7516)
         // leaves that partition's one generation unsealed. Its covered values are then read raw
