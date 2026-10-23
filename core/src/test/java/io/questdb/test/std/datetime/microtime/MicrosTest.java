@@ -321,6 +321,15 @@ public class MicrosTest {
     }
 
     @Test
+    public void testFloorMMWithOffsetNearLongMax() {
+        // Long.MAX_VALUE is 294247-01-10T04:00:54.775807Z. The bucket after it would start after Long.MAX_VALUE, and
+        // its start must not wrap around and land in the result.
+        final long offset = MicrosFormatUtils.parseTimestamp("2024-01-15T00:00:00.000000Z");
+        Assert.assertEquals(Micros.toMicros(294_246, 12, 15), Micros.floorMM(Long.MAX_VALUE, 1, offset));
+        Assert.assertEquals(Micros.toMicros(294_246, 10, 15), Micros.floorMM(Long.MAX_VALUE, 3, offset));
+    }
+
+    @Test
     public void testFloorMMWithOffsetOnLastDayOfMonth() {
         // GitHub issue #7798. The bucket starts on the day of the offset, or on the last day of a shorter month. A
         // value after the start of such a bucket, but earlier in its month than the offset in its own, went into the
@@ -480,6 +489,14 @@ public class MicrosTest {
         micros = MicrosFormatUtils.parseTimestamp("1967-05-12T23:45:51.045045Z");
         MicrosFormatUtils.appendDateTimeUSec(sink, Micros.floorYYYY(micros, 3));
         TestUtils.assertEquals("1967-01-01T00:00:00.000000Z", sink);
+    }
+
+    @Test
+    public void testFloorYYYYWithOffsetNearLongMax() {
+        // as testFloorMMWithOffsetNearLongMax(), for years
+        final long offset = MicrosFormatUtils.parseTimestamp("2024-06-01T00:00:00.000000Z");
+        Assert.assertEquals(Micros.toMicros(294_246, 6, 1), Micros.floorYYYY(Long.MAX_VALUE, 1, offset));
+        Assert.assertEquals(Micros.toMicros(294_245, 6, 1), Micros.floorYYYY(Long.MAX_VALUE, 3, offset));
     }
 
     @Test

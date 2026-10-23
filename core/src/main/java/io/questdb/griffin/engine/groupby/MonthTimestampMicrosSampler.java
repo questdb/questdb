@@ -78,21 +78,25 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        // Returns the last bucket start at or before the value. The bucket that starts in the calendar month of the
-        // value, counted from the anchor month in whole strides, can start after the value, when the value comes
-        // earlier in its month than the day and time of the grid. A negative offset moves each bucket start into
-        // the month before, so the next bucket can start in the calendar month of the value as well. The offset
-        // is far shorter than a month, so one step either way finds the bucket.
-        final int y = Micros.getYear(value);
-        final long monthIndex = 12L * y + Micros.getMonthOfYear(value, y, CommonUtils.isLeapYear(y)) - 1;
-        final long bucketMonthIndex = anchorMonthIndex + Math.floorDiv(monthIndex - anchorMonthIndex, stepMonths) * stepMonths;
-        final long bucketStart = bucketStart(bucketMonthIndex);
-        if (bucketStart > value) {
-            return bucketStart(bucketMonthIndex - stepMonths);
-        }
-        final long nextBucketStart = bucketStart(bucketMonthIndex + stepMonths);
-        // the comparison with bucketStart guards against an overflow at the end of the timestamp range
-        return nextBucketStart > bucketStart && nextBucketStart <= value ? nextBucketStart : bucketStart;
+        // Returns the last bucket start at or before the value. A negative offset moves each bucket start into the
+        // month before, so the bucket follows the calendar month of the value shifted by the offset; max() keeps the
+        // value when the shift overflows at the end of the timestamp range. The bucket that starts in that month,
+        // counted from the anchor month in whole strides, can start after the value, when the value comes earlier in
+        // its month than the day and time of the grid. Every later bucket starts in a later month. setStart() keeps
+        // the time of day under a day, and setOffset() starts the grid on the first day of the month with an offset
+        // far shorter than a month, so one step back finds the bucket.
+        final long shifted = dayMod < 0 ? Math.max(value, value - dayMod) : value;
+        final int y = Micros.getYear(shifted);
+        final boolean isLeap = CommonUtils.isLeapYear(y);
+        final int m = Micros.getMonthOfYear(shifted, y, isLeap);
+        final long monthIndex = 12L * y + m - 1;
+        final int monthsIntoBucket = stepMonths == 1 ? 0 : Math.floorMod(monthIndex - anchorMonthIndex, stepMonths);
+        final long bucketMonthIndex = monthIndex - monthsIntoBucket;
+        final long bucketStart = monthsIntoBucket == 0
+                ? toMicros(y, isLeap, m, startDay > 0 ? startDay : 1) + dayMod
+                : bucketStart(bucketMonthIndex);
+        // the difference stays correct when the bucket start overflows a long at the end of the timestamp range
+        return value - bucketStart < 0 ? bucketStart(bucketMonthIndex - stepMonths) : bucketStart;
     }
 
     @Override

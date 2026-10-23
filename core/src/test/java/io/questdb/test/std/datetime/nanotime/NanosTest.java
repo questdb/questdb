@@ -364,6 +364,23 @@ public class NanosTest {
     }
 
     @Test
+    public void testFloorMMWithOffsetNearLongMax() {
+        // The bucket after the value would start after Long.MAX_VALUE (2262-04-11T23:47:16.854775807Z). Its start
+        // must not wrap around to 1677 and land in the result.
+        final long offset = parseNSecUTC("2024-01-15T00:00:00.000000000Z");
+        assertNanos("2262-03-15T00:00:00.000000000Z", Nanos.floorMM(Nanos.toNanos(2262, 4, 10), 1, offset));
+        assertNanos("2262-03-15T00:00:00.000000000Z", Nanos.floorMM(Long.MAX_VALUE, 1, offset));
+        assertNanos("2262-02-15T00:00:00.000000000Z", Nanos.floorMM(Long.MAX_VALUE, 2, parseNSecUTC("2024-02-15T00:00:00.000000000Z")));
+        assertNanos(
+                "2262-03-31T23:59:59.999999999Z",
+                Nanos.floorMM(Nanos.toNanos(2262, 4, 11), 1, parseNSecUTC("1970-01-31T23:59:59.999999999Z"))
+        );
+        // the bucket that starts exactly at Long.MAX_VALUE
+        final long sameTimeOfMonth = Nanos.toNanos(2262, 1, 11) + (Long.MAX_VALUE - Nanos.toNanos(2262, 4, 11));
+        assertNanos("2262-04-11T23:47:16.854775807Z", Nanos.floorMM(Long.MAX_VALUE, 1, sameTimeOfMonth));
+    }
+
+    @Test
     public void testFloorMMWithOffsetOnLastDayOfMonth() {
         // GitHub issue #7798. The bucket starts on the day of the offset, or on the last day of a shorter month. A
         // value after the start of such a bucket, but earlier in its month than the offset in its own, went into the
@@ -527,6 +544,19 @@ public class NanosTest {
                 "1973-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1975-05-12T23:45:51.045789123Z"), 3)
         );
+    }
+
+    @Test
+    public void testFloorYYYYWithOffsetNearLongMax() {
+        // as testFloorMMWithOffsetNearLongMax(), for years
+        final long offset = parseNSecUTC("2024-06-01T00:00:00.000000000Z");
+        assertNanos("2261-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Nanos.toNanos(2262, 3, 1), 1, offset));
+        assertNanos("2261-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, offset));
+        assertNanos("2260-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 2, offset));
+        assertNanos("2261-04-12T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, parseNSecUTC("2001-04-12T00:00:00.000000000Z")));
+        // the bucket that starts exactly at Long.MAX_VALUE
+        final long sameTimeOfYear = Nanos.toNanos(2000, 4, 11) + (Long.MAX_VALUE - Nanos.toNanos(2262, 4, 11));
+        assertNanos("2262-04-11T23:47:16.854775807Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, sameTimeOfYear));
     }
 
     @Test

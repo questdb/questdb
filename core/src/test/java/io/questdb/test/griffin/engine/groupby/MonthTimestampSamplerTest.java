@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -357,6 +358,109 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
+    public void testRoundMatchesGridWalk() throws Exception {
+        // round() returns the last bucket start that nextTimestamp() reaches at or before the value, in every state
+        // that setStart() and setOffset() leave: anchors on the first, middle and last days of a month, before and
+        // after the values, with a time of day, and offsets of either sign up to the 23:59 that WITH OFFSET accepts
+        // and the 47:58 that a mat view refresh passes for WITH OFFSET in a fixed-offset time zone
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] anchors = {
+                "1965-03-01T00:00:00.000000Z",
+                "1999-01-15T10:30:15.123456Z",
+                "2018-01-28T23:59:59.999999Z",
+                "2018-01-29T00:00:00.000000Z",
+                "2018-03-30T12:00:00.000000Z",
+                "2018-01-31T00:00:00.000001Z",
+                "2024-02-29T08:00:00.000000Z",
+                "2029-12-31T10:00:00.000000Z",
+        };
+        final long[] offsets = {
+                timestampDriver.fromMinutes(-(47 * 60 + 58)),
+                timestampDriver.fromMinutes(-(23 * 60 + 59)),
+                timestampDriver.fromMinutes(-60),
+                -1,
+                0,
+                1,
+                timestampDriver.fromMinutes(10 * 60),
+                timestampDriver.fromMinutes(23 * 60 + 59),
+                timestampDriver.fromMinutes(47 * 60 + 58),
+        };
+        final int[] strides = {1, 2, 3, 5, 7, 12, 13};
+        final long lo = timestampDriver.parseFloorLiteral("1960-01-01T00:00:00.000000Z");
+        final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            // a sampler that neither setStart() nor setOffset() configured starts its grid in January 1970
+            assertRoundMatchesGridWalk(timestampDriver.getTimestampSampler(stride, 'M', 0), 0, lo, hi, step);
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            for (String anchor : anchors) {
+                final long anchorTs = timestampDriver.parseFloorLiteral(anchor);
+                sampler.setStart(anchorTs);
+                assertRoundMatchesGridWalk(sampler, anchorTs, lo, hi, step);
+            }
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                // the offset grid starts at January 1970 plus the offset
+                assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
+            }
+        }
+    }
+
+    @Test
+    public void testRoundNearEndOfTimestampRange() throws Exception {
+        // The bucket that starts in the calendar month of the value can start after the largest timestamp, which
+        // overflows a long. round() returns the bucket before it.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setStart(timestampDriver.parseFloorLiteral("2024-01-15T08:00:00.000000Z"));
+        final long expected = timestampType == TestTimestampType.MICRO
+                ? Micros.toMicros(294_246, 12, 15) + 8 * Micros.HOUR_MICROS
+                : timestampDriver.parseFloorLiteral("2262-03-15T08:00:00.000000Z");
+        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
+        Assert.assertEquals(expected, sampler.round(expected + 1));
+    }
+
+    @Test
+    public void testRoundNearEndOfTimestampRangeWithNegativeOffset() throws Exception {
+        // round() shifts the value by a negative offset to find the calendar month of its bucket. Near the largest
+        // timestamp the shift overflows a long, and round() keeps the value, which belongs to the bucket of the last
+        // calendar month: 294247-01 for TIMESTAMP and 2262-04 for TIMESTAMP_NS.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long oneHour = timestampDriver.fromMinutes(60);
+        final long almostTwoDays = timestampDriver.fromMinutes(47 * 60 + 58);
+        final int stride;
+        final long expectedOneHour;
+        final long expectedAlmostTwoDays;
+        final long expectedStride;
+        if (timestampType == TestTimestampType.MICRO) {
+            // 294246-12-31T23:00, 294246-12-30T00:02 and, for 5 months counted from January 1970, 294246-08-31T23:00
+            stride = 5;
+            expectedOneHour = 9_223_371_241_200_000_000L;
+            expectedAlmostTwoDays = 9_223_371_072_120_000_000L;
+            expectedStride = 9_223_360_700_400_000_000L;
+            Assert.assertEquals(expectedOneHour, Micros.toMicros(294_247, 1, 1) - oneHour);
+            Assert.assertEquals(expectedAlmostTwoDays, Micros.toMicros(294_247, 1, 1) - almostTwoDays);
+            Assert.assertEquals(expectedStride, Micros.toMicros(294_246, 9, 1) - oneHour);
+        } else {
+            // 2 months counted from January 1970 start a bucket in 2262-03
+            stride = 2;
+            expectedOneHour = timestampDriver.parseFloorLiteral("2262-03-31T23:00:00.000000Z");
+            expectedAlmostTwoDays = timestampDriver.parseFloorLiteral("2262-03-30T00:02:00.000000Z");
+            expectedStride = timestampDriver.parseFloorLiteral("2262-02-28T23:00:00.000000Z");
+        }
+
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setOffset(-oneHour);
+        assertRoundOfLargestTimestamps(sampler, expectedOneHour);
+        sampler.setOffset(-almostTwoDays);
+        assertRoundOfLargestTimestamps(sampler, expectedAlmostTwoDays);
+
+        final TimestampSampler strideSampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+        strideSampler.setOffset(-oneHour);
+        assertRoundOfLargestTimestamps(strideSampler, expectedStride);
+    }
+
+    @Test
     public void testSimple() throws Exception {
         final StringSink sink = new StringSink();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -550,5 +654,35 @@ public class MonthTimestampSamplerTest {
                 timestampDriver.parseFloorLiteral(expected),
                 sampler.round(timestampDriver.parseFloorLiteral(value))
         );
+    }
+
+    // Walks the grid from gridPoint, a bucket start, back to lo and then forward to hi, and checks that round()
+    // returns the bucket start for values every step apart and for the instants around each bucket start.
+    private void assertRoundMatchesGridWalk(TimestampSampler sampler, long gridPoint, long lo, long hi, long step) {
+        long bucketStart = gridPoint;
+        while (bucketStart > lo) {
+            final long previousBucketStart = sampler.previousTimestamp(bucketStart);
+            // the walk fails instead of looping forever when previousTimestamp() doesn't move back
+            Assert.assertTrue(previousBucketStart < bucketStart);
+            bucketStart = previousBucketStart;
+        }
+        long value = lo;
+        while (bucketStart < hi) {
+            final long nextBucketStart = sampler.nextTimestamp(bucketStart);
+            // the walk fails instead of looping forever when nextTimestamp() doesn't move forward
+            Assert.assertTrue(nextBucketStart > bucketStart);
+            for (; value < nextBucketStart; value += step) {
+                Assert.assertEquals(bucketStart, sampler.round(value));
+            }
+            Assert.assertEquals(bucketStart, sampler.round(nextBucketStart - 1));
+            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart));
+            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart + 1));
+            bucketStart = nextBucketStart;
+        }
+    }
+
+    private void assertRoundOfLargestTimestamps(TimestampSampler sampler, long expected) {
+        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
+        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE - 1));
     }
 }

@@ -81,19 +81,18 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        // Returns the last bucket start at or before the value. The bucket that starts in the calendar year of the
-        // value, counted from the anchor year in whole strides, can start after the value, when the value comes
-        // earlier in its year than the month, day and time of the grid. A negative offset moves each bucket start
-        // into the year before, so the next bucket can start in the calendar year of the value as well. The offset
-        // is far shorter than a year, so one step either way finds the bucket.
-        final int bucketYear = anchorYear + Math.floorDiv(Nanos.getYear(value) - anchorYear, stepYears) * stepYears;
+        // Returns the last bucket start at or before the value. A negative offset moves each bucket start into the
+        // year before, so the bucket follows the calendar year of the value shifted by the offset; max() keeps the
+        // value when the shift overflows at the end of the timestamp range. The bucket that starts in that year,
+        // counted from the anchor year in whole strides, can start after the value, when the value comes earlier in
+        // its year than the month, day and time of the grid. Every later bucket starts in a later year. setStart()
+        // keeps the time of day under a day, and setOffset() starts the grid on the first day of the year with an
+        // offset far shorter than a year, so one step back finds the bucket.
+        final int y = Nanos.getYear(dayMod < 0 ? Math.max(value, value - dayMod) : value);
+        final int bucketYear = stepYears == 1 ? y : anchorYear + Math.floorDiv(y - anchorYear, stepYears) * stepYears;
         final long bucketStart = bucketStart(bucketYear);
-        if (bucketStart > value) {
-            return bucketStart(bucketYear - stepYears);
-        }
-        final long nextBucketStart = bucketStart(bucketYear + stepYears);
-        // the comparison with bucketStart guards against an overflow at the end of the timestamp range
-        return nextBucketStart > bucketStart && nextBucketStart <= value ? nextBucketStart : bucketStart;
+        // the difference stays correct when the bucket start overflows a long at the end of the timestamp range
+        return value - bucketStart < 0 ? bucketStart(bucketYear - stepYears) : bucketStart;
     }
 
     @Override

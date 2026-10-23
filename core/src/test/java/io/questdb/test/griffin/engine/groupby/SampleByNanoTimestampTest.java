@@ -8983,6 +8983,44 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByYearFromTimeZoneNearMaxTimestamp() throws Exception {
+        // Pacific/Kiritimati stays at UTC+14, so every bucket starts on Aug 31 at local midnight, which is
+        // Aug 30T10:00Z. The last row is 2262-01-01T10:00 local time and belongs to the bucket that starts on
+        // 2261-08-31 local time. The bucket of its own year would start on 2262-08-31, after the last
+        // TIMESTAMP_NS value (2262-04-11), and floorYYYY() must not build it. FILL(NULL) without TO adds no rows,
+        // because every bucket from FROM to the last row holds data.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, x DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2259-09-01T00:00:00.000000000Z', 1.0),
+                    ('2260-09-01T00:00:00.000000000Z', 2.0),
+                    ('2261-12-31T20:00:00.000000000Z', 4.0)
+                    """);
+            assertQuery("SELECT ts, sum(x) FROM t SAMPLE BY 1y FROM '2021-08-31' ALIGN TO CALENDAR TIME ZONE 'Pacific/Kiritimati'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2259-08-30T10:00:00.000000000Z\t1.0
+                            2260-08-30T10:00:00.000000000Z\t2.0
+                            2261-08-30T10:00:00.000000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(x) FROM t SAMPLE BY 1y FROM '2259-08-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Pacific/Kiritimati'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2259-08-30T10:00:00.000000000Z\t1.0
+                            2260-08-30T10:00:00.000000000Z\t2.0
+                            2261-08-30T10:00:00.000000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleCountFillLinear() throws Exception {
         assertQuery("select b, count(), k from x sample by 3h fill(linear) align to first observation")
                 .ddl("create table x as " +
