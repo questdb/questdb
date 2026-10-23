@@ -4713,6 +4713,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDuplicateDesignatedTimestampRejectedWhenNamedColumnIsFirst() throws Exception {
+        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_named_first", false);
+    }
+
+    @Test
+    public void testDuplicateDesignatedTimestampRejectedWhenUnnamedColumnIsFirst() throws Exception {
+        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_unnamed_first", true);
+    }
+
+    @Test
     public void testTimestampMicrosBeyondCeilingIsTerminal() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_ts_micros_beyond_ceiling";
@@ -5024,6 +5034,52 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         } finally {
             assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, expectedMsgPart1, expectedMsgPart2);
         }
+    }
+
+    private void assertDuplicateDesignatedTimestampRejected(String table, boolean unnamedColumnFirst) throws Exception {
+        runInContext(port -> {
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            long timestampNanos = 1_645_747_200_000_000_000L;
+
+            assertCoercionError(
+                    port,
+                    table,
+                    (sender, tableName) -> {
+                        if (unnamedColumnFirst) {
+                            sender.table(tableName)
+                                    .longColumn("v", 1L)
+                                    .at(timestampNanos, ChronoUnit.NANOS);
+                        }
+                        sender.table(tableName)
+                                .longColumn("v", 2L)
+                                .timestampColumn("ts", timestampNanos + 1, ChronoUnit.NANOS)
+                                .at(timestampNanos + 1, ChronoUnit.NANOS);
+                    },
+                    "multiple QWP columns resolve to the same table column",
+                    "column=ts"
+            );
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .longColumn("v", 3L)
+                        .timestampColumn("ts", timestampNanos + 2, ChronoUnit.NANOS)
+                        .atNow();
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM " + table)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n3\t2022-02-25T00:00:00.000000002Z\n");
+        });
     }
 
     /**

@@ -973,7 +973,6 @@ public class QwpWalAppender implements QuietCloseable {
                             .put(']');
                 }
                 columnWriterIndex = timestampIndex;
-                timestampColumnInBlock = i;
             } else {
                 columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
 
@@ -1017,10 +1016,18 @@ public class QwpWalAppender implements QuietCloseable {
                                 .put(']');
                     }
                 }
+            }
 
-                if (columnWriterIndex == timestampIndex) {
-                    timestampColumnInBlock = i;
+            if (columnWriterIndex >= 0 && columnWriterIndex == timestampIndex) {
+                if (timestampColumnInBlock >= 0) {
+                    throw CairoException.schemaMismatch()
+                            .put("multiple QWP columns resolve to the same table column [table=")
+                            .put(tud.getTableNameUtf16())
+                            .put(", column=")
+                            .put(metadata.getColumnName(columnWriterIndex))
+                            .put(']');
                 }
+                timestampColumnInBlock = i;
             }
 
             int columnType = columnWriterIndex >= 0 ? metadata.getColumnType(columnWriterIndex) : ColumnType.UNDEFINED;
