@@ -38,7 +38,6 @@ import io.questdb.cairo.vm.MemoryCMRDetachedImpl;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.log.Log;
@@ -825,10 +824,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Opens one native column required by a decoder extension even when the
-     * query's active-column set did not request it. This is used by the cold
-     * delta merge for the designated timestamp comparator; ordinary page-frame
-     * execution never calls it.
+     * Opens one native column required by page-frame execution even when the
+     * query's active-column set did not request it. Custom native decoders use
+     * this to access base columns.
      */
     public void openPageFrameColumn(int partitionIndex, int columnIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
@@ -840,8 +838,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final int columnBase = getColumnBase(partitionIndex);
         final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
-        final MemoryCMR existing = columns.getQuick(primaryIndex);
-        if (existing != null && existing != NullMemoryCMR.INSTANCE && existing.isOpen()) {
+        if (isColumnOpen(primaryIndex, metadata.getColumnType(columnIndex))) {
             return;
         }
         final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
@@ -1253,6 +1250,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private boolean isColumnOpen(int primaryIndex, int columnType) {
+        // A variable-size data vector may be empty while its aux vector is live, for example with inline VARCHARs.
+        final int checkIndex = ColumnType.isVarSize(columnType) ? primaryIndex + 1 : primaryIndex;
+        final MemoryCMR mem = columns.getQuick(checkIndex);
+        return mem != null && mem != NullMemoryCMR.INSTANCE && mem.isOpen();
+    }
+
     /**
      * Whether {@code reader} is one of the stand-in readers {@link #createIndexReaderAt}
      * installs for a partition that does not contain the indexed column at all. They
@@ -1614,11 +1618,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     continue;
                 }
                 final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
-                // For var-size columns the primary (data) pageAddress can be 0 when
-                // all values are inlined in the aux vector, so check the aux column.
-                final int checkIndex = ColumnType.isVarSize(metadata.getColumnType(i)) ? primaryIndex + 1 : primaryIndex;
-                final MemoryCMR mem = columns.getQuick(checkIndex);
-                if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.isOpen()) {
+                if (isColumnOpen(primaryIndex, metadata.getColumnType(i))) {
                     continue; // already mapped
                 }
                 if (!hasNewColumns) {
@@ -2446,8 +2446,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 //    on Windows before column can be deleted. In this case, we must check for marker
                                 //    instance and the column from disk
                                 // 2. The column hasn't been altered, and we can skip to the next column.
-                                MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                                if (col instanceof NullMemoryCMR || (col != null && !col.isOpen())) {
+                                final int primaryIndex = getPrimaryColumnIndex(base, i);
+                                final MemoryCMR col = columns.getQuick(primaryIndex);
+                                if (col instanceof NullMemoryCMR
+                                        || (col != null && !isColumnOpen(primaryIndex, metadata.getColumnType(i)))) {
                                     reloadColumnAt(
                                             partitionIndex,
                                             path,
