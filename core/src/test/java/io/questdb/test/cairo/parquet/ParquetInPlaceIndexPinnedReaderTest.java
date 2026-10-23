@@ -136,6 +136,35 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInPlaceCommitsReleasePurgeEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTwins(IDX_BITMAP, false, "nat", "pq");
+            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long symNameTxnBefore = symColumnNameTxn();
+            final long ts = MicrosTimestampDriver.floor("2024-01-01T00:30:00.000000Z");
+            // One writer for every commit, as under continuous ingestion: each in-place
+            // O3 supersedes the sym index version, and housekeep() must release the
+            // purge entry it queued instead of keeping it for the writer's lifetime.
+            try (TableWriter writer = getWriter("pq")) {
+                for (int i = 0; i < 5; i++) {
+                    final TableWriter.Row row = writer.newRow(ts + i);
+                    row.putInt(0, 1000 + i);
+                    row.putSym(2, "s1");
+                    row.putLong(3, 1000 + i);
+                    row.append();
+                    writer.commit();
+                    Assert.assertEquals("commit " + i, 0, writer.getParquetIndexPurgeColumnNameCount());
+                }
+            }
+            final StringBuilder mismatches = new StringBuilder();
+            assertInPlace("after o3 commits", nameTxnBefore, symNameTxnBefore, mismatches);
+            if (mismatches.length() > 0) {
+                Assert.fail(mismatches.toString());
+            }
+        });
+    }
+
+    @Test
     public void testNonWalBitmap() throws Exception {
         assertNonWalInPlace(IDX_BITMAP);
     }

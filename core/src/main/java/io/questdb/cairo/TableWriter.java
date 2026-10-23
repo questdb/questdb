@@ -2959,6 +2959,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    @TestOnly
+    public int getParquetIndexPurgeColumnNameCount() {
+        return parquetIndexPurgingOperator != null ? parquetIndexPurgingOperator.getColumnNameCount() : 0;
+    }
+
     @Override
     public int getPartitionBy() {
         return partitionBy;

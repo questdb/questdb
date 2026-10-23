@@ -43,6 +43,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
+import org.jetbrains.annotations.TestOnly;
 
 public final class PurgingOperator {
     public static final long TABLE_ROOT_PARTITION = Long.MIN_VALUE + 1;
@@ -137,6 +138,12 @@ public final class PurgingOperator {
     public void clear() {
         updateColumnIndexes.clear();
         cleanupColumnVersions.clear();
+        columnNames.clear();
+    }
+
+    @TestOnly
+    public int getColumnNameCount() {
+        return columnNames.size();
     }
 
     public void purge(
