@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.types;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypeDriver;
@@ -54,6 +55,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -112,6 +114,16 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return TypeConformanceTypes.parameters();
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // The recordings hold the column files that an O3 write leaves when it rewrites the
+        // partition, the production default. Merge-append, on by default in tests, appends the
+        // write as a composite piece instead and leaves other aux offsets and dead space.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
     }
 
     @Test

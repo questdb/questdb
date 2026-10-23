@@ -450,11 +450,12 @@ public class RecordSinkFactory {
 
     /**
      * Widens a TIMESTAMP (micros) key to TIMESTAMP_NS (nanos) for the generated sinks and
-     * {@link LoopingRecordSink}. NULL stays NULL: multiplying it overflows to 0, the epoch, so a
-     * NULL key would miss the NULL keys of the other side and match its epoch keys instead.
+     * {@link LoopingRecordSink}. The nanos timestamp driver keeps NULL as NULL: multiplying it
+     * overflows to 0, the epoch, so a NULL key would miss the NULL keys of the other side and
+     * match its epoch keys instead.
      */
     public static long widenMicrosToNanos(long micros) {
-        return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : micros * 1000L;
+        return NanosTimestampDriver.INSTANCE.fromMicros(micros);
     }
 
     /**

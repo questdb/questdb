@@ -132,6 +132,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     private static final Pattern HTTP_ERROR_ID = Pattern.compile("id: [0-9a-f]+-[0-9]+");
     private static final int LOCALHOST = Numbers.parseIPv4Quiet("127.0.0.1");
     private static final String[] MODES = {"nonwal-day", "wal-day"};
+    // ILP over UDP writes through a TableWriter, which refuses a WAL table
+    private static final String[] NON_WAL_MODES = {"nonwal-day"};
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private static final Pattern TABLE_NAME = Pattern.compile("dst_[nw]1");
     private final ObjList<TypeConformanceValues.Row> rows;
@@ -262,7 +264,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
 
     @Test
     public void testIlpUdp() throws Exception {
-        runPath("ingest.ilp-udp", (server, mode, section) -> sendIlpFenced(
+        runPath("ingest.ilp-udp", NON_WAL_MODES, (server, mode, section) -> sendIlpFenced(
                 server,
                 mode,
                 section,
@@ -1070,9 +1072,13 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     }
 
     private void runPath(String path, PathBody body) throws Exception {
+        runPath(path, MODES, body);
+    }
+
+    private void runPath(String path, String[] modes, PathBody body) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startServer()) {
-                for (String mode : MODES) {
+                for (String mode : modes) {
                     if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
                         continue;
                     }
