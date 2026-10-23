@@ -303,7 +303,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 slots.add(slot);
                 if (isBatched) {
                     slot.batchSize = batchSize;
-                    slot.batchList = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT);
+                    // Allocated per execution in init() and released in Slot.clear(), so an idle
+                    // factory holds no batch memory.
+                    slot.batchList = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true);
                     slot.batchMapValue = new FlyweightPackedMapValue(functions.getValueTypes());
                     slot.batchKernels = kernelProgram != null ? kernelProgram.newInstance(functions.getGroupByFunctions(i)) : null;
                 }
@@ -618,6 +620,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     slot.value.setNew(true);
                 }
                 slot.bindSymbols(symbolTableSource, buildSymbols);
+                if (slot.batchList != null) {
+                    slot.batchList.reopen();
+                }
             }
             isFiltersInitialized = true;
             filterContext.initFilters(symbolTableSource, executionContext);
@@ -1639,6 +1644,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             batchMap = null;
             batchMapSize = -1;
             batchCount = 0;
+            if (batchList != null) {
+                batchList.close();
+            }
             if (resolvedProbeKeys != null) {
                 Arrays.fill(resolvedProbeKeys, PROBE_KEY_UNKNOWN);
             }
