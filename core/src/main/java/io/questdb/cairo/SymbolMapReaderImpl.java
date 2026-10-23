@@ -489,6 +489,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return cachedValueOf(key, csviewA);
         }
 
+        @Override
+        public CharSequence valueOfOnce(int key) {
+            return SymbolMapReaderImpl.this.valueOf(key, csviewA);
+        }
+
         private CharSequence cachedValueOf(int key, DirectString view) {
             if (key > maxCachedKey) {
                 return SymbolMapReaderImpl.this.valueOf(key, view);

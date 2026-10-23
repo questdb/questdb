@@ -201,7 +201,7 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                     if ((buildKey & FILL_FROM_BUILD_CHECK_MASK) == 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     }
-                    final CharSequence value = buildKeyTable.valueOf(buildKey);
+                    final CharSequence value = buildKeyTable.valueOfOnce(buildKey);
                     // A key without a text is no probe text's build key, so it resolves nothing.
                     if (value == null) {
                         continue;
@@ -276,7 +276,7 @@ public final class SymbolKeyTranslator implements QuietCloseable {
             final long address = cacheAddress + (long) probeKey * Integer.BYTES;
             int buildKey = Unsafe.getInt(address);
             if (buildKey == UNRESOLVED) {
-                buildKey = buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+                buildKey = buildKeyTable.keyOf(probeKeyTable.valueOfOnce(probeKey));
                 Unsafe.putInt(address, buildKey);
             }
             return buildKey;
