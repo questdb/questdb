@@ -27,18 +27,21 @@ package io.questdb.test.cairo.mig;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.mig.Mig1003;
+import io.questdb.cairo.mig.Mig1011;
 import io.questdb.cairo.mig.MigrationContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -55,19 +58,69 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.zip.CRC32;
 
-public class Mig1003Test extends AbstractCairoTest {
+public class Mig1011Test extends AbstractCairoTest {
+    private static final int MIG1011_VERSION = 431;
     private static final String[] PREDICATES = {"NOT (d < 4901.0)", "NOT (f < 4901.0)"};
 
     @Test
     public void testEngineMigrationRecordsQuestDBWriterFromRecordedVersion() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            createConvertedTable();
-            final String parquetMetaPath = parquetMetaPath();
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
             clearWrittenByQuestDB(parquetMetaPath);
-            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            writeMigrationVersion(MIG1011_VERSION - 1);
             engine.clear();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testEngineMigrationRecordsQuestDBWriterInCompositeTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createCompositeTableWithConvertedPartition();
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            writeMigrationVersion(MIG1011_VERSION - 1);
+            engine.clear();
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+            Assert.assertTrue(isComposite("x", "2024-01-02"));
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+
+            // a crash before _upgrade.d records the migration reruns it
+            final long markedSize = Files.size(Paths.get(parquetMetaPath));
+            writeMigrationVersion(MIG1011_VERSION - 1);
+            engine.clear();
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            Assert.assertEquals(markedSize, Files.size(Paths.get(parquetMetaPath)));
+            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+        });
+    }
+
+    @Test
+    public void testEngineMigrationRunsNoOtherMigrationOnCompositeTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createCompositeTableWithConvertedPartition();
+            createConvertedTable("y");
+            final String compositeParquetMetaPath = parquetMetaPath("x");
+            final String plainParquetMetaPath = parquetMetaPath("y");
+            clearWrittenByQuestDB(compositeParquetMetaPath);
+            clearWrittenByQuestDB(plainParquetMetaPath);
+            engine.clear();
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+            // Mig941 regenerates a _pm as a single snapshot; Mig1011 appends one to the committed chain.
+            Assert.assertEquals(0, previousSnapshotSize(plainParquetMetaPath));
+            Assert.assertNotEquals(0, previousSnapshotSize(compositeParquetMetaPath));
+            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+            Assert.assertTrue(isComposite("x", "2024-01-02"));
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
             }
@@ -78,7 +131,7 @@ public class Mig1003Test extends AbstractCairoTest {
     public void testMigrationLeavesAnotherWritersPartitionUnrecorded() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            createConvertedTable();
+            createConvertedTable("x");
             execute("ALTER TABLE x DETACH PARTITION LIST '2024-01-01'");
             final java.nio.file.Path table = Paths.get(configuration.getDbRoot().toString(), engine.verifyTableName("x").getDirName());
             final java.nio.file.Path attach = table.resolve("2024-01-01" + configuration.getAttachPartitionSuffix());
@@ -89,9 +142,9 @@ public class Mig1003Test extends AbstractCairoTest {
             // QuestDB rewrites row groups of the attached file but keeps its created_by.
             execute("INSERT INTO x VALUES (2.0, 2.0, '2024-01-01T00:00:00.000001Z')");
 
-            final String parquetMetaPath = parquetMetaPath();
+            final String parquetMetaPath = parquetMetaPath("x");
             final long size = Files.size(Paths.get(parquetMetaPath));
-            runMig1003();
+            runMig1011();
             Assert.assertEquals(size, Files.size(Paths.get(parquetMetaPath)));
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 0, prunedCount(predicate, "count\n100\n"));
@@ -103,24 +156,24 @@ public class Mig1003Test extends AbstractCairoTest {
     public void testMigrationRecordsQuestDBWriterOnce() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            createConvertedTable();
+            createConvertedTable("x");
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
             }
-            final String parquetMetaPath = parquetMetaPath();
+            final String parquetMetaPath = parquetMetaPath("x");
             clearWrittenByQuestDB(parquetMetaPath);
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 0, prunedCount(predicate, "count\n100\n"));
             }
 
             final long size = Files.size(Paths.get(parquetMetaPath));
-            runMig1003();
+            runMig1011();
             final long markedSize = Files.size(Paths.get(parquetMetaPath));
             Assert.assertTrue(markedSize > size);
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
             }
-            runMig1003();
+            runMig1011();
             Assert.assertEquals(markedSize, Files.size(Paths.get(parquetMetaPath)));
         });
     }
@@ -135,7 +188,7 @@ public class Mig1003Test extends AbstractCairoTest {
         final byte[] bytes = Files.readAllBytes(file);
         final ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         final int size = (int) buffer.getLong(0);
-        final int footer = size - 4 - buffer.getInt(size - 4);
+        final int footer = committedFooterOffset(buffer);
         Assert.assertEquals("single footer expected", 0, buffer.getLong(footer + 24));
         final long flags = buffer.getLong(footer + 32);
         Assert.assertNotEquals("writer recorded", 0, flags & (1L << 2));
@@ -146,19 +199,74 @@ public class Mig1003Test extends AbstractCairoTest {
         Files.write(file, bytes);
     }
 
-    private static void createConvertedTable() throws Exception {
+    private static int committedFooterOffset(ByteBuffer buffer) {
+        final int size = (int) buffer.getLong(0);
+        return size - 4 - buffer.getInt(size - 4);
+    }
+
+    // A composite 2024-01-02 between a converted 2024-01-01 and a plain 2024-01-03.
+    private static void createCompositeTableWithConvertedPartition() throws Exception {
+        execute("CREATE TABLE x (d DOUBLE, f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("""
-                CREATE TABLE x AS (
+                INSERT INTO x
+                SELECT x::DOUBLE d, x::FLOAT f, timestamp_sequence('2024-01-01', 10_000) ts
+                FROM long_sequence(5_000)
+                """);
+        execute("""
+                INSERT INTO x
+                SELECT x::DOUBLE d, x::FLOAT f, timestamp_sequence('2024-01-02', 1_000_000) ts
+                FROM long_sequence(20_000)
+                """);
+        drainWalQueue();
+        execute("""
+                INSERT INTO x
+                SELECT x::DOUBLE d, x::FLOAT f, timestamp_sequence('2024-01-03', 1_000_000) ts
+                FROM long_sequence(1_000)
+                """);
+        drainWalQueue();
+        for (int i = 0; i < 2; i++) {
+            execute("""
+                    INSERT INTO x
+                    SELECT x::DOUBLE d, x::FLOAT f, timestamp_sequence('2024-01-02T01:00:00', 1_000_000) ts
+                    FROM long_sequence(200)
+                    """);
+            drainWalQueue();
+        }
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        Assert.assertTrue("fixture produced no composite partition", isComposite("x", "2024-01-02"));
+        Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+    }
+
+    private static void createConvertedTable(String tableName) throws Exception {
+        execute("""
+                CREATE TABLE %s AS (
                     SELECT x::DOUBLE d, x::FLOAT f, timestamp_sequence('2024-01-01', 10_000) ts
                     FROM long_sequence(5_000)
                 ) TIMESTAMP(ts) PARTITION BY DAY
-                """);
-        execute("INSERT INTO x VALUES (1.0, 1.0, '2024-01-02')");
-        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+                """.formatted(tableName));
+        execute("INSERT INTO " + tableName + " VALUES (1.0, 1.0, '2024-01-02')");
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 
-    private static String parquetMetaPath() {
-        final TableToken token = engine.verifyTableName("x");
+    private static boolean isComposite(String tableName, String day) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(MicrosTimestampDriver.floor(day + "T00:00:00.000000Z"));
+            return partitionIndex > -1 && txReader.isPartitionComposite(partitionIndex);
+        }
+    }
+
+    private static int metaStorageVersion(String tableName) {
+        try (MemoryMR mem = Vm.getCMRInstance(); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.META_FILE_NAME);
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+            return mem.getInt(TableUtils.META_OFFSET_VERSION);
+        }
+    }
+
+    private static String parquetMetaPath(String tableName) {
+        final TableToken token = engine.verifyTableName(tableName);
         try (TableReader reader = engine.getReader(token); Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(token);
             TableUtils.setPathForParquetPartitionMetadata(
@@ -170,6 +278,11 @@ public class Mig1003Test extends AbstractCairoTest {
             );
             return path.toString();
         }
+    }
+
+    private static long previousSnapshotSize(String parquetMetaPath) throws Exception {
+        final ByteBuffer buffer = ByteBuffer.wrap(Files.readAllBytes(Paths.get(parquetMetaPath))).order(ByteOrder.LITTLE_ENDIAN);
+        return buffer.getLong(committedFooterOffset(buffer) + 24);
     }
 
     private static int prunedCount(String predicate, String expected) throws Exception {
@@ -185,7 +298,7 @@ public class Mig1003Test extends AbstractCairoTest {
         return ParquetRowGroupFilter.getRowGroupsSkipped();
     }
 
-    private static void runMig1003() {
+    private static void runMig1011() {
         final TableToken token = engine.verifyTableName("x");
         engine.releaseAllWriters();
         engine.releaseAllReaders();
@@ -199,7 +312,7 @@ public class Mig1003Test extends AbstractCairoTest {
         ) {
             final MigrationContext context = new MigrationContext(engine, tempMem, 1024, tempVirtualMem, rwMem);
             context.of(tablePath, tablePath2, -1);
-            Mig1003.migrate(context);
+            Mig1011.migrate(context);
         } finally {
             Unsafe.free(tempMem, 1024, MemoryTag.NATIVE_MIG_MMAP);
         }

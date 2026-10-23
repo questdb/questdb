@@ -27,4 +27,12 @@ package io.questdb.cairo.mig;
 @FunctionalInterface
 interface MigrationAction {
     void migrate(MigrationContext context);
+
+    /**
+     * A migration that touches only files whose format does not depend on the table's {@code _meta}
+     * storage version, so {@link EngineMigration} also runs it on a table that holds composite partitions.
+     */
+    @FunctionalInterface
+    interface StorageVersionAgnostic extends MigrationAction {
+    }
 }

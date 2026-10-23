@@ -52,7 +52,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * footer through the same append-then-publish sequence as an incremental update, so a crash leaves the
  * committed snapshot in place, and a rerun skips partitions already recorded.
  */
-public final class Mig1003 {
+public final class Mig1011 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
 
     // Local copies of constants to avoid depending on values that may change.
