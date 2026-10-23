@@ -1376,6 +1376,108 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Parses a directory entry name and dispatches to the visitor if it matches
+     * a sealed-file pattern for {@code columnName}.
+     * <p>
+     * Recognised patterns (segment indices use 0-based dot splits):
+     * <ul>
+     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
+     *   <li>{@code <columnName>.pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>} — cover data file</li>
+     * </ul>
+     * Files that do not match (different column, .pk, .pci, partition data, etc.)
+     * are silently ignored.
+     */
+    public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
+        int nameLen = columnName.length();
+        int fileLen = fileName.length();
+        if (fileLen < nameLen + 4) {
+            return;
+        }
+        for (int i = 0; i < nameLen; i++) {
+            if (fileName.charAt(i) != columnName.charAt(i)) {
+                return;
+            }
+        }
+        if (fileName.charAt(nameLen) != '.') {
+            return;
+        }
+        int pos = nameLen + 1;
+        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
+            return;
+        }
+        char kind = fileName.charAt(pos + 1);
+        if (kind != 'v' && kind != 'c') {
+            return;
+        }
+        pos += 2;
+        int includeIdx = -1;
+        if (kind == 'c') {
+            int idxStart = pos;
+            while (pos < fileLen && fileName.charAt(pos) != '.') {
+                char ch = fileName.charAt(pos);
+                if (ch < '0' || ch > '9') {
+                    return;
+                }
+                pos++;
+            }
+            if (pos == idxStart || pos >= fileLen) {
+                return;
+            }
+            try {
+                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
+            } catch (NumericException e) {
+                return;
+            }
+        }
+        if (pos >= fileLen || fileName.charAt(pos) != '.') {
+            return;
+        }
+        pos++;
+
+        if (kind == 'v') {
+            int dot = nextDot(fileName, pos, fileLen);
+            long columnNameTxn;
+            long sealTxn;
+            if (dot < 0) {
+                columnNameTxn = COLUMN_NAME_TXN_NONE;
+                sealTxn = parseTxnSegment(fileName, pos, fileLen);
+            } else {
+                columnNameTxn = parseTxnSegment(fileName, pos, dot);
+                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
+            }
+            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+                return;
+            }
+            visitor.onValueFile(columnNameTxn, sealTxn);
+            return;
+        }
+
+        int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return;
+        }
+        long rawHost = parseTxnSegment(fileName, pos, hostDot);
+        if (rawHost == PARSE_FAIL) {
+            return;
+        }
+        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
+        long coveredColumnNameTxn;
+        long sealTxn;
+        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        if (secondDot < 0) {
+            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
+            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
+        } else {
+            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
+            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
+        }
+        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+            return;
+        }
+        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+    }
+
+    /**
      * Walks the v2 chain via fd-based reads and returns the head entry's
      * {@code SEAL_TXN}. Useful when the caller has just opened the .pk file
      * (e.g. snapshot restore, seal-purge job) and would otherwise pay an
@@ -1907,108 +2009,6 @@ public final class PostingIndexUtils {
             }
         }
         return -1;
-    }
-
-    /**
-     * Parses a directory entry name and dispatches to the visitor if it matches
-     * a sealed-file pattern for {@code columnName}.
-     * <p>
-     * Recognised patterns (segment indices use 0-based dot splits):
-     * <ul>
-     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
-     *   <li>{@code <columnName>.pc<includeIdx>.<coveredColumnNameTxn>.<sealTxn>} — cover data file</li>
-     * </ul>
-     * Files that do not match (different column, .pk, .pci, partition data, etc.)
-     * are silently ignored.
-     */
-    private static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
-        int nameLen = columnName.length();
-        int fileLen = fileName.length();
-        if (fileLen < nameLen + 4) {
-            return;
-        }
-        for (int i = 0; i < nameLen; i++) {
-            if (fileName.charAt(i) != columnName.charAt(i)) {
-                return;
-            }
-        }
-        if (fileName.charAt(nameLen) != '.') {
-            return;
-        }
-        int pos = nameLen + 1;
-        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
-            return;
-        }
-        char kind = fileName.charAt(pos + 1);
-        if (kind != 'v' && kind != 'c') {
-            return;
-        }
-        pos += 2;
-        int includeIdx = -1;
-        if (kind == 'c') {
-            int idxStart = pos;
-            while (pos < fileLen && fileName.charAt(pos) != '.') {
-                char ch = fileName.charAt(pos);
-                if (ch < '0' || ch > '9') {
-                    return;
-                }
-                pos++;
-            }
-            if (pos == idxStart || pos >= fileLen) {
-                return;
-            }
-            try {
-                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
-            } catch (NumericException e) {
-                return;
-            }
-        }
-        if (pos >= fileLen || fileName.charAt(pos) != '.') {
-            return;
-        }
-        pos++;
-
-        if (kind == 'v') {
-            int dot = nextDot(fileName, pos, fileLen);
-            long columnNameTxn;
-            long sealTxn;
-            if (dot < 0) {
-                columnNameTxn = COLUMN_NAME_TXN_NONE;
-                sealTxn = parseTxnSegment(fileName, pos, fileLen);
-            } else {
-                columnNameTxn = parseTxnSegment(fileName, pos, dot);
-                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
-            }
-            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
-                return;
-            }
-            visitor.onValueFile(columnNameTxn, sealTxn);
-            return;
-        }
-
-        int hostDot = nextDot(fileName, pos, fileLen);
-        if (hostDot < 0) {
-            return;
-        }
-        long rawHost = parseTxnSegment(fileName, pos, hostDot);
-        if (rawHost == PARSE_FAIL) {
-            return;
-        }
-        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
-        long coveredColumnNameTxn;
-        long sealTxn;
-        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
-        if (secondDot < 0) {
-            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
-            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
-        } else {
-            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
-            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
-        }
-        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
-            return;
-        }
-        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
     }
 
     private static long parseTxnSegment(CharSequence s, int from, int end) {
