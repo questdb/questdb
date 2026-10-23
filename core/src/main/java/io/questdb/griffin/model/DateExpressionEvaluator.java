@@ -209,6 +209,20 @@ public class DateExpressionEvaluator {
     }
 
     /**
+     * Returns true if {@code seq} contains a date variable ({@code $now}, {@code $today},
+     * {@code $yesterday}, {@code $tomorrow}) at any position, as recognised by
+     * {@link #isDateVariable(CharSequence, int, int)}.
+     */
+    public static boolean hasDateVariable(CharSequence seq) {
+        for (int i = 0, lim = seq.length(); i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && isDateVariable(seq, i, lim)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Checks whether the characters at seq[lo..lim) start with a known date
      * variable ({@code $now}, {@code $today}, {@code $yesterday}, {@code $tomorrow})
      * followed by a non-letter boundary. Case-insensitive, zero-allocation.

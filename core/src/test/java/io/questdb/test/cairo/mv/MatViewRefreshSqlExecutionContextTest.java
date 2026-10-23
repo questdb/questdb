@@ -41,10 +41,40 @@ import org.junit.Test;
  * replaces the base table's WHERE timestamp intrinsics with a runtime BETWEEN whose endpoints
  * link to bind variables 1 (lo, inclusive) and 2 (hi, exclusive, stored as hi-1). The override
  * must adopt both endpoints into the interval model - which takes ownership and closes them -
- * forward the refresh range set by setRange(), and remain a strict no-op for any table other
- * than the base table.
+ * forward the refresh range set by setRange(), intersect the scan with that range even when a
+ * NOT BETWEEN left the model's BETWEEN polarity negated, and remain a strict no-op for any table
+ * other than the base table. Also covers which views' refresh reads a bare name as a call to a
+ * zero-argument function.
  */
 public class MatViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
+
+    @Test
+    public void testBareNoArgFunctionCallsFollowPassthroughFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp) timestamp(ts) partition by day");
+            final MatViewRefreshSqlExecutionContext refreshCtx = new MatViewRefreshSqlExecutionContext(engine, 0);
+            try (TableReader baseReader = getReader("base")) {
+                refreshCtx.of(baseReader, baseReader.getTableToken(), true);
+                Assert.assertFalse(
+                        "a passthrough view's refresh reads a bare name as a column",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+
+                refreshCtx.of(baseReader, baseReader.getTableToken(), false);
+                Assert.assertTrue(
+                        "an aggregating view's refresh reads a bare name that matches no column as a call",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+
+                refreshCtx.of(baseReader, baseReader.getTableToken(), true);
+                refreshCtx.clearReader();
+                Assert.assertTrue(
+                        "clearReader() drops the passthrough flag of the previous view",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+            }
+        });
+    }
 
     @Test
     public void testOverrideWhereIntrinsicsForwardsBetweenEndpoints() throws Exception {
@@ -80,6 +110,30 @@ public class MatViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
                     Assert.assertEquals(2, out.size());
                     Assert.assertEquals("interval lo must read bind variable 1", 1_000L, out.getQuick(0));
                     Assert.assertEquals("interval hi must read bind variable 2 (exclusive hi - 1)", 3_000L, out.getQuick(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverrideWhereIntrinsicsResetsNegatedBetween() throws Exception {
+        // A NOT BETWEEN on the designated timestamp leaves the model's BETWEEN polarity negated:
+        // the view query's own NOT BETWEEN does it in the same compile, and a pooled model keeps
+        // it from an earlier compile. The refresh range still narrows the scan to [lo, hi - 1]
+        // rather than everything outside it.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp) timestamp(ts) partition by day");
+            final MatViewRefreshSqlExecutionContext refreshCtx = new MatViewRefreshSqlExecutionContext(engine, 0);
+            try (TableReader baseReader = getReader("base")) {
+                refreshCtx.of(baseReader);
+                final WhereClauseParser parser = new WhereClauseParser();
+                final IntrinsicModel intrinsicModel = parser.getEmpty(ColumnType.TIMESTAMP, PartitionBy.DAY, engine.getConfiguration());
+                intrinsicModel.setBetweenNegated(true);
+
+                refreshCtx.overrideWhereIntrinsics(baseReader.getTableToken(), intrinsicModel, ColumnType.TIMESTAMP);
+                refreshCtx.setRange(1_000L, 3_001L, ColumnType.TIMESTAMP);
+                try (RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel()) {
+                    Assert.assertEquals("[1000,3000]", intervalModel.calculateIntervals(refreshCtx).toString());
                 }
             }
         });

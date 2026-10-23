@@ -27,12 +27,15 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -57,7 +60,65 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    /**
+     * Closes the table-name-function factories the compiler attached to its query models and never
+     * transferred to a returned {@link RecordCursorFactory}. Code generation empties the model's slot
+     * as it takes ownership, so a factory the caller still holds is invisible here.
+     * <p>
+     * This is the narrow alternative to {@link #clear()} for a lifecycle boundary: it releases what
+     * the compiler still owns without dropping the SQL text or the flyweight {@link CompiledQuery} a
+     * caller may still be reading. It reports a close failure rather than throwing, so a caller can
+     * always finish returning or disposing of the compiler.
+     */
+    void freeUntransferredTableNameFunctions();
+
+    /**
+     * Returns the upper bound T, in the unit of the designated timestamp column, when {@code predicate} is
+     * {@code <ts> < T} or {@code <ts> <= T} on that column and T references no column. T lets the row-expiry
+     * cleanup classify a whole partition from its bounds, with no survivor scan. A shape that does not match,
+     * or an evaluation problem, gives {@link io.questdb.std.Numbers#LONG_NULL}, and the caller then scans.
+     */
+    long expiryTimestampThreshold(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    );
+
+    /**
+     * Returns true when the background cleanup job frees disk space for the EXPIRE ROWS policy
+     * {@code predicate}, i.e. when physical deletion is safe: a row it classifies as expired now can never
+     * re-enter the keep-set. Eligible scalar {@code WHEN} predicates qualify when they are clock-free or
+     * reduce to a designated-timestamp threshold ({@code ts < now()} / {@code ts <= T}). Structural KEEP and
+     * raw window policies do not: a later materialized-view refresh can remove a winner and reveal an older
+     * fallback that cleanup had physically deleted. A scalar predicate that references a non-deterministic clock in a
+     * non-threshold position (e.g. {@code ts > now()}) is also not monotonic because it can un-expire rows as
+     * time advances.
+     * <p>
+     * The check is conservative — any doubt (parse/bind issue, a non-deterministic function it cannot prove
+     * monotonic) returns false, so cleanup is SKIPPED and the authoritative read filter alone enforces
+     * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code metadata} is
+     * used to bind scalar predicates.
+     */
+    boolean isExpiryCleanupReclaiming(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate
+    );
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
+
+    /**
+     * Parses and optimises the SELECT of a view like {@link #generateExecutionModel}, and collects the
+     * tables and columns it reads into {@code outDependencies}, replacing what the map held. The set is
+     * the one CREATE VIEW records, so a caller that stores a view definition grants the view the same
+     * authority CREATE VIEW would.
+     */
+    ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+    ) throws SqlException;
 
     /**
      * Parses a single expression text into an {@link ExpressionNode} tree without
@@ -98,6 +159,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     CairoEngine getEngine();
 
     QueryBuilder query();
+
+    /**
+     * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}
+     * (the columns the object will have) and checking the result is a boolean expression, without touching
+     * any table. Used by CREATE TABLE / CREATE MATERIALIZED VIEW to reject a bad predicate before the
+     * object is created. Any parse/bind error is rewritten as a clear SqlException at {@code position}.
+     */
+    ExpiryValidationResult validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException;
 
     @TestOnly
     void setEnableJitNullChecks(boolean value);

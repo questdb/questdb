@@ -54,6 +54,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
+    // Two hours of fuzz data that NOT BETWEEN reads and view queries exclude.
+    private static final String NOT_BETWEEN_HI = "'2022-02-24T20:00:00.000000Z'";
+    private static final String NOT_BETWEEN_LO = "'2022-02-24T18:00:00.000000Z'";
     private static final long SPIN_LOCK_TIMEOUT = 100_000_000;
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
@@ -548,6 +551,30 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    @Test
+    public void testViewSqlGeneratorEmitsBothShapes() {
+        // runMvFuzz must keep generating views with and without their own NOT BETWEEN on the
+        // designated timestamp. The seed is fixed, so a failure reproduces.
+        final Rnd rnd = new Rnd(42, 42);
+        final String plainSql = "select min(c3), max(c3), ts from t sample by 1h";
+        final String notBetweenSql = "select min(c3), max(c3), ts from t " +
+                "where ts not between '2022-02-24T18:00:00.000000Z' and '2022-02-24T20:00:00.000000Z' sample by 1h";
+        int plainCount = 0;
+        int notBetweenCount = 0;
+        for (int i = 0; i < 100; i++) {
+            final String viewSql = generateViewSql(rnd, "t");
+            if (plainSql.equals(viewSql)) {
+                plainCount++;
+            } else if (notBetweenSql.equals(viewSql)) {
+                notBetweenCount++;
+            } else {
+                Assert.fail("unexpected view SQL: " + viewSql);
+            }
+        }
+        Assert.assertTrue("no view without NOT BETWEEN in 100 draws", plainCount > 0);
+        Assert.assertTrue("no view with NOT BETWEEN in 100 draws", notBetweenCount > 0);
+    }
+
     private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
@@ -562,6 +589,31 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
     }
 
+    // Half of the views exclude two hours of base data with their own NOT BETWEEN on the designated
+    // timestamp. Each refresh adds its refresh range to the same where-clause model.
+    private static String generateViewSql(Rnd rnd, String tableName) {
+        return "select min(c3), max(c3), ts from " + tableName +
+                (rnd.nextBoolean() ? " where ts not between " + NOT_BETWEEN_LO + " and " + NOT_BETWEEN_HI : "") +
+                " sample by 1h";
+    }
+
+    // NOT BETWEEN reads on the designated timestamp, each on a compiler drawn from the pool that the
+    // refresh jobs share, so the refresh compiles land on compilers that have analyzed a negated
+    // BETWEEN. An equivalent OR filter checks the count of each read.
+    private static void runNotBetweenReads(String tableName) throws SqlException {
+        for (int i = 0; i < 30; i++) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        "select count() from " + tableName + " where ts < " + NOT_BETWEEN_LO + " or ts > " + NOT_BETWEEN_HI,
+                        "select count() from " + tableName + " where ts not between " + NOT_BETWEEN_LO + " and " + NOT_BETWEEN_HI,
+                        LOG
+                );
+            }
+        }
+    }
+
     private ObjList<FuzzTransaction> createTransactionsAndMv(
             Rnd rnd,
             String tableNameBase,
@@ -569,6 +621,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             String viewSql
     ) throws SqlException, NumericException {
         fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
+        runNotBetweenReads(tableNameBase);
         final boolean deferred = rnd.nextBoolean();
         createMatView(viewSql, matViewName, deferred);
 
@@ -637,7 +690,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             for (int i = 0; i < tableCount; i++) {
                 String tableNameBase = testTableName + "_" + i;
                 String tableNameMv = tableNameBase + "_mv";
-                String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1h";
+                String viewSql = generateViewSql(rnd, tableNameBase);
                 ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
                 fuzzTransactions.add(transactions);
                 viewSqls.add(viewSql);
