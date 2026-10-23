@@ -5039,10 +5039,10 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testSharedSymbolCacheZeroAndTinyBudget() throws Exception {
         for (long budget : new long[]{0, 1}) {
+            setProperty(PropertyKey.CAIRO_SYMBOL_CACHE_MAX_SIZE, budget);
             assertMemoryLeak(() -> TestUtils.execute(
                     null,
                     (localEngine, _, context) -> {
-                        localEngine.getSymbolMapCachePool().getBudget().setLimit(budget);
                         localEngine.execute("CREATE TABLE cache_disabled (s SYMBOL CAPACITY 8192 CACHE)", context);
                         localEngine.execute("INSERT INTO cache_disabled SELECT x::STRING FROM long_sequence(4097)", context);
                         try (TableReader reader = localEngine.getReader("cache_disabled")) {
