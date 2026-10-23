@@ -176,6 +176,82 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * Compaction moves no row, so it keeps every column top the parquet file holds, as the native twin keeps them:
+     * BOOLEAN, BYTE and SHORT have no NULL value and read the rows of a top as NULL only through the top. Columns
+     * with a top inside the partition (6 of 8 rows, row groups of 4), a top of the whole partition, and columns
+     * the file lacks; CHAR is the control, its 0 is NULL. DROP COLUMN triggers the compaction, which keeps the
+     * row groups. After it, each column changes to a type with NULL; the top rows read NULL, lazily from the
+     * parquet partition, after a reopen and after CONVERT TO NATIVE. Without statistics only CONVERT TO NATIVE
+     * reads the tops, see assertIdleSweepKeepsColumnTops().
+     */
+    @Test
+    public void testIdleSweepKeepsColumnTops() throws Exception {
+        assertIdleSweepKeepsColumnTops(true);
+    }
+
+    @Test
+    public void testIdleSweepKeepsColumnTopsStatisticsDisabled() throws Exception {
+        assertIdleSweepKeepsColumnTops(false);
+    }
+
+    /**
+     * After the compaction, m BYTE is added and the row at 00:30 merges into row group 0: it ends the top of bt
+     * BYTE (2 rows, inside row group 0) and of m, absent from the file, all 8 rows. The rows of both tops read 0,
+     * as the native twin materializes them.
+     */
+    @Test
+    public void testIdleSweepThenO3EndsColumnTops() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+        assertMemoryLeak(() -> {
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("CREATE TABLE " + t + " (v INT, filler INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + t + " (v, ts) VALUES (1, '2020-01-01T00:00:00.000Z'), (2, '2020-01-01T01:00:00.000Z')");
+                execute("ALTER TABLE " + t + " ADD COLUMN bt BYTE");
+                execute("INSERT INTO " + t + " (v, ts, bt) VALUES (3, '2020-01-01T02:00:00.000Z', 3), (4, '2020-01-01T03:00:00.000Z', 4), "
+                        + "(5, '2020-01-01T04:00:00.000Z', 5), (6, '2020-01-01T05:00:00.000Z', 6), "
+                        + "(7, '2020-01-01T06:00:00.000Z', 7), (8, '2020-01-01T07:00:00.000Z', 8), (99, '2020-01-02T00:00:00.000Z', 99)");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("ALTER TABLE " + t + " DROP COLUMN filler");
+            }
+            drainWalQueue();
+            engine.releaseInactive();
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep should have compacted the partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("ALTER TABLE " + t + " ADD COLUMN m BYTE");
+                execute("INSERT INTO " + t + " (v, ts, bt, m) VALUES (50, '2020-01-01T00:30:00.000Z', 9, 9)");
+                execute("ALTER TABLE " + t + " ALTER COLUMN bt TYPE INT");
+                execute("ALTER TABLE " + t + " ALTER COLUMN m TYPE INT");
+            }
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "tw ORDER BY ts", "pt ORDER BY ts", LOG, false);
+            assertQuery("SELECT v, bt, m FROM pt WHERE ts IN '2020-01-01' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tbt\tm
+                            1\t0\t0
+                            50\t9\t9
+                            2\t0\t0
+                            3\t3\t0
+                            4\t4\t0
+                            5\t5\t0
+                            6\t6\t0
+                            7\t7\t0
+                            8\t8\t0
+                            """);
+        });
+    }
+
+    /**
      * The gate that makes the sweep WAL-only, pinned from both sides in one run so a gate that quietly
      * disables compaction for everyone cannot pass: two tables built by the same fixture, one WAL and one
      * not, swept together past the idle timeout. The WAL one must be compacted; the non-WAL one must come
@@ -832,6 +908,106 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 .returns("sum\n" + expectedNullSum + "\n");
     }
 
+    private void assertIdleSweepKeepsColumnTops(boolean isStatisticsEnabled) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, isStatisticsEnabled);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        // {column, type, the value of the rows after the top, the type it changes to after the compaction}
+        final String[][] columns = {
+                {"bt6", "BYTE", "6", "INT"}, {"sh6", "SHORT", "6", "LONG"}, {"bo6", "BOOLEAN", "true", "DOUBLE"}, {"ch6", "CHAR", "'c'", "VARCHAR"},
+                {"bt8", "BYTE", "8", "LONG"}, {"sh8", "SHORT", "8", "DOUBLE"}, {"bo8", "BOOLEAN", "true", "VARCHAR"}, {"ch8", "CHAR", "'c'", "STRING"},
+                {"btm", "BYTE", "9", "DOUBLE"}, {"shm", "SHORT", "9", "VARCHAR"}, {"bom", "BOOLEAN", "true", "INT"}, {"chm", "CHAR", "'c'", "VARCHAR"},
+        };
+        assertMemoryLeak(() -> {
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("CREATE TABLE " + t + " (v INT, filler INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + t + " (v, ts) VALUES (1, '2020-01-01T00:00:00.000Z'), (2, '2020-01-01T01:00:00.000Z'), "
+                        + "(3, '2020-01-01T02:00:00.000Z'), (4, '2020-01-01T03:00:00.000Z'), "
+                        + "(5, '2020-01-01T04:00:00.000Z'), (6, '2020-01-01T05:00:00.000Z')");
+                for (int i = 0; i < 4; i++) {
+                    execute("ALTER TABLE " + t + " ADD COLUMN " + columns[i][0] + " " + columns[i][1]);
+                }
+                final String values6 = columns[0][2] + ", " + columns[1][2] + ", " + columns[2][2] + ", " + columns[3][2];
+                execute("INSERT INTO " + t + " (v, ts, bt6, sh6, bo6, ch6) VALUES (7, '2020-01-01T06:00:00.000Z', " + values6
+                        + "), (8, '2020-01-01T07:00:00.000Z', " + values6 + ")");
+                // added after the 8 rows of 2020-01-01, while it is the last partition: a top of the whole partition
+                for (int i = 4; i < 8; i++) {
+                    execute("ALTER TABLE " + t + " ADD COLUMN " + columns[i][0] + " " + columns[i][1]);
+                }
+                execute("INSERT INTO " + t + " (v, ts, bt6, sh6, bo6, ch6, bt8, sh8, bo8, ch8) VALUES (99, '2020-01-02T00:00:00.000Z', "
+                        + values6 + ", " + columns[4][2] + ", " + columns[5][2] + ", " + columns[6][2] + ", " + columns[7][2] + ")");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            // added after the conversion: the parquet file lacks them
+            for (String t : new String[]{"pt", "tw"}) {
+                for (int i = 8; i < 12; i++) {
+                    execute("ALTER TABLE " + t + " ADD COLUMN " + columns[i][0] + " " + columns[i][1]);
+                }
+                execute("ALTER TABLE " + t + " DROP COLUMN filler");
+            }
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long fileSizeBefore = parquetPartitionFileSize(tableToken);
+            final String rowGroupsBefore = parquetRowGroupSizes(tableToken);
+            Assert.assertEquals("2 row groups: 4, 4", "4,4", rowGroupsBefore);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep should have compacted the partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals("the compaction keeps the row groups", rowGroupsBefore, parquetRowGroupSizes(tableToken));
+            // the dropped INT column leaves the file, the 4 columns it lacked come in as chunks of NULL definition levels
+            // of a few bytes each, 2 row groups
+            Assert.assertTrue(
+                    "the compacted file grew from " + fileSizeBefore + " to " + parquetPartitionFileSize(tableToken),
+                    parquetPartitionFileSize(tableToken) < fileSizeBefore + 4 * 2 * 128
+            );
+            assertTwinMatches();
+
+            if (!isStatisticsEnabled) {
+                // Without statistics the _pm decoder sees no column top in a chunk: a lazy change that decodes at
+                // the width of the source type reads the NULL top rows as 0, with or without the compaction. The
+                // footer keeps the tops, which CONVERT TO NATIVE reads
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+                drainWalQueue();
+            }
+            for (String t : new String[]{"pt", "tw"}) {
+                for (String[] column : columns) {
+                    execute("ALTER TABLE " + t + " ALTER COLUMN " + column[0] + " TYPE " + column[3]);
+                }
+            }
+            drainWalQueue();
+            assertTwinMatches();
+            // the rows of the tops read NULL: 6 and 8 rows, and the 8 rows of the columns the file lacked
+            assertQuery("SELECT count() FROM pt WHERE ts IN '2020-01-01' AND bt6 IS NULL AND sh6 IS NULL AND bo6 IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n6\n");
+            assertQuery("SELECT count() FROM pt WHERE ts IN '2020-01-01' AND bt8 IS NULL AND sh8 IS NULL AND bo8 IS NULL "
+                            + "AND btm IS NULL AND shm IS NULL AND bom IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n8\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertTwinMatches();
+            if (isStatisticsEnabled) {
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+                drainWalQueue();
+                assertTwinMatches();
+            }
+        });
+    }
+
+    private void assertTwinMatches() throws Exception {
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, "tw ORDER BY ts", "pt ORDER BY ts", LOG, false);
+    }
+
     private void assertCleanParquetDataIntact(String tableName) throws Exception {
         assertQuery("SELECT count() FROM " + tableName)
                 .noLeakCheck()
@@ -1228,6 +1404,21 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             final int parquetIdx = findParquetPartitionIndex(reader);
             Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
             return reader.getTxFile().getPartitionParquetFileSize(parquetIdx);
+        }
+    }
+
+    // the row counts of the row groups of the parquet partition, comma-separated
+    private String parquetRowGroupSizes(TableToken tableToken) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            reader.openPartition(parquetIdx);
+            final var meta = reader.getAndInitParquetPartitionDecoder(parquetIdx).metadata();
+            final StringBuilder sizes = new StringBuilder();
+            for (int rg = 0, n = meta.getRowGroupCount(); rg < n; rg++) {
+                sizes.append(rg > 0 ? "," : "").append(meta.getRowGroupSize(rg));
+            }
+            return sizes.toString();
         }
     }
 

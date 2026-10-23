@@ -930,6 +930,13 @@ impl ParquetUpdater {
     /// chunks for columns that are missing from the old schema but present in
     /// the target schema. `null_columns` contains `(target_schema_position,
     /// column_type)` pairs for each column that needs a null chunk.
+    ///
+    /// A missing column's top is the old row count. When the output does not keep
+    /// it (see `kept_column_top()`), a BOOLEAN, BYTE, SHORT or CHAR column gets a
+    /// chunk of 0/false values instead: these types have no NULL sentinel, the
+    /// native merge materializes an ended top as 0/false, and the null chunk would
+    /// read NULL through its definition levels and null count after a change to a
+    /// type with NULL.
     pub fn copy_row_group_with_null_columns(
         &mut self,
         rg_index: i32,
@@ -1049,13 +1056,30 @@ impl ParquetUpdater {
             })?;
 
             let col_offset = null_chunk_offset_base + null_bytes_buf.len() as u64;
-            let (chunk_bytes, thrift_col) = generate_null_column_chunk_bytes(
-                field,
-                col_type,
-                row_count,
-                col_offset,
-                self.parquet_file.options().write_statistics,
-            )?;
+            let field_info = field.get_field_info();
+            // the target schema declares these types Optional, see column_type_to_parquet_type()
+            let is_ended_top = is_no_null_sentinel_type(col_type)
+                && field_info
+                    .id
+                    .is_some_and(|id| self.kept_column_top(id) == 0);
+            let write_statistics = self.parquet_file.options().write_statistics;
+            let (chunk_bytes, thrift_col) = if is_ended_top {
+                generate_zero_column_chunk_bytes(
+                    field,
+                    col_type,
+                    row_count,
+                    col_offset,
+                    write_statistics,
+                )?
+            } else {
+                generate_null_column_chunk_bytes(
+                    field,
+                    col_type,
+                    row_count,
+                    col_offset,
+                    write_statistics,
+                )?
+            };
             null_bytes_buf.extend_from_slice(&chunk_bytes);
             merged_cols[target_pos] = Some(thrift_col);
         }
@@ -2280,6 +2304,211 @@ fn generate_null_column_chunk_bytes(
     Ok((chunk_bytes, column_chunk))
 }
 
+/// Whether the type has no NULL sentinel: BOOLEAN, BYTE, SHORT and CHAR read a NULL
+/// only through the definition levels of their chunks.
+fn is_no_null_sentinel_type(column_type: ColumnType) -> bool {
+    matches!(
+        column_type.tag(),
+        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
+    )
+}
+
+/// Generates the raw bytes and thrift `ColumnChunk` of an Optional BOOLEAN, BYTE,
+/// SHORT or CHAR column chunk whose rows all hold 0/false, as the encoder writes a
+/// materialized column top. The size does not grow with the row count: the
+/// definition levels are one RLE run of 1s, a BOOLEAN stores its values as one RLE
+/// run of false, the other types (INT32 in Parquet) as a dictionary of the single
+/// value 0 and one RLE run of RLE_DICTIONARY indices. With `write_statistics` the
+/// chunk carries `null_count = 0` and min = max = 0.
+fn generate_zero_column_chunk_bytes(
+    parquet_field: &ParquetType,
+    column_type: ColumnType,
+    row_count: usize,
+    file_offset: u64,
+    write_statistics: bool,
+) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
+    let is_boolean = column_type.tag() == ColumnTypeTag::Boolean;
+    let (path, max_rep_level, max_def_level, (thrift_type, _type_length)) =
+        collect_leaf_info(parquet_field);
+    if !is_no_null_sentinel_type(column_type) || max_rep_level != 0 || max_def_level != 1 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "cannot generate a zero chunk for column type {:?} with max rep level {} and max def level {}",
+            column_type,
+            max_rep_level,
+            max_def_level
+        ));
+    }
+
+    // Definition levels: every row is defined.
+    let def_levels = rle_run(row_count, 1);
+    let mut page_data = Vec::with_capacity(2 * (4 + def_levels.len()));
+    page_data.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+    page_data.extend_from_slice(&def_levels);
+    if is_boolean {
+        // RLE-encoded booleans of DataPageV1 carry a 4-byte length prefix.
+        let values = rle_run(row_count, 0);
+        page_data.extend_from_slice(&(values.len() as u32).to_le_bytes());
+        page_data.extend_from_slice(&values);
+    } else {
+        // Dictionary indices of bit width 1, one RLE run of entry 0. Readers such as arrow
+        // read no value from indices of bit width 0.
+        page_data.push(0x01);
+        page_data.extend_from_slice(&rle_run(row_count, 0));
+    }
+
+    let mut chunk_bytes = Vec::new();
+    let dict_page_offset = if is_boolean {
+        None
+    } else {
+        let dict_values = 0i32.to_le_bytes();
+        let dict_header = PageHeader {
+            type_: PageType::DICTIONARY_PAGE,
+            uncompressed_page_size: dict_values.len() as i32,
+            compressed_page_size: dict_values.len() as i32,
+            crc: None,
+            data_page_header: None,
+            index_page_header: None,
+            dictionary_page_header: Some(DictionaryPageHeader {
+                num_values: 1,
+                encoding: ThriftEncoding::PLAIN,
+                is_sorted: None,
+            }),
+            data_page_header_v2: None,
+        };
+        write_page_header(
+            &dict_header,
+            &mut chunk_bytes,
+            "zero column dictionary page",
+        )?;
+        chunk_bytes.extend_from_slice(&dict_values);
+        Some(file_offset as i64)
+    };
+
+    let data_encoding = if is_boolean {
+        ThriftEncoding::RLE
+    } else {
+        ThriftEncoding::RLE_DICTIONARY
+    };
+    let data_page_header = PageHeader {
+        type_: PageType::DATA_PAGE,
+        uncompressed_page_size: page_data.len() as i32,
+        compressed_page_size: page_data.len() as i32,
+        crc: None,
+        data_page_header: Some(DataPageHeader {
+            num_values: row_count as i32,
+            encoding: data_encoding,
+            definition_level_encoding: ThriftEncoding::RLE,
+            repetition_level_encoding: ThriftEncoding::RLE,
+            statistics: None,
+        }),
+        index_page_header: None,
+        dictionary_page_header: None,
+        data_page_header_v2: None,
+    };
+    let data_page_offset = file_offset as i64 + chunk_bytes.len() as i64;
+    write_page_header(&data_page_header, &mut chunk_bytes, "zero column data page")?;
+    chunk_bytes.extend_from_slice(&page_data);
+    let total_size = chunk_bytes.len() as i64;
+
+    let (encodings, encoding_stats) = if is_boolean {
+        (
+            vec![ThriftEncoding::RLE],
+            vec![PageEncodingStats {
+                page_type: PageType::DATA_PAGE,
+                encoding: ThriftEncoding::RLE,
+                count: 1,
+            }],
+        )
+    } else {
+        (
+            vec![
+                ThriftEncoding::PLAIN,
+                ThriftEncoding::RLE_DICTIONARY,
+                ThriftEncoding::RLE,
+            ],
+            vec![
+                PageEncodingStats {
+                    page_type: PageType::DICTIONARY_PAGE,
+                    encoding: ThriftEncoding::PLAIN,
+                    count: 1,
+                },
+                PageEncodingStats {
+                    page_type: PageType::DATA_PAGE,
+                    encoding: ThriftEncoding::RLE_DICTIONARY,
+                    count: 1,
+                },
+            ],
+        )
+    };
+    // the plain encoding of the value 0: one byte for a BOOLEAN, an INT32 for the others
+    let zero_value = if is_boolean {
+        vec![0u8]
+    } else {
+        0i32.to_le_bytes().to_vec()
+    };
+    let metadata = ColumnMetaData {
+        type_: thrift_type,
+        encodings,
+        path_in_schema: path,
+        codec: CompressionCodec::UNCOMPRESSED,
+        num_values: row_count as i64,
+        total_uncompressed_size: total_size,
+        total_compressed_size: total_size,
+        key_value_metadata: None,
+        data_page_offset,
+        index_page_offset: None,
+        dictionary_page_offset: dict_page_offset,
+        statistics: write_statistics.then(|| Statistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: Some(zero_value.clone()),
+            min_value: Some(zero_value),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        }),
+        encoding_stats: Some(encoding_stats),
+        bloom_filter_offset: None,
+        bloom_filter_length: None,
+    };
+    let column_chunk = ColumnChunk {
+        file_path: None,
+        file_offset: file_offset as i64 + total_size,
+        meta_data: Some(metadata),
+        offset_index_offset: None,
+        offset_index_length: None,
+        column_index_offset: None,
+        column_index_length: None,
+        crypto_metadata: None,
+        encrypted_column_metadata: None,
+    };
+    Ok((chunk_bytes, column_chunk))
+}
+
+fn write_page_header(header: &PageHeader, out: &mut Vec<u8>, what: &str) -> ParquetResult<()> {
+    let mut protocol = TCompactOutputProtocol::new(out);
+    header.write_to_out_protocol(&mut protocol).map_err(|e| {
+        ParquetError::with_descr(
+            ParquetErrorReason::Parquet2(parquet2::error::Error::oos(e.to_string())),
+            format!("Failed to serialize {what} header"),
+        )
+    })?;
+    Ok(())
+}
+
+/// One RLE run of `count` copies of `value`, of a bit width of at most 8: the
+/// header `count << 1` as a varint, then the value in one byte.
+fn rle_run(count: usize, value: u8) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(11);
+    let mut varint_buf = [0u8; 10];
+    let varint_len = uleb128::encode((count << 1) as u64, &mut varint_buf);
+    buf.extend_from_slice(&varint_buf[..varint_len]);
+    buf.push(value);
+    buf
+}
+
 /// Collects the full root-to-leaf path for `path_in_schema` and computes
 /// the leaf's max repetition/definition levels and physical type.
 ///
@@ -2333,14 +2562,7 @@ fn generate_optional_null_page(row_count: usize, max_rep_level: i16) -> Vec<u8> 
     // followed by ceil(bit_width / 8) zero bytes for the value.  Since the
     // value is 0 regardless of bit_width, one 0x00 byte suffices for any
     // bit_width in [1, 8].
-    let rle_all_zeros = {
-        let mut buf = Vec::with_capacity(8);
-        let mut varint_buf = [0u8; 10];
-        let varint_len = uleb128::encode((row_count << 1) as u64, &mut varint_buf);
-        buf.extend_from_slice(&varint_buf[..varint_len]);
-        buf.push(0x00); // value byte: all zeros
-        buf
-    };
+    let rle_all_zeros = rle_run(row_count, 0);
 
     let rle_section_len = rle_all_zeros.len() as u32;
     // Estimate: optional rep + def sections.
@@ -3134,24 +3356,53 @@ mod tests {
 
     /// Rewrites a 4-row [ts(id=0), val(id=1)] source into [ts, val, added(id=2)] with
     /// `copy_row_group_with_null_columns()` and returns the `_pm` column chunk of `added`.
+    /// The limit keeps the top of `added`: the copy writes the null chunk.
     fn null_column_pm_chunk(
         added: ColumnType,
         write_statistics: bool,
     ) -> Result<qdb_parquet_meta::ColumnChunkRaw, Box<dyn Error>> {
+        Ok(added_column_chunk(added, write_statistics, usize::MAX, 4)?.0)
+    }
+
+    /// Rewrites a file of `row_count` rows (ts, val) with the column `added`, id 2, that the
+    /// file lacks, under the column top row limit; returns the `_pm` chunk of the added
+    /// column in row group 0, its footer chunk and the output file.
+    fn added_column_chunk(
+        added: ColumnType,
+        write_statistics: bool,
+        limit: usize,
+        row_count: usize,
+    ) -> Result<
+        (
+            qdb_parquet_meta::ColumnChunkRaw,
+            parquet2::metadata::ColumnChunkMetaData,
+            NamedTempFile,
+        ),
+        Box<dyn Error>,
+    > {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_metadata::reader::ParquetMetaReader;
         use std::io::Read as _;
 
-        let ts = [1i64, 2, 3, 4];
-        let val = [10i32, 20, 30, 40];
+        let ts: &'static [i64] = Box::leak(
+            (1..=row_count as i64)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let val: &'static [i32] = Box::leak(
+            (1..=row_count as i32)
+                .map(|v| v * 10)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
         let src = NamedTempFile::new()?;
         ParquetWriter::new(src.reopen()?)
             .with_statistics(write_statistics)
             .finish(Partition {
                 table: "t".to_string(),
                 columns: vec![
-                    make_designated_ts_with_id(0, "ts", &ts),
-                    make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                    make_designated_ts_with_id(0, "ts", ts),
+                    make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), val),
                 ],
             })?;
         let src_len = src.as_file().metadata()?.len();
@@ -3179,11 +3430,12 @@ mod tests {
             -1,
             SeqTxn::UNSET,
         )?;
+        updater.set_column_top_row_limit(limit);
         updater.set_target_schema(&Partition {
             table: "t".to_string(),
             columns: vec![
-                make_designated_ts_with_id(0, "ts", &ts),
-                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_designated_ts_with_id(0, "ts", &ts[..1]),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val[..1]),
                 make_column_with_id(2, "added", added, &[0u8]),
             ],
         })?;
@@ -3194,7 +3446,237 @@ mod tests {
         let mut pm_bytes = Vec::new();
         pm.reopen()?.read_to_end(&mut pm_bytes)?;
         let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64)?;
-        Ok(*reader.row_group(0)?.column_chunk(2)?)
+        let pm_chunk = *reader.row_group(0)?.column_chunk(2)?;
+        let footer_chunk = read_footer(&out)?.row_groups[0].columns()[2].clone();
+        Ok((pm_chunk, footer_chunk, out))
+    }
+
+    /// Decodes column `name` of `file` with the arrow reader, as INT64; None for NULL.
+    fn read_column_as_i64(
+        file: &NamedTempFile,
+        name: &str,
+    ) -> Result<Vec<Option<i64>>, Box<dyn Error>> {
+        let bytes = std::fs::read(file.path())?;
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes))?.build()?;
+        let mut out = Vec::new();
+        for batch in reader {
+            let batch = batch?;
+            let column = batch.column_by_name(name).expect("column");
+            let column = arrow::compute::cast(column, &arrow::datatypes::DataType::Int64)?;
+            out.extend(
+                column
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int64Array>()
+                    .expect("Int64Array")
+                    .iter(),
+            );
+        }
+        Ok(out)
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_writes_zero_chunk_for_ended_top(
+    ) -> Result<(), Box<dyn Error>> {
+        // the added column's top, the 4 rows of the file, is not below the limit 2: a BOOLEAN,
+        // BYTE, SHORT or CHAR column gets 0/false in every row, with no NULL, as the native merge
+        // materializes an ended top. A type with a NULL sentinel keeps the null chunk
+        use crate::parquet_metadata::types::StatFlags;
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+        ] {
+            let (chunk, footer_chunk, out) = added_column_chunk(tag.into_type(), true, 2, 4)?;
+            let flags = StatFlags(chunk.stat_flags);
+            assert!(flags.has_null_count(), "{tag:?}");
+            assert_eq!(chunk.num_values, 4, "{tag:?}");
+            assert_eq!(chunk.null_count, 0, "{tag:?}");
+            assert!(flags.has_min_stat() && flags.has_max_stat(), "{tag:?}");
+            let statistics = footer_chunk
+                .column_chunk()
+                .meta_data
+                .as_ref()
+                .and_then(|m| m.statistics.clone())
+                .expect("statistics");
+            let zero = if tag == ColumnTypeTag::Boolean {
+                vec![0u8]
+            } else {
+                0i32.to_le_bytes().to_vec()
+            };
+            assert_eq!(statistics.null_count, Some(0), "{tag:?}");
+            assert_eq!(statistics.min_value, Some(zero.clone()), "{tag:?}");
+            assert_eq!(statistics.max_value, Some(zero), "{tag:?}");
+            assert_eq!(
+                read_column_as_i64(&out, "added")?,
+                vec![Some(0); 4],
+                "{tag:?}"
+            );
+            assert_eq!(
+                footer_column_tops(&read_footer(&out)?),
+                vec![0, 0, 0],
+                "{tag:?}"
+            );
+
+            // statistics off: no null count, the values read 0 all the same
+            let (chunk, _, out) = added_column_chunk(tag.into_type(), false, 2, 4)?;
+            assert!(!StatFlags(chunk.stat_flags).has_null_count(), "{tag:?}");
+            assert_eq!(
+                read_column_as_i64(&out, "added")?,
+                vec![Some(0); 4],
+                "{tag:?}"
+            );
+        }
+        let (chunk, _, out) = added_column_chunk(ColumnTypeTag::Int.into_type(), true, 2, 4)?;
+        assert_eq!(chunk.null_count, 4);
+        assert_eq!(read_column_as_i64(&out, "added")?, vec![None; 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_keeps_null_chunk_of_kept_top() -> Result<(), Box<dyn Error>>
+    {
+        // a limit past the 4 rows keeps the added column's top: NULL rows, footer top 4
+        for tag in [ColumnTypeTag::Boolean, ColumnTypeTag::Byte] {
+            let (chunk, _, out) = added_column_chunk(tag.into_type(), true, 5, 4)?;
+            assert_eq!(chunk.null_count, 4, "{tag:?}");
+            assert_eq!(read_column_as_i64(&out, "added")?, vec![None; 4], "{tag:?}");
+            assert_eq!(
+                footer_column_tops(&read_footer(&out)?),
+                vec![0, 0, 4],
+                "{tag:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn zero_chunk_size_does_not_grow_with_row_count() -> Result<(), Box<dyn Error>> {
+        // a dictionary of one value with RLE indices, or one RLE run of booleans, and one
+        // RLE run of definition levels: 100_000 rows take a few bytes more than 4 rows, the
+        // varints of the run lengths
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+        ] {
+            let (_, small, _) = added_column_chunk(tag.into_type(), true, 0, 4)?;
+            let (_, large, out) = added_column_chunk(tag.into_type(), true, 0, 100_000)?;
+            let small_size = small.compressed_size();
+            let large_size = large.compressed_size();
+            assert!(
+                large_size < 100,
+                "{tag:?} zero chunk of 100_000 rows takes {large_size} bytes"
+            );
+            assert!(
+                large_size - small_size <= 8,
+                "{tag:?}: {small_size} -> {large_size}"
+            );
+            let values = read_column_as_i64(&out, "added")?;
+            assert_eq!(values.len(), 100_000);
+            assert!(values.iter().all(|v| *v == Some(0)), "{tag:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generate_zero_column_chunk_bytes_rejects_types_with_null_sentinel() {
+        use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
+        use parquet2::schema::Repetition;
+        let optional_int = ParquetType::from_physical("i".to_string(), PhysicalType::Int32);
+        let required_int = ParquetType::PrimitiveType(PrimitiveType {
+            field_info: parquet2::schema::types::FieldInfo {
+                name: "b".to_string(),
+                repetition: Repetition::Required,
+                id: Some(2),
+            },
+            logical_type: None,
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        });
+        let repeated = ParquetType::PrimitiveType(PrimitiveType {
+            field_info: parquet2::schema::types::FieldInfo {
+                name: "element".to_string(),
+                repetition: Repetition::Repeated,
+                id: None,
+            },
+            logical_type: None,
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        });
+        let nested = ParquetType::from_group(
+            "b".to_string(),
+            Repetition::Optional,
+            None,
+            None,
+            vec![repeated],
+            Some(2),
+        );
+        // a type with a NULL sentinel, a Required field (no definition levels) and a nested one
+        for (field, column_type, levels) in [
+            (
+                &optional_int,
+                ColumnTypeTag::Int.into_type(),
+                "max rep level 0 and max def level 1",
+            ),
+            (
+                &required_int,
+                ColumnTypeTag::Byte.into_type(),
+                "max rep level 0 and max def level 0",
+            ),
+            (
+                &nested,
+                ColumnTypeTag::Byte.into_type(),
+                "max rep level 1 and max def level 2",
+            ),
+        ] {
+            let err = super::generate_zero_column_chunk_bytes(field, column_type, 4, 0, true)
+                .expect_err("an error");
+            assert!(
+                err.to_string().contains(&format!(
+                    "cannot generate a zero chunk for column type {column_type:?} with {levels}"
+                )),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_rejects_chunk_the_field_cannot_hold(
+    ) -> Result<(), Box<dyn Error>> {
+        // position 0 is the designated timestamp, Required: a BYTE whose top ends cannot get the
+        // Optional zero chunk, an INT cannot get the Required zero page of the null chunk
+        use crate::allocator::TestAllocatorState;
+        let ts = [1i64, 2, 3, 4];
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?).finish(Partition {
+            table: "t".to_string(),
+            columns: vec![make_designated_ts_with_id(0, "ts", &ts)],
+        })?;
+        let src_len = src.as_file().metadata()?.len();
+        let alloc = TestAllocatorState::new();
+        for (column_type, expected) in [
+            (
+                ColumnTypeTag::Byte.into_type(),
+                "cannot generate a zero chunk",
+            ),
+            (
+                ColumnTypeTag::Int.into_type(),
+                "cannot generate null chunk for Required column type",
+            ),
+        ] {
+            let out = NamedTempFile::new()?;
+            let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+            updater.set_target_schema(&Partition {
+                table: "t".to_string(),
+                columns: vec![make_designated_ts_with_id(0, "ts", &ts[..1])],
+            })?;
+            let err = updater
+                .copy_row_group_with_null_columns(0, &[(0, column_type)])
+                .expect_err("an error");
+            assert!(err.to_string().contains(expected), "{column_type:?}: {err}");
+        }
+        Ok(())
     }
 
     #[test]
@@ -7042,7 +7524,11 @@ mod tests {
         for (rg, &top) in tops.iter().enumerate() {
             assert!(top <= 4, "top {top} exceeds the row group size 4");
             if top == 4 {
+                // the null chunk of a top the output keeps: under the default limit 0 the copy
+                // ends the top and writes 0/false
+                updater.set_column_top_row_limit(usize::MAX);
                 updater.copy_row_group_with_null_columns(rg as i32, &[(2, added)])?;
+                updater.set_column_top_row_limit(0);
             } else {
                 let lo = rg * 4;
                 let added_values = &values[top..];

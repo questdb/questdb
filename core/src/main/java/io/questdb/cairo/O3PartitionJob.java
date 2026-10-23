@@ -3108,6 +3108,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     parquetFileSize,
                     seqTxn
             );
+            // compaction moves no row: the output keeps every column top, as the source has it
+            partitionUpdater.setColumnTopRowLimit(Long.MAX_VALUE);
             if (isFullyMaterialized) {
                 ParquetRowGroupMaterializer.setTargetSchema(ctx, partitionUpdater, metadata, symbolTableProvider);
             }

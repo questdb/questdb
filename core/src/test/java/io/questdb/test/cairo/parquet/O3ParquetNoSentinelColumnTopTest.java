@@ -1421,6 +1421,42 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEndedTopOfAbsentColumnReadsZero() throws Exception {
+        // c1..c3 are absent from the parquet file, a top of all 8 rows; the row at 00:30 merges into row group 0 and
+        // ends the top: the rewrite writes row group 1 with 0/false in c1..c3, as native materializes the top
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("");
+            insertO3("2024-01-01T00:30:00.000000Z");
+            assertReaders(topRows(8, 8, -1, "2024-01-01T00:30:00.000000Z", false));
+        });
+    }
+
+    @Test
+    public void testEndedTopOfAbsentColumnStatisticsDisabledReadsZero() throws Exception {
+        // the shape of testEndedTopOfAbsentColumnReadsZero without statistics: no chunk carries a null count
+        setInPlaceProperties(4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, false);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("");
+            insertO3("2024-01-01T00:30:00.000000Z");
+            assertReaders(topRows(8, 8, -1, "2024-01-01T00:30:00.000000Z", false));
+        });
+    }
+
+    @Test
+    public void testEndedTopOfAbsentColumnSurvivesReopen() throws Exception {
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("");
+            insertO3("2024-01-01T00:30:00.000000Z");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            assertReaders(topRows(8, 8, -1, "2024-01-01T00:30:00.000000Z", false));
+        });
+    }
+
+    @Test
     public void testFailedCommitThenRetryKeepsTop() throws Exception {
         // the in-place update fails to open data.parquet for writing: the commit fails and leaves the
         // file as it was, the retry keeps the top
