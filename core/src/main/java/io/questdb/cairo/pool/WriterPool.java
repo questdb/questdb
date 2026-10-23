@@ -51,6 +51,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.function.LongConsumer;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of
@@ -73,6 +74,7 @@ import java.util.Map;
  * closed.
  */
 public class WriterPool extends AbstractPool {
+    public static final String OWNERSHIP_REASON_ASYNC_COMMAND = "async command";
     public static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_RELEASED = "released";
@@ -153,7 +155,7 @@ public class WriterPool extends AbstractPool {
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
         // writer cannot be null because our async command is null
-        TableWriter w = getWriterEntry(tableToken, lockReason, null);
+        TableWriter w = getWriterEntry(tableToken, lockReason, null, null);
         assert w != null;
         w.goActive();
         return w;
@@ -176,6 +178,23 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
+     * Identifies the writer the pool currently holds for a table, without taking it.
+     *
+     * @param tableToken the table to look up
+     * @return the live writer's id, or -1 when the pool holds no writer for the table
+     */
+    public long getWriterId(TableToken tableToken) {
+        final Entry entry = entries.get(tableToken.getDirName());
+        if (entry != null) {
+            final TableWriter writer = (TableWriter) Unsafe.getObjectVolatile(entry, ENTRY_WRITER);
+            if (writer != null) {
+                return writer.getWriterId();
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Returns writer from the pool or sends writer command
      *
      * @param tableToken         name of the table
@@ -188,9 +207,18 @@ public class WriterPool extends AbstractPool {
             @NotNull String lockReason,
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
+        return getWriterOrPublishCommand(tableToken, lockReason, asyncWriterCommand, null);
+    }
+
+    public TableWriter getWriterOrPublishCommand(
+            TableToken tableToken,
+            @NotNull String lockReason,
+            @NotNull AsyncWriterCommand asyncWriterCommand,
+            @Nullable LongConsumer publishedWriterIdSink
+    ) {
         while (true) {
             try {
-                return getWriterEntry(tableToken, lockReason, asyncWriterCommand);
+                return getWriterEntry(tableToken, lockReason, asyncWriterCommand, publishedWriterIdSink);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -240,6 +268,7 @@ public class WriterPool extends AbstractPool {
 
             // try to change owner
             if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                e.ownershipReason = lockReason;
                 closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                 if (lockAndNotify(thread, e, tableToken, lockReason)) {
                     return OWNERSHIP_REASON_NONE;
@@ -318,7 +347,13 @@ public class WriterPool extends AbstractPool {
         unlock(tableToken, null, false);
     }
 
-    private void addCommandToWriterQueue(TableToken tableToken, Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
+    private void addCommandToWriterQueue(
+            TableToken tableToken,
+            Entry e,
+            AsyncWriterCommand asyncWriterCommand,
+            long thread,
+            @Nullable LongConsumer publishedWriterIdSink
+    ) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
             // If the entry has been removed from the pool (e.g. distressed close),
@@ -353,6 +388,11 @@ public class WriterPool extends AbstractPool {
                 // into its soon-to-be-freed queue; let the caller retry.
                 throw EntryUnavailableException.instance("please retry");
             }
+            // Capture the writer instance while the publisher fence guarantees it cannot close. Reading the
+            // pool after publish would race a close/reopen and could associate the command with its successor.
+            if (publishedWriterIdSink != null) {
+                publishedWriterIdSink.accept(writer.getWriterId());
+            }
             // Publish it. publishAsyncWriterCommand() marks the command as executing
             // asynchronously (startAsync) once it has validated the WAL invariant.
             writer.publishAsyncWriterCommand(asyncWriterCommand);
@@ -368,6 +408,8 @@ public class WriterPool extends AbstractPool {
 
         // If the writer is suddenly in the pool, lock it and call tick to process command queue
         if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+            // The one borrow that has no caller-supplied reason.
+            e.ownershipReason = OWNERSHIP_REASON_ASYNC_COMMAND;
             // Writer became available straight after setting items in the queue.
             // Don't leave it unprocessed
             try {
@@ -394,6 +436,28 @@ public class WriterPool extends AbstractPool {
         if (isClosed()) {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
+        }
+    }
+
+    /**
+     * Resolves the reason a holder took {@code e}, waiting out the window between the holder taking the entry and
+     * stamping its reason - {@code owner} and {@code ownershipReason} are two separate stores, so a reader can land
+     * between them however early the stamp happens.
+     *
+     * @return the holder's reason, or {@link #OWNERSHIP_REASON_NONE} if it released while we waited - the entry is no
+     * longer busy and the caller should retry rather than report it as such
+     */
+    private String awaitOwnershipReason(Entry e) {
+        while (true) {
+            final String reason = e.ownershipReason;
+            //noinspection StringEquality
+            if (reason != OWNERSHIP_REASON_NONE) {
+                return reason;
+            }
+            if (e.owner == UNALLOCATED) {
+                return OWNERSHIP_REASON_NONE;
+            }
+            Os.pause();
         }
     }
 
@@ -498,7 +562,8 @@ public class WriterPool extends AbstractPool {
     private TableWriter getWriterEntry(
             TableToken tableToken,
             @NotNull String lockReason,
-            @Nullable AsyncWriterCommand asyncWriterCommand
+            @Nullable AsyncWriterCommand asyncWriterCommand,
+            @Nullable LongConsumer publishedWriterIdSink
     ) {
         checkClosed();
 
@@ -510,6 +575,7 @@ public class WriterPool extends AbstractPool {
                 // We are racing to create new writer!
                 final String dirName = tableToken.getDirName();
                 e = new Entry(clock.getTicks(), dirName);
+                e.ownershipReason = lockReason;
                 Entry other = entries.putIfAbsent(dirName, e);
                 if (other == null) {
                     // race won
@@ -522,6 +588,7 @@ public class WriterPool extends AbstractPool {
             // try to change owner
             if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                 // we managed to grab the writer
+                e.ownershipReason = lockReason;
 
                 // in an extreme race condition it is possible that e.writer will be null
                 // in this case behaviour should be identical to entry missing entirely
@@ -551,11 +618,17 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 if (asyncWriterCommand != null) {
-                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread);
+                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread, publishedWriterIdSink);
                     return null;
                 }
 
-                String reason = reinterpretOwnershipReason(e.ownershipReason);
+                String reason = awaitOwnershipReason(e);
+                //noinspection StringEquality
+                if (reason == OWNERSHIP_REASON_NONE) {
+                    // The holder released while we were resolving its reason, so the entry may well be
+                    // free now - retry the acquire rather than report a busy entry that is not busy.
+                    continue;
+                }
 
                 if (!tableToken.isWal()) {
                     // Don't log busy for WAL table it's BAU.
@@ -667,6 +740,7 @@ public class WriterPool extends AbstractPool {
                 // to avoid race condition try to grab the writer before declaring it a
                 // free agent
                 if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                    e.ownershipReason = OWNERSHIP_REASON_RELEASED;
                     // Returning false makes TableWriter.close() run doClose(), which frees
                     // the command queue. Drain in-flight publishers first, just like
                     // closeWriter() does on the other free paths.

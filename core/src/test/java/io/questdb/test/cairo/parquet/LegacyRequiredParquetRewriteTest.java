@@ -260,6 +260,60 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAppendRewriteKeepsNoSentinelColumnTops() throws Exception {
+        // n_bool, n_byte, n_short and n_char are Required in the legacy file with footer column top
+        // 100. A row appended after the partition's last row rewrites the partition, re-encoding every
+        // row group (forceFullReencode). Every old row keeps its position, so the rewrite keeps the
+        // tops: rows 1..100 read NULL as in a native table that added the columns after 100 rows,
+        // through the lazy conversion and after CONVERT TO NATIVE.
+        assertMemoryLeak(() -> {
+            loadFixture();
+            final String columns = "ts, n_bool, n_byte, n_short, n_char";
+            execute("CREATE TABLE tw AS (SELECT ts FROM legacy_all ORDER BY ts LIMIT 100) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE tw ADD COLUMN n_bool BOOLEAN");
+            execute("ALTER TABLE tw ADD COLUMN n_byte BYTE");
+            execute("ALTER TABLE tw ADD COLUMN n_short SHORT");
+            execute("ALTER TABLE tw ADD COLUMN n_char CHAR");
+            execute("INSERT INTO tw SELECT " + columns + " FROM legacy_all ORDER BY ts LIMIT 100, 150");
+            drainWalQueue();
+            final long maxTimestamp;
+            try (
+                    RecordCursorFactory factory = select("SELECT max(ts) FROM legacy_all", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                maxTimestamp = cursor.getRecord().getTimestamp(0);
+            }
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("INSERT INTO " + t + " (" + columns + ") VALUES (" + (maxTimestamp + 1) + ", true, 7::BYTE, 7::SHORT, 'q')");
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM legacy_all").noRandomAccess().expectSize().returns("count\n151\n");
+
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_bool TYPE INT");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_byte TYPE INT");
+            }
+            drainWalQueue();
+            final String query = "SELECT " + columns + " FROM $t ORDER BY ts";
+            assertSqlCursors(query.replace("$t", "tw"), query.replace("$t", "legacy_all"));
+            assertQuery("SELECT count() FROM legacy_all WHERE n_bool = NULL AND n_byte = NULL")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+
+            execute("ALTER TABLE legacy_all CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+            drainWalQueue();
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_short TYPE SYMBOL");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_char TYPE SYMBOL");
+            }
+            drainWalQueue();
+            assertSqlCursors(query.replace("$t", "tw"), query.replace("$t", "legacy_all"));
+            assertQuery("SELECT count() FROM legacy_all WHERE n_short = NULL AND n_char = NULL")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+        });
+    }
+
+    @Test
     public void testRewriteAfterTypeConversion() throws Exception {
         // An O3 insert into a parquet partition that has pending type conversions routes through
         // ParquetRowGroupMaterializer with REAL conversions: c_byte->string is a

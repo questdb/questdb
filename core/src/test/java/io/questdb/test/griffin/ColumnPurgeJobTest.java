@@ -25,17 +25,28 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.griffin.PurgingOperator;
 import io.questdb.griffin.SqlException;
+import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -44,6 +55,7 @@ import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,12 +63,42 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.ObjIntConsumer;
+import java.util.regex.Pattern;
 
 @RunWith(Parameterized.class)
 public class ColumnPurgeJobTest extends AbstractCairoTest {
+    // the rows of y that insertRowsOfIndexReAddedAtTxnZero() writes, as ts, s, d, vc, l
+    private static final String ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO = """
+            2024-01-01T01:00:00.000000Z\ty\t1.5\ta1\t10
+            2024-01-01T02:00:00.000000Z\ty\tnull\t\tnull
+            2024-01-01T04:00:00.000000Z\ty\t4.5\t\u00e94\t40
+            """;
+    private static final String THIRD_ROW_OF_INDEX_RE_ADDED_AT_TXN_ZERO = "(5, '2024-01-01T05:00:00.000000Z', 'y', 5.5, 'a5', 50)";
+    // the rows of t_replay that createReplayTable() writes with sym = 'A', as ts, x
+    private static final String ROWS_OF_A_IN_REPLAY_TABLE = """
+            ts\tx
+            1970-01-01T02:00:00.000000Z\t1
+            1970-01-04T02:00:00.000000Z\t4
+            """;
     private final TestTimestampType timestampType;
+    // the entries that the purge job reported as refused because the truncate version changed, see
+    // listenToTruncateRefusals()
+    private final ArrayList<String> truncateRefusedEntries = new ArrayList<>();
     private int iteration = 1;
 
     public ColumnPurgeJobTest(TestTimestampType timestampType) {
@@ -73,6 +115,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     @Before
     public void setUpUpdates() {
         iteration = 1;
+        truncateRefusedEntries.clear();
         setCurrentMicros(0);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
     }
@@ -911,6 +954,516 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeCompletedBeforeTruncateIsNotReportedAsRefused() throws Exception {
+        // The purge of the first UPDATE completes before DROP PARTITION, and the purge of the second UPDATE
+        // waits for a reader until after it. The purge log holds the rows of both with the truncate version
+        // from before DROP PARTITION and marks them all completed, but the job refuses only the second
+        // purge: it reports the instance that the second UPDATE replaced, in the partitions that DROP
+        // PARTITION keeps.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 9, 9);
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    for (String dir : dirs) {
+                        for (String col : new String[]{"x", "str", "sym"}) {
+                            Assert.assertEquals(walMode + ", " + dir, "[]", filesOfInstance(listFiles(dir), col, TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                        }
+                    }
+                    final List<String> expected = new ArrayList<>();
+                    for (String col : new String[]{"x", "str", "sym"}) {
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, getColumnNameTxn("t", col, 0)));
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, getColumnNameTxn("t", col, 2)));
+                    }
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 18, 18);
+                    // the rows of the completed purge carry the old truncate version too
+                    assertQuery("SELECT count() c, count(completed) completed FROM \"" + purgeJob.getLogTableName()
+                            + "\" WHERE truncate_version <> 1 AND column_version = " + TableUtils.COLUMN_NAME_TXN_NONE)
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("c\tcompleted\n9\t9\n");
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateAfterPartialRemoval() throws Exception {
+        // The job removes sym.d of instance NONE of sym in 1970-01-01, fails to remove its sym.k and
+        // purges the other partitions. DROP PARTITION follows, and the job refuses the retry: it reports
+        // the entry of 1970-01-01 only, whose sym.k and sym.v stay. The entry of 1970-01-03 has no files
+        // left, and the existence check completes it.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                failedRemoveCount.set(0);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    final String firstDir = partitionDir("t", 0);
+                    final String lastDir = partitionDir("t", 2);
+                    final String expected = truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(firstDir).getName() + Files.SEPARATOR + "sym.k");
+                    remainingFailures.set(1);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, "[sym.k, sym.v]", filesOfInstance(listFiles(firstDir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    Assert.assertEquals(walMode, "[]", filesOfInstance(listFiles(lastDir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, "[" + expected + "]", truncateRefusedEntries.toString());
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, "[sym.k, sym.v]", filesOfInstance(listFiles(firstDir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateAfterPartialRemovalOfPostingIndex() throws Exception {
+        // The job fails to remove a sealed .pv file of instance NONE of sym in each partition, and
+        // removes sym.d and sym.pk. DROP PARTITION follows, and the job refuses the retry: the scan for
+        // sealed files finds the .pv files, so it reports the entries of 1970-01-01 and 1970-01-03, whose
+        // .pv files stay.
+        final AtomicBoolean isValueFileFailureArmed = new AtomicBoolean();
+        // the partition directory and the name of the .pv file whose removal failed there
+        final Map<String, String> failedValueFiles = new ConcurrentHashMap<>();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isValueFileFailureArmed.get()) {
+                    final File file = new File(Utf8s.stringFromUtf8Bytes(name));
+                    // the first sealed .pv file of sym in each partition
+                    if (file.getName().startsWith("sym.pv.") && failedValueFiles.putIfAbsent(file.getParent(), file.getName()) == null) {
+                        return false;
+                    }
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                failedValueFiles.clear();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX TYPE POSTING");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    for (String dir : dirs) {
+                        final String files = filesOfInstance(listFiles(dir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString();
+                        Assert.assertTrue(walMode + ", " + files, files.contains("sym.pk") && files.contains("sym.pv."));
+                    }
+                    final List<String> expected = Arrays.asList(
+                            truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE),
+                            truncateRefusalKeyOfT("sym", "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE)
+                    );
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    isValueFileFailureArmed.set(true);
+                    purgeJob.run();
+                    isValueFileFailureArmed.set(false);
+                    Assert.assertEquals(walMode, 3, failedValueFiles.size());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    final String[] failedNames = new String[dirs.length];
+                    for (int i = 0; i < dirs.length; i++) {
+                        failedNames[i] = failedValueFiles.get(new File(dirs[i]).getPath());
+                        Assert.assertNotNull(walMode + ", " + dirs[i] + " in " + failedValueFiles, failedNames[i]);
+                        Assert.assertEquals(walMode, "[" + failedNames[i] + "]", filesOfInstance(listFiles(dirs[i]), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+                    Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    for (int i = 0; i < dirs.length; i++) {
+                        Assert.assertEquals(walMode, "[" + failedNames[i] + "]", filesOfInstance(listFiles(dirs[i]), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeTruncateRefusalListenerPassesThroughConfigurationWrapper() {
+        // CairoConfigurationWrapper must hand out the delegate's listener, or a wrapped configuration
+        // silently drops the refusal reports
+        final ObjIntConsumer<ColumnPurgeTask> listener = (task, offset) -> {
+        };
+        node1.getConfigurationOverrides().setColumnPurgeTruncateRefusalListener(listener);
+        Assert.assertSame(listener, new CairoConfigurationWrapper(configuration).getColumnPurgeTruncateRefusalListener());
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateCompletesWithoutRetry() throws Exception {
+        // DROP PARTITION changes the truncate version while the purge of UPDATE waits for a reader. The job
+        // refuses the purge, marks its rows completed, does not retry it, and leaves the files of instance
+        // NONE of x, str and sym in the partitions that DROP PARTITION keeps.
+        assertMemoryLeak(() -> {
+            // the test installs no listener, and Overrides.reset() cleared that of an earlier test
+            Assert.assertNull(engine.getConfiguration().getColumnPurgeTruncateRefusalListener());
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    final String[] listings = new String[dirs.length];
+                    for (int i = 0; i < dirs.length; i++) {
+                        listings[i] = listFiles(dirs[i]);
+                        Assert.assertEquals(walMode, "[x.d]", filesOfInstance(listings[i], "x", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                        Assert.assertEquals(walMode, "[str.d, str.i]", filesOfInstance(listings[i], "str", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                        Assert.assertEquals(walMode, "[sym.d, sym.k, sym.v]", filesOfInstance(listings[i], "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    for (int repeat = 0; repeat < 2; repeat++) {
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                        // the first run after DROP PARTITION, at 60 micros, completes all 9 rows
+                        assertQuery("SELECT count() c, count(completed) completed, min(completed) first, max(completed) last FROM \""
+                                + purgeJob.getLogTableName() + "\"")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("""
+                                        c\tcompleted\tfirst\tlast
+                                        9\t9\t1970-01-01T00:00:00.000060Z\t1970-01-01T00:00:00.000060Z
+                                        """);
+                        for (int i = 0; i < dirs.length; i++) {
+                            Assert.assertEquals(walMode, listings[i], listFiles(dirs[i]));
+                        }
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateReportsEachEntryWithFiles() throws Exception {
+        // Two UPDATEs run while a reader holds the table, and DROP PARTITION follows. The job refuses the
+        // purges of both and reports each entry of instance NONE and of the instance of the first UPDATE
+        // in the partitions that DROP PARTITION keeps. The entries of the dropped partition have no files
+        // left, and the existence check completes them. Later runs report nothing.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    final List<String> expected = new ArrayList<>();
+                    for (String col : new String[]{"x", "str", "sym"}) {
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE));
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE));
+                    }
+                    try (TableReader ignore = getReader("t")) {
+                        execute("UPDATE t SET x = 100, str = 'z', sym = 'Z'");
+                        drainWalQueue();
+                        for (String col : new String[]{"x", "str", "sym"}) {
+                            final long firstColumnNameTxn = getColumnNameTxn("t", col, 0);
+                            final long lastColumnNameTxn = getColumnNameTxn("t", col, 2);
+                            Assert.assertTrue(walMode + ", " + col, firstColumnNameTxn > 0 && lastColumnNameTxn > 0);
+                            expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, firstColumnNameTxn));
+                            expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, lastColumnNameTxn));
+                        }
+                        // a reader of the first UPDATE keeps its instance, which UPDATE would purge at once otherwise
+                        try (TableReader ignore2 = getReader("t")) {
+                            execute("UPDATE t SET x = 200, str = 'y', sym = 'Y'");
+                            drainWalQueue();
+                            runPurgeJob(purgeJob);
+                        }
+                    }
+                    Assert.assertEquals(walMode, 6, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 18, 0);
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 18, 18);
+
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRefusedByTruncateReportsSymbolRootFiles() throws Exception {
+        // RENAME COLUMN of sym runs while a reader holds the table, and DROP PARTITION follows. The job
+        // refuses the purge of the old name and reports its entries: the symbol table files in the table
+        // root and the column files in the partitions that DROP PARTITION keeps. All of them stay.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t").getDirName());
+                    Assert.assertEquals(walMode, "[sym.c, sym.k, sym.o, sym.v]", symbolRootFiles(tableDir).toString());
+                    final List<String> expected = Arrays.asList(
+                            truncateRefusalKey("sym", PurgingOperator.TABLE_ROOT_PARTITION, -1, TableUtils.COLUMN_NAME_TXN_NONE),
+                            truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE),
+                            truncateRefusalKeyOfT("sym", "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE)
+                    );
+                    final String[] dirs = {partitionDir("t", 0), partitionDir("t", 2)};
+                    try (TableReader ignore = getReader("t")) {
+                        execute("ALTER TABLE t RENAME COLUMN sym TO sym2");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                    }
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+
+                    dropMiddlePartitionOfTruncateTable(walMode);
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, "[sym.c, sym.k, sym.o, sym.v]", symbolRootFiles(tableDir).toString());
+                    for (String dir : dirs) {
+                        Assert.assertEquals(walMode, "[sym.d, sym.k, sym.v]", filesOfInstance(listFiles(dir), "sym", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeDuringDropTable() throws Exception {
+        assertPurgeDuringDropTable(false);
+    }
+
+    @Test
+    public void testPurgeDuringFailedDropTable() throws Exception {
+        assertPurgeDuringDropTable(true);
+    }
+
+    @Test
+    public void testPurgeMixesRetryAndLiveEntries() throws Exception {
+        // The table id of t cannot be read for the first entry of the purge only. The job retries that
+        // entry and purges the other two partitions in the same run; the purge log marks the rows of the
+        // task complete once every entry is done.
+        final AtomicBoolean isMetaOpenFailureArmed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isMetaFileOfT(name) && isMetaOpenFailureArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                isMetaOpenFailureArmed.set(true);
+                purgeJob.run();
+                Assert.assertFalse(isMetaOpenFailureArmed.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 0);
+                Assert.assertEquals(listings[0], listFiles(partitionDir("t", 0)));
+                for (int i = 1; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeOfRecreatedTableWithUnreadableMetaIsOrphan() throws Exception {
+        // t is dropped and created again under the same name while its purge waits. The registry holds
+        // another table id, so the job drops the purge even though it cannot read _meta, and the files
+        // of the new table stay.
+        final AtomicBoolean isMetaOpenFailing = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isMetaOpenFailing.get() && isMetaFileOfT(name)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                engine.releaseInactive();
+                execute("DROP TABLE t");
+                createRetryTable("BYPASS WAL");
+                final String[] listings = new String[3];
+                for (int i = 0; i < 3; i++) {
+                    listings[i] = listFiles(partitionDir("t", i));
+                    Assert.assertTrue(listings[i], (" " + listings[i] + " ").contains(" sym.d "));
+                }
+                engine.releaseInactive();
+                isMetaOpenFailing.set(true);
+                runPurgeJob(purgeJob);
+                isMetaOpenFailing.set(false);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
+                }
+                // the job drops the purge of an orphan table, which no truncate refused
+                Assert.assertEquals("[]", truncateRefusedEntries.toString());
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeOfTableWithMetaOfAnotherTableIsOrphan() throws Exception {
+        // The registry lists t with the table id of the purge, but _meta of t holds the id of another
+        // table. The job drops the purge and leaves the files.
+        final AtomicBoolean isMetaOfOtherTable = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isMetaOfOtherTable.get() && isMetaFileOfT(name)) {
+                    try (Path other = new Path()) {
+                        other.of(configuration.getDbRoot()).concat(engine.verifyTableName("other")).concat(TableUtils.META_FILE_NAME);
+                        return super.openRO(other.$());
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE other (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            listenToTruncateRefusals();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                engine.releaseInactive();
+                isMetaOfOtherTable.set(true);
+                runPurgeJob(purgeJob);
+                isMetaOfOtherTable.set(false);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
+                }
+                // the job drops the purge of an orphan table, which no truncate refused
+                Assert.assertEquals("[]", truncateRefusedEntries.toString());
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesEntryAfterShortReadOfMeta() throws Exception {
+        // _meta of t opens, but the read of the table id returns fewer bytes than an int has, once. The
+        // job retries the first entry of the purge rather than drop it as a purge of another table, and
+        // purges the other two partitions in the same run; the next run purges the first one.
+        final AtomicBoolean isMetaShortReadArmed = new AtomicBoolean();
+        final AtomicLong metaFd = new AtomicLong(-1);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (isMetaShortReadArmed.get() && isMetaFileOfT(name)) {
+                    metaFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (fd == metaFd.get() && offset == TableUtils.META_OFFSET_TABLE_ID && isMetaShortReadArmed.compareAndSet(true, false)) {
+                    metaFd.set(-1);
+                    // the bytes past the short read hold what the buffer held before, not the table id
+                    Unsafe.getUnsafe().setMemory(buf, len, (byte) 0xFF);
+                    return super.read(fd, buf, len - 1, offset);
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                isMetaShortReadArmed.set(true);
+                purgeJob.run();
+                Assert.assertFalse(isMetaShortReadArmed.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 0);
+                Assert.assertEquals(listings[0], listFiles(partitionDir("t", 0)));
+                for (int i = 1; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesEntryDuringMetaSwap() throws Exception {
+        assertPurgeRetriesEntryDuringMetaSwap(false);
+    }
+
+    @Test
+    public void testPurgeRetryAfterMetaSwapReplayedOnRestart() throws Exception {
+        assertPurgeRetriesEntryDuringMetaSwap(true);
+    }
+
+    @Test
     public void testPurgeRetriesAfterRestart() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
@@ -1345,6 +1898,1518 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPurgeJobRemovesOrphanPostingSidecarsOfEveryPartition() throws Exception {
+        // UPDATE with an open reader leaves the old instance of sym in three partitions. The test deletes
+        // its sym.d and sym.pk in the last two partitions, or in all three, so only the .pci, .pv and .pc
+        // files of the old instance remain there. One retry of the purge task removes the old instance
+        // from every partition.
+        assertMemoryLeak(() -> {
+            for (boolean isFirstPartitionOrphaned : new boolean[]{false, true}) {
+                final String context = isFirstPartitionOrphaned ? "all partitions orphaned" : "first partition complete";
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    final String[] liveFiles = createOrphanPostingSidecars(context, purgeJob, isFirstPartitionOrphaned);
+                    Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertOrphanPostingSidecarsPurged(context, liveFiles);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRemovesRootSymbolFilesOfOldCapacity() throws Exception {
+        // A symbol capacity change with an open reader leaves the symbol table files of the old version
+        // in the table root. One run of the purge job removes all four of them.
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE t_capacity AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                        " FROM long_sequence(3))" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t_capacity").getDirName());
+                Assert.assertEquals("[sym.c, sym.k, sym.o, sym.v]", symbolRootFiles(tableDir).toString());
+                final long symbolTableNameTxn;
+                try (TableReader ignore = getReader("t_capacity")) {
+                    execute("ALTER TABLE t_capacity ALTER COLUMN sym SYMBOL CAPACITY 1024");
+                    try (TableReader reader = getReader("t_capacity")) {
+                        symbolTableNameTxn = reader.getColumnVersionReader().getSymbolTableNameTxn(1);
+                    }
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                }
+                Assert.assertTrue(symbolTableNameTxn > 0);
+                final String suffix = "." + symbolTableNameTxn;
+                Assert.assertEquals(
+                        "[sym.c, sym.c" + suffix + ", sym.k, sym.k" + suffix + ", sym.o, sym.o" + suffix + ", sym.v, sym.v" + suffix + "]",
+                        symbolRootFiles(tableDir).toString()
+                );
+
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 100_000_000L);
+                purgeJob.run();
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(
+                        "[sym.c" + suffix + ", sym.k" + suffix + ", sym.o" + suffix + ", sym.v" + suffix + "]",
+                        symbolRootFiles(tableDir).toString()
+                );
+                assertQuery("SELECT count() FROM t_capacity WHERE sym IN ('A', 'B', 'C', 'D')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                3
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRemovesPostingCoverFilesOfNameTxnZero() throws Exception {
+        // s is the first column added to the empty table t_z, so its column name txn is 0, and its .pc
+        // files carry the token 0 that txn NONE also writes: s.pc<N>.0[.<covered txn>].<seal>. An
+        // earlier version left a superseded seal of s on disk, planted here by name. Each change moves
+        // s, or its index, away from column version 0, and the removal of that version takes every
+        // .pc file of it, with an open reader through the purge job and without one in the writer.
+        // The covered values read what the twin, with s in CREATE TABLE, reads.
+        assertMemoryLeak(() -> {
+            for (String change : new String[]{"DROP INDEX", "DROP COLUMN", "RENAME COLUMN", "UPDATE"}) {
+                for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                    for (boolean isReaderOpen : new boolean[]{true, false}) {
+                        final String context = change + ", " + walMode + (isReaderOpen ? ", reader open" : "");
+                        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                            createTxnZeroCoveringTables(walMode);
+                            final String dir = partitionDir("t_z", 0);
+                            for (String name : new String[]{"s.pc0.0.1.77", "s.pc2.0.77", "s.pv.0.77"}) {
+                                Assert.assertTrue(context + ", " + name, new File(dir, name).createNewFile());
+                            }
+                            final String sql = switch (change) {
+                                case "DROP INDEX" -> "ALTER TABLE {t} ALTER COLUMN s DROP INDEX";
+                                case "DROP COLUMN" -> "ALTER TABLE {t} DROP COLUMN s";
+                                case "RENAME COLUMN" -> "ALTER TABLE {t} RENAME COLUMN s TO s2";
+                                default -> "UPDATE {t} SET s = 'z' WHERE s = 'y' AND ts IN '2024-01-01'";
+                            };
+                            if (isReaderOpen) {
+                                try (TableReader ignored = getReader("t_z")) {
+                                    execute(sql.replace("{t}", "t_z"));
+                                    execute(sql.replace("{t}", "t_twin"));
+                                    drainWalQueue();
+                                    runPurgeJob(purgeJob);
+                                }
+                            } else {
+                                execute(sql.replace("{t}", "t_z"));
+                                execute(sql.replace("{t}", "t_twin"));
+                                drainWalQueue();
+                            }
+                            runPurgeJob(purgeJob);
+                            Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                            Assert.assertEquals(context, "[]", txnZeroIndexFilesOfS(partitionDir("t_z", 0)).toString());
+                            final String sName = change.equals("RENAME COLUMN") ? "s2" : "s";
+                            if (!change.startsWith("DROP")) {
+                                assertCoverFilesPerSeal(context, partitionDir("t_z", 0), sName);
+                                assertCoverFilesPerSeal(context, partitionDir("t_z", 1), sName);
+                            }
+                            final String projection = change.equals("DROP COLUMN") ? "ts, d, vc" : "ts, " + sName + ", d, vc";
+                            for (String query : change.startsWith("DROP")
+                                    ? new String[]{"SELECT " + projection + " FROM {t}"}
+                                    : new String[]{
+                                    "SELECT " + projection + " FROM {t} WHERE " + sName + " = 'x'",
+                                    "SELECT " + projection + " FROM {t} WHERE " + sName + " IN ('y', 'z')",
+                                    "SELECT " + projection + " FROM {t}"
+                            }) {
+                                assertSqlCursors(query.replace("{t}", "t_twin"), query.replace("{t}", "t_z"));
+                            }
+                            if (!change.startsWith("DROP")) {
+                                assertQuery("SELECT count() c, sum(d) sd FROM t_z WHERE " + sName + " = 'x'")
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .withPlanContaining("CoveringIndex on: " + sName)
+                                        .returns("c\tsd\n3\t14.5\n");
+                            }
+                            execute("DROP TABLE t_z");
+                            execute("DROP TABLE t_twin");
+                            drainWalQueue();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverFilesOfNameTxnZero() throws Exception {
+        // The purge of the index of s, column name txn 0, cannot remove one of its .pc files the first
+        // time. It reports the task incomplete and removes the file on the retry.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean hasFailed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "s.pc0.0.") && hasFailed.compareAndSet(false, true)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createTxnZeroCoveringTables("BYPASS WAL");
+                try (TableReader ignored = getReader("t_z")) {
+                    execute("ALTER TABLE t_z ALTER COLUMN s DROP INDEX");
+                    execute("ALTER TABLE t_twin ALTER COLUMN s DROP INDEX");
+                    runPurgeJob(purgeJob);
+                }
+                isArmed.set(true);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                purgeJob.run();
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertTrue(hasFailed.get());
+                Assert.assertEquals(1, coverDataFileCount(partitionDir("t_z", 0), "s") + coverDataFileCount(partitionDir("t_z", 1), "s"));
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("[]", txnZeroIndexFilesOfS(partitionDir("t_z", 0)).toString());
+                Assert.assertEquals("[]", txnZeroIndexFilesOfS(partitionDir("t_z", 1)).toString());
+                assertSqlCursors("SELECT ts, s, d, vc FROM t_twin WHERE s = 'x'", "SELECT ts, s, d, vc FROM t_z WHERE s = 'x'");
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFile() throws Exception {
+        // UPDATE with a reader open leaves the old instance of sym in the last three of five partitions.
+        // The purge job cannot remove the .pci file of the old instance in the middle one of them, once
+        // or three times in a row: each failed run keeps the task, and the next run removes the file
+        // after every other file of the old instance is gone. The old instance has the column name txn
+        // NONE, or the txn of an earlier UPDATE whose synchronous purge completed.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            final String[][] cases = {
+                    // WAL mode, column name txn of the old instance, covered columns, failed removals
+                    {"BYPASS WAL", "NONE", "x", "1"},
+                    {"WAL", "NONE", "x", "1"},
+                    {"BYPASS WAL", "NONE", "d, vc, str", "1"},
+                    {"BYPASS WAL", "UPDATED", "x", "1"},
+                    {"WAL", "UPDATED", "d, vc, str", "1"},
+                    {"BYPASS WAL", "UPDATED", "d, vc, str", "3"},
+            };
+            for (String[] testCase : cases) {
+                final String context = String.join(", ", testCase);
+                final boolean isUpdatedBefore = testCase[1].equals("UPDATED");
+                final int failures = Integer.parseInt(testCase[3]);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createCoverInfoTable(testCase[0], testCase[2]);
+                    if (isUpdatedBefore) {
+                        // no reader: the writer purges the instance NONE itself
+                        update("UPDATE t_pci SET sym = 'B' WHERE ts >= '1970-01-03'");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] oldInstanceFiles = filesOfSymInPartitions2To4(context);
+                    final String[] coverInfoFiles = new String[3];
+                    for (int i = 0; i < 3; i++) {
+                        final long columnNameTxn = getColumnNameTxn("t_pci", "sym", i + 2);
+                        if (isUpdatedBefore) {
+                            Assert.assertTrue(context, columnNameTxn > 0);
+                        } else {
+                            Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, columnNameTxn);
+                        }
+                        coverInfoFiles[i] = coverInfoFileName("sym", columnNameTxn);
+                        Assert.assertTrue(context + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" " + coverInfoFiles[i] + " "));
+                    }
+
+                    try (TableReader ignore = getReader("t_pci")) {
+                        update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] liveFiles = liveFilesOfPartitions2To4(context, oldInstanceFiles);
+
+                    final String middleDir = partitionDir("t_pci", 3);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + coverInfoFiles[1]);
+                    remainingFailures.set(failures);
+                    failedRemoveCount.set(0);
+                    for (int k = 1; k <= failures; k++) {
+                        engine.releaseInactive();
+                        setCurrentMicros(currentMicros + 100_000_000L);
+                        purgeJob.run();
+                        Assert.assertEquals(context, k, failedRemoveCount.get());
+                        Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                        Assert.assertEquals(context, liveFiles[0], listFiles(partitionDir("t_pci", 2)));
+                        Assert.assertEquals(context, joinSorted(liveFiles[1], coverInfoFiles[1]), listFiles(middleDir));
+                        Assert.assertEquals(context, liveFiles[2], listFiles(partitionDir("t_pci", 4)));
+                    }
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(context, failures, failedRemoveCount.get());
+                    Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertLiveFilesOfPartitions2To4(context, liveFiles);
+                    assertRowsOfCoverInfoTable(context);
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_pci");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFileAfterUpdateWithoutReader() throws Exception {
+        // No reader holds the old instance of sym, so the writer purges it during UPDATE. It cannot
+        // remove the .pci file in the middle one of the three updated partitions and hands the purge to
+        // the purge job, whose first run removes the file.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createCoverInfoTable(walMode, "x");
+                    final String[] oldInstanceFiles = filesOfSymInPartitions2To4(walMode);
+                    final String middleDir = partitionDir("t_pci", 3);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pci");
+                    remainingFailures.set(1);
+                    failedRemoveCount.set(0);
+
+                    update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                    drainWalQueue();
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    final String[] liveFiles = new String[3];
+                    for (int i = 0; i < 3; i++) {
+                        final TreeSet<String> files = new TreeSet<>(Arrays.asList(listFiles(partitionDir("t_pci", i + 2)).split(" ")));
+                        files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+                        liveFiles[i] = String.join(" ", files);
+                    }
+                    Assert.assertEquals(walMode, liveFiles[0], listFiles(partitionDir("t_pci", 2)));
+                    Assert.assertEquals(walMode, joinSorted(liveFiles[1], "sym.pci"), listFiles(middleDir));
+                    Assert.assertEquals(walMode, liveFiles[2], listFiles(partitionDir("t_pci", 4)));
+
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertLiveFilesOfPartitions2To4(walMode, liveFiles);
+                    assertRowsOfCoverInfoTable(walMode);
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_pci");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFileOfDroppedOrRenamedColumn() throws Exception {
+        // DROP COLUMN and RENAME COLUMN with a reader open leave the instance NONE of sym in all five
+        // partitions. The purge job cannot remove its .pci file in the middle partition the first time
+        // and removes it on the retry.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            for (String change : new String[]{"DROP COLUMN", "RENAME COLUMN"}) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createCoverInfoTable("BYPASS WAL", "x");
+                    final String[] oldInstanceFiles = new String[5];
+                    for (int i = 0; i < 5; i++) {
+                        oldInstanceFiles[i] = String.join(" ", filesWithPrefix(listFiles(partitionDir("t_pci", i)), "sym."));
+                        Assert.assertTrue(change + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" sym.pci "));
+                    }
+                    try (TableReader ignore = getReader("t_pci")) {
+                        execute(change.equals("DROP COLUMN") ? "ALTER TABLE t_pci DROP COLUMN sym" : "ALTER TABLE t_pci RENAME COLUMN sym TO s2");
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(change, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] liveFiles = new String[5];
+                    for (int i = 0; i < 5; i++) {
+                        final String listing = listFiles(partitionDir("t_pci", i));
+                        final TreeSet<String> files = new TreeSet<>(Arrays.asList(listing.split(" ")));
+                        Assert.assertTrue(change + ", " + listing, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+                        files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+                        Assert.assertEquals(change + ", " + listing, change.equals("RENAME COLUMN"), !filesWithPrefix(String.join(" ", files), "s2.pci").isEmpty());
+                        liveFiles[i] = String.join(" ", files);
+                    }
+
+                    final String middleDir = partitionDir("t_pci", 2);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pci");
+                    remainingFailures.set(1);
+                    failedRemoveCount.set(0);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(change, 1, failedRemoveCount.get());
+                    Assert.assertEquals(change, 1, purgeJob.getOutstandingPurgeTasks());
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(change, i == 2 ? joinSorted(liveFiles[i], "sym.pci") : liveFiles[i], listFiles(partitionDir("t_pci", i)));
+                    }
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(change, 0, purgeJob.getOutstandingPurgeTasks());
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(change, liveFiles[i], listFiles(partitionDir("t_pci", i)));
+                    }
+                    if (change.equals("DROP COLUMN")) {
+                        assertQuery("SELECT ts, x FROM t_pci")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tx
+                                        1970-01-01T02:00:00.000000Z\t1
+                                        1970-01-02T02:00:00.000000Z\t2
+                                        1970-01-03T02:00:00.000000Z\t3
+                                        1970-01-04T02:00:00.000000Z\t4
+                                        1970-01-05T02:00:00.000000Z\t5
+                                        """, timestampType.getTypeName()));
+                    } else {
+                        assertQuery("SELECT ts, s2, x FROM t_pci WHERE s2 = 'A'")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .timestamp("ts")
+                                .withPlanContaining("CoveringIndex on: s2 with: ts, x")
+                                .returns(replaceTimestampSuffix("""
+                                        ts\ts2\tx
+                                        1970-01-01T02:00:00.000000Z\tA\t1
+                                        1970-01-04T02:00:00.000000Z\tA\t4
+                                        """, timestampType.getTypeName()));
+                    }
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_pci");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFileOfNameTxnZero() throws Exception {
+        // DROP INDEX with a reader open leaves instance 0 of s in both partitions. The purge job cannot
+        // remove s.pci.0 in the first partition the first time and removes it on the retry.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTxnZeroCoveringTables(walMode);
+                    final String[] oldInstanceFiles = new String[2];
+                    for (int i = 0; i < 2; i++) {
+                        oldInstanceFiles[i] = String.join(" ", filesWithPrefix(listFiles(partitionDir("t_z", i)), "s."));
+                        Assert.assertTrue(walMode + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" s.pci.0 "));
+                    }
+                    try (TableReader ignored = getReader("t_z")) {
+                        execute("ALTER TABLE t_z ALTER COLUMN s DROP INDEX");
+                        execute("ALTER TABLE t_twin ALTER COLUMN s DROP INDEX");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] liveFiles = new String[2];
+                    for (int i = 0; i < 2; i++) {
+                        final TreeSet<String> files = new TreeSet<>(Arrays.asList(listFiles(partitionDir("t_z", i)).split(" ")));
+                        Assert.assertTrue(walMode, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+                        files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+                        liveFiles[i] = String.join(" ", files);
+                    }
+
+                    final String firstDir = partitionDir("t_z", 0);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(firstDir).getName() + Files.SEPARATOR + "s.pci.0");
+                    remainingFailures.set(1);
+                    failedRemoveCount.set(0);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, joinSorted(liveFiles[0], "s.pci.0"), listFiles(firstDir));
+                    Assert.assertEquals(walMode, liveFiles[1], listFiles(partitionDir("t_z", 1)));
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, liveFiles[0], listFiles(firstDir));
+                    Assert.assertEquals(walMode, liveFiles[1], listFiles(partitionDir("t_z", 1)));
+                    assertSqlCursors("SELECT ts, s, d, vc FROM t_twin WHERE s = 'x'", "SELECT ts, s, d, vc FROM t_z WHERE s = 'x'");
+                    assertSqlCursors("SELECT ts, s, d, vc FROM t_twin", "SELECT ts, s, d, vc FROM t_z");
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_z");
+                    execute("DROP TABLE t_twin");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRefusedByTruncateReportsEntries() throws Exception {
+        // The purge job closes with the purge of UPDATE incomplete in its log, and DROP PARTITION follows.
+        // A new purge job replays the purge, refuses it, reports each entry in the partitions that DROP
+        // PARTITION keeps, leaves the files there and truncates the log.
+        assertMemoryLeak(() -> {
+            listenToTruncateRefusals();
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                startTruncateIteration();
+                final String[] dirs;
+                final String[] listings;
+                final List<String> expected = new ArrayList<>();
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTruncateTable(walMode, "INDEX");
+                    updateTruncateTableWithReader(purgeJob, walMode);
+                    dirs = new String[]{partitionDir("t", 0), partitionDir("t", 2)};
+                    listings = new String[]{listFiles(dirs[0]), listFiles(dirs[1])};
+                    for (String col : new String[]{"x", "str", "sym"}) {
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE));
+                        expected.add(truncateRefusalKeyOfT(col, "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE));
+                    }
+                }
+                dropMiddlePartitionOfTruncateTable(walMode);
+                engine.releaseInactive();
+                Assert.assertEquals(walMode, "[]", truncateRefusedEntries.toString());
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    Assert.assertEquals(walMode, sorted(expected), sorted(truncateRefusedEntries));
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 0, 0);
+                    for (int i = 0; i < dirs.length; i++) {
+                        Assert.assertEquals(walMode, listings[i], listFiles(dirs[i]));
+                    }
+                }
+                dropTruncateTable();
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRetriesPostingCoverInfoFile() throws Exception {
+        // The purge job cannot remove the .pci file of the old instance of sym in the middle partition
+        // and closes with the task incomplete in the purge log. A new purge job replays the task and
+        // removes the file.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            final String[] liveFiles;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createCoverInfoTable("BYPASS WAL", "x");
+                final String[] oldInstanceFiles = filesOfSymInPartitions2To4("replay");
+                try (TableReader ignore = getReader("t_pci")) {
+                    update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                }
+                liveFiles = liveFilesOfPartitions2To4("replay", oldInstanceFiles);
+                final String middleDir = partitionDir("t_pci", 3);
+                failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pci");
+                remainingFailures.set(1);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 100_000_000L);
+                purgeJob.run();
+                Assert.assertEquals(1, failedRemoveCount.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(joinSorted(liveFiles[1], "sym.pci"), listFiles(middleDir));
+                // the purge log holds a row per partition of the task and completes them all at once
+                assertIncompletePurgeLogRows(purgeJob, 3);
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(1, failedRemoveCount.get());
+                assertLiveFilesOfPartitions2To4("replay", liveFiles);
+                assertRowsOfCoverInfoTable("replay");
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeKeepsPostingCoverFilesOfIndexReAddedAtTxnZero() throws Exception {
+        // DROP INDEX as the first change of a table that is not partitioned gives the column the column
+        // name txn 0 in default, next to the files of instance NONE, whose purge an open reader defers.
+        // ADD INDEX then writes the .pc files of instance 0, whose host token 0 NONE also writes. The
+        // purge of NONE, by the purge job or replayed from the purge log by a new one, takes only the
+        // files of NONE. The old BITMAP index purged by the purge job guards the shape: its purge never
+        // runs the POSTING removal.
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    // column name, old index, new index, replayed
+                    {"s", "INDEX TYPE POSTING INCLUDE (d, vc)", "POSTING INCLUDE (d, vc, l)", "false"},
+                    {"s", "INDEX TYPE POSTING", "POSTING DELTA INCLUDE (d, vc, l)", "false"},
+                    {"s", "INDEX TYPE POSTING DELTA INCLUDE (d, vc)", "POSTING EF INCLUDE (d, vc, l)", "false"},
+                    {"s", "INDEX TYPE POSTING EF INCLUDE (d, vc)", "POSTING INCLUDE (d, vc, l)", "false"},
+                    {"s", "INDEX", "POSTING INCLUDE (d, vc, l)", "false"},
+                    {"\u0441\u0438\u043c", "INDEX TYPE POSTING INCLUDE (d, vc)", "POSTING INCLUDE (d, vc, l)", "false"},
+                    {"s", "INDEX TYPE POSTING INCLUDE (d, vc)", "POSTING INCLUDE (d, vc, l)", "true"},
+                    {"s", "INDEX", "POSTING EF INCLUDE (d, vc, l)", "true"},
+            };
+            for (String[] testCase : cases) {
+                final String col = testCase[0];
+                final boolean isReplayed = Boolean.parseBoolean(testCase[3]);
+                final String context = col + ", " + testCase[1] + " -> " + testCase[2] + (isReplayed ? ", replayed" : "");
+                createIndexDroppedAtTxnZeroTables(col, testCase[1]);
+                final String before;
+                if (isReplayed) {
+                    try (TableReader ignored = getReader("pt")) {
+                        execute("ALTER TABLE pt ALTER COLUMN " + col + " DROP INDEX");
+                        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                            runPurgeJob(purgeJob);
+                            Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                        }
+                        reAddIndexAfterTxnZero(col, testCase[2]);
+                    }
+                    before = listFiles(defaultDir("pt"));
+                    engine.releaseInactive();
+                    try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                        Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                } else {
+                    try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                        try (TableReader ignored = getReader("pt")) {
+                            execute("ALTER TABLE pt ALTER COLUMN " + col + " DROP INDEX");
+                            runPurgeJob(purgeJob);
+                            Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                            reAddIndexAfterTxnZero(col, testCase[2]);
+                        }
+                        before = listFiles(defaultDir("pt"));
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                }
+                assertIndexReAddedAtTxnZeroBeforePurge(context, col, testCase[1].startsWith("INDEX TYPE POSTING"), before);
+                Assert.assertEquals(context, withoutFilesOfInstanceNone(before, col), listFiles(defaultDir("pt")));
+                Assert.assertEquals(context, 0, getColumnNameTxnOfDefault("pt", col));
+                assertRowsOfIndexReAddedAtTxnZero(context, col, ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO, "3\t6.0");
+
+                // a new seal after the purge, and the rows of a reopened table
+                execute("INSERT INTO pt VALUES " + THIRD_ROW_OF_INDEX_RE_ADDED_AT_TXN_ZERO);
+                execute("INSERT INTO tw VALUES " + THIRD_ROW_OF_INDEX_RE_ADDED_AT_TXN_ZERO);
+                final String rowsAfterThirdCommit = ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO + "2024-01-01T05:00:00.000000Z\ty\t5.5\ta5\t50\n";
+                assertRowsOfIndexReAddedAtTxnZero(context, col, rowsAfterThirdCommit, "4\t11.5");
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                assertRowsOfIndexReAddedAtTxnZero(context, col, rowsAfterThirdCommit, "4\t11.5");
+                execute("DROP TABLE pt");
+                execute("DROP TABLE tw");
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeDuringSealKeepsPostingCoverFilesOfIndexReAddedAtTxnZero() throws Exception {
+        // The purge job runs the deferred purge of instance NONE of s on another thread while the writer
+        // seals the first .pc files of instance 0: s.pc0.0.<seal> is on disk, s.pc1.0.<seal> is next.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicReference<ColumnPurgeJob> purgeJobRef = new AtomicReference<>();
+        final AtomicReference<Throwable> purgeError = new AtomicReference<>();
+        final AtomicBoolean hasPurged = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isArmed.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "s.pc1.0.") && isArmed.compareAndSet(true, false)) {
+                    final CountDownLatch sealStarted = new CountDownLatch(1);
+                    final Thread purgeThread = new Thread(() -> {
+                        try {
+                            sealStarted.await();
+                            purgeJobRef.get().run();
+                            hasPurged.set(true);
+                        } catch (Throwable th) {
+                            purgeError.set(th);
+                        }
+                    });
+                    purgeThread.start();
+                    sealStarted.countDown();
+                    try {
+                        purgeThread.join();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexDroppedAtTxnZeroTables("s", "INDEX TYPE POSTING INCLUDE (d, vc)");
+                try (TableReader ignored = getReader("pt")) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    execute("ALTER TABLE pt ADD COLUMN l LONG");
+                    execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc, l)");
+                }
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                purgeJobRef.set(purgeJob);
+                isArmed.set(true);
+                insertRowsOfIndexReAddedAtTxnZero("pt");
+                Assert.assertFalse(isArmed.get());
+                Assert.assertNull(purgeError.get());
+                Assert.assertTrue(hasPurged.get());
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+
+                execute("ALTER TABLE tw ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc, l)");
+                insertRowsOfIndexReAddedAtTxnZero("tw");
+                final String listing = listFiles(defaultDir("pt"));
+                Assert.assertEquals(listing, "[]", filesOfInstanceNone(listing, "s").toString());
+                assertFilesOfInstanceZero("after the purge", "s", listing);
+                assertRowsOfIndexReAddedAtTxnZero("after the purge", "s", ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO, "3\t6.0");
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeOfIndexDroppedAtTxnZeroRetriesWithoutRemovingReAddedCoverFiles() throws Exception {
+        // The purge of instance NONE of s cannot remove s.pv.0 the first time. s.d and s.pk are gone
+        // when it retries, so the retry finds the files of NONE through the directory scan, which also
+        // reports the .pc files of instance 0: the retry removes s.pv.0 and keeps them. A second DROP
+        // INDEX, after the first commit, purges instance 0 with every .pc file of the token 0.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean hasFailed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.pv.0") && hasFailed.compareAndSet(false, true)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexDroppedAtTxnZeroTables("s", "INDEX TYPE POSTING INCLUDE (d, vc)");
+                try (TableReader ignored = getReader("pt")) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    runPurgeJob(purgeJob);
+                    reAddIndexAfterTxnZero("s", "POSTING INCLUDE (d, vc, l)");
+                }
+                final String before = listFiles(defaultDir("pt"));
+                assertIndexReAddedAtTxnZeroBeforePurge("before", "s", true, before);
+                Assert.assertTrue(before, (" " + before + " ").contains(" s.pv.0 "));
+
+                isArmed.set(true);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                purgeJob.run();
+                Assert.assertTrue(hasFailed.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("[s.pv.0]", filesOfInstanceNone(listFiles(defaultDir("pt")), "s").toString());
+                Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), withoutFilesOfInstanceNone(listFiles(defaultDir("pt")), "s"));
+                assertRowsOfIndexReAddedAtTxnZero("failed purge", "s", ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO, "3\t6.0");
+
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), listFiles(defaultDir("pt")));
+                assertRowsOfIndexReAddedAtTxnZero("retried purge", "s", ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO, "3\t6.0");
+
+                // DROP INDEX after the first commit moves s to the table txn and purges instance 0
+                final long dropTxn;
+                try (TableReader reader = getReader("pt")) {
+                    dropTxn = reader.getTxn();
+                }
+                Assert.assertTrue(dropTxn > 0);
+                execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                final TreeSet<String> filesOfS = new TreeSet<>();
+                for (String file : listFiles(defaultDir("pt")).split(" ")) {
+                    if (file.startsWith("s.")) {
+                        filesOfS.add(file);
+                    }
+                }
+                Assert.assertEquals("[s.d." + dropTxn + "]", filesOfS.toString());
+                Assert.assertEquals(dropTxn, getColumnNameTxnOfDefault("pt", "s"));
+                assertQuery("SELECT ts, s, d, vc, l FROM pt WHERE s = 'y'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\ts\td\tvc\tl\n" + timestamps(ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO));
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeOfIndexDroppedAtTxnZeroRetriesAfterReplay() throws Exception {
+        // The purge job cannot remove s.k of the BITMAP index of s that DROP INDEX at txn 0 dropped, so
+        // the task stays incomplete in the purge log. A new purge job replays it with the POSTING removal,
+        // which the replay takes for every index type, as the purge log keeps none. s.d is gone and s.pk
+        // never existed, so the directory scan finds only the .pc files of instance 0: the replay removes
+        // s.k and s.v and keeps them.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean hasFailed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.k") && hasFailed.compareAndSet(false, true)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createIndexDroppedAtTxnZeroTables("s", "INDEX");
+            final String before;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignored = getReader("pt")) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    reAddIndexAfterTxnZero("s", "POSTING INCLUDE (d, vc, l)");
+                }
+                before = listFiles(defaultDir("pt"));
+                assertIndexReAddedAtTxnZeroBeforePurge("before", "s", false, before);
+
+                isArmed.set(true);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                purgeJob.run();
+                Assert.assertTrue(hasFailed.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("[s.k, s.v]", filesOfInstanceNone(listFiles(defaultDir("pt")), "s").toString());
+                Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), withoutFilesOfInstanceNone(listFiles(defaultDir("pt")), "s"));
+                assertIncompletePurgeLogRows(purgeJob, 1);
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), listFiles(defaultDir("pt")));
+                assertRowsOfIndexReAddedAtTxnZero("replayed purge", "s", ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO, "3\t6.0");
+            }
+        });
+    }
+
+    /**
+     * The files of instance 0 of {@code col} in {@code listing}, as ADD INDEX ... INCLUDE (d, vc, l) after
+     * DROP INDEX at txn 0 and two commits write them: d and vc have the column name txn NONE, l the txn 1.
+     */
+    private static void assertFilesOfInstanceZero(String context, String col, String listing) {
+        final String paddedListing = " " + listing + " ";
+        for (String file : new String[]{col + ".d.0", col + ".pk.0", col + ".pci.0"}) {
+            Assert.assertTrue(context + ", " + file + " in " + listing, paddedListing.contains(" " + file + " "));
+        }
+        for (String coverFilePrefix : new String[]{col + ".pc0.0.", col + ".pc1.0.", col + ".pc2.0.1."}) {
+            Assert.assertTrue(context + ", " + coverFilePrefix + " in " + listing, paddedListing.contains(" " + coverFilePrefix));
+        }
+    }
+
+    /**
+     * {@code listing} holds the files of instance 0 of {@code col} next to the data file and the index
+     * key file of instance NONE, whose index was POSTING or BITMAP.
+     */
+    private static void assertIndexReAddedAtTxnZeroBeforePurge(String context, String col, boolean isOldIndexPosting, String listing) {
+        final String paddedListing = " " + listing + " ";
+        for (String file : new String[]{col + ".d", isOldIndexPosting ? col + ".pk" : col + ".k"}) {
+            Assert.assertTrue(context + ", " + file + " in " + listing, paddedListing.contains(" " + file + " "));
+        }
+        assertFilesOfInstanceZero(context, col, listing);
+    }
+
+    private void assertLiveFilesOfPartitions2To4(String context, String[] liveFiles) {
+        for (int i = 0; i < 3; i++) {
+            Assert.assertEquals(context, liveFiles[i], listFiles(partitionDir("t_pci", i + 2)));
+        }
+    }
+
+    /**
+     * The rows of t_pci after UPDATE ... SET sym = 'Z' WHERE ts >= '1970-01-03', through the index of
+     * sym and through a filter that reads no index.
+     */
+    private void assertRowsOfCoverInfoTable(String context) throws Exception {
+        final String query = "SELECT ts, sym, x, d, vc, str FROM t_pci WHERE sym = 'Z'";
+        try {
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
+                            ts\tsym\tx\td\tvc\tstr
+                            1970-01-03T02:00:00.000000Z\tZ\t3\t3.5\tv3\ts3
+                            1970-01-04T02:00:00.000000Z\tZ\t4\t4.5\t\u00e94\ts4
+                            1970-01-05T02:00:00.000000Z\tZ\t5\tnull\t\t
+                            """, timestampType.getTypeName()));
+            assertSqlCursors("SELECT ts, sym, x, d, vc, str FROM t_pci WHERE sym::STRING = 'Z'", query);
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+    }
+
+    /**
+     * Creates t_pci with one row in each of five daily partitions and a POSTING index on sym that covers
+     * {@code includeClause}, so each partition holds sym.pci.
+     */
+    private void createCoverInfoTable(String walMode, String includeClause) throws SqlException {
+        execute("CREATE TABLE t_pci (ts " + timestampType.getTypeName() + ", x LONG, d DOUBLE, vc VARCHAR, str STRING, sym SYMBOL)"
+                + " TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t_pci VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 1.5, 'v1', 's1', 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 2.5, 'v2', 's2', 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 3.5, 'v3', 's3', 'C'),
+                ('1970-01-04T02:00:00.000000Z', 4, 4.5, '\u00e94', 's4', 'A'),
+                ('1970-01-05T02:00:00.000000Z', 5, NULL, NULL, NULL, 'B')""");
+        execute("ALTER TABLE t_pci ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (" + includeClause + ")");
+        drainWalQueue();
+    }
+
+    private static String coverInfoFileName(String columnName, long columnNameTxn) {
+        try (Path path = new Path()) {
+            return Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverInfoFileName(path.of(""), columnName, columnNameTxn));
+        }
+    }
+
+    // the sym.* files of the last three partitions of t_pci, space-separated in name order
+    private String[] filesOfSymInPartitions2To4(String context) {
+        final String[] files = new String[3];
+        for (int i = 0; i < 3; i++) {
+            files[i] = String.join(" ", filesWithPrefix(listFiles(partitionDir("t_pci", i + 2)), "sym."));
+            Assert.assertTrue(context + ", " + files[i], (" " + files[i] + " ").contains(" sym.pv."));
+        }
+        return files;
+    }
+
+    private static TreeSet<String> filesWithPrefix(String listing, String prefix) {
+        final TreeSet<String> files = new TreeSet<>();
+        for (String file : listing.split(" ")) {
+            if (file.startsWith(prefix)) {
+                files.add(file);
+            }
+        }
+        return files;
+    }
+
+    private static long getColumnNameTxn(String tableName, String col, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(col));
+            return reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(partitionIndex), writerIndex);
+        }
+    }
+
+    // the space-separated file names of the listings, in name order
+    private static String joinSorted(String... listings) {
+        final TreeSet<String> files = new TreeSet<>();
+        for (String listing : listings) {
+            files.addAll(Arrays.asList(listing.split(" ")));
+        }
+        return String.join(" ", files);
+    }
+
+    /**
+     * The files of the last three partitions of t_pci without {@code oldInstanceFiles}, which each
+     * partition still holds.
+     */
+    private String[] liveFilesOfPartitions2To4(String context, String[] oldInstanceFiles) {
+        final String[] liveFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            final String listing = listFiles(partitionDir("t_pci", i + 2));
+            final TreeSet<String> files = new TreeSet<>(Arrays.asList(listing.split(" ")));
+            Assert.assertTrue(context + ", " + listing, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+            files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+            liveFiles[i] = String.join(" ", files);
+        }
+        return liveFiles;
+    }
+
+    /**
+     * A files facade that fails the next {@code remainingFailures} removals of the file whose path ends
+     * with {@code failingFileSuffix}, and counts them in {@code failedRemoveCount}.
+     */
+    private static TestFilesFacadeImpl newFailingRemoveFilesFacade(
+            AtomicReference<String> failingFileSuffix,
+            AtomicInteger remainingFailures,
+            AtomicInteger failedRemoveCount
+    ) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                final String suffix = failingFileSuffix.get();
+                if (suffix != null && Utf8s.endsWithAscii(name, suffix) && remainingFailures.get() > 0) {
+                    remainingFailures.decrementAndGet();
+                    failedRemoveCount.incrementAndGet();
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+    }
+
+    /**
+     * The job runs while non-WAL DROP TABLE t removes the table directory, after _meta is gone and before
+     * the registry forgets t: it retries the purge. With {@code isDropFailing}, the removal fails, DROP
+     * TABLE fails, the registry still lists t without _meta, and the job keeps retrying until DROP TABLE
+     * runs again. Once the directory is gone, the existence check completes the purge.
+     */
+    private void assertPurgeDuringDropTable(boolean isDropFailing) throws Exception {
+        final AtomicBoolean isPurgeInDropArmed = new AtomicBoolean();
+        final AtomicReference<ColumnPurgeJob> purgeJobRef = new AtomicReference<>();
+        final AtomicReference<String[]> listingsInDrop = new AtomicReference<>();
+        final AtomicInteger outstandingInDrop = new AtomicInteger(-1);
+        final String[] partitionNames = new String[3];
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean unlinkOrRemove(Path path, Log log) {
+                if (new File(Utf8s.stringFromUtf8Bytes(path.$())).getName().startsWith("t~") && isPurgeInDropArmed.compareAndSet(true, false)) {
+                    final int len = path.size();
+                    Assert.assertTrue(removeQuiet(path.concat(TableUtils.META_FILE_NAME).$()));
+                    path.trimTo(len);
+                    setCurrentMicros(currentMicros + 10L * iteration++);
+                    purgeJobRef.get().run();
+                    outstandingInDrop.set(purgeJobRef.get().getOutstandingPurgeTasks());
+                    final String[] listings = new String[3];
+                    for (int i = 0; i < 3; i++) {
+                        listings[i] = listFiles(new File(Utf8s.stringFromUtf8Bytes(path.$()), partitionNames[i]).getAbsolutePath());
+                    }
+                    listingsInDrop.set(listings);
+                    if (isDropFailing) {
+                        return false;
+                    }
+                }
+                return super.unlinkOrRemove(path, log);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                purgeJobRef.set(purgeJob);
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t").getDirName());
+                for (int i = 0; i < 3; i++) {
+                    partitionNames[i] = new File(partitionDir("t", i)).getName();
+                }
+                engine.releaseInactive();
+                isPurgeInDropArmed.set(true);
+                try {
+                    execute("DROP TABLE t");
+                    Assert.assertFalse(isDropFailing);
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage(), isDropFailing);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remove table [table=t~");
+                }
+                Assert.assertFalse(isPurgeInDropArmed.get());
+                Assert.assertEquals(1, outstandingInDrop.get());
+                Assert.assertArrayEquals(listings, listingsInDrop.get());
+
+                if (isDropFailing) {
+                    Assert.assertNotNull(engine.getTableTokenIfExists("t"));
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 3, 0);
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals(listings[i], listFiles(new File(tableDir, partitionNames[i]).getAbsolutePath()));
+                    }
+                    execute("DROP TABLE t");
+                }
+                Assert.assertNull(engine.getTableTokenIfExists("t"));
+                Assert.assertFalse(tableDir.exists());
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+            }
+        });
+    }
+
+    /**
+     * The job runs while ALTER TABLE t ADD COLUMN swaps _meta, between the renames of _meta to
+     * _meta.prev and of _meta.swp to _meta, and retries the purge rather than dropping it. Then the job
+     * runs again, or, with {@code isRestarted}, a new job replays the purge from the log.
+     */
+    private void assertPurgeRetriesEntryDuringMetaSwap(boolean isRestarted) throws Exception {
+        final AtomicBoolean isPurgeInMetaSwapArmed = new AtomicBoolean();
+        final AtomicReference<ColumnPurgeJob> purgeJobRef = new AtomicReference<>();
+        final AtomicInteger outstandingInMetaSwap = new AtomicInteger(-1);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                final int result = super.rename(from, to);
+                if (isMetaFileOfT(from) && isPurgeInMetaSwapArmed.compareAndSet(true, false)) {
+                    Assert.assertFalse(exists(from));
+                    purgeJobRef.get().run();
+                    outstandingInMetaSwap.set(purgeJobRef.get().getOutstandingPurgeTasks());
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                execute("DROP TABLE IF EXISTS t");
+                final String[] oldFiles;
+                final String[] listings;
+                ColumnPurgeJob purgeJob = createPurgeJob();
+                try {
+                    purgeJobRef.set(purgeJob);
+                    oldFiles = dropIndexOfRetryTableWithReader(purgeJob, walMode);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 10L * iteration++);
+                    outstandingInMetaSwap.set(-1);
+                    isPurgeInMetaSwapArmed.set(true);
+                    execute("ALTER TABLE t ADD COLUMN y INT");
+                    drainWalQueue();
+                    Assert.assertFalse(walMode, isPurgeInMetaSwapArmed.get());
+                    Assert.assertEquals(walMode, 1, outstandingInMetaSwap.get());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 3, 0);
+                    listings = listRetryTablePartitions(oldFiles);
+                    if (isRestarted) {
+                        purgeJob = Misc.free(purgeJob);
+                        purgeJob = createPurgeJob();
+                        purgeJobRef.set(purgeJob);
+                    } else {
+                        runPurgeJob(purgeJob);
+                        assertPurgeLogRows(purgeJob, 3, 3);
+                    }
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                } finally {
+                    Misc.free(purgeJob);
+                }
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(walMode, withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+                assertRowsOfRetryTable();
+            }
+        });
+    }
+
+    // the rows of t, which createRetryTable() writes
+    private void assertRowsOfRetryTable() throws Exception {
+        assertQuery("SELECT ts, x, sym FROM t")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(replaceTimestampSuffix("""
+                        ts\tx\tsym
+                        1970-01-01T02:00:00.000000Z\t1\tA
+                        1970-01-02T02:00:00.000000Z\t2\tB
+                        1970-01-03T02:00:00.000000Z\t3\tA
+                        """, timestampType.getTypeName()));
+    }
+
+    /**
+     * Creates t with x LONG, str STRING and sym SYMBOL {@code symIndexClause}, and one row in each of the
+     * daily partitions 1970-01-01, 1970-01-02 and 1970-01-03.
+     */
+    private void createTruncateTable(String walMode, String symIndexClause) throws SqlException {
+        execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", x LONG, str STRING, sym SYMBOL " + symIndexClause
+                + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 'a', 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 'b', 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 'c', 'A')""");
+        drainWalQueue();
+    }
+
+    // DROP PARTITION of 1970-01-02 of t moves the truncate version of t from 0 to 1
+    private void dropMiddlePartitionOfTruncateTable(String walMode) throws SqlException {
+        engine.releaseInactive();
+        execute("ALTER TABLE t DROP PARTITION LIST '1970-01-02'");
+        drainWalQueue();
+        try (TableReader reader = getReader("t")) {
+            Assert.assertEquals(walMode, 1, reader.getTxFile().getTruncateVersion());
+            Assert.assertEquals(walMode, 2, reader.getTxFile().getPartitionCount());
+        }
+    }
+
+    private void dropTruncateTable() throws SqlException {
+        execute("DROP TABLE t");
+        drainWalQueue();
+    }
+
+    private static long getPartitionNameTxn(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        }
+    }
+
+    // records the entries that the purge job reports as refused because the truncate version changed
+    private void listenToTruncateRefusals() {
+        node1.getConfigurationOverrides().setColumnPurgeTruncateRefusalListener((task, offset) -> {
+            final LongList info = task.getUpdatedColumnInfo();
+            truncateRefusedEntries.add(truncateRefusalKey(
+                    task.getColumnName(),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_COLUMN_VERSION)
+            ));
+        });
+    }
+
+    private static List<String> sorted(List<String> keys) {
+        final List<String> sorted = new ArrayList<>(keys);
+        Collections.sort(sorted);
+        return sorted;
+    }
+
+    // resets the clock of the purge job runs and the reported entries for the next iteration over WAL modes
+    private void startTruncateIteration() {
+        iteration = 1;
+        setCurrentMicros(0);
+        truncateRefusedEntries.clear();
+    }
+
+    // the key of an entry of a purge task that the truncate refusal listener receives
+    private static String truncateRefusalKey(CharSequence columnName, long partitionTimestamp, long partitionNameTxn, long columnVersion) {
+        return columnName + "/" + partitionTimestamp + "/" + partitionNameTxn + "/" + columnVersion;
+    }
+
+    // the key of the entry of columnName in the partition of t that holds the day partition, at partitionIndex
+    private String truncateRefusalKeyOfT(String columnName, String partition, int partitionIndex, long columnVersion) throws NumericException {
+        return truncateRefusalKey(
+                columnName,
+                timestampType.getDriver().parseFloorLiteral(partition),
+                getPartitionNameTxn("t", partitionIndex),
+                columnVersion
+        );
+    }
+
+    /**
+     * Runs UPDATE of x, str and sym of t while a reader holds the table, so the purge job saves the three
+     * purges in its log, one row per partition, and purges none.
+     */
+    private void updateTruncateTableWithReader(ColumnPurgeJob purgeJob, String walMode) throws Exception {
+        final int outstandingPurgeTasks = purgeJob.getOutstandingPurgeTasks();
+        try (TableReader ignore = getReader("t")) {
+            execute("UPDATE t SET x = 100, str = 'z', sym = 'Z'");
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertEquals(walMode, outstandingPurgeTasks + 3, purgeJob.getOutstandingPurgeTasks());
+    }
+
+    // the number of rows of the purge log, and of those the purge job marked complete
+    private void assertPurgeLogRows(ColumnPurgeJob purgeJob, int expectedCount, int expectedCompletedCount) throws Exception {
+        assertQuery("SELECT count() c, count(completed) completed FROM \"" + purgeJob.getLogTableName() + "\"")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("c\tcompleted\n" + expectedCount + "\t" + expectedCompletedCount + "\n");
+    }
+
+    /**
+     * Creates t with one row in each of three daily partitions and sym, declared in CREATE TABLE (column
+     * name txn NONE), under a POSTING index that covers x.
+     */
+    private void createRetryTable(String walMode) throws SqlException {
+        execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", x LONG, sym SYMBOL INDEX TYPE POSTING INCLUDE (x))"
+                + " TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 'A')""");
+        drainWalQueue();
+    }
+
+    /**
+     * Creates t, see {@link #createRetryTable(String)}, and drops the index of sym while a reader holds
+     * the table, so the purge job only saves the purge of instance NONE of sym in its log, one row per
+     * partition. Returns the files of that instance in each partition.
+     */
+    private String[] dropIndexOfRetryTableWithReader(ColumnPurgeJob purgeJob, String walMode) throws Exception {
+        createRetryTable(walMode);
+        final String[] oldFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            Assert.assertEquals(TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("t", "sym", i));
+            final String listing = listFiles(partitionDir("t", i));
+            oldFiles[i] = String.join(" ", filesOfInstance(listing, "sym", TableUtils.COLUMN_NAME_TXN_NONE));
+            Assert.assertEquals(String.join(" ", filesWithPrefix(listing, "sym.")), oldFiles[i]);
+            for (String file : new String[]{" sym.d ", " sym.pc0.0.", " sym.pci ", " sym.pk ", " sym.pv."}) {
+                Assert.assertTrue(file + " in " + oldFiles[i], (" " + oldFiles[i] + " ").contains(file));
+            }
+        }
+        try (TableReader ignored = getReader("t")) {
+            execute("ALTER TABLE t ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+        assertPurgeLogRows(purgeJob, 3, 0);
+        return oldFiles;
+    }
+
+    // whether name is the _meta file of the table t
+    private static boolean isMetaFileOfT(LPSZ name) {
+        final File file = new File(Utf8s.stringFromUtf8Bytes(name));
+        final File parent = file.getParentFile();
+        return TableUtils.META_FILE_NAME.equals(file.getName()) && parent != null && parent.getName().startsWith("t~");
+    }
+
+    // the listing of each partition of t, which still holds the files of the old instance of sym
+    private String[] listRetryTablePartitions(String[] oldFiles) {
+        final String[] listings = new String[3];
+        for (int i = 0; i < 3; i++) {
+            listings[i] = listFiles(partitionDir("t", i));
+            Assert.assertEquals(oldFiles[i], String.join(" ", filesOfInstance(listings[i], "sym", TableUtils.COLUMN_NAME_TXN_NONE)));
+        }
+        return listings;
+    }
+
+    // the space-separated listing without the space-separated files
+    private static String withoutFiles(String listing, String files) {
+        final TreeSet<String> remaining = new TreeSet<>(Arrays.asList(listing.split(" ")));
+        remaining.removeAll(Arrays.asList(files.split(" ")));
+        return String.join(" ", remaining);
+    }
+
+    private void assertIncompletePurgeLogRows(ColumnPurgeJob purgeJob, int expectedCount) throws Exception {
+        assertQuery("SELECT count() c FROM \"" + purgeJob.getLogTableName() + "\" WHERE completed = null")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("c\n" + expectedCount + "\n");
+    }
+
+    private static String defaultDir(String tableName) {
+        return new File(new File(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName()), "default").getAbsolutePath();
+    }
+
+    /**
+     * The files in {@code listing} that instance NONE of {@code col} owns in an empty table: the data
+     * file, the BITMAP index files, and the POSTING key, cover info and first value files.
+     */
+    private static TreeSet<String> filesOfInstanceNone(String listing, String col) {
+        final TreeSet<String> namesOfNone = new TreeSet<>();
+        try (Path path = new Path()) {
+            namesOfNone.add(Utf8s.stringFromUtf8Bytes(TableUtils.dFile(path.of(""), col, TableUtils.COLUMN_NAME_TXN_NONE)));
+            namesOfNone.add(Utf8s.stringFromUtf8Bytes(BitmapIndexUtils.keyFileName(path.of(""), col, TableUtils.COLUMN_NAME_TXN_NONE)));
+            namesOfNone.add(Utf8s.stringFromUtf8Bytes(BitmapIndexUtils.valueFileName(path.of(""), col, TableUtils.COLUMN_NAME_TXN_NONE)));
+            namesOfNone.add(Utf8s.stringFromUtf8Bytes(PostingIndexUtils.keyFileName(path.of(""), col, TableUtils.COLUMN_NAME_TXN_NONE)));
+            namesOfNone.add(Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverInfoFileName(path.of(""), col, TableUtils.COLUMN_NAME_TXN_NONE)));
+            namesOfNone.add(Utf8s.stringFromUtf8Bytes(PostingIndexUtils.valueFileName(path.of(""), col, TableUtils.COLUMN_NAME_TXN_NONE, 0)));
+        }
+        final TreeSet<String> files = new TreeSet<>();
+        for (String file : listing.split(" ")) {
+            if (namesOfNone.contains(file)) {
+                files.add(file);
+            }
+        }
+        return files;
+    }
+
+    private static long getColumnNameTxnOfDefault(String tableName, String col) {
+        try (TableReader reader = getReader(tableName)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(col));
+            return reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex);
+        }
+    }
+
+    private static String withoutFilesOfInstanceNone(String listing, String col) {
+        final TreeSet<String> filesOfNone = filesOfInstanceNone(listing, col);
+        final StringBuilder remaining = new StringBuilder();
+        for (String file : listing.split(" ")) {
+            if (!filesOfNone.contains(file)) {
+                if (!remaining.isEmpty()) {
+                    remaining.append(' ');
+                }
+                remaining.append(file);
+            }
+        }
+        return remaining.toString();
+    }
+
+    /**
+     * Asserts the rows of {@code col} = 'y' in pt through its covering index, the same rows through a
+     * filter that reads no index and through the twin tw, which never dropped its index, and their
+     * count and sum of d.
+     */
+    private void assertRowsOfIndexReAddedAtTxnZero(String context, String col, String rowsOfY, String countAndSumOfY) throws Exception {
+        final String projection = "ts, " + col + ", d, vc, l";
+        final String query = "SELECT " + projection + " FROM pt WHERE " + col + " = 'y'";
+        try {
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: " + col + " with: ts, d, vc, l")
+                    .returns("ts\t" + col + "\td\tvc\tl\n" + timestamps(rowsOfY));
+            assertSqlCursors("SELECT " + projection + " FROM pt WHERE " + col + "::STRING = 'y'", query);
+            assertSqlCursors(query.replace("FROM pt", "FROM tw"), query);
+            final String inQuery = "SELECT " + projection + " FROM {t} WHERE " + col + " IN ('y', 'x')";
+            assertSqlCursors(inQuery.replace("{t}", "tw"), inQuery.replace("{t}", "pt"));
+            assertQuery("SELECT count() c, sum(d) sd FROM pt WHERE " + col + " = 'y'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: " + col)
+                    .returns("c\tsd\n" + countAndSumOfY + "\n");
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+    }
+
+    /**
+     * Creates pt, not partitioned, with {@code col} indexed by {@code oldIndexClause}, and its twin tw
+     * with the columns pt has after {@link #reAddIndexAfterTxnZero}, without an index.
+     */
+    private void createIndexDroppedAtTxnZeroTables(String col, String oldIndexClause) throws SqlException {
+        final String ts = timestampType.getTypeName();
+        execute("CREATE TABLE pt (v INT, ts " + ts + ", " + col + " SYMBOL " + oldIndexClause + ", d DOUBLE, vc VARCHAR) TIMESTAMP(ts)");
+        execute("CREATE TABLE tw (v INT, ts " + ts + ", " + col + " SYMBOL, d DOUBLE, vc VARCHAR, l LONG) TIMESTAMP(ts)");
+    }
+
+    /**
+     * The first commit seals one row, the second three rows, one with NULL covered values. A table
+     * that is not partitioned takes no O3 rows.
+     */
+    private void insertRowsOfIndexReAddedAtTxnZero(String tableName) throws SqlException {
+        execute("INSERT INTO " + tableName + " VALUES (1, '2024-01-01T01:00:00.000000Z', 'y', 1.5, 'a1', 10)");
+        execute("INSERT INTO " + tableName + """
+                 VALUES (2, '2024-01-01T02:00:00.000000Z', 'y', NULL, NULL, NULL),
+                (3, '2024-01-01T03:00:00.000000Z', 'x', 3.5, 'a3', 30), (4, '2024-01-01T04:00:00.000000Z', 'y', 4.5, '\u00e94', 40)
+                """);
+    }
+
+    /**
+     * After DROP INDEX at txn 0 committed: adds l to pt at txn 1, indexes {@code col} of pt and tw with
+     * {@code newIndexClause}, which covers l, and inserts the same rows into both.
+     */
+    private void reAddIndexAfterTxnZero(String col, String newIndexClause) throws SqlException {
+        execute("ALTER TABLE pt ADD COLUMN l LONG");
+        for (String tableName : new String[]{"pt", "tw"}) {
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN " + col + " ADD INDEX TYPE " + newIndexClause);
+            insertRowsOfIndexReAddedAtTxnZero(tableName);
+        }
+    }
+
+    private String timestamps(String rows) {
+        return timestampType == TestTimestampType.NANO ? rows.replace(".000000Z", ".000000000Z") : rows;
+    }
+
+    @Test
+    public void testPurgeKeepsPostingFilesOfColumnConvertedAtTxnZero() throws Exception {
+        // Guard: ALTER COLUMN TYPE at txn 0 writes s.d.0 and s.i.0 next to the POSTING files of instance
+        // NONE. The purge of NONE removes them and keeps the files of the STRING column.
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE pt (v INT, ts " + timestampType.getTypeName() + ", s SYMBOL INDEX TYPE POSTING INCLUDE (d, vc), d DOUBLE, vc VARCHAR) TIMESTAMP(ts)");
+                final String before;
+                try (TableReader ignored = getReader("pt")) {
+                    execute("ALTER TABLE pt ALTER COLUMN s TYPE STRING");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    before = listFiles(defaultDir("pt"));
+                }
+                Assert.assertEquals("[s.d, s.pk, s.pv.0]", filesOfInstanceNone(before, "s").toString());
+                Assert.assertTrue(before, (" " + before + " ").contains(" s.d.0 "));
+                Assert.assertTrue(before, (" " + before + " ").contains(" s.i.0 "));
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), listFiles(defaultDir("pt")));
+                execute("INSERT INTO pt VALUES (1, '2024-01-01T01:00:00.000000Z', 'y', 1.5, 'a1'), (2, '2024-01-01T02:00:00.000000Z', 'x', 2.5, 'a2')");
+                assertQuery("SELECT v, s, d, vc FROM pt WHERE s = 'y'")
+                        .noLeakCheck()
+                        .returns("v\ts\td\tvc\n1\ty\t1.5\ta1\n");
+            }
+        });
+    }
+
+    /**
+     * The live seal of the covering index of {@code columnName} in {@code dir}, the newest
+     * {@code <col>.pv.<txn>.<seal>}, has a .pc file for each covered column d, vc and ts:
+     * {@code <col>.pc<N>.<txn>[.<covered txn>].<seal>}, N in 0..2. Every .pc file belongs to a seal
+     * that has its .pv file.
+     */
+    private static void assertCoverFilesPerSeal(String context, String dir, String columnName) {
+        final String[] names = new File(dir).list();
+        Assert.assertNotNull(names);
+        final String failureContext = context + ", " + Arrays.toString(names);
+        final TreeSet<Long> valueFileSeals = new TreeSet<>();
+        for (String name : names) {
+            if (name.startsWith(columnName + ".pv.")) {
+                valueFileSeals.add(Long.parseLong(name.substring(name.lastIndexOf('.') + 1)));
+            }
+        }
+        Assert.assertFalse(failureContext, valueFileSeals.isEmpty());
+        final long liveSeal = valueFileSeals.last();
+        final TreeSet<String> liveCoverFiles = new TreeSet<>();
+        for (String name : names) {
+            if (name.startsWith(columnName + ".pc") && !name.startsWith(columnName + ".pci")) {
+                final long seal = Long.parseLong(name.substring(name.lastIndexOf('.') + 1));
+                Assert.assertTrue(failureContext, valueFileSeals.contains(seal));
+                if (seal == liveSeal) {
+                    liveCoverFiles.add(name.substring(columnName.length() + 1, columnName.length() + 4));
+                }
+            }
+        }
+        Assert.assertEquals(failureContext, "[pc0, pc1, pc2]", liveCoverFiles.toString());
+    }
+
+    private static int coverDataFileCount(String dir, String columnName) {
+        final String[] names = new File(dir).list((_, name) -> name.startsWith(columnName + ".pc") && !name.startsWith(columnName + ".pci"));
+        Assert.assertNotNull(names);
+        return names.length;
+    }
+
+    /**
+     * Creates t_z, where s is the first column added to the empty table (column name txn 0), with a
+     * covering index on s, and t_twin, which declares s in CREATE TABLE, with the same index and rows
+     * in partitions 2024-01-01 and 2024-01-02.
+     */
+    private void createTxnZeroCoveringTables(String walMode) throws SqlException {
+        final String ts = timestampType.getTypeName();
+        execute("CREATE TABLE t_z (v INT, ts " + ts + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("ALTER TABLE t_z ADD COLUMN s SYMBOL");
+        execute("ALTER TABLE t_z ADD COLUMN d DOUBLE");
+        execute("ALTER TABLE t_z ADD COLUMN vc VARCHAR");
+        execute("CREATE TABLE t_twin (v INT, ts " + ts + ", s SYMBOL, d DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        for (String table : new String[]{"t_z", "t_twin"}) {
+            execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+            execute("INSERT INTO " + table + """
+                     VALUES (1, '2024-01-01T01:00:00.000000Z', 'x', 1.5, 'vc1'), (2, '2024-01-01T02:00:00.000000Z', 'y', 2.5, 'vc2'),
+                    (3, '2024-01-01T03:00:00.000000Z', NULL, NULL, NULL), (4, '2024-01-01T04:00:00.000000Z', 'x', 4.5, 'vc4'),
+                    (5, '2024-01-02T01:00:00.000000Z', 'y', 5.5, 'vc5'), (6, '2024-01-02T02:00:00.000000Z', 'x', 8.5, 'vc6')
+                    """);
+        }
+        drainWalQueue();
+        try (TableReader reader = getReader("t_z")) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+            Assert.assertEquals(0, reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex));
+        }
+    }
+
+    private String partitionDir(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    PartitionBy.DAY,
+                    reader.getTxFile().getPartitionTimestampByIndex(partitionIndex),
+                    reader.getTxFile().getPartitionNameTxn(partitionIndex)
+            );
+            return path.toString();
+        }
+    }
+
+    /**
+     * The index files of column version 0 of s in {@code dir}: s.pk.0, s.pci.0, s.pv.0.<seal> and
+     * s.pc<N>.0[.<covered txn>].<seal>.
+     */
+    private static TreeSet<String> txnZeroIndexFilesOfS(String dir) {
+        final String[] names = new File(dir).list();
+        Assert.assertNotNull(names);
+        final TreeSet<String> files = new TreeSet<>();
+        for (String name : names) {
+            if (name.equals("s.pk.0") || name.equals("s.pci.0") || name.startsWith("s.pv.0.") || name.matches("s\\.pc[0-9]+\\.0\\..*")) {
+                files.add(name);
+            }
+        }
+        return files;
+    }
+
     private void assertPartitionFileExists(Path path, String partition, String fileName, boolean exist) {
         TableToken tt = engine.verifyTableName("t_purge_leak");
         path.of(configuration.getDbRoot()).concat(tt).concat(partition).concat(fileName).$();
@@ -1401,6 +3466,555 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesOrphanPostingSidecarsOfEveryPartition() throws Exception {
+        // Same shape as testPurgeJobRemovesOrphanPostingSidecarsOfEveryPartition, with the purge task
+        // replayed from the purge log by a new purge job.
+        assertMemoryLeak(() -> {
+            final String[] liveFiles;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                liveFiles = createOrphanPostingSidecars("replay", purgeJob, true);
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertOrphanPostingSidecarsPurged("replay", liveFiles);
+                assertQuery(purgeJob.getLogTableName())
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesPostingFilesOfChangedIndex() throws Exception {
+        // The purge log keeps no index type. The replayed purge of the old instance of sym removes its
+        // POSTING files whatever index the live column has, and when no live column has its name.
+        assertMemoryLeak(() -> {
+            final String[][] changes = {
+                    // live column, changes
+                    {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"},
+                    {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX", "ALTER TABLE t_replay ALTER COLUMN sym ADD INDEX TYPE BITMAP"},
+                    {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX", "ALTER TABLE t_replay ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)"},
+                    {null, "ALTER TABLE t_replay DROP COLUMN sym"},
+                    {"sym2", "ALTER TABLE t_replay RENAME COLUMN sym TO sym2"},
+            };
+            for (String oldIndexClause : new String[]{"POSTING", "POSTING DELTA", "POSTING EF", "POSTING INCLUDE (x)"}) {
+                for (String[] change : changes) {
+                    assertReplayedPurgeOfChangedIndex("PARTITION BY DAY BYPASS WAL", oldIndexClause, change);
+                }
+            }
+            // the old BITMAP index: the replay removes its .k and .v files
+            assertReplayedPurgeOfChangedIndex("PARTITION BY DAY BYPASS WAL", "BITMAP", changes[0]);
+            assertReplayedPurgeOfChangedIndex("PARTITION BY DAY BYPASS WAL", "BITMAP", changes[2]);
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesPostingFilesOfDroppedIndexOfEveryTableKind() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] dropIndex = {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"};
+            assertReplayedPurgeOfChangedIndex("PARTITION BY DAY WAL", "POSTING INCLUDE (x)", dropIndex);
+            // not partitioned
+            assertReplayedPurgeOfChangedIndex("", "POSTING INCLUDE (x)", dropIndex);
+            assertReplayedPurgeOfChangedIndex("", "POSTING", dropIndex);
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesPostingFilesOfRetypedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String newType : new String[]{"VARCHAR", "STRING"}) {
+                final String[] oldFiles = assertReplayedPurgeOfChangedIndex(
+                        "PARTITION BY DAY BYPASS WAL",
+                        "POSTING INCLUDE (x)",
+                        new String[]{"sym", "ALTER TABLE t_replay ALTER COLUMN sym TYPE " + newType},
+                        false
+                );
+                for (int i = 0; i < oldFiles.length; i++) {
+                    final String listing = listFiles(partitionDir("t_replay", i));
+                    final long liveTxn = getColumnNameTxn("t_replay", "sym", i);
+                    Assert.assertTrue(newType + ", " + listing, liveTxn > 0);
+                    final TreeSet<String> liveFiles = filesOfInstance(listing, "sym", liveTxn);
+                    Assert.assertEquals(newType + ", " + listing, "[sym.d." + liveTxn + ", sym.i." + liveTxn + "]", liveFiles.toString());
+                }
+                execute("DROP TABLE t_replay");
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesPostingFilesOfUpdatedColumn() throws Exception {
+        // UPDATE gives sym the column name txn of the update in the last three partitions, and the purge
+        // job removes the files of instance NONE there. The replayed purge of the next change removes the
+        // POSTING files named with that txn, sym.pv.<txn>.<seal> and sym.pc<N>.<txn>.<seal> among them.
+        assertMemoryLeak(() -> {
+            final String[][] changes = {
+                    {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"},
+                    {null, "ALTER TABLE t_replay DROP COLUMN sym"},
+            };
+            for (String[] change : changes) {
+                createReplayTable("PARTITION BY DAY BYPASS WAL", "POSTING INCLUDE (x)");
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    update("UPDATE t_replay SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                }
+                final long updateTxn = getColumnNameTxn("t_replay", "sym", 2);
+                Assert.assertTrue(updateTxn > 0);
+                // the UPDATE leaves 'A' in the first row only; the rows 1 and 4 when sym is dropped
+                final String expectedRows = change[0] != null ? """
+                        ts\tx
+                        1970-01-01T02:00:00.000000Z\t1
+                        """ : ROWS_OF_A_IN_REPLAY_TABLE;
+                final String[] oldFiles = assertReplayedPurgeRemovesOldInstance(
+                        change[0],
+                        replaceTimestampSuffix(expectedRows, timestampType.getTypeName()),
+                        null,
+                        null,
+                        Arrays.copyOfRange(change, 1, change.length)
+                );
+                for (int i = 0; i < oldFiles.length; i++) {
+                    final String suffix = i < 2 ? "" : "." + updateTxn;
+                    final String paddedFiles = " " + oldFiles[i] + " ";
+                    for (String file : new String[]{" sym.d" + suffix + " ", " sym.pk" + suffix + " ", " sym.pci" + suffix + " ", " sym.pv" + suffix + ".", " sym.pc0." + (i < 2 ? 0 : updateTxn) + "."}) {
+                        Assert.assertTrue(change[1] + ", " + file + " in " + oldFiles[i], paddedFiles.contains(file));
+                    }
+                }
+                execute("DROP TABLE t_replay");
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesPostingFilesOfColumnAddedAfterData() throws Exception {
+        // sym, added with a POSTING index after the first two partitions, has no files in the first one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_replay (ts " + timestampType.getTypeName() + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_replay VALUES ('1970-01-01T02:00:00.000000Z', 1), ('1970-01-02T02:00:00.000000Z', 2)");
+            execute("ALTER TABLE t_replay ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
+            execute("""
+                    INSERT INTO t_replay VALUES
+                    ('1970-01-03T02:00:00.000000Z', 3, 'C'),
+                    ('1970-01-04T02:00:00.000000Z', 4, 'A'),
+                    ('1970-01-05T02:00:00.000000Z', 5, 'B')""");
+            final String[] oldFiles = assertReplayedPurgeRemovesOldInstance("sym", replaceTimestampSuffix("""
+                    ts\tx
+                    1970-01-04T02:00:00.000000Z\t4
+                    """, timestampType.getTypeName()), null, null, "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX");
+            Assert.assertEquals("", oldFiles[0]);
+            for (int i = 2; i < oldFiles.length; i++) {
+                Assert.assertTrue(oldFiles[i], oldFiles[i].matches("sym\\.d\\.[1-9][0-9]* sym\\.pk\\.[1-9][0-9]* sym\\.pv\\.[1-9][0-9]*\\.[0-9]+.*"));
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesPostingFilesOfParquetPartition() throws Exception {
+        // CONVERT PARTITION TO PARQUET keeps the POSTING index files next to data.parquet.
+        assertMemoryLeak(() -> {
+            createReplayTable("PARTITION BY DAY BYPASS WAL", "POSTING INCLUDE (x)");
+            execute("ALTER TABLE t_replay CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final String[] oldFiles = assertReplayedPurgeRemovesOldInstance(
+                    "sym",
+                    replaceTimestampSuffix(ROWS_OF_A_IN_REPLAY_TABLE, timestampType.getTypeName()),
+                    null,
+                    null,
+                    "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"
+            );
+            final String paddedFiles = " " + oldFiles[0] + " ";
+            for (String file : new String[]{" sym.pk ", " sym.pci ", " sym.pv.", " sym.pc0.0."}) {
+                Assert.assertTrue(file + " in " + oldFiles[0], paddedFiles.contains(file));
+            }
+            Assert.assertTrue((" " + listFiles(partitionDir("t_replay", 0)) + " ").contains(" data.parquet "));
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeOfDroppedPostingIndexWithFailingRemove() throws Exception {
+        // The replay cannot remove sym.pv.1 of the old instance in the middle partition and removes every
+        // other file of the old instance.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            createReplayTable("PARTITION BY DAY BYPASS WAL", "POSTING INCLUDE (x)");
+            final String middleDir = partitionDir("t_replay", 2);
+            final String[] leftoverFiles = {null, null, "sym.pv.1", null, null};
+            final String[] oldFiles = assertReplayedPurgeRemovesOldInstance(
+                    "sym",
+                    replaceTimestampSuffix(ROWS_OF_A_IN_REPLAY_TABLE, timestampType.getTypeName()),
+                    () -> {
+                        failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pv.1");
+                        remainingFailures.set(1);
+                    },
+                    leftoverFiles,
+                    "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"
+            );
+            Assert.assertEquals(1, failedRemoveCount.get());
+            Assert.assertTrue(oldFiles[2], (" " + oldFiles[2] + " ").contains(" sym.pv.1 "));
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeOfDroppedPostingIndexAfterFailedPurge() throws Exception {
+        // No reader holds the old instance of sym, so DROP INDEX purges it at once. Neither DROP INDEX nor
+        // the first purge job can remove its sym.pci in partition 2 and one of its sealed .pv files in
+        // partition 3, and the job closes with the task incomplete in the purge log. Its .d and .pk files
+        // are gone, and the live column has no index. A new purge job replays the task and removes both
+        // files: its existence probe finds the .pci in partition 2 and the .pv by the directory scan in
+        // partition 3.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final String[] failingFileSuffixes = new String[2];
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get()) {
+                    for (String suffix : failingFileSuffixes) {
+                        if (Utf8s.endsWithAscii(name, suffix)) {
+                            return false;
+                        }
+                    }
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createReplayTable("PARTITION BY DAY BYPASS WAL", "POSTING INCLUDE (x)");
+            final String[] dirs = new String[5];
+            final long[] oldTxns = new long[5];
+            for (int i = 0; i < 5; i++) {
+                dirs[i] = partitionDir("t_replay", i);
+                oldTxns[i] = getColumnNameTxn("t_replay", "sym", i);
+            }
+            final String sealedValueFile = filesWithPrefix(listFiles(dirs[3]), "sym.pv.").first();
+            Assert.assertTrue(sealedValueFile, sealedValueFile.matches("sym\\.pv\\.[0-9]+"));
+            failingFileSuffixes[0] = Files.SEPARATOR + new File(dirs[2]).getName() + Files.SEPARATOR + "sym.pci";
+            failingFileSuffixes[1] = Files.SEPARATOR + new File(dirs[3]).getName() + Files.SEPARATOR + sealedValueFile;
+            isArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                // a row per partition of the task
+                assertIncompletePurgeLogRows(purgeJob, 2);
+            }
+            isArmed.set(false);
+            engine.releaseInactive();
+
+            final String[] expectedOldFiles = {"[]", "[]", "[sym.pci]", "[" + sealedValueFile + "]", "[]"};
+            final String[] listingsBefore = new String[5];
+            for (int i = 0; i < 5; i++) {
+                listingsBefore[i] = listFiles(dirs[i]);
+                Assert.assertEquals(listingsBefore[i], expectedOldFiles[i], filesOfInstance(listingsBefore[i], "sym", oldTxns[i]).toString());
+            }
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            for (int i = 0; i < 5; i++) {
+                final TreeSet<String> expectedFiles = new TreeSet<>(Arrays.asList(listingsBefore[i].split(" ")));
+                expectedFiles.removeAll(filesOfInstance(listingsBefore[i], "sym", oldTxns[i]));
+                Assert.assertEquals(dirs[i], String.join(" ", expectedFiles), listFiles(dirs[i]));
+            }
+            final String query = "SELECT ts, x FROM t_replay WHERE sym = 'A'";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix(ROWS_OF_A_IN_REPLAY_TABLE, timestampType.getTypeName()));
+            assertSqlCursors("SELECT ts, x FROM t_replay WHERE sym::STRING = 'A'", query);
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeOfPostingIndexDroppedAtTxnZero() throws Exception {
+        // DROP INDEX as the first change of a table that is not partitioned gives s the column name txn 0
+        // in default, next to the files of instance NONE. The replayed purge removes them and keeps s.d.0.
+        assertMemoryLeak(() -> {
+            createIndexDroppedAtTxnZeroTables("s", "INDEX TYPE POSTING INCLUDE (d, vc)");
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignored = getReader("pt")) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                }
+            }
+            final String before = listFiles(defaultDir("pt"));
+            Assert.assertEquals("[s.d, s.pk, s.pv.0]", filesOfInstanceNone(before, "s").toString());
+            Assert.assertTrue(before, (" " + before + " ").contains(" s.d.0 "));
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            Assert.assertEquals(withoutFilesOfInstanceNone(before, "s"), listFiles(defaultDir("pt")));
+            Assert.assertEquals(0, getColumnNameTxnOfDefault("pt", "s"));
+            execute("ALTER TABLE pt ADD COLUMN l LONG");
+            insertRowsOfIndexReAddedAtTxnZero("pt");
+            final String query = "SELECT ts, s, d, vc, l FROM pt WHERE s = 'y'";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\ts\td\tvc\tl\n" + timestamps(ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO));
+            assertSqlCursors("SELECT ts, s, d, vc, l FROM pt WHERE s::STRING = 'y'", query);
+        });
+    }
+
+    /**
+     * {@link #assertReplayedPurgeOfChangedIndex(String, String, String[], boolean)}, then drops t_replay.
+     */
+    private void assertReplayedPurgeOfChangedIndex(String partitionByAndWal, String oldIndexClause, String[] changes) throws Exception {
+        assertReplayedPurgeOfChangedIndex(partitionByAndWal, oldIndexClause, changes, true);
+    }
+
+    /**
+     * Creates t_replay, indexes sym with {@code oldIndexClause}, and asserts the replayed purge of the old
+     * instance of sym after {@code changes[1..]}, which leave {@code changes[0]} the live column, or no
+     * live column when null. Every partition holds the data file and the index files of the old instance.
+     * Drops t_replay when {@code isDropped}. Returns the files of the old instance in each partition
+     * directory.
+     */
+    private String[] assertReplayedPurgeOfChangedIndex(
+            String partitionByAndWal,
+            String oldIndexClause,
+            String[] changes,
+            boolean isDropped
+    ) throws Exception {
+        final String context = partitionByAndWal + ", " + oldIndexClause + ", " + String.join("; ", changes);
+        createReplayTable(partitionByAndWal, oldIndexClause);
+        final String[] oldFiles;
+        try {
+            oldFiles = assertReplayedPurgeRemovesOldInstance(
+                    changes[0],
+                    replaceTimestampSuffix(ROWS_OF_A_IN_REPLAY_TABLE, timestampType.getTypeName()),
+                    null,
+                    null,
+                    Arrays.copyOfRange(changes, 1, changes.length)
+            );
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+        final boolean isPosting = oldIndexClause.startsWith("POSTING");
+        final boolean isCovering = oldIndexClause.contains("INCLUDE");
+        for (String files : oldFiles) {
+            final String paddedFiles = " " + files + " ";
+            final String[] expectedFiles = isPosting
+                    ? (isCovering ? new String[]{" sym.d ", " sym.pk ", " sym.pv.", " sym.pci ", " sym.pc0.0."} : new String[]{" sym.d ", " sym.pk ", " sym.pv."})
+                    : new String[]{" sym.d ", " sym.k ", " sym.v "};
+            for (String file : expectedFiles) {
+                Assert.assertTrue(context + ", " + file + " in " + files, paddedFiles.contains(file));
+            }
+        }
+        if (isDropped) {
+            execute("DROP TABLE t_replay");
+        }
+        return oldFiles;
+    }
+
+    /**
+     * Runs {@code changes} on t_replay with a reader open, so the first purge job keeps the purge task of
+     * the old instance of sym in the purge log, and replays the task in a new purge job, after
+     * {@code beforeReplay} when not null. Asserts that the replay removes every file of the old instance,
+     * named with its column name txn in each partition, but {@code leftoverFiles}, and keeps the other
+     * files, that the new job leaves the purge log empty, and the rows of 'A' in {@code liveColumn}
+     * through its index and through a filter that reads no index, or the rows 1 and 4 when no live
+     * column is given. Returns the files of the old instance in each partition directory, space-separated.
+     */
+    private String[] assertReplayedPurgeRemovesOldInstance(
+            String liveColumn,
+            String expectedRows,
+            Runnable beforeReplay,
+            String[] leftoverFiles,
+            String... changes
+    ) throws Exception {
+        final String[] dirs;
+        try (TableReader reader = getReader("t_replay")) {
+            dirs = new String[PartitionBy.isPartitioned(reader.getPartitionedBy()) ? reader.getPartitionCount() : 1];
+        }
+        final long[] oldTxns = new long[dirs.length];
+        for (int i = 0; i < dirs.length; i++) {
+            dirs[i] = dirs.length > 1 ? partitionDir("t_replay", i) : defaultDir("t_replay");
+            oldTxns[i] = getColumnNameTxn("t_replay", "sym", i);
+        }
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            try (TableReader ignored = getReader("t_replay")) {
+                for (String change : changes) {
+                    execute(change);
+                }
+                drainWalQueue();
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+        }
+        engine.releaseInactive();
+        final String[] listingsBefore = new String[dirs.length];
+        final String[] oldFiles = new String[dirs.length];
+        for (int i = 0; i < dirs.length; i++) {
+            listingsBefore[i] = listFiles(dirs[i]);
+            oldFiles[i] = String.join(" ", filesOfInstance(listingsBefore[i], "sym", oldTxns[i]));
+        }
+        if (beforeReplay != null) {
+            beforeReplay.run();
+        }
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            assertPurgeLogRows(purgeJob, 0, 0);
+        }
+        for (int i = 0; i < dirs.length; i++) {
+            final TreeSet<String> expectedFiles = new TreeSet<>(Arrays.asList(listingsBefore[i].split(" ")));
+            expectedFiles.removeAll(Arrays.asList(oldFiles[i].split(" ")));
+            if (leftoverFiles != null && leftoverFiles[i] != null) {
+                expectedFiles.add(leftoverFiles[i]);
+            }
+            Assert.assertEquals(dirs[i] + ", old instance " + oldFiles[i], String.join(" ", expectedFiles), listFiles(dirs[i]));
+        }
+        if (liveColumn != null) {
+            final String query = "SELECT ts, x FROM t_replay WHERE " + liveColumn + " = 'A'";
+            // a covering index of the live column reads the rows without random access, and knows their count
+            final boolean isLiveIndexCovering;
+            try (TableReader reader = getReader("t_replay")) {
+                final int columnIndex = reader.getMetadata().getColumnIndex(liveColumn);
+                final IntList coveredColumnIndices = reader.getMetadata().getCoveringColumnIndices(columnIndex);
+                isLiveIndexCovering = IndexType.isPosting(reader.getMetadata().getColumnIndexType(columnIndex))
+                        && coveredColumnIndices != null && coveredColumnIndices.size() > 0;
+            }
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .supportsRandomAccess(!isLiveIndexCovering)
+                    .expectSize(isLiveIndexCovering)
+                    .returns(expectedRows);
+            assertSqlCursors("SELECT ts, x FROM t_replay WHERE " + liveColumn + "::STRING = 'A'", query);
+        } else {
+            assertQuery("SELECT ts, x FROM t_replay WHERE x IN (1, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedRows);
+        }
+        return oldFiles;
+    }
+
+    /**
+     * Creates t_replay with one row in each of five daily partitions, or in default when
+     * {@code partitionByAndWal} names no partitioning, and indexes sym with {@code indexClause}.
+     */
+    private void createReplayTable(String partitionByAndWal, String indexClause) throws SqlException {
+        execute("CREATE TABLE t_replay (ts " + timestampType.getTypeName() + ", x LONG, sym SYMBOL) TIMESTAMP(ts) " + partitionByAndWal);
+        execute("""
+                INSERT INTO t_replay VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 'C'),
+                ('1970-01-04T02:00:00.000000Z', 4, 'A'),
+                ('1970-01-05T02:00:00.000000Z', 5, 'B')""");
+        drainWalQueue();
+        execute("ALTER TABLE t_replay ALTER COLUMN sym ADD INDEX TYPE " + indexClause);
+        drainWalQueue();
+    }
+
+    /**
+     * The files in {@code listing} of the instance of {@code col} with the column name txn
+     * {@code columnNameTxn}: the data and var-size index files, the BITMAP key and value files, the
+     * POSTING key and cover info files, the sealed .pv files, and the .pc files of the host token of the
+     * txn, which is 0 for txn NONE.
+     */
+    private static TreeSet<String> filesOfInstance(String listing, String col, long columnNameTxn) {
+        final String txnSuffix = columnNameTxn > TableUtils.COLUMN_NAME_TXN_NONE ? "\\." + columnNameTxn : "";
+        final Pattern names = Pattern.compile(Pattern.quote(col) + "\\.(?:(?:d|i|k|v|pk|pci)" + txnSuffix
+                + "|pv" + txnSuffix + "\\.[0-9]+"
+                + "|pc[0-9]+\\." + Math.max(0, columnNameTxn) + "(?:\\.[0-9]+)?\\.[0-9]+)");
+        final TreeSet<String> files = new TreeSet<>();
+        for (String file : listing.split(" ")) {
+            if (names.matcher(file).matches()) {
+                files.add(file);
+            }
+        }
+        return files;
+    }
+
+    private static String listFiles(String dir) {
+        final String[] names = new File(dir).list();
+        Assert.assertNotNull(dir, names);
+        Arrays.sort(names);
+        return String.join(" ", names);
+    }
+
+    private static TreeSet<String> symbolRootFiles(File tableDir) {
+        final String[] names = tableDir.list((dir, name) -> name.startsWith("sym."));
+        Assert.assertNotNull(names);
+        return new TreeSet<>(Arrays.asList(names));
+    }
+
+    private void assertOrphanPostingSidecarsPurged(String context, String[] liveFiles) throws Exception {
+        for (int i = 0; i < liveFiles.length; i++) {
+            Assert.assertEquals(context, liveFiles[i], listFiles(partitionDir("t_orphan", i + 2)));
+        }
+        assertQuery("SELECT ts, sym, x FROM t_orphan WHERE sym = 'Z'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: sym with: ts, x")
+                .returns(replaceTimestampSuffix("""
+                        ts\tsym\tx
+                        1970-01-03T02:00:00.000000Z\tZ\t3
+                        1970-01-04T02:00:00.000000Z\tZ\t4
+                        1970-01-05T02:00:00.000000Z\tZ\t5
+                        """, timestampType.getTypeName()));
+    }
+
+    /**
+     * Creates t_orphan with a POSTING INCLUDE index on sym in five daily partitions, and updates sym in
+     * the last three with a reader open, so the purge job keeps the purge task of the old instance of
+     * sym. Then deletes sym.d and sym.pk of the old instance in the last two of those partitions, and
+     * in the first one too when {@code isFirstPartitionOrphaned}. Returns the files of the three
+     * partitions without the old instance.
+     */
+    private String[] createOrphanPostingSidecars(String context, ColumnPurgeJob purgeJob, boolean isFirstPartitionOrphaned) throws SqlException {
+        execute("DROP TABLE IF EXISTS t_orphan");
+        execute("CREATE TABLE t_orphan AS" +
+                " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                " x," +
+                " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                " FROM long_sequence(5))" +
+                " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("ALTER TABLE t_orphan ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)");
+        final String[] oldInstanceFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            final TreeSet<String> files = new TreeSet<>();
+            for (String file : listFiles(partitionDir("t_orphan", i + 2)).split(" ")) {
+                if (file.startsWith("sym.")) {
+                    files.add(file);
+                }
+            }
+            Assert.assertTrue(context + ", " + files, files.containsAll(Arrays.asList("sym.d", "sym.pci", "sym.pk")));
+            oldInstanceFiles[i] = String.join(" ", files);
+        }
+
+        try (TableReader ignore = getReader("t_orphan")) {
+            update("UPDATE t_orphan SET sym = 'Z' WHERE ts >= '1970-01-03'");
+            // the reader holds the old instance
+            runPurgeJob(purgeJob);
+        }
+
+        final String[] liveFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            final String dir = partitionDir("t_orphan", i + 2);
+            final TreeSet<String> files = new TreeSet<>(Arrays.asList(listFiles(dir).split(" ")));
+            Assert.assertTrue(context, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+            files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+            liveFiles[i] = String.join(" ", files);
+            if (i > 0 || isFirstPartitionOrphaned) {
+                Assert.assertTrue(new File(dir, "sym.d").delete());
+                Assert.assertTrue(new File(dir, "sym.pk").delete());
+            }
+        }
+        return liveFiles;
     }
 
     private void assertPostingKeyFileExists(Path path, String tableName, String partition, boolean exist) {

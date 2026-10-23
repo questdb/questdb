@@ -83,12 +83,12 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     }
 
     @Override
-    public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-        if (postingColumnNameTxn != scanTargetPostingTxn || sealTxn != scanTargetSealTxn) {
+    public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+        if (sealTxn != scanTargetSealTxn) {
             return;
         }
         LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(scanPartitionPathLen),
-                scanColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                scanColumnName, includeIdx, scanTargetPostingTxn, coveredColumnNameTxn, sealTxn);
         // removeQuiet returns true on ENOENT too, but scanSealedFiles only
         // invokes this callback for .pc files actually present in the directory
         // listing, so a true return here means a real file was unlinked. Track
@@ -112,7 +112,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     }
 
     @Override
-    public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+    public void onValueFile(long sealTxn) {
     }
 
     public boolean purge(PostingSealPurgeTask task) {
@@ -269,7 +269,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         scanColumnName = task.getIndexColumnName();
         scanPartitionPathLen = pathPartitionLen;
         path.trimTo(pathPartitionLen);
-        PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, scanColumnName, this);
+        PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, scanColumnName, scanTargetPostingTxn, this);
         path.trimTo(pathPartitionLen);
 
         // Post-unlink reuse-race detection for the cover (.pc) files, the analogue of

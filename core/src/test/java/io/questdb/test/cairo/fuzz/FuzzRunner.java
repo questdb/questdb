@@ -32,6 +32,7 @@ import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -72,6 +73,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
+import io.questdb.test.fuzz.FuzzDropIndexOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -92,6 +94,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
+    public static final String TXN_ZERO_SYMBOL_COLUMN = "sym0";
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
@@ -107,12 +110,14 @@ public class FuzzRunner {
     private double colTypeChangeProb;
     private boolean createWalAsParquet;
     private double dataAddProb;
+    private double dropIndexProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
     private int fuzzRowCount;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
+    private boolean isNoSentinelTypeChangeEnabled;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -136,6 +141,10 @@ public class FuzzRunner {
     private double tableDropProb;
     private int transactionCount;
     private double truncateProb;
+    // INCLUDE list and index type of the covering index on sym0, the column the txn-0 setup adds to
+    // the still-empty table; null when the setup is off
+    private IntList txnZeroCoveredIncludeIndices;
+    private String txnZeroCoveringIndexTypeName;
 
     public FuzzRunner() {
         checkNoSuspendedTablesRef = this::checkNoSuspendedTables;
@@ -210,6 +219,10 @@ public class FuzzRunner {
                 Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
                 purgeJobThread.start();
                 applyThreads.add(purgeJobThread);
+
+                Thread compactionJobThread = new Thread(() -> runPartitionCompactionJob(done, errors));
+                compactionJobThread.start();
+                applyThreads.add(compactionJobThread);
 
                 Thread purgePartitionThread = new Thread(() -> runPurgePartitionJob(
                         done,
@@ -303,6 +316,11 @@ public class FuzzRunner {
                                 Misc.free(writer);
                                 writer = null;
                                 coveringOp.executePostDrain(engine, tableName);
+                                writer = TestUtils.getWriter(engine, tableName);
+                            } else if (transaction.operationList.getQuick(opIdx) instanceof FuzzDropIndexOperation dropIndexOp) {
+                                Misc.free(writer);
+                                writer = null;
+                                dropIndexOp.executePostDrain(engine, tableName);
                                 writer = TestUtils.getWriter(engine, tableName);
                             }
                         }
@@ -417,7 +435,7 @@ public class FuzzRunner {
         TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
-        executeCoveringIndexOps(transactions, tableName);
+        executeIndexOps(transactions, tableName, applyRnd);
         drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
@@ -527,7 +545,10 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb, setTableFormatProb
+                addCoveringIndexProb,
+                dropIndexProb,
+                setTableFormatProb,
+                isNoSentinelTypeChangeEnabled
         );
     }
 
@@ -812,6 +833,56 @@ public class FuzzRunner {
         this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
+    /**
+     * Makes the generator drop the index of a symbol column, and index it again with BITMAP or a POSTING
+     * kind five times in eight, see {@link FuzzDropIndexOperation}. Every setFuzzProbabilities() call
+     * keeps it.
+     */
+    public void setDropIndexProbability(double dropIndexProb) {
+        this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
+     * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
+     * partition and those types back to text, with in-order writes only, see
+     * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
+     */
+    public void setNoSentinelTypeChangeEnabled(boolean isNoSentinelTypeChangeEnabled) {
+        this.isNoSentinelTypeChangeEnabled = isNoSentinelTypeChangeEnabled;
+    }
+
+    /**
+     * Makes the next initial tables start with {@value #TXN_ZERO_SYMBOL_COLUMN}, a SYMBOL column that
+     * ALTER TABLE ADD COLUMN adds while the table is still empty, so its column name txn is 0.
+     * {@link FuzzAddCoveringIndexOperation} covers it before the first row goes in, and every fuzz
+     * operation after that (O3, CONVERT PARTITION, RENAME and DROP COLUMN, purges) runs on that
+     * covering index. A .pc sidecar name carries the token 0 for both txn 0 and txn NONE, and a scan
+     * that read 0 as NONE once made CONVERT, RENAME and the purges miss the sidecars of such a column.
+     * The WAL tables and the non-WAL twin get the same INCLUDE list and index type, drawn from rnd.
+     */
+    public void setTxnZeroCoveredSymbol(Rnd rnd) {
+        // writer indexes of the data_temp columns c1 (LONG), c2 (SYMBOL), c3 (INT), rnd_str (STRING)
+        // and bool1 (BOOLEAN)
+        final IntList candidates = new IntList();
+        candidates.add(0);
+        candidates.add(1);
+        candidates.add(4);
+        candidates.add(7);
+        candidates.add(8);
+        txnZeroCoveredIncludeIndices = new IntList();
+        for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+            final int pick = rnd.nextInt(candidates.size());
+            txnZeroCoveredIncludeIndices.add(candidates.getQuick(pick));
+            candidates.removeIndex(pick);
+        }
+        final double indexKindPick = rnd.nextDouble();
+        txnZeroCoveringIndexTypeName = indexKindPick < 0.6
+                ? "POSTING"
+                : (indexKindPick < 0.8 ? "POSTING DELTA" : "POSTING EF");
+        LOG.info().$("txn 0 covered symbol [index=").$(txnZeroCoveringIndexTypeName)
+                .$(", include=").$(txnZeroCoveredIncludeIndices).I$();
+    }
+
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
@@ -846,7 +917,7 @@ public class FuzzRunner {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
-        executeCoveringIndexOps(transactions, tableName);
+        executeIndexOps(transactions, tableName, applyRnd);
         drainWalQueue(applyRnd, tableName);
     }
 
@@ -1139,30 +1210,35 @@ public class FuzzRunner {
         SharedRandom.RANDOM.set(new Rnd());
 
         if (engine.getTableTokenIfExists(tableName) == null) {
-            sink.clear();
-            sink.put("create atomic table ")
-                    .put(tableName)
-                    .put(" as (")
-                    .put("select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from data_temp");
-
+            final StringSink rowFilter = new StringSink();
             if (transactions != null) {
                 LongList noCommitRanges = calculateReplaceRanges(transactions);
 
                 if (noCommitRanges != null) {
-                    sink.put(" where");
+                    rowFilter.put(" where");
                     for (int i = 0, n = noCommitRanges.size(); i < n; i += 2) {
                         long lo = noCommitRanges.getQuick(i);
                         long hi = noCommitRanges.getQuick(i + 1);
                         if (i > 0) {
-                            sink.put(" and");
+                            rowFilter.put(" and");
                         }
-                        sink.put(" (ts not between '" + Micros.toUSecString(lo) + "' and '" + Micros.toUSecString(hi) + "')");
+                        rowFilter.put(" (ts not between '" + Micros.toUSecString(lo) + "' and '" + Micros.toUSecString(hi) + "')");
                     }
                 }
             }
 
-            sink.put("), index(sym2 ").put(randomIndexTypeClause()).put(") timestamp(ts) partition by DAY BYPASS WAL");
-            engine.execute(sink, sqlExecutionContext);
+            if (txnZeroCoveringIndexTypeName != null) {
+                createTxnZeroCoveredTable(tableName, rowFilter, "BYPASS WAL", false);
+            } else {
+                sink.clear();
+                sink.put("create atomic table ")
+                        .put(tableName)
+                        .put(" as (")
+                        .put("select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from data_temp")
+                        .put(rowFilter);
+                sink.put("), index(sym2 ").put(randomIndexTypeClause()).put(") timestamp(ts) partition by DAY BYPASS WAL");
+                engine.execute(sink, sqlExecutionContext);
+            }
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
@@ -1202,12 +1278,16 @@ public class FuzzRunner {
             } else {
                 tail = "BYPASS WAL";
             }
-            engine.execute(
-                    "create atomic table " + tableName + " as (" +
-                            "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
-                    sqlExecutionContext
-            );
+            if (txnZeroCoveringIndexTypeName != null) {
+                createTxnZeroCoveredTable(tableName, "", tail, isWal);
+            } else {
+                engine.execute(
+                        "create atomic table " + tableName + " as (" +
+                                "select * from data_temp" +
+                                "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
+                        sqlExecutionContext
+                );
+            }
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
@@ -1272,6 +1352,60 @@ public class FuzzRunner {
         engine.releaseInactive();
 
         return transactions;
+    }
+
+    /**
+     * Creates the data_temp table shape with {@value #TXN_ZERO_SYMBOL_COLUMN} added to the still-empty
+     * table, covers it with {@link FuzzAddCoveringIndexOperation}, then inserts the data_temp rows that
+     * pass rowFilter. See {@link #setTxnZeroCoveredSymbol(Rnd)}.
+     */
+    private void createTxnZeroCoveredTable(String tableName, CharSequence rowFilter, String tail, boolean isWal) throws SqlException {
+        engine.execute(
+                "create atomic table " + tableName + " as (select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from data_temp where c1 < 0)"
+                        + ", index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
+                sqlExecutionContext
+        );
+        engine.execute("alter table " + tableName + " add column " + TXN_ZERO_SYMBOL_COLUMN + " symbol", sqlExecutionContext);
+        if (isWal) {
+            drainWalQueue(new Rnd(), tableName);
+        }
+        try (TableReader reader = getReader(tableName)) {
+            final int columnIndex = reader.getMetadata().getColumnIndex(TXN_ZERO_SYMBOL_COLUMN);
+            Assert.assertEquals(
+                    "column name txn of " + TXN_ZERO_SYMBOL_COLUMN + " in " + tableName,
+                    0,
+                    reader.getColumnVersionReader().getDefaultColumnNameTxn(reader.getMetadata().getWriterIndex(columnIndex))
+            );
+            new FuzzAddCoveringIndexOperation(columnIndex, txnZeroCoveredIncludeIndices, txnZeroCoveringIndexTypeName)
+                    .executePostDrain(engine, tableName);
+        }
+        if (isWal) {
+            drainWalQueue(new Rnd(), tableName);
+        }
+        engine.execute(
+                "insert into " + tableName + " select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1,"
+                        + " case when c1 % 4 = 0 then null else c2 end from data_temp" + rowFilter,
+                sqlExecutionContext
+        );
+        if (isWal) {
+            drainWalQueue(new Rnd(), tableName);
+        }
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int columnIndex = metadata.getColumnIndex(TXN_ZERO_SYMBOL_COLUMN);
+            final IntList coveringIndices = metadata.getCoveringColumnIndices(columnIndex);
+            Assert.assertTrue(
+                    "covering index on " + TXN_ZERO_SYMBOL_COLUMN + " in " + tableName,
+                    metadata.isColumnIndexed(columnIndex) && coveringIndices != null && coveringIndices.size() > 0
+            );
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                Assert.assertEquals(
+                        "column name txn of " + TXN_ZERO_SYMBOL_COLUMN + " in " + tableName + ", partition " + i,
+                        0,
+                        reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(i), metadata.getWriterIndex(columnIndex))
+                );
+            }
+        }
     }
 
     @NotNull
@@ -1400,25 +1534,39 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
+        // the drain loop runs a timing-dependent number of times: a copy keeps its draws off applyRnd,
+        // so that the seeded draws after the drain replay from the printed seeds
+        final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+             PartitionCompactionScanJob compactionJob = new PartitionCompactionScanJob(engine);
              TableReader rdr1 = getReaderWithRetries(tableName, null);
              TableReader rdr2 = getReaderWithRetries(tableName, null)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
-                forceReleaseTableWriter(applyRnd);
-                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+                forceReleaseTableWriter(drainRnd);
+                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
             }
+            // This path is the ONLY compaction coverage for single-writer tables driven through
+            // applyWal() -> applyToWal() (walWriterCount=1 never goes through
+            // applyManyWalParallel()'s waitApply thread pool below), so it needs its own sweep,
+            // not just the threaded one.
+            compactionJob.drain(0);
         }
     }
 
-    private void executeCoveringIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
+    private void executeIndexOps(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
             for (int j = 0, m = ops.size(); j < m; j++) {
                 if (ops.getQuick(j) instanceof FuzzAddCoveringIndexOperation coveringOp) {
                     coveringOp.executePostDrain(engine, tableName);
+                } else if (ops.getQuick(j) instanceof FuzzDropIndexOperation dropIndexOp) {
+                    // the drop op skips the columns that other indexes cover, so it must read the
+                    // applied metadata of the covering index ops queued before it in this batch
+                    drainWalQueue(applyRnd, tableName);
+                    dropIndexOp.executePostDrain(engine, tableName);
                 }
             }
         }
@@ -1495,6 +1643,21 @@ public class FuzzRunner {
         } finally {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+        }
+    }
+
+    private void runPartitionCompactionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
+        try {
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                while (done.get() == 0 && errors.isEmpty()) {
+                    job.drain(0);
+                    Os.sleep(1);
+                }
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Path.clearThreadLocals();
         }
     }
 

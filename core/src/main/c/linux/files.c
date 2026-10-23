@@ -437,6 +437,35 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     return JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    // Grows the file to len, allocating only [offset, len): the caller knows the file already holds offset bytes.
+    // posix_fallocate() is not free over a range that is already allocated - XFS opens a transaction for every
+    // extent in it - so growing a fragmented file from offset 0 costs time in proportion to the whole file, rather
+    // than to the growth.
+    if (len <= offset) {
+        return JNI_TRUE;
+    }
+    int rc = posix_fallocate(fd, offset, len - offset);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    if (rc == EINVAL) {
+        // Some file systems (such as ZFS) do not support posix_fallocate
+        struct stat st;
+        if (fstat((int) fd, &st) != 0) {
+            return JNI_FALSE;
+        }
+        if (st.st_size < len && ftruncate(fd, len) != 0) {
+            return JNI_FALSE;
+        }
+        return JNI_TRUE;
+    }
+
+    errno = rc; // communicate errno to caller
+    return JNI_FALSE;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;

@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -47,7 +48,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
@@ -276,65 +279,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftWithColumnTop() throws Exception {
-        assertMemoryLeak(() -> {
-            ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean();
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
-
-            boolean isSkipMode = rnd.nextBoolean();
-
-            String tableName = getTestName();
-            createEmptyTable(tableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", createAsParquet);
-
-            long initialDelta = Micros.MINUTE_MICROS * 15;
-            int initialCount = 2 * 24 * 5;
-            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
-            generateInsertsTransactions(
-                    transactions,
-                    1,
-                    parseFloorPartialTimestamp("2020-02-24T04:30"),
-                    initialDelta,
-                    initialCount,
-                    1 + rnd.nextInt(1),
-                    null,
-                    rnd
-            );
-
-            int strLen = 4 + rnd.nextInt(20);
-            String[] symbols = generateSymbols(rnd, 20, strLen, tableName);
-
-            applyWal(transactions, tableName, 1, rnd);
-            ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, false);
-            transactions.clear();
-
-            execute("alter table " + tableName + " add s symbol index", sqlExecutionContext);
-
-            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
-            long delta = (long) (initialDelta * deltaMultiplier);
-            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
-            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
-            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
-
-            generateInsertsTransactions(
-                    transactions,
-                    2,
-                    from,
-                    delta,
-                    count,
-                    rowsWithSameTimestamp,
-                    symbols,
-                    rnd
-            );
-
-            maybeConvertToParquet(tableName, convertToParquet);
-            splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
-            // ts is the only dedup key, the rows of one timestamp differ in the s column
-            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts", false, isSkipMode, transactions, firstBatchKeys);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
-        });
+        runDedupWithRandomShiftWithColumnTop(false);
     }
+
+    @Test
+    public void testDedupWithRandomShiftWithColumnTopParquet() throws Exception {
+        // every seed replays stored rows into a Parquet partition that is not the last one, then appends to it
+        runDedupWithRandomShiftWithColumnTop(true);
+    }
+
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
@@ -546,14 +499,29 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return !transaction.rollback && transaction.operationList.size() > 1 && !transaction.hasReplaceRange();
     }
 
+    // Whether the table has a live BOOLEAN, BYTE or SHORT column, the types without a NULL value
+    private static boolean hasNoSentinelColumn(TableToken tableToken) {
+        try (TableReader reader = getReader(tableToken)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE || columnType == ColumnType.SHORT) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // When every re-inserted row is a duplicate, SKIP leaves native and Parquet partitions as they are. UPSERT
-    // keeps a native partition only after it checks that the new rows carry the values the partition has, a
-    // check that the Parquet merge does not make: an UPSERT O3 merge into a Parquet partition writes the file
-    // even when the new rows equal the stored ones, so for UPSERT only native partitions must keep their name
-    // txn.
-    private static String readPartitionsToString(TableToken tableToken, boolean isSkipMode) {
+    // keeps a native partition only after it checks that the new rows carry the values the partition has. The
+    // Parquet merge makes that check only for tables with a BOOLEAN, BYTE or SHORT column, the types whose
+    // column tops a merge would turn into 0/false: without such a column, an UPSERT O3 merge into a Parquet
+    // partition writes the file even when the new rows equal the stored ones, so only native partitions must
+    // keep their name txn.
+    private static String readPartitionsToString(TableToken tableToken, boolean isUnchangedParquet) {
         final String partitions = readTxnToString(tableToken, false, true, true, false);
-        return isSkipMode ? partitions : partitions.replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
+        return isUnchangedParquet ? partitions : partitions.replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
     }
 
     private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes, boolean isSkipMode) {
@@ -607,6 +575,21 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions,
             ObjHashSet<String> firstBatchKeys
     ) throws SqlException {
+        return applyWithDedupModeSwitch(rnd, tableName, null, null, dedupKeys, isSymbolKey, isSkipMode, transactions, firstBatchKeys);
+    }
+
+    // twinTableName (null: none) takes the same commits with the same mode switch, after tableName
+    private CommitOracle applyWithDedupModeSwitch(
+            Rnd rnd,
+            String tableName,
+            String twinTableName,
+            Rnd twinRnd,
+            String dedupKeys,
+            boolean isSymbolKey,
+            boolean isSkipMode,
+            ObjList<FuzzTransaction> transactions,
+            ObjHashSet<String> firstBatchKeys
+    ) throws SqlException {
         int switchIndex = rnd.nextInt(transactions.size() + 1);
         boolean isSkipAfterSwitch = rnd.nextBoolean();
         ObjList<FuzzTransaction> beforeSwitch = new ObjList<>();
@@ -623,6 +606,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         fuzzer.applyToWal(beforeSwitch, tableName, 1, rnd);
         execute("alter table " + tableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
         applyWal(afterSwitch, tableName, 1, rnd);
+        if (twinTableName != null) {
+            fuzzer.applyToWal(beforeSwitch, twinTableName, 1, twinRnd);
+            execute("alter table " + twinTableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
+            applyWal(afterSwitch, twinTableName, 1, twinRnd);
+        }
 
         return new CommitOracle(
                 firstBatchKeys,
@@ -645,6 +633,18 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
             foundSymbols[i] = false;
         }
+    }
+
+    // Changes the BYTE column b of the table and of its native twin to SYMBOL, which reads the rows below a
+    // column top as NULL and a materialized top as 0, then compares the tables
+    private void assertByteColumnTopMatchesTwin(String tableName, String twinTableName) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " alter column b type symbol", sqlExecutionContext);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(twinTableName)));
+        assertSqlCursors(twinTableName, tableName);
     }
 
     // addDuplicates() writes the copies of the last insert commit of a SKIP run before the transaction that follows
@@ -987,6 +987,48 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return null;
     }
 
+    // The timestamp of a random row of a random Parquet partition that is not the last partition of the table, or
+    // LONG_NULL when the table has no such partition
+    private long pickRowOfParquetPartitionBeforeLast(Rnd rnd, String tableName) throws SqlException {
+        final LongList parquetPartitionTimestamps = new LongList();
+        final LongList parquetPartitionRowCounts = new LongList();
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount() - 1; i < n; i++) {
+                if (reader.getPartitionFormat(i) == PartitionFormat.PARQUET && reader.getPartitionRowCount(i) > 0) {
+                    parquetPartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
+                    parquetPartitionRowCounts.add(reader.getPartitionRowCount(i));
+                }
+            }
+        }
+        if (parquetPartitionTimestamps.size() == 0) {
+            return Numbers.LONG_NULL;
+        }
+        final int partition = rnd.nextInt(parquetPartitionTimestamps.size());
+        final long partitionLo = parquetPartitionTimestamps.getQuick(partition);
+        final long row = rnd.nextLong(parquetPartitionRowCounts.getQuick(partition));
+        try (
+                RecordCursorFactory factory = select("select ts from " + tableName + " where ts >= " + partitionLo + " and ts < " + (partitionLo + Micros.DAY_MICROS));
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            for (long r = 0; cursor.hasNext(); r++) {
+                if (r == row) {
+                    return cursor.getRecord().getTimestamp(0);
+                }
+            }
+        }
+        throw new AssertionError("partition has fewer rows than its row count [partition=" + partitionLo + ", row=" + row + ']');
+    }
+
+    private long readLong(String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
     private CharSequence readStrValue(Record rec, int colType) {
         return switch (colType) {
             case ColumnType.SYMBOL -> rec.getSymA(2);
@@ -1012,7 +1054,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         LOG.info().$("Re-inserting written rows into table ").$(tableNameDedup).$();
         TableToken tt = engine.verifyTableName(tableNameDedup);
-        String partitions = readPartitionsToString(tt, isSkipMode);
+        final boolean isUnchangedParquet = isSkipMode || hasNoSentinelColumn(tt);
+        String partitions = readPartitionsToString(tt, isUnchangedParquet);
         int inserts = 2 + rnd.nextInt(10);
         long minTs, maxTs;
         try (TableReader reader = getReader(tableNameDedup)) {
@@ -1038,8 +1081,157 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
 
         Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
-        String partitionsAfter = readPartitionsToString(tt, isSkipMode);
+        String partitionsAfter = readPartitionsToString(tt, isUnchangedParquet);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
+    }
+
+    // Switches the table and its native twin to UPSERT and resends stored rows unchanged, as an at-least-once
+    // client does after a reconnect: first rows of a random interval, which every partition keeps as it is, then
+    // the rows of a day up to its last row together with a new row 1us after it, which appends to the partition of
+    // that day. The rows of the first batch hold NULL in s and b, as their column tops read. When the table has a
+    // Parquet partition before the last one, the interval starts at a row of such a partition, and the append goes
+    // into it: an identical replay leaves the Parquet file as it is and the append keeps the top of b.
+    private void replayStoredRows(Rnd rnd, String tableName, String twinTableName, boolean isParquetReplayExpected) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " dedup upsert keys(ts)", sqlExecutionContext);
+        }
+        drainWalQueue();
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final TableToken twinToken = engine.verifyTableName(twinTableName);
+        final long minTs, maxTs;
+        try (TableReader reader = getReader(tableName)) {
+            if (reader.size() == 0) {
+                return;
+            }
+            minTs = reader.getMinTimestamp();
+            maxTs = reader.getMaxTimestamp();
+        }
+
+        final long parquetRowTs = pickRowOfParquetPartitionBeforeLast(rnd, tableName);
+        Assert.assertTrue(
+                "no Parquet partition before the last one to replay into",
+                !isParquetReplayExpected || parquetRowTs != Numbers.LONG_NULL
+        );
+        final long replayLo = parquetRowTs != Numbers.LONG_NULL
+                ? parquetRowTs
+                : minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
+        final long replayHi = replayLo + rnd.nextLong(Micros.DAY_MICROS);
+        LOG.info().$("replaying stored rows [table=").$(tableName).$(", lo=").$ts(replayLo).$(", hi=").$ts(replayHi).I$();
+        final String replayCountSql = "select count() from " + tableName + " where ts >= " + replayLo + " and ts <= " + replayHi;
+        final long replayRowCount = readLong(replayCountSql);
+        Assert.assertTrue(
+                "the replay must resend rows of the Parquet partition",
+                parquetRowTs == Numbers.LONG_NULL || replayRowCount > 0
+        );
+        final String partitions = readTxnToString(tableToken, false, true, true, true);
+        final String twinPartitions = readTxnToString(twinToken, false, true, true, true);
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("insert into " + t + " select * from " + t + " where ts >= " + replayLo + " and ts <= " + replayHi);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        Assert.assertEquals(twinPartitions, readTxnToString(twinToken, false, true, true, true));
+        Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+        Assert.assertEquals(replayRowCount, readLong(replayCountSql));
+
+        // the last row of the day of replayLo, the new row goes 1us after it when that is still the same day
+        final long dayLo = Micros.floorDD(replayLo);
+        long dayMax = Long.MIN_VALUE;
+        try (
+                RecordCursorFactory factory = select("select max(ts) from " + tableName + " where ts >= " + dayLo + " and ts < " + (dayLo + Micros.DAY_MICROS));
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            if (cursor.hasNext()) {
+                dayMax = cursor.getRecord().getTimestamp(0);
+            }
+        }
+        final boolean isAppend = dayMax != Numbers.LONG_NULL && dayMax != Long.MIN_VALUE && dayMax + 1 < dayLo + Micros.DAY_MICROS;
+        Assert.assertTrue("the Parquet partition must take the append", parquetRowTs == Numbers.LONG_NULL || isAppend);
+        if (isAppend) {
+            final long appendLo = Math.max(dayLo, dayMax - rnd.nextLong(Micros.DAY_MICROS));
+            LOG.info().$("replaying stored rows with an append [table=").$(tableName).$(", lo=").$ts(appendLo).$(", dayMax=").$ts(dayMax).I$();
+            for (String t : new String[]{tableName, twinTableName}) {
+                execute("insert into " + t + " select * from ("
+                        + "select ts, commit, s, b from " + t + " where ts >= " + appendLo + " and ts <= " + dayMax
+                        + " union all select ts + 1 ts, commit, s, b from " + t + " where ts = " + dayMax + ")");
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        }
+    }
+
+    private void runDedupWithRandomShiftWithColumnTop(boolean isParquetForced) throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            Rnd rnd = generateRandomAndProps();
+            boolean createAsParquet = rnd.nextBoolean() || isParquetForced;
+            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+
+            boolean isSkipMode = rnd.nextBoolean();
+
+            String tableName = getTestName();
+            createEmptyTable(tableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", createAsParquet);
+            // the native twin takes the same commits, see assertByteColumnTopMatchesTwin()
+            String twinTableName = tableName + "_native";
+            createEmptyTable(twinTableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", false);
+            Rnd twinRnd = new Rnd();
+
+            long initialDelta = Micros.MINUTE_MICROS * 15;
+            int initialCount = 2 * 24 * 5;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    parseFloorPartialTimestamp("2020-02-24T04:30"),
+                    initialDelta,
+                    initialCount,
+                    1 + rnd.nextInt(1),
+                    null,
+                    rnd
+            );
+
+            int strLen = 4 + rnd.nextInt(20);
+            String[] symbols = generateSymbols(rnd, 20, strLen, tableName);
+
+            applyWal(transactions, tableName, 1, rnd);
+            applyWal(transactions, twinTableName, 1, twinRnd);
+            ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, false);
+            transactions.clear();
+
+            for (String t : new String[]{tableName, twinTableName}) {
+                execute("alter table " + t + " add s symbol index", sqlExecutionContext);
+                // a column without a NULL value: the rows of the first batch read NULL only through its top
+                execute("alter table " + t + " add b byte", sqlExecutionContext);
+            }
+
+            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
+            long delta = (long) (initialDelta * deltaMultiplier);
+            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
+            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
+            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    symbols,
+                    rnd
+            );
+
+            maybeConvertToParquet(tableName, convertToParquet);
+            splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+            // ts is the only dedup key, the rows of one timestamp differ in the s column
+            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, twinTableName, twinRnd, "ts", false, isSkipMode, transactions, firstBatchKeys);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
+            replayStoredRows(rnd, tableName, twinTableName, createAsParquet);
+            assertByteColumnTopMatchesTwin(tableName, twinTableName);
+        });
     }
 
     private void runDedupWithShiftAndStep(

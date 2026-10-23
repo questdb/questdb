@@ -55,7 +55,13 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Tests lazy column type conversion on parquet partitions.
@@ -2162,6 +2168,63 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProduceParquetFromParquetWithConversionsKeepsNoSentinelColumnTops() throws Exception {
+        // BOOLEAN, BYTE, SHORT and CHAR columns added after two rows have top 2 in the parquet file;
+        // the materializer re-encodes them (their _cv top is not 0) while it converts val. No row moves,
+        // so the candidate keeps the tops in its footer, and the decoder reads the top rows as NULL
+        // from the file. Before the fix the footer top was 0 and the top rows read as 0/false values.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO pt VALUES ('1', '2024-01-01T00:00:01.000000Z'), ('2', '2024-01-01T00:00:02.000000Z')");
+                execute("ALTER TABLE pt ADD COLUMN o BOOLEAN");
+                execute("ALTER TABLE pt ADD COLUMN b BYTE");
+                execute("ALTER TABLE pt ADD COLUMN s SHORT");
+                execute("ALTER TABLE pt ADD COLUMN c CHAR");
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('3', '2024-01-01T00:00:03.000000Z', false, 0::BYTE, 0::SHORT, 'x'),
+                        ('4', '2024-01-01T00:00:04.000000Z', true, -128::BYTE, 32767::SHORT, 'y'),
+                        ('5', '2024-01-02T00:00:01.000000Z', true, 5::BYTE, 5::SHORT, 'z')
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
+                drainWalQueue();
+
+                final String candidatePath = produceCurrentSchemaParquetCandidate(
+                        "pt",
+                        "LONG",
+                        ColumnType.VARCHAR,
+                        ColumnType.LONG
+                );
+                // QDB metadata of the candidate's footer, in schema order: val, ts, o, b, s, c
+                Assert.assertEquals("[0, 0, 2, 2, 2, 2]", footerColumnTops(candidatePath));
+
+                final String oldInputRoot = inputRoot;
+                inputRoot = root;
+                try {
+                    assertQuery("SELECT val, o, b, s, c FROM read_parquet('" + candidatePath.replace("'", "''") + "') ORDER BY ts")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    val\to\tb\ts\tc
+                                    1\tfalse\t0\t0\t
+                                    2\tfalse\t0\t0\t
+                                    3\tfalse\t0\t0\tx
+                                    4\ttrue\t-128\t32767\ty
+                                    """);
+                } finally {
+                    inputRoot = oldInputRoot;
+                }
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
     public void testProduceParquetFromParquetWithConversionsVarcharToLong() throws Exception {
         assertMemoryLeak(() -> assertDirectParquetMaterializerConversion(
                 "VARCHAR",
@@ -2495,6 +2558,21 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             a\t2024-01-01T09:00:00.000000Z
                             """);
         });
+    }
+
+    /**
+     * An indexed SYMBOL column whose type was ALTERed while the partition was still native is carried in the parquet
+     * file under its ORIGINAL writer index. The O3 rewrite zeroes every column top, so its index rebuild must find the
+     * column under that id - or it skips the column and index lookups open a {@code .k} file that was never written.
+     */
+    @Test
+    public void testO3InsertRewriteIndexesTypeConvertedSymbolColumnBitmap() throws Exception {
+        assertO3InsertRewriteIndexesTypeConvertedSymbolColumn("");
+    }
+
+    @Test
+    public void testO3InsertRewriteIndexesTypeConvertedSymbolColumnPosting() throws Exception {
+        assertO3InsertRewriteIndexesTypeConvertedSymbolColumn(" TYPE POSTING");
     }
 
     /**
@@ -4417,6 +4495,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
+    // The column tops of the QDB metadata (JSON) that the parquet file's footer holds, in schema order.
+    private String footerColumnTops(String parquetFilePath) throws Exception {
+        final String content = new String(java.nio.file.Files.readAllBytes(Paths.get(parquetFilePath)), StandardCharsets.ISO_8859_1);
+        final Matcher matcher = Pattern.compile("\"column_top\":(\\d+)").matcher(content);
+        final List<Integer> tops = new ArrayList<>();
+        while (matcher.find()) {
+            tops.add(Integer.parseInt(matcher.group(1)));
+        }
+        return tops.toString();
+    }
+
     private void assertParquetColumnType(String parquetFilePath, int expectedColumnType) {
         final FilesFacade filesFacade = configuration.getFilesFacade();
         long fd = -1;
@@ -4858,6 +4947,50 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             a5\tb5\t2024-01-01T04:00:00.000000Z
                             aX\tbX\t2024-01-01T04:30:00.000000Z
                             a6\tb6\t2024-01-01T05:00:00.000000Z
+                            """);
+        });
+    }
+
+    private void assertO3InsertRewriteIndexesTypeConvertedSymbolColumn(String indexType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (a INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO pt VALUES
+                    (1, 'x', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'y', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'x', '2024-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            // Altered while native, so the parquet conversion below writes v under its original writer index.
+            execute("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL");
+            execute("ALTER TABLE pt ALTER COLUMN v ADD INDEX" + indexType);
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Lands inside the parquet partition; a single row group always rewrites.
+            execute("INSERT INTO pt VALUES (4, 'x', '2024-01-01T00:30:00.000000Z')");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableReader reader = getReader("pt")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+            }
+            assertQuery("SELECT a, v, ts FROM pt WHERE v = 'x'")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tv\tts
+                            1\tx\t2024-01-01T00:00:00.000000Z
+                            4\tx\t2024-01-01T00:30:00.000000Z
+                            3\tx\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT a, v, ts FROM pt WHERE v IN ('y', 'z')")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tv\tts
+                            2\ty\t2024-01-01T01:00:00.000000Z
                             """);
         });
     }

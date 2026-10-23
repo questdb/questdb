@@ -71,8 +71,8 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
     ) throws SqlException {
         long microsBetweenRows = 1000000L;
         int nTotalRows = 120_000;
-        // create initial table "x"
-        String sql = "create table x as (" +
+        // the rows of x, with BOOLEAN, BYTE, SHORT and CHAR columns that x gets later, see below
+        String sql = "create table src as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -93,25 +93,37 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " rnd_char() t," +
                 " rnd_varchar(6, 16, 2) v1," +
                 " rnd_varchar(1, 1, 1) v2," +
+                " rnd_boolean() nb," +
+                " rnd_byte() nl," +
+                " rnd_short() nf," +
+                " rnd_char() nt," +
                 " from long_sequence(" + nTotalRows + ")" +
                 ") timestamp (ts) partition by HOUR";
-
         engine.execute(sql, sqlExecutionContext);
-        engine.execute("create table y as (select * from x) timestamp (ts) partition by HOUR", sqlExecutionContext);
-        TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
 
         final int partitionIndex;
         final long partitionTs;
         StringSink stringSink = new StringSink();
         TimestampDriver timestampDriver;
-        try (TableReader xr = engine.getReader("x")) {
-            timestampDriver = ColumnType.getTimestampDriver(xr.getMetadata().getTimestampType());
-            partitionIndex = rnd.nextInt(xr.getPartitionCount() - 1);
-            partitionTs = xr.getPartitionTimestampByIndex(partitionIndex);
-            int partitionBy = xr.getPartitionedBy();
-            PartitionBy.setSinkForPartition(stringSink, xr.getMetadata().getTimestampType(), partitionBy, partitionTs);
-            engine.execute("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
+        try (TableReader srcReader = engine.getReader("src")) {
+            timestampDriver = ColumnType.getTimestampDriver(srcReader.getMetadata().getTimestampType());
+            partitionIndex = rnd.nextInt(srcReader.getPartitionCount() - 1);
+            partitionTs = srcReader.getPartitionTimestampByIndex(partitionIndex);
+            PartitionBy.setSinkForPartition(stringSink, srcReader.getMetadata().getTimestampType(), srcReader.getPartitionedBy(), partitionTs);
         }
+        // x and y add the no-sentinel columns at a random row of the partition that x converts to
+        // parquet: the columns have a column top inside it
+        final long addColumnTs = partitionTs + timestampDriver.fromMicros(rnd.nextInt(3600) * microsBetweenRows);
+        LOG.info().$("no-sentinel columns added at [ts=").$(addColumnTs).I$();
+        final String columnsBeforeAdd = "i, sym, amt, timestamp, b, c, d, e, f, g, ik, j, ts, l, m, n, t, v1, v2";
+        for (String table : new String[]{"x", "y"}) {
+            engine.execute("create table " + table + " as (select " + columnsBeforeAdd + " from src where ts < " + addColumnTs
+                    + ") timestamp (ts) partition by HOUR", sqlExecutionContext);
+            engine.execute("alter table " + table + " add column nb boolean, nl byte, nf short, nt char", sqlExecutionContext);
+            engine.execute("insert into " + table + " select * from src where ts >= " + addColumnTs, sqlExecutionContext);
+        }
+        TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+        engine.execute("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
 
         long minTs = partitionTs - timestampDriver.fromMicros(3600000000L);
         long maxTs = partitionTs + timestampDriver.fromMicros(2 * 3600000000L);
@@ -169,11 +181,62 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 replayTransactions(rnd1, engine, xw, transactions);
                 xw.commit();
 
-                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, "y", "x");
             } finally {
                 Misc.freeObjListAndClear(transactions);
             }
+
+            // Ties: the first commit puts one or two rows on each whole second of the partition from
+            // addColumnTs on, which already holds one, so the row groups it merges split runs of equal
+            // timestamps at their boundaries; the second commit adds a row on every k-th of those seconds,
+            // some of them at such a boundary. Native y puts each O3 row after every stored row of its
+            // timestamp, x must as well. The commits start at addColumnTs: the prefix that keeps its
+            // position takes the whole column top, which stays, as in y
+            final long secondTicks = timestampDriver.fromMicros(1_000_000L);
+            final long partitionHi = partitionTs + timestampDriver.fromMicros(3_600_000_000L);
+            final int secondCount = (int) ((partitionHi - addColumnTs) / secondTicks);
+            final int[] firstCommitRowCounts = new int[secondCount];
+            for (int i = 0; i < secondCount; i++) {
+                firstCommitRowCounts[i] = 1 + rnd.nextInt(2);
+            }
+            final int tieStep = 1 + rnd.nextInt(3);
+            LOG.info().$("tie commits [secondCount=").$(secondCount).$(", tieStep=").$(tieStep).I$();
+            for (TableWriter w : new TableWriter[]{xw, yw}) {
+                final int iIndex = w.getMetadata().getColumnIndex("i");
+                int value = 1_000_000;
+                for (int i = 0; i < secondCount; i++) {
+                    for (int j = 0; j < firstCommitRowCounts[i]; j++) {
+                        TableWriter.Row row = w.newRow(addColumnTs + i * secondTicks);
+                        row.putInt(iIndex, value++);
+                        row.append();
+                    }
+                }
+                w.commit();
+                value = 2_000_000;
+                for (int i = 0; i < secondCount; i += tieStep) {
+                    TableWriter.Row row = w.newRow(addColumnTs + i * secondTicks);
+                    row.putInt(iIndex, value++);
+                    row.append();
+                }
+                w.commit();
+            }
+            TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, "y", "x");
         }
+
+        // The O3 commits keep the column top of the no-sentinel columns as native does: the top rows
+        // read NULL after a change to a type with NULL, lazily on the parquet partition (nb, nl) and
+        // after CONVERT TO NATIVE (nf, nt)
+        for (String table : new String[]{"x", "y"}) {
+            engine.execute("alter table " + table + " alter column nb type symbol", sqlExecutionContext);
+            engine.execute("alter table " + table + " alter column nl type int", sqlExecutionContext);
+        }
+        TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, "y", "x");
+        engine.execute("alter table x convert partition to native list '" + stringSink + "'", sqlExecutionContext);
+        for (String table : new String[]{"x", "y"}) {
+            engine.execute("alter table " + table + " alter column nf type int", sqlExecutionContext);
+            engine.execute("alter table " + table + " alter column nt type symbol", sqlExecutionContext);
+        }
+        TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, "y", "x");
     }
 
     private void testFuzz0(
