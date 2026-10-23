@@ -38,6 +38,7 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
     private long expectedParquetFileSize;
     private long expectedSrcNameTxn;
     private boolean isFullyMaterialized;
+    private boolean isIndexRowMapDropped;
     private long newParquetFileSize;
     private long partitionTimestamp;
     private int tableId;
@@ -129,6 +130,11 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
         return isFullyMaterialized;
     }
 
+    /** Whether the compacted file dropped the source's index row map, so its index files must be rebuilt. */
+    public boolean isIndexRowMapDropped() {
+        return isIndexRowMapDropped;
+    }
+
     @Override
     public boolean isStructural() {
         return false;
@@ -150,6 +156,7 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
         this.expectedMetadataVersion = expectedMetadataVersion;
         this.newParquetFileSize = -1L;
         this.isFullyMaterialized = false;
+        this.isIndexRowMapDropped = false;
     }
 
     @Override
@@ -166,12 +173,14 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
     }
 
     /**
-     * Records the build's outcome: the size of the staged {@code data.parquet} and whether it was fully
-     * re-encoded under the current schema. Set by {@link O3PartitionJob#compactParquetPartition}.
+     * Records the build's outcome: the size of the staged {@code data.parquet}, whether it was fully
+     * re-encoded under the current schema, and whether the source footer carried an index row map the
+     * compacted file drops. Set by {@link O3PartitionJob#compactParquetPartition}.
      */
-    public void setResult(long newParquetFileSize, boolean isFullyMaterialized) {
+    public void setResult(long newParquetFileSize, boolean isFullyMaterialized, boolean isIndexRowMapDropped) {
         this.newParquetFileSize = newParquetFileSize;
         this.isFullyMaterialized = isFullyMaterialized;
+        this.isIndexRowMapDropped = isIndexRowMapDropped;
     }
 
     @Override

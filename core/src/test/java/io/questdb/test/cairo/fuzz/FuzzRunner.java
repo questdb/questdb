@@ -101,6 +101,7 @@ public class FuzzRunner {
     protected int initialRowCount;
     protected int partitionCount;
     private double addCoveringIndexProb;
+    private double backfillProb;
     private double cancelRowsProb;
     private double colAddProb;
     private double colRemoveProb;
@@ -532,7 +533,8 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb, setTableFormatProb
+                addCoveringIndexProb, setTableFormatProb,
+                backfillProb
         );
     }
 
@@ -577,6 +579,10 @@ public class FuzzRunner {
         } else {
             return (int) (20 * randomDriver);
         }
+    }
+
+    public void setBackfillProb(double backfillProb) {
+        this.backfillProb = backfillProb;
     }
 
     /**
@@ -1521,6 +1527,8 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Path.clearThreadLocals();
+            // A parquet rebuild leaves the O3 merge context in a thread local, which a worker pool would free on halt.
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 

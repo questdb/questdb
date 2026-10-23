@@ -1780,9 +1780,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                 columnTops.add(columnVersionReader.getColumnTop(partitionTimestamp, writerIndex));
             }
 
-            long rowCount = 0;
-            for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            // Index values grow per key: add row groups in index row order. An index row map implies zero tops.
+            final IntList rowGroupOrder = new IntList(rowGroupCount);
+            final LongList rowGroupIndexRowLos = new LongList(rowGroupCount);
+            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+            for (int g = 0; g < rowGroupCount; g++) {
+                final int rowGroupIndex = rowGroupOrder.getQuick(g);
                 final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                final long rowCount = rowGroupIndexRowLos.getQuick(rowGroupIndex);
 
                 // Check if any column needs data from this row group
                 boolean needsDecode = false;
@@ -1794,7 +1799,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
 
                 if (!needsDecode) {
-                    rowCount += rowGroupSize;
                     continue;
                 }
 
@@ -1832,8 +1836,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                         }
                     }
                 }
-
-                rowCount += rowGroupSize;
             }
 
             // Finalize each writer. POSTING calls seal() to produce sealed
@@ -1848,7 +1850,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     w.setNextTxnAtSeal(currentTableTxn);
                     w.seal();
                 } else {
-                    w.setMaxValue(partitionRowCount - 1);
+                    w.setMaxValue(parquetMetadata.getIndexRowCount() - 1);
                     w.commit();
                 }
             }

@@ -217,6 +217,65 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Commits only a swap of committed entries {@code [lo, committedHi)} for in-memory {@code [lo, lo + count)}; the
+     * open transaction's state stays uncommitted. Every other in-memory entry must equal its committed one.
+     */
+    public void commitPartitionRange(int commitMode, int lo, int committedHi, int count) {
+        final int symbolCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_MAP_WRITER_COUNT_32);
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolCount);
+        final int committedPartitionLongs = txMemBase.getInt(readBaseOffset + partitionTableOffset) / Long.BYTES;
+        final int symbolBytes = symbolCount * Long.BYTES;
+        final int rawLo = lo * LONGS_PER_TX_ATTACHED_PARTITION;
+        final int rawCommittedHi = committedHi * LONGS_PER_TX_ATTACHED_PARTITION;
+        final int rawCount = count * LONGS_PER_TX_ATTACHED_PARTITION;
+        assert lo <= committedHi && rawCommittedHi <= committedPartitionLongs;
+        assert rawLo + rawCount <= attachedPartitions.size();
+        final int partitionLongs = committedPartitionLongs - (rawCommittedHi - rawLo) + rawCount;
+        final int partitionTableBytes = partitionLongs * Long.BYTES;
+
+        final long committedSeqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+        final int committedLagRowCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32);
+        final long committedLagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+        final long committedLagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+        final int committedLagTxnCount = Math.abs(txMemBase.getInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32));
+
+        writeAreaSize = calculateTxRecordSize(symbolBytes, partitionTableBytes);
+        writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        final long partitionsOffset = getPartitionTableIndexOffset(partitionTableOffset, 0);
+        for (long offset = 0; offset < partitionsOffset; offset += Long.BYTES) {
+            putLong(offset, txMemBase.getLong(readBaseOffset + offset));
+        }
+        int dst = 0;
+        for (int i = 0; i < rawLo; i++) {
+            putLong(getPartitionTableIndexOffset(partitionTableOffset, dst++), committedPartitionLong(partitionTableOffset, i));
+        }
+        for (int i = 0; i < rawCount; i++) {
+            putLong(getPartitionTableIndexOffset(partitionTableOffset, dst++), attachedPartitions.getQuick(rawLo + i));
+        }
+        for (int i = rawCommittedHi; i < committedPartitionLongs; i++) {
+            putLong(getPartitionTableIndexOffset(partitionTableOffset, dst++), committedPartitionLong(partitionTableOffset, i));
+        }
+        assert dst == partitionLongs;
+        putInt(partitionTableOffset, partitionTableBytes);
+        putLong(TX_OFFSET_TXN_64, ++txn);
+        putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
+        putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
+        putInt(TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
+        putInt(
+                TX_OFFSET_CHECKSUM_32,
+                calculateTxnLagChecksum(txn, committedSeqTxn, committedLagRowCount, committedLagMinTimestamp, committedLagMaxTimestamp, committedLagTxnCount)
+        );
+        finishABHeader(writeBaseOffset, symbolBytes, partitionTableBytes, commitMode);
+
+        // Keep the next commit off the in-place fast path: the record before last holds the old entries.
+        prevRecordStructureVersion = -2L;
+        lastRecordStructureVersion = -1L;
+        prevRecordBaseOffset = lastRecordBaseOffset;
+        lastRecordBaseOffset = writeBaseOffset;
+        prevPartitionTableVersion = partitionTableVersion;
+    }
+
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
@@ -236,6 +295,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public int getAppendedPartitionCount() {
         return txPartitionCount;
+    }
+
+    /** Partitions in the committed record; an open transaction may hold more in memory. */
+    public int getCommittedPartitionCount() {
+        final int symbolCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_MAP_WRITER_COUNT_32);
+        final int partitionTableBytes = txMemBase.getInt(readBaseOffset + getPartitionTableSizeOffset(symbolCount));
+        return partitionTableBytes / (LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES);
     }
 
     public long getLastTxSize() {
@@ -283,6 +349,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             return getPartitionFloor(prevPartitionTs) == getPartitionFloor(timestamp);
         }
         return false;
+    }
+
+    /** Whether the committed record holds this partition's in-memory entry unchanged. */
+    public boolean isPartitionEntryCommitted(int partitionIndex) {
+        if (partitionIndex < 0 || partitionIndex >= getCommittedPartitionCount()) {
+            return false;
+        }
+        final int symbolCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_MAP_WRITER_COUNT_32);
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolCount);
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        for (int i = 0; i < LONGS_PER_TX_ATTACHED_PARTITION; i++) {
+            final long committed = txMemBase.getLong(readBaseOffset + getPartitionTableIndexOffset(partitionTableOffset, rawIndex + i));
+            if (committed != attachedPartitions.getQuick(rawIndex + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether the open transaction changed the partition table in a way only a whole commit can publish. */
+    public boolean isPartitionTableChanged() {
+        return prevPartitionTableVersion != partitionTableVersion;
     }
 
     @Override
@@ -759,6 +847,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevRecordBaseOffset = lastRecordBaseOffset;
         lastRecordBaseOffset = writeBaseOffset;
         prevPartitionTableVersion = partitionTableVersion;
+    }
+
+    private long committedPartitionLong(long partitionTableOffset, int rawIndex) {
+        return txMemBase.getLong(readBaseOffset + getPartitionTableIndexOffset(partitionTableOffset, rawIndex));
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {

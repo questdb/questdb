@@ -81,12 +81,16 @@ final class ParquetCoveredColumnAccumulator {
     private final IntList slotWriterIndices = new IntList();
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    // Later chunks drop a var-size chunk's leading aux entry: the previous trailing entry holds it.
+    private boolean isFirstChunk = true;
 
     /**
      * Appends one decoded row group's worth of every decoded slot to its scratch files, which grow via mmap
-     * extend. Called once per row group, in row group order, from the index build's row-group loop.
+     * extend. Called once per row group, in index row order, from the index build's row-group loop.
      */
-    void accumulate(RowGroupBuffers rowGroupBuffers, int rowGroupIndex, long rowGroupRowCount) {
+    void accumulate(RowGroupBuffers rowGroupBuffers, long rowGroupRowCount) {
+        final boolean isFirstChunk = this.isFirstChunk;
+        this.isFirstChunk = false;
         for (int slot = 0, n = slotWriterIndices.size(); slot < n; slot++) {
             final int decodedChunkIdx = slotDecodedChunks.getQuick(slot);
             if (decodedChunkIdx < 0) {
@@ -107,7 +111,7 @@ final class ParquetCoveredColumnAccumulator {
 
                 if (srcDataSize == 0 && srcAuxSize == 0) {
                     accumulateAllNullVarSizeChunk(
-                            driver, auxMem, dataMem, rowGroupIndex,
+                            driver, auxMem, dataMem, isFirstChunk,
                             rowGroupRowCount, dataVecBytesWritten);
                     slotDataBytesWritten.setQuick(slot,
                             dataVecBytesWritten + rowGroupRowCount * driver.getDataVectorMinEntrySize());
@@ -118,14 +122,14 @@ final class ParquetCoveredColumnAccumulator {
                     final long convertedDataSize = accumulateFixedToVarChunk(
                             driver, columnType, parquetColType, dataMem, auxMem,
                             rowGroupBuffers, decodedChunkIdx, srcDataPtr,
-                            rowGroupIndex, rowGroupRowCount, dataVecBytesWritten);
+                            isFirstChunk, rowGroupRowCount, dataVecBytesWritten);
                     slotDataBytesWritten.setQuick(slot, dataVecBytesWritten + convertedDataSize);
                     continue;
                 }
 
                 long auxPtr = srcAuxPtr;
                 long auxSize = srcAuxSize;
-                if (rowGroupIndex > 0) {
+                if (!isFirstChunk) {
                     driver.shiftCopyAuxVector(
                             -dataVecBytesWritten, auxPtr, 0,
                             rowGroupRowCount - 1, auxPtr, auxSize);
@@ -160,6 +164,30 @@ final class ParquetCoveredColumnAccumulator {
                 } else {
                     dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
                 }
+            }
+        }
+    }
+
+    /** Appends null entries for index rows of replaced row groups, keeping each entry at its index row. */
+    void accumulateNulls(long rowCount) {
+        if (rowCount <= 0) {
+            return;
+        }
+        final boolean isFirstChunk = this.isFirstChunk;
+        this.isFirstChunk = false;
+        for (int slot = 0, n = slotWriterIndices.size(); slot < n; slot++) {
+            if (slotDecodedChunks.getQuick(slot) < 0) {
+                continue;
+            }
+            final int columnType = slotTypes.getQuick(slot);
+            final MemoryMARW dataMem = mmaps.getQuick(2 * slot + 1);
+            if (ColumnType.isVarSize(columnType)) {
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                final long dataVecBytesWritten = slotDataBytesWritten.getQuick(slot);
+                accumulateAllNullVarSizeChunk(driver, mmaps.getQuick(2 * slot), dataMem, isFirstChunk, rowCount, dataVecBytesWritten);
+                slotDataBytesWritten.setQuick(slot, dataVecBytesWritten + rowCount * driver.getDataVectorMinEntrySize());
+            } else {
+                accumulateAllNullFixedChunk(dataMem, columnType, rowCount);
             }
         }
     }
@@ -215,6 +243,7 @@ final class ParquetCoveredColumnAccumulator {
         slotParquetTypes.clear();
         slotDecodedChunks.clear();
         slotDataBytesWritten.clear();
+        isFirstChunk = true;
     }
 
     /**
@@ -365,7 +394,7 @@ final class ParquetCoveredColumnAccumulator {
             ColumnTypeDriver driver,
             MemoryMARW auxMem,
             MemoryMARW dataMem,
-            int rowGroupIndex,
+            boolean isFirstChunk,
             long rowCount,
             long dataVecBytesWritten
     ) {
@@ -390,7 +419,7 @@ final class ParquetCoveredColumnAccumulator {
                 }
                 long auxPtr = nullAuxBuf;
                 long auxBytes = auxSize;
-                if (rowGroupIndex > 0) {
+                if (!isFirstChunk) {
                     final long adjust = driver.getMinAuxVectorSize();
                     auxPtr += adjust;
                     auxBytes -= adjust;
@@ -416,7 +445,7 @@ final class ParquetCoveredColumnAccumulator {
             RowGroupBuffers rowGroupBuffers,
             int decodedChunkIdx,
             long srcDataPtr,
-            int rowGroupIndex,
+            boolean isFirstChunk,
             long rowGroupRowCount,
             long dataVecBytesWritten
     ) {
@@ -442,7 +471,7 @@ final class ParquetCoveredColumnAccumulator {
                 final long actualDataSize = driver.getDataVectorSizeAt(auxBuf, rowGroupRowCount - 1);
                 long auxWritePtr = auxBuf;
                 long auxWriteSize = auxSize;
-                if (rowGroupIndex > 0) {
+                if (!isFirstChunk) {
                     driver.shiftCopyAuxVector(-dataVecBytesWritten, auxBuf, 0, rowGroupRowCount - 1, auxBuf, auxSize);
                     final long adjust = driver.getMinAuxVectorSize();
                     auxWritePtr += adjust;

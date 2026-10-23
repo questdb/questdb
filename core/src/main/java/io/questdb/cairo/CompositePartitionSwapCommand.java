@@ -40,8 +40,10 @@ import io.questdb.tasks.TableWriterTask;
  *     {@code liveRows} and the recorded tops go unused.</li>
  *     <li>MERGE ({@link #ofMerge}): the whole LOGICAL partition - the main directory plus every MOVE-TAIL split -
  *     copied into one staging directory, which replaces the run of {@code _txn} entries it was built from.</li>
+ *     <li>PARQUET CONVERSION ({@link #ofParquetConversion}): a MERGE into one parquet file, maybe of one folder.</li>
+ *     <li>PARQUET GENERATION ({@link #ofParquetGeneration}): a parquet copy beside a plain native folder.</li>
  * </ul>
- * All three are the same errand - compact this partition - so they share one command and one lock reason.
+ * All five are the same errand - rebuild this partition off a reader - so they share one command and one lock reason.
  */
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     /**
@@ -57,19 +59,35 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
      */
     private final LongList folders = new LongList();
     private long correlationId = -1L;
+    // PARQUET GENERATION only: the column version the folder's files carried when the copy read them.
+    private long expectedColumnVersion;
     private long expectedMetadataVersion;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
     private boolean isMakePlain;
     private boolean isMerge;
+    private boolean isParquetGeneration;
     private long liveRows;
+    // PARQUET CONVERSION only: the staged data.parquet size, -1 for every other mode.
+    private long parquetFileSize = -1L;
     private long partitionTimestamp;
+    // PARQUET GENERATION only: the version the copy's footer carries.
+    private long seqTxn;
     private int tableId;
     private TableToken tableToken;
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        if (isMerge) {
+        if (isParquetGeneration) {
+            ((TableWriter) svc).installGeneratedParquet(
+                    partitionTimestamp,
+                    expectedSrcNameTxn,
+                    liveRows,
+                    expectedColumnVersion,
+                    expectedMetadataVersion,
+                    seqTxn
+            );
+        } else if (isMerge) {
             ((TableWriter) svc).swapMergedLogicalPartition(
                     partitionTimestamp,
                     folders,
@@ -77,6 +95,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
                     expectedWriterTxn,
                     expectedMetadataVersion,
                     liveRows,
+                    parquetFileSize,
                     columnTops
             );
         } else if (isMakePlain) {
@@ -146,6 +165,10 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return liveRows;
     }
 
+    public long getParquetFileSize() {
+        return parquetFileSize;
+    }
+
     public long getPartitionTimestamp() {
         return partitionTimestamp;
     }
@@ -197,6 +220,10 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.liveRows = liveRows;
         this.isMakePlain = false;
         this.isMerge = false;
+        this.isParquetGeneration = false;
+        this.parquetFileSize = -1L;
+        this.expectedColumnVersion = -1L;
+        this.seqTxn = -1L;
         this.folders.clear();
         this.columnTops.clear();
     }
@@ -235,17 +262,37 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
             long liveRows
     ) {
         assert folders.size() >= 2 * LONGS_PER_FOLDER : "a merge needs at least two folders";
-        of(
-                tableToken,
-                tableId,
-                logicalPartitionTimestamp,
-                folders.getQuick(1),
-                folders.getQuick(2),
-                expectedMetadataVersion,
-                liveRows
-        );
-        this.isMerge = true;
-        this.folders.add(folders);
+        ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
+    }
+
+    /** {@link #ofMerge} into one parquet file; the build calls {@link #setParquetFileSize} before publishing. */
+    public void ofParquetConversion(
+            TableToken tableToken,
+            int tableId,
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long expectedMetadataVersion,
+            long liveRows
+    ) {
+        assert folders.size() >= LONGS_PER_FOLDER : "a conversion needs a folder";
+        ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
+        this.parquetFileSize = 0;
+    }
+
+    public void ofParquetGeneration(
+            TableToken tableToken,
+            int tableId,
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedColumnVersion,
+            long expectedMetadataVersion,
+            long liveRows,
+            long seqTxn
+    ) {
+        of(tableToken, tableId, partitionTimestamp, expectedSrcNameTxn, 0, expectedMetadataVersion, liveRows);
+        this.isParquetGeneration = true;
+        this.expectedColumnVersion = expectedColumnVersion;
+        this.seqTxn = seqTxn;
     }
 
     @Override
@@ -261,7 +308,33 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.correlationId = correlationId;
     }
 
+    public void setParquetFileSize(long parquetFileSize) {
+        assert this.parquetFileSize > -1 : "not a parquet conversion";
+        this.parquetFileSize = parquetFileSize;
+    }
+
     @Override
     public void startAsync() {
+    }
+
+    private void ofRun(
+            TableToken tableToken,
+            int tableId,
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long expectedMetadataVersion,
+            long liveRows
+    ) {
+        of(
+                tableToken,
+                tableId,
+                logicalPartitionTimestamp,
+                folders.getQuick(1),
+                folders.getQuick(2),
+                expectedMetadataVersion,
+                liveRows
+        );
+        this.isMerge = true;
+        this.folders.add(folders);
     }
 }
