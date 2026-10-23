@@ -26,17 +26,27 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -70,6 +80,68 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
                 PropertyKey.QUERY_TIMEOUT + "=150000"
         ));
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testTwoFilteredScansOverHttp() throws Exception {
+        final String joinQuery = "SELECT t.k FROM t JOIN s ON s.k = t.k WHERE t.vt IS NULL AND s.ct = 'u'";
+        final String unionAllQuery = "SELECT sum(k) FROM (SELECT k FROM s WHERE ct = 'u' UNION ALL SELECT k FROM t WHERE vt IS NULL)";
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement statement = conn.createStatement()
+                ) {
+                    statement.execute("""
+                            CREATE TABLE t AS (
+                                SELECT x AS k, NULL::TIMESTAMP AS vt, timestamp_sequence(0, 86_400_000_000) AS ts
+                                FROM long_sequence(40)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                            """);
+                    statement.execute("CREATE TABLE s AS (SELECT k, 'u' AS ct FROM t WHERE k % 10 = 7)");
+                    assertPlan(statement, joinQuery, """
+                            QUERY PLAN[VARCHAR]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: s.k=t.k
+                                    Async JIT Filter workers: 1
+                                      filter: null=vt
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: ct=u
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                            """);
+                    assertPlan(statement, unionAllQuery, """
+                            QUERY PLAN[VARCHAR]
+                            GroupBy vectorized: false
+                              values: [sum(k)]
+                                Union All
+                                    SelectedRecord
+                                        Async JIT Filter workers: 1
+                                          filter: ct=u
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                                    SelectedRecord
+                                        Async JIT Filter workers: 1
+                                          filter: null=vt
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """);
+                }
+
+                assertExecReturns(joinQuery, "\"dataset\":[[7],[17],[27],[37]],\"count\":4");
+                assertExecReturns(unionAllQuery, "\"dataset\":[[908]],\"count\":1");
+            }
+        });
     }
 
     @Test
@@ -136,6 +208,35 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
 
             doneLatch.await();
             Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    private static void assertExecReturns(String query, String expectedResult) throws Exception {
+        final HttpRequest request = HttpRequest.newBuilder(URI.create(
+                        "http://127.0.0.1:" + HTTP_PORT + "/exec?query=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                ))
+                .timeout(Duration.ofSeconds(10))
+                .build();
+        final HttpClient client = HttpClient.newHttpClient();
+        for (int i = 0; i < 3; i++) {
+            final HttpResponse<String> response;
+            try {
+                response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            } catch (HttpTimeoutException e) {
+                throw new AssertionError("query stalled [run=" + i + ", query=" + query + ']', e);
+            }
+            Assert.assertEquals(200, response.statusCode());
+            TestUtils.assertContains(response.body(), expectedResult);
+        }
+    }
+
+    private static void assertPlan(Statement statement, String query, String expectedPlan) throws Exception {
+        try (ResultSet rs = statement.executeQuery("EXPLAIN " + query)) {
+            assertResultSet(
+                    JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"),
+                    new StringSink(),
+                    rs
+            );
         }
     }
 }

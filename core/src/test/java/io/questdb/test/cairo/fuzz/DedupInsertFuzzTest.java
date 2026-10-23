@@ -60,6 +60,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.fuzz.DuplicateFuzzInsertOperation;
+import io.questdb.test.fuzz.FuzzAddColumnOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
@@ -447,6 +448,19 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         runFuzzWithRepeatDedup(rnd, convertToParquet, rnd.nextBoolean());
     }
 
+    @Test
+    public void testSkipDuplicatesOfLastInsertCommitBeforeColumnAdd() throws Exception {
+        // FuzzInsertOperation draws the values of a row for the columns the table has, so after a column add
+        // the copies of the last insert commit would get other dedup key values
+        assertSkipDuplicatesOfLastInsertCommit(new FuzzAddColumnOperation("new_col", ColumnType.INT, false, 256, false), false);
+    }
+
+    @Test
+    public void testSkipDuplicatesOfLastInsertCommitBeforeTruncate() throws Exception {
+        // after a truncate, the copies of the last insert commit would land in an empty table
+        assertSkipDuplicatesOfLastInsertCommit(new FuzzTruncateTableOperation(), true);
+    }
+
     // Collects the dedup keys of the stable inserts, see dedupKey().
     private static ObjHashSet<String> collectDedupKeys(ObjList<FuzzTransaction> transactions, boolean isSymbolKey) {
         ObjHashSet<String> keys = new ObjHashSet<>();
@@ -516,6 +530,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         IntHashSet upsertKeyIndexesMap = new IntHashSet();
         upsertKeyIndexesMap.addAll(upsertKeyIndexes);
         int lastInsertIndex = -1;
+        // the position after the last insert commit and the duplicate commit the loop puts after it
+        int lastInsertEnd = -1;
 
         for (int i = 0; i < transactions.size(); i++) {
             FuzzTransaction transaction = transactions.getQuick(i);
@@ -532,14 +548,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 }
                 duplicateCommits--;
             }
+            lastInsertEnd = i + 1;
         }
 
         if (isSkipMode && lastInsertIndex > -1) {
-            // Whatever the loop added, the last commit re-sends the keys of the last insert commit
-            // with other values, which the table must not take
+            // Whatever the loop added, a commit re-sends the keys of the last insert commit with other values,
+            // which the table must not take. The commit goes right after the last insert commit and its duplicates:
+            // after a later column change the copies would get other dedup key values, and after a truncate or a
+            // replace commit the originals would be gone.
             FuzzTransaction duplicateTrans = newDuplicateCommit(transactions.getQuick(lastInsertIndex), rnd, upsertKeyIndexesMap, true);
             if (duplicateTrans != null) {
-                transactions.add(duplicateTrans);
+                transactions.insert(lastInsertEnd, 1, duplicateTrans);
             }
         }
     }
@@ -626,6 +645,61 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(twinTableName)));
         assertSqlCursors(twinTableName, tableName);
+    }
+
+    // addDuplicates() writes the copies of the last insert commit of a SKIP run before the transaction that follows
+    // that commit, so SKIP drops them all
+    private void assertSkipDuplicatesOfLastInsertCommit(FuzzTransactionOperation laterOperation, boolean isTruncate) throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableDefinition = " (ts TIMESTAMP, k LONG, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+            execute("CREATE TABLE originals" + tableDefinition);
+            execute("CREATE TABLE skip_dedup" + tableDefinition + " DEDUP SKIP KEYS(ts, k)");
+
+            final Rnd rnd = generateRandomAndProps();
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            try {
+                final FuzzTransaction insertCommit = new FuzzTransaction();
+                final long timestamp = MicrosTimestampDriver.floor("2022-02-24");
+                for (int i = 0; i < 100; i++) {
+                    insertCommit.operationList.add(new FuzzInsertOperation(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            timestamp + i * Micros.SECOND_MICROS,
+                            0,
+                            0,
+                            0,
+                            10,
+                            new String[0]
+                    ));
+                }
+                transactions.add(insertCommit);
+                applyWal(transactions, "originals", 1, rnd);
+
+                final FuzzTransaction laterTransaction = new FuzzTransaction();
+                laterTransaction.operationList.add(laterOperation);
+                laterTransaction.waitAllDone = true;
+                transactions.add(laterTransaction);
+
+                final IntList dedupKeyIndexes = new IntList();
+                dedupKeyIndexes.add(0);
+                dedupKeyIndexes.add(1);
+                addDuplicates(transactions, rnd, dedupKeyIndexes, true);
+                applyWal(transactions, "skip_dedup", 1, rnd);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
+
+            if (isTruncate) {
+                assertQuery("SELECT count() FROM skip_dedup")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
+            } else {
+                // SKIP keeps the original rows and drops every copy
+                assertSqlCursors("SELECT ts, k, v FROM originals", "SELECT ts, k, v FROM skip_dedup");
+            }
+        });
     }
 
     private void assertSqlCursorsNoDups(
@@ -866,6 +940,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     // Returns a commit that repeats the dedup keys of some rows of the transaction, or null when it picks none.
+    // The commit has to follow the transaction with no column change in between, see DuplicateFuzzInsertOperation.
     private FuzzTransaction newDuplicateCommit(
             FuzzTransaction transaction,
             Rnd rnd,
@@ -890,9 +965,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 // Add a duplicate operation
                 FuzzInsertOperation operation = (FuzzInsertOperation) txnList.getQuick(t);
 
-                // Generate only 1 non-identical record, compares will have work harder to find 1 record only.
-                // SKIP keeps the row written first, so there every duplicate differs from its original outside
-                // the dedup keys and the table must keep the original values.
+                // UPSERT: at most 1 row of the commit differs from its original, so the check whether the commit
+                // carries the values the partition has must find that row. SKIP keeps the row written first, so
+                // there every duplicate that writes a column outside the dedup keys differs from its original, and
+                // the table must keep the original values.
                 boolean generatedNonIdentical = isSkipMode || (generateNonIdenticalCount > 0 && rnd.nextBoolean());
                 FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap, !generatedNonIdentical);
                 if (generatedNonIdentical) {

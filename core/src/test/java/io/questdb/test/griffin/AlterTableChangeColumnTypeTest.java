@@ -50,6 +50,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1795,8 +1796,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             Assert.assertNotEquals("destination column file was never opened for write", -1, dstFd.get());
             Assert.assertTrue("destination column data file was never mapped read-write", dstMappedForWrite.get());
             Assert.assertEquals(
-                    "ff.allocate() must reserve the exact destination byte size before mapping",
-                    2L * Long.BYTES,
+                    "ff.allocate() must reserve a page on Linux, or the exact destination size elsewhere, before mapping",
+                    Os.isLinux() ? Files.PAGE_SIZE : 2L * Long.BYTES,
                     allocatedSizeForDst.get()
             );
             Assert.assertFalse(
@@ -2134,6 +2135,24 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("x\n10.0\n20.0\n");
+        });
+    }
+
+    @Test
+    public void testConvertToSymbolSetsNullFlagForColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : " BYPASS WAL"));
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-05T01:00:00Z', 2)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN s STRING");
+            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00Z', 3, 'A'), ('2024-01-01T00:00:00Z', 4, 'B')");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary()
+                    .returns("x\ts\n4\tB\n2\t\n3\tA\n");
         });
     }
 
