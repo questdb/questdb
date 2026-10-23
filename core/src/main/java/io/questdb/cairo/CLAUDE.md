@@ -51,10 +51,16 @@ hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumn
 ```
 
 `hasTypeConvertedColumns` is set when a column maps into the parquet file through its
-`getOriginalWriterIndex()` (the `replacingIndex` chain head) but its current writer index
-differs — i.e. it went through `ALTER COLUMN TYPE`. So a pending conversion always forces a
-rewrite; the in-place `copyRowGroupWithNullColumns()` path is taken only when the schema is
-unchanged.
+`getOriginalWriterIndex()` (the `replacingIndex` chain head), its current writer index
+differs — i.e. it went through `ALTER COLUMN TYPE` — **and** the type stored in the parquet
+file (ignoring `PARQUET_SYMBOL_NOT_NULL_HINT`) differs from the table's column type. Every
+parquet writer stores a column under its original writer index, so a file that a previous
+rewrite already materialized to the new type (or a VARCHAR -> STRING -> VARCHAR round
+trip that left the file untouched) still matches by that index but needs no rewrite. So a
+pending conversion always forces a rewrite; the in-place `copyRowGroupWithNullColumns()` path
+is taken only when the schema is unchanged. On that path the file's column order may differ
+from the writer's column order, and the Rust `ParquetUpdater::align_columns_to_schema()`
+matches the supplied columns to the file schema by parquet field id.
 
 Both the row group merge and `ParquetRowGroupMaterializer.materialize()` share the same
 `ParquetColumnTypeConverter` decode-selection and source-preparation methods. The materializer
@@ -169,6 +175,11 @@ a merge whose O3 rows are all duplicates reproduces the existing rows as they ar
   actions before it, in order. When no action writes, the partition stays as it is, and the
   partition sink reports it as unchanged as the native path does (`updatePartitionSink(...,
   newPartitionSize = -1, partitionMutates = 0)`). Other commits open the output upfront.
+
+`TableWriter` applies nothing for a partition reported unchanged (`isO3PartitionUnchanged()`):
+`o3ConsumePartitionUpdateSink()` leaves its `_txn` entry as it is, and the posting index seal
+(`sealPostingIndexesForO3Partitions()`) does not rebuild its index, which would read and re-index
+the whole partition column on every commit that re-sends rows the table has.
 
 UPSERT takes the same shortcut on parquet partitions only for tables with a live BOOLEAN, BYTE or
 SHORT column, the types whose column tops a merge would turn into 0/false (native turns an
