@@ -191,6 +191,47 @@ public class O3ParquetMissingColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEndedTopOfMissingColumnPrunesByValue() throws Exception {
+        // bo, bt and sh are added after the conversion; the row at 00:30 ends their top, all 8 rows. The rewrite
+        // writes the copied row groups with a chunk of 0/false, whose _pm statistics (null count 0, min = max = 0)
+        // the row group pruner reads: a filter on 0/false must keep those row groups, a filter on the O3 value may
+        // prune them, and the counts match the native twin
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
+        assertMemoryLeak(() -> {
+            for (String t : tables()) {
+                execute("CREATE TABLE " + t + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + t + " (v, ts) VALUES " + DAY_ROWS + ", (99, '2024-01-02T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            convertToParquet();
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " ADD COLUMN bo BOOLEAN");
+                execute("ALTER TABLE " + t + " ADD COLUMN bt BYTE");
+                execute("ALTER TABLE " + t + " ADD COLUMN sh SHORT");
+                execute("INSERT INTO " + t + " (v, ts, bo, bt, sh) VALUES (50, '2024-01-01T00:30:00.000000Z', true, 5, 5)");
+            }
+            drainWalQueue();
+            final String[][] filterCounts = {
+                    {"bt = 0", "8"},
+                    {"sh = 0", "8"},
+                    {"bo = false", "8"},
+                    {"bt = 5", "1"},
+                    {"sh = 5", "1"},
+                    {"bo = true", "1"},
+            };
+            for (String[] filterCount : filterCounts) {
+                for (String t : tables()) {
+                    assertQuery("SELECT count() FROM " + t + " WHERE ts IN '" + O3_DAY + "' AND " + filterCount[0])
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n" + filterCount[1] + "\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPresentTopKeptWhileMissingTopEnds() throws Exception {
         // p BYTE has top 2 in the parquet file, m BYTE is added after the conversion. The row at 02:30 merges into
         // row group 0 after row 3: the prefix of rows 1..3 keeps the top of p, and ends the top of m, all 8 rows
