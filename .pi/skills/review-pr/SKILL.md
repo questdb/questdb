@@ -142,7 +142,7 @@ Check the title, body and labels against CLAUDE.md "Git & PR Conventions". Read 
   - an effect of the diff that no bullet states, above all a regression or a breaking change;
   - a bullet the diff does not support;
   - a change made for speed, or one on a data path, without its JMH table;
-  - anything else: a test plan, coverage, fuzz seeds, a walkthrough, narrative, selling.
+  - anything else: a test plan, coverage, fuzz seeds, a walkthrough, narrative, selling, a boilerplate Trade-offs section, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists). Never ask the author to add such material to the body.
 - **Labels** match the title (`perf(sql)` gets SQL and Performance).
 - Bundled related fixes are allowed; do not demand a split.
 

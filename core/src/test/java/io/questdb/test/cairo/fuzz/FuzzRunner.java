@@ -32,6 +32,7 @@ import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -218,6 +219,10 @@ public class FuzzRunner {
                 Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
                 purgeJobThread.start();
                 applyThreads.add(purgeJobThread);
+
+                Thread compactionJobThread = new Thread(() -> runPartitionCompactionJob(done, errors));
+                compactionJobThread.start();
+                applyThreads.add(compactionJobThread);
 
                 Thread purgePartitionThread = new Thread(() -> runPurgePartitionJob(
                         done,
@@ -1534,6 +1539,7 @@ public class FuzzRunner {
         final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+             PartitionCompactionScanJob compactionJob = new PartitionCompactionScanJob(engine);
              TableReader rdr1 = getReaderWithRetries(tableName, null);
              TableReader rdr2 = getReaderWithRetries(tableName, null)
         ) {
@@ -1542,6 +1548,11 @@ public class FuzzRunner {
                 forceReleaseTableWriter(drainRnd);
                 purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
             }
+            // This path is the ONLY compaction coverage for single-writer tables driven through
+            // applyWal() -> applyToWal() (walWriterCount=1 never goes through
+            // applyManyWalParallel()'s waitApply thread pool below), so it needs its own sweep,
+            // not just the threaded one.
+            compactionJob.drain(0);
         }
     }
 
@@ -1632,6 +1643,21 @@ public class FuzzRunner {
         } finally {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+        }
+    }
+
+    private void runPartitionCompactionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
+        try {
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                while (done.get() == 0 && errors.isEmpty()) {
+                    job.drain(0);
+                    Os.sleep(1);
+                }
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Path.clearThreadLocals();
         }
     }
 

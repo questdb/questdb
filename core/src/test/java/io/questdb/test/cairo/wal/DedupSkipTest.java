@@ -1638,6 +1638,12 @@ public class DedupSkipTest extends AbstractCairoTest {
             Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
 
             execute("ALTER TABLE t RESUME WAL");
+            // the out of memory error backed the table off for up to CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE
+            // milliseconds, which RESUME WAL keeps: the WAL apply skips the table until the backoff ends
+            TestUtils.assertEventually(
+                    () -> Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().isReadyToProcess()),
+                    60
+            );
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSqlCursors("n", "t");

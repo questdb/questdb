@@ -38,6 +38,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -113,6 +114,17 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         this.isWal = walMode == WalMode.WITH_WAL;
         this.type = type;
         this.lazyTarget = lazyTarget;
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // The parquet rule follows the column tops the O3 merge of O3OpenColumnJob keeps, the merge that
+        // production runs by default. Tests turn merge-append on, and its commits into the composite
+        // partitions of the WAL twin tw read 0 in BOOLEAN, BYTE and SHORT rows where that merge keeps a
+        // top, which reads NULL after a type change. Ask for the default merge.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
     }
 
     @Parameterized.Parameters(name = "{0}-{1}-{2}")

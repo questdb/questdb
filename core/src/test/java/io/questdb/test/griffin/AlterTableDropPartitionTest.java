@@ -60,6 +60,36 @@ import java.nio.file.Paths;
 
 public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
+    /**
+     * FORCE DROP of the first partition must leave _txn's min timestamp on the partition that now
+     * holds it. The min is read after the removal, so it comes from partition index 0.
+     */
+    @Test
+    public void testForceDropFirstPartitionKeepsMinTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO p VALUES" +
+                    " (1,'2020-01-01T05:00:00.000000')," +
+                    " (2,'2020-01-02T06:00:00.000000')," +
+                    " (3,'2020-01-03T07:00:00.000000')");
+            drainWalQueue();
+
+            execute("ALTER TABLE p FORCE DROP PARTITION LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("p")) {
+                Assert.assertEquals(
+                        "_txn min timestamp must name the first surviving partition",
+                        MicrosTimestampDriver.floor("2020-01-02T06:00:00.000000"),
+                        reader.getMinTimestamp()
+                );
+            }
+            assertQuery("SELECT min(ts)::varchar lo, count() c FROM p")
+                    .noRandomAccess().expectSize()
+                    .returns("lo\tc\n2020-01-02T06:00:00.000000Z\t2\n");
+        });
+    }
+
     @Test
     public void testAddColumnAndDropPartition() throws Exception {
         assertMemoryLeak(() -> {

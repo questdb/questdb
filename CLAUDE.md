@@ -330,8 +330,12 @@ qdbr toolchain; the script prints the command when it is missing.
   - A change made for speed, or one on a data path, adds its JMH results as a
     table: case, before, after, with the slower cases included.
   - Link tandem PRs on one line.
-  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough
-    or design narrative. The code and its tests carry those.
+  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough,
+    design narrative, boilerplate "Trade-offs" section or investigation output
+    (probe results, "fails without the fix" evidence, lists of covered shapes
+    or configs, "Not changed" lists). The code and its tests carry those.
+  - When new commits land, rewrite the body under these rules. Never append
+    to it.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit

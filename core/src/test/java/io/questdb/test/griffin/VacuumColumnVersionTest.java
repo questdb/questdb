@@ -838,7 +838,10 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumKeepsPostingIncludeFilesAfterO3Insert() throws Exception {
-        // An O3 row rewrites 2024-01-01 into a new directory and reseals the index of s.
+        // An O3 row rewrites 2024-01-01 into a new directory and reseals the index of s. A merge-append
+        // commit, which tests turn on, writes the row into the composite partition of a WAL table in
+        // place instead, so ask for the O3 merge that production runs by default.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
         assertMemoryLeak(() -> {
             for (String walMode : WAL_MODES) {
                 for (boolean isTxnZero : new boolean[]{true, false}) {

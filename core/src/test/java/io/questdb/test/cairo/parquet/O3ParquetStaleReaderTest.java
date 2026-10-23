@@ -1752,8 +1752,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
             Assert.assertEquals(txn, getColumnNameTxn("pt", 0, "s"));
             Assert.assertEquals(txn, getColumnNameTxn("pt", 0, "k"));
-            Assert.assertEquals(1, ff.getOpenCount("s.k." + txn));
-            Assert.assertEquals(1, ff.getOpenCount("k.k." + txn));
+            // one open builds the new version, and finishO3Commit() opens it once more to bind the
+            // indexer of the append-blocked last partition, without truncating it
+            Assert.assertEquals(2, ff.getOpenCount("s.k." + txn));
+            Assert.assertEquals(2, ff.getOpenCount("k.k." + txn));
             Assert.assertEquals(purgeTasksBefore + 2, engine.getMessageBus().getColumnPurgePubSeq().current());
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, sNameTxn));
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, kNameTxn));
@@ -1769,8 +1771,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertEquals(txn, getColumnNameTxn("pt", 0, "s"));
             Assert.assertEquals(txn, getColumnNameTxn("pt", 0, "k"));
-            Assert.assertEquals(1, ff.getOpenCount("s.k." + txn));
-            Assert.assertEquals(1, ff.getOpenCount("k.k." + txn));
+            // one open builds the new version, and finishO3Commit() opens it once more to bind the
+            // indexer of the append-blocked last partition, without truncating it
+            Assert.assertEquals(2, ff.getOpenCount("s.k." + txn));
+            Assert.assertEquals(2, ff.getOpenCount("k.k." + txn));
             Assert.assertEquals(purgeTasksBefore, engine.getMessageBus().getColumnPurgePubSeq().current());
             Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, sNameTxn2));
             Assert.assertFalse(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, sNameTxn2));
@@ -1852,14 +1856,15 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionOtherPartitionFailure() throws Exception {
-        // Non-WAL commit into two parquet partitions: the first one builds its new index version, the
-        // second one fails. The commit rolls back and the first partition's new version goes.
+        // Non-WAL commit into two parquet partitions: the committing thread runs the partition of the last
+        // O3 row itself, before the queued one, so the second partition builds its new index version and
+        // the first one fails. The commit rolls back and the second partition's new version goes.
         setInPlaceParquetO3Properties();
         final AtomicBoolean isArmed = new AtomicBoolean();
         final IndexFileOpenCounter ff = new IndexFileOpenCounter() {
             @Override
             public long openRO(LPSZ name) {
-                if (isArmed.get() && Utf8s.containsAscii(name, "2024-01-02") && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                if (isArmed.get() && Utf8s.containsAscii(name, "2024-01-01") && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1881,7 +1886,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute(symRowsInsert(secondDayRows));
             execute(symRowsInsert(lastDayRow));
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
-            final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+            final long firstDayColumnNameTxn = getColumnNameTxn("pt", 0, "s");
+            final long secondDayColumnNameTxn = getColumnNameTxn("pt", 1, "s");
             final long txnBefore = getTableTxn("pt");
             final String sql = "SELECT s, v, ts FROM pt WHERE s = 'a'";
             final String rowsBefore = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow);
@@ -1896,11 +1902,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             } finally {
                 isArmed.set(false);
             }
-            // the first partition built its new index version before the commit failed
+            // the second partition built its new index version before the first one failed
             Assert.assertEquals(1, ff.getOpenCount("s.k." + txnBefore));
-            Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
-            Assert.assertFalse(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
-            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertFalse(isIndexKeyFilePresent("pt", 1, IndexType.BITMAP, txnBefore));
+            Assert.assertFalse(isIndexValueFilePresent("pt", 1, IndexType.BITMAP, txnBefore));
+            Assert.assertEquals(firstDayColumnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals(secondDayColumnNameTxn, getColumnNameTxn("pt", 1, "s"));
             Assert.assertEquals(txnBefore, getTableTxn("pt"));
             assertQuery(sql).noLeakCheck().timestamp("ts").returns(rowsBefore);
 
