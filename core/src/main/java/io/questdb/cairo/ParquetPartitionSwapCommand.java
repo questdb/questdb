@@ -130,11 +130,7 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
         return isFullyMaterialized;
     }
 
-    /**
-     * Whether the source footer mapped row groups to index rows other than their partition rows,
-     * see {@link ParquetMetaFileReader#getRowGroupIndexRowLo}. The compacted file uses the identity
-     * map, so the source's index files do not describe it and the build must index it afresh.
-     */
+    /** Whether the compacted file dropped the source's index row map, so its index files must be rebuilt. */
     public boolean isIndexRowMapDropped() {
         return isIndexRowMapDropped;
     }

@@ -214,8 +214,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         // Several days, so CONVERT PARTITION reaches days behind the active one too.
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
-        // Small O3 splits, so the days CONVERT PARTITION reaches are split and composite, not only plain - and
-        // room for several folders per day, so an older day keeps its splits until it is converted.
         setFuzzProperties(rnd);
         setRndConvertedDayShapeProperties(rnd, fuzzer);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
@@ -223,10 +221,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * {@link #testConvertPartitionToParquet()}, shaped so CONVERT PARTITION keeps finding split and composite days
-     * behind the active one: every commit may land out of order across the whole range, and nothing - no TRUNCATE,
-     * no TTL, almost no DROP PARTITION - takes the older days away, so they keep collecting O3 splits and composite
-     * pieces between conversions in both directions.
+     * No TRUNCATE, TTL, and almost no DROP PARTITION, so older days keep collecting O3 splits and composite pieces.
      */
     @Test
     public void testConvertSplitAndCompositePartitionToParquet() throws Exception {
@@ -330,10 +325,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0
 
         );
-        // Several days, so CONVERT PARTITION reaches days behind the active one too.
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
-        // Small O3 splits, so the days CONVERT PARTITION reaches are split and composite, not only plain - and
-        // room for several folders per day, so an older day keeps its splits until it is converted.
         setFuzzProperties(rnd);
         setRndConvertedDayShapeProperties(rnd, fuzzer);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
@@ -854,23 +846,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Shapes the days CONVERT PARTITION reaches so they are split and composite when it does:
-     * <ul>
-     *     <li>room for 2 to 5 folders per day, so a day behind the active one keeps its O3 splits;</li>
-     *     <li>a piece floor of 1 to 128 rows (LOG-UNIFORM) instead of the default 4096: the merge-append
-     *     pre-split only cuts around incoming rows where it spares twice that many existing rows, which a
-     *     fuzz-sized day of a few thousand rows never has at the default, so every merge-append would rewrite
-     *     the whole day into one piece - and a one-piece composite is made plain on the next commit;</li>
-     *     <li>a tenth to two fifths of the O3 blocks are backfills: narrow clusters dropped among the rows of a
-     *     day the workload has moved on from, which is what cuts such a day into splits and pieces - an ordinary
-     *     O3 block lands near the workload's front, on the active day;</li>
-     *     <li>merge-append three runs in four, up from setFuzzProperties' one in two: it is what makes composite
-     *     pieces, while the classic O3 path the rest take makes splits;</li>
-     *     <li>three runs in four, nothing compacts the days the workload moved on from: no sweep, a long hot
-     *     window, a long idle timeout, and piece-count and waste thresholds no fuzz-sized day reaches, so the
-     *     splits and pieces stay for the conversion to fold in its single pass rather than being folded first. The
-     *     fourth run keeps whatever compaction setFuzzProperties drew.</li>
-     * </ul>
+     * Makes the days CONVERT PARTITION reaches split and composite: several folders per day, a piece floor far below
+     * the default 4096 (a fuzz-sized day never spares enough rows for the merge-append pre-split otherwise), backfill
+     * O3 blocks into older days, merge-append mostly on, and, three runs in four, compaction effectively off so the
+     * conversion folds the splits and pieces itself.
      */
     private static void setRndConvertedDayShapeProperties(Rnd rnd, FuzzRunner fuzzer) {
         final int maxSplits = 2 + rnd.nextInt(4);

@@ -257,8 +257,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             decodeColumns.clear();
             decodeColumns.add(parquetIndex);
             decodeColumns.add(ColumnType.SYMBOL);
-            // The index stores index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo; the covered
-            // scratch files hold one entry per index row.
+            // The covered scratch files hold one entry per index row.
             final long indexRowCount = parquetMetadata.getIndexRowCount();
             int decodedCoveredCount = 0;
             if (hasCovering) {

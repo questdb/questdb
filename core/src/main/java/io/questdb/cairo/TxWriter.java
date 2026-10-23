@@ -218,15 +218,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Commits a swap of committed partitions on top of the committed record, and nothing else: the committed entries
-     * {@code [lo, committedHi)} are replaced by the in-memory entries {@code [lo, lo + count)}, and the partition
-     * table, column and geometry versions are taken from memory. An open transaction's own state - its row counts and
-     * timestamps, the partitions its in-order rows opened, its symbol counts - stays uncommitted, exactly as it was: a
-     * later {@link #commit} publishes it, and a rollback reloads this record without it.
-     * <p>
-     * The caller has checked, before the swap changed anything, that {@link #isPartitionEntryCommitted} holds for
-     * every entry it replaces and that {@link #isPartitionTableChanged} does not, so the in-memory entries outside the
-     * swapped range are the committed ones, plus the partitions the open transaction appended past them.
+     * Commits only a swap of committed entries {@code [lo, committedHi)} for in-memory {@code [lo, lo + count)}; the
+     * open transaction's state stays uncommitted. Every other in-memory entry must equal its committed one.
      */
     public void commitPartitionRange(int commitMode, int lo, int committedHi, int count) {
         final int symbolCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_MAP_WRITER_COUNT_32);
@@ -249,8 +242,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateTxRecordSize(symbolBytes, partitionTableBytes);
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
-        // The header, the symbol counts and the partition table size word end 8-byte aligned: a 136-byte header and
-        // symbol table head, plus whole longs.
         final long partitionsOffset = getPartitionTableIndexOffset(partitionTableOffset, 0);
         for (long offset = 0; offset < partitionsOffset; offset += Long.BYTES) {
             putLong(offset, txMemBase.getLong(readBaseOffset + offset));
@@ -277,9 +268,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         );
         finishABHeader(writeBaseOffset, symbolBytes, partitionTableBytes, commitMode);
 
-        // The record just written matches no in-memory structure version, and the one before it holds the old
-        // entries: keep the next commit off the in-place fast path, which rewrites only a few fields of the
-        // record before last.
+        // Keep the next commit off the in-place fast path: the record before last holds the old entries.
         prevRecordStructureVersion = -2L;
         lastRecordStructureVersion = -1L;
         prevRecordBaseOffset = lastRecordBaseOffset;
@@ -308,10 +297,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txPartitionCount;
     }
 
-    /**
-     * The number of partitions the committed record holds. An open transaction can hold more in memory: the
-     * partitions its in-order rows opened past the last committed one.
-     */
+    /** Partitions in the committed record; an open transaction may hold more in memory. */
     public int getCommittedPartitionCount() {
         final int symbolCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_MAP_WRITER_COUNT_32);
         final int partitionTableBytes = txMemBase.getInt(readBaseOffset + getPartitionTableSizeOffset(symbolCount));
@@ -365,10 +351,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
-    /**
-     * Whether the committed record holds the partition at {@code partitionIndex} with exactly its in-memory entry,
-     * i.e. an open transaction has neither added nor changed it.
-     */
+    /** Whether the committed record holds this partition's in-memory entry unchanged. */
     public boolean isPartitionEntryCommitted(int partitionIndex) {
         if (partitionIndex < 0 || partitionIndex >= getCommittedPartitionCount()) {
             return false;
@@ -385,10 +368,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return true;
     }
 
-    /**
-     * Whether the in-memory partition table has changed since the last commit in a way only a whole commit can
-     * publish: a partition inserted, removed or rewritten by the open transaction.
-     */
+    /** Whether the open transaction changed the partition table in a way only a whole commit can publish. */
     public boolean isPartitionTableChanged() {
         return prevPartitionTableVersion != partitionTableVersion;
     }

@@ -119,11 +119,8 @@ public class FuzzTransactionGenerator {
     }
 
     /**
-     * {@link #generateSet} with backfills: an O3 data block is, with {@code probabilityOfBackfill}, a narrow cluster
-     * of rows dropped at a random point anywhere the run has written so far, rather than one near the run's
-     * advancing front. It lands among the rows of a day the run has moved on from, which is what cuts such a day
-     * into split folders and composite pieces. Zero draws nothing from {@code rnd}, so a run without backfills is the
-     * run {@link #generateSet} always was.
+     * A backfill is an O3 block clustered at a random point behind the run's front, cutting older days into splits
+     * and pieces. A zero {@code probabilityOfBackfill} draws nothing from {@code rnd}, keeping old runs reproducible.
      */
     public static ObjList<FuzzTransaction> generateSet(
             long initialRowCount,
@@ -423,8 +420,7 @@ public class FuzzTransactionGenerator {
                 );
                 rowCount -= blockRows;
                 if (!isBackfill) {
-                    // A backfill lands behind the front, which is what the conversions and the next in-order
-                    // block are placed against.
+                    // A backfill does not move the front the next blocks are placed against.
                     lastTimestamp = stopTs;
                 }
             }
@@ -434,12 +430,8 @@ public class FuzzTransactionGenerator {
     }
 
     /**
-     * The upper end of the one-day window a CONVERT PARTITION targets: four times in ten the day the latest rows
-     * went to - the active one - three times the day before it, and three times an older day picked at random. The
-     * conversions in both directions keep cycling the days behind the active one, and the writer converts every
-     * folder of such a day - the splits and composite pieces O3 commits left behind - in a single pass, while the
-     * active day goes through a fold first. The day before the active one is the one the latest O3 commits most
-     * likely cut into pieces.
+     * Picks the active day 4 in 10, the day before it 3 in 10, else a random older day, so conversions keep
+     * reaching days the O3 commits cut into splits and pieces.
      */
     private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, Rnd rnd) {
         final int target = rnd.nextInt(100);

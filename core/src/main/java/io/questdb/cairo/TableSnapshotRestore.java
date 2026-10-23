@@ -1780,9 +1780,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 columnTops.add(columnVersionReader.getColumnTop(partitionTimestamp, writerIndex));
             }
 
-            // The indexes store index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo, and their
-            // values grow per key, so the row groups go in the order of their index rows. A footer with
-            // an index row map only exists after an in-place O3 update, which zeroes every column top.
+            // Index values grow per key: add row groups in index row order. An index row map implies zero tops.
             final IntList rowGroupOrder = new IntList(rowGroupCount);
             final LongList rowGroupIndexRowLos = new LongList(rowGroupCount);
             parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);

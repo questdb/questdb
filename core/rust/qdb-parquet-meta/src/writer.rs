@@ -354,20 +354,16 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// on the next chunk GET.
     scratchpad: Option<Vec<(u32, Vec<u8>)>>,
     prior_scratchpad: Vec<(u32, Vec<u8>)>,
-    /// Block offset of each row group in the committed footer.
     prior_block_offsets: Vec<u64>,
-    /// Row count of each row group in the committed footer.
     prior_num_rows: Vec<u64>,
-    /// First index row of each row group in the committed footer, identity
-    /// map resolved.
+    /// First index row of each committed row group, identity map resolved.
     prior_index_row_lo: Vec<u64>,
     /// Index rows the committed footer covers, identity map resolved.
     prior_index_row_count: u64,
 }
 
 enum RowGroupEntry {
-    /// Reuse the committed row group at position `src`: its block, its bloom
-    /// filters and its index rows.
+    /// Reuse committed row group `src`: its block, bloom filters and index rows.
     Existing { src: usize },
     /// Write a new block. Its rows get fresh index rows.
     New(RowGroupBlockBuilder),
@@ -469,11 +465,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         })
     }
 
-    /// Places the committed row group at position `src` at position `index`,
-    /// keeping its block, bloom filters and index rows. `index` may equal the
-    /// current row group count, which appends. Used when an update shifts a
-    /// row group it did not rewrite, for example after inserting a row group
-    /// in front of it.
+    /// Places committed row group `src` at `index` (may append), keeping its block and index rows.
     pub fn reuse_row_group(&mut self, index: usize, src: usize) -> ParquetMetaResult<&mut Self> {
         if src >= self.prior_block_offsets.len() {
             return Err(parquet_meta_err!(
@@ -500,10 +492,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         Ok(self)
     }
 
-    /// Resolves the index row map of the new footer. Reused row groups keep
-    /// their index rows, new ones take fresh rows past the committed index row
-    /// count, in row group order. Returns `None` when the result is the
-    /// identity map, so a footer that needs no map does not carry one.
+    /// Reused row groups keep their index rows, new ones take fresh rows past the
+    /// committed count. Returns `None` for the identity map, which the footer omits.
     fn resolve_index_row_map(&self) -> Option<(u64, Vec<u64>)> {
         let mut index_row_count = self.prior_index_row_count;
         let mut lows = Vec::with_capacity(self.entries.len());
@@ -708,8 +698,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                 match entry {
                     RowGroupEntry::Existing { src } => {
                         // Copy through existing bloom filter entries.
-                        // existing_bloom_* is indexed by the committed row group
-                        // position, which a reused row group carries in src.
+                        // existing_bloom_* is indexed by committed position, i.e. `src`.
                         if self.is_bloom_external {
                             if let Some(ext) = self.existing_bloom_external.get(*src) {
                                 for (pos, &(off, len)) in ext.iter().enumerate() {
@@ -945,7 +934,6 @@ mod tests {
         rg
     }
 
-    /// Applies an update to `file` and returns the published file.
     fn index_row_map_apply(
         file: &[u8],
         file_size: u64,
@@ -976,8 +964,6 @@ mod tests {
 
     #[test]
     fn index_row_map_omitted_for_append() {
-        // A row group appended after the last one starts where the identity map
-        // puts it, so the footer needs no map.
         let (original, size) = make_simple_file();
         let (full, new_size) = index_row_map_apply(&original, size, |u| {
             u.add_row_group(index_row_map_rg(500));
@@ -989,8 +975,6 @@ mod tests {
 
     #[test]
     fn index_row_map_replace_takes_fresh_rows() {
-        // Replacing the only row group moves its rows past the 1000 index rows
-        // the replaced block still holds.
         let (original, size) = make_simple_file();
         let (full, new_size) = index_row_map_apply(&original, size, |u| {
             u.replace_row_group(0, index_row_map_rg(1001)).unwrap();
@@ -1000,8 +984,7 @@ mod tests {
 
     #[test]
     fn index_row_map_reused_row_group_keeps_its_rows() {
-        // Insert a row group in front of the committed one: the committed row
-        // group keeps index rows [0, 1000), the new one takes [1000, 1200).
+        // Insert in front: the committed group keeps [0, 1000), the new one takes [1000, 1200).
         let (original, size) = make_simple_file();
         let (full, new_size) = index_row_map_apply(&original, size, |u| {
             u.replace_row_group(0, index_row_map_rg(200)).unwrap();
@@ -1014,7 +997,6 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
         assert_eq!(reader.row_group(0).unwrap().num_rows(), 200);
         assert_eq!(reader.row_group(1).unwrap().num_rows(), 1000);
-        // the reused row group points at the committed block
         let original_reader = ParquetMetaReader::from_file_size(&original, size).unwrap();
         assert_eq!(
             reader.footer().row_group_block_offset(1).unwrap(),
@@ -1024,8 +1006,6 @@ mod tests {
 
     #[test]
     fn index_row_map_carries_across_updates() {
-        // A second update starts from the first one's map, not from the
-        // identity map, and keeps growing the index rows.
         let (original, size) = make_simple_file();
         let (first, first_size) = index_row_map_apply(&original, size, |u| {
             u.replace_row_group(0, index_row_map_rg(200)).unwrap();
@@ -1048,8 +1028,6 @@ mod tests {
 
     #[test]
     fn index_row_map_returns_to_identity() {
-        // A map whose row groups tile the index rows in order is the identity
-        // map, and the footer drops the section.
         let (original, size) = make_simple_file();
         let (first, first_size) = index_row_map_apply(&original, size, |u| {
             u.reuse_row_group(0, 0).unwrap();

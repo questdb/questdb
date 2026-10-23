@@ -139,9 +139,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
     private static final int HEADER_SORTING_COL_CNT_OFF = 20;
-    // Required footer flag: the footer maps each row group to the index rows its rows
-    // occupy. The section is [u64 indexRowCount][u64 indexRowLo; rowGroupCount]. Bit 32
-    // is the highest known footer bit, so its section is the last one before the CRC.
+    // Required footer flag, section [u64 indexRowCount][u64 indexRowLo; rowGroupCount]. Bit 32 is the highest
+    // known footer bit, so its section is the last one before the CRC.
     private static final long INDEX_ROW_MAP_FOOTER_FLAG = 1L << 32;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
@@ -180,8 +179,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private IntIntHashMap columnIdToIndex;
     private long fileSize;
     private long footerAddr;
-    // Address of the resolved footer's index row map section, 0 when the footer uses
-    // the identity map.
+    // The resolved footer's index row map section, 0 for the identity map.
     private long indexRowMapAddr;
     private boolean isColumnIdToIndexBuilt;
     // Committed _pm snapshot size the native handle was parsed at.
@@ -351,11 +349,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.checksumVerified = false;
     }
 
-    /**
-     * Appends to {@code out} the index row ranges, as {@code [lo, hi)} pairs, that hold the partition rows
-     * {@code [rowLo, rowHi)}: one range per row group the rows overlap. See
-     * {@link #getRowGroupIndexRowLo(int, long)}.
-     */
     public void collectIndexRowRanges(long rowLo, long rowHi, LongList out) {
         long rowGroupStartRow = 0;
         for (int i = 0; i < rowGroupCount && rowGroupStartRow < rowHi; i++) {
@@ -370,15 +363,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
     }
 
-    /**
-     * Lists the row groups in the order of their first index row, which is the order
-     * an index build must add them in: index values grow per key. Without an index row
-     * map that is the row group order. After an in-place update that inserted a row
-     * group in front of the ones it kept, the inserted row group comes last.
-     *
-     * @param rowGroupOrder        receives the row group indexes, ordered by first index row
-     * @param rowGroupIndexRowLos  receives the first index row of each row group, by row group index
-     */
+    /** Lists row groups in index row order, the order an index build must add them in. */
     public void collectRowGroupsInIndexRowOrder(IntList rowGroupOrder, LongList rowGroupIndexRowLos) {
         rowGroupOrder.clear();
         rowGroupIndexRowLos.clear();
@@ -392,8 +377,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             rowGroupStartRow += getRowGroupSize(i);
         }
         if (!isSorted) {
-            // Insertion sort: row group counts are small, and in-place updates keep
-            // the order mostly ascending.
             for (int i = 1; i < rowGroupCount; i++) {
                 final int rowGroup = rowGroupOrder.getQuick(i);
                 final long indexRowLo = rowGroupIndexRowLos.getQuick(rowGroup);
@@ -539,11 +522,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return fileSize;
     }
 
-    /**
-     * Returns the number of index rows the partition's symbol indexes cover, dead rows
-     * included. Equals the partition row count unless an in-place update moved row
-     * groups to fresh index rows, see {@link #getRowGroupIndexRowLo(int, long)}.
-     */
+    /** Index rows the symbol indexes cover, dead rows included; see {@link #getRowGroupIndexRowLo(int, long)}. */
     public long getIndexRowCount() {
         return indexRowMapAddr != 0 ? Unsafe.getLong(indexRowMapAddr) : getPartitionRowCount();
     }
@@ -616,18 +595,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return rowGroupCount;
     }
 
-    /**
-     * Returns the first index row of a row group: the row the partition's symbol
-     * indexes store for the row group's first row. An in-place O3 update keeps the
-     * index rows of the row groups it keeps and puts the row groups it writes at
-     * fresh index rows past {@link #getIndexRowCount()}, so the indexes only grow and
-     * a reader of an older snapshot keeps finding its rows. Without such an update,
-     * a row group's index rows are its partition rows.
-     *
-     * @param rowGroupIndex     zero-based row group index
-     * @param rowGroupStartRow  partition row of the row group's first row, returned
-     *                          when the footer uses the identity map
-     */
+    /** Index row the symbol indexes store for a row group's first row; {@code rowGroupStartRow} under identity. */
     public long getRowGroupIndexRowLo(int rowGroupIndex, long rowGroupStartRow) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         if (indexRowMapAddr == 0) {
@@ -744,10 +712,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return false;
     }
 
-    /**
-     * Returns true when the resolved footer maps row groups to index rows other than
-     * their partition rows, see {@link #getRowGroupIndexRowLo(int, long)}.
-     */
     public boolean hasIndexRowMap() {
         return indexRowMapAddr != 0;
     }
@@ -1118,8 +1082,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
 
         if (indexRowMapAddr != 0) {
-            // Every row group's index rows must lie inside the index row count, otherwise
-            // a query would ask the index for rows it does not cover.
             final long indexRowCount = Unsafe.getLong(indexRowMapAddr);
             for (int i = 0; i < rowGroupCount; i++) {
                 final long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * ROW_GROUP_ENTRY_SIZE;

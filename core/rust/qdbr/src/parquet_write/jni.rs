@@ -1063,10 +1063,7 @@ pub struct StreamingParquetWriter {
     chunked_writer: ChunkedWriter<BufferWriter>,
     additional_data: Vec<KeyValue>,
 
-    // Frames not written to a row group yet. A frame decoded from a parquet row group
-    // carries the RowGroupBuffers its columns point into (writeStreamingParquetChunkFromRowGroup);
-    // a frame of caller memory carries none (writeChunk). The accumulator also counts the rows
-    // written to row groups, which Java uses to decide when frame memory can be released.
+    // Decoded frames carry the RowGroupBuffers their columns point into.
     frames: FrameAccumulator<Option<crate::parquet_read::RowGroupBuffers>>,
 }
 
@@ -1345,10 +1342,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetEncod
     }
 }
 
-/// Opens a [`PartitionFrameWriter`] over a new parquet file at `dest_path`. The column
-/// template has the layout `createStreamingParquetWriter` takes: three longs per column -
-/// name length, `writer index << 32 | type`, parquet encoding config - over the names in
-/// `col_names_ptr`, which, like the `_pm` fd, Java keeps alive until it destroys the writer.
+/// Opens a [`PartitionFrameWriter`]; Java keeps column names and the `_pm` fd alive until destroy.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_create(
     mut env: JNIEnv,
@@ -1473,11 +1467,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
     }
 }
 
-/// Hands one frame to the writer: seven longs per template column, the layout
-/// `writeStreamingParquetChunk` takes - column top, primary address and size, secondary
-/// address and size (symbol values for a SYMBOL column), symbol offsets address and count.
-/// The frame's memory must stay valid until the returned count of rows written to row
-/// groups covers it.
+/// Hands one frame (layout as `writeStreamingParquetChunk`) to the writer. Its memory must
+/// stay valid until the returned count of rows written to row groups covers it.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_writeFrame(
     mut env: JNIEnv,
@@ -1492,8 +1483,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
         err.add_context("error in PartitionFrameEncoder.writeFrame");
         return err.into_cairo_exception().throw::<jlong>(env);
     }
-    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-    // Single-threaded JNI access guarantees no aliasing.
+    // SAFETY: from `Box::into_raw` in create; single-threaded JNI access, no aliasing.
     let writer = unsafe { &mut *writer };
     let mut write_frame = || -> ParquetResult<jlong> {
         let row_count = checked_non_negative_usize(row_count, "row count")?;
@@ -1516,8 +1506,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
     }
 }
 
-/// Writes the last row group, the footer and the `_pm` sidecar, syncing both files when
-/// `sync` is set. Returns the parquet file size.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFrameEncoder_finish(
     mut env: JNIEnv,
@@ -1551,8 +1539,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
     if writer.is_null() {
         return;
     }
-    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-    // Java guarantees a single destroy call and no further use after destroy.
+    // SAFETY: from `Box::into_raw` in create; Java destroys it exactly once and never reuses it.
     let _ = unsafe { Box::from_raw(writer) };
 }
 

@@ -22,18 +22,8 @@
  *
  ******************************************************************************/
 
-//! Frame-at-a-time parquet writing.
-//!
-//! A frame is a run of rows whose columns each sit in one contiguous buffer: a
-//! piece of a composite partition, a split folder, a decoded parquet row group.
-//! Frames rarely line up with row groups, so [`FrameAccumulator`] keeps the frames
-//! that have not been written yet and cuts row groups of exactly `row_group_size`
-//! rows out of them - a row group can span many frames and a frame many row
-//! groups. The frames' memory has to stay valid until the rows they hold are
-//! written, which [`FrameAccumulator::rows_written_to_row_groups`] reports.
-//!
-//! [`PartitionFrameWriter`] drives an accumulator into a parquet file and writes
-//! the matching `_pm` sidecar when it finishes.
+//! Frame-at-a-time parquet writing: [`FrameAccumulator`] cuts row groups of exactly
+//! `row_group_size` rows across frames, each a run of rows in contiguous column buffers.
 
 use std::fs::File;
 use std::io::Write;
@@ -45,14 +35,12 @@ use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::ChunkedWriter;
 use crate::parquet_write::schema::Partition;
 
-/// The frames a row group has not taken yet, each with a payload that has to
-/// live as long as the frame - the buffers a decoded frame's columns point into.
+/// Frames not yet fully written, each with a payload that must live as long as the frame.
 pub(crate) struct FrameAccumulator<P> {
     row_group_size: usize,
     frames: Vec<(Partition, P)>,
     // Rows of the first frame already written to an earlier row group.
     first_frame_start: usize,
-    // Rows not written to a row group yet, across all frames.
     accumulated_rows: usize,
     rows_written_to_row_groups: usize,
 }
@@ -80,14 +68,11 @@ impl<P> FrameAccumulator<P> {
         }
     }
 
-    /// Rows already written to row groups, counted from the first frame pushed. The
-    /// memory of every frame that ends at or below it can be released.
+    /// Rows written to row groups so far; frames ending at or below it can be released.
     pub(crate) fn rows_written_to_row_groups(&self) -> usize {
         self.rows_written_to_row_groups
     }
 
-    /// Writes one row group of exactly `row_group_size` rows. The caller has checked
-    /// [`Self::has_full_row_group`].
     pub(crate) fn write_row_group<W: Write>(
         &mut self,
         writer: &mut ChunkedWriter<W>,
@@ -123,7 +108,6 @@ impl<P> FrameAccumulator<P> {
         Ok(())
     }
 
-    /// Writes whatever rows are left as one last, possibly short, row group.
     pub(crate) fn write_remaining<W: Write>(
         &mut self,
         writer: &mut ChunkedWriter<W>,
@@ -155,13 +139,8 @@ impl<P> FrameAccumulator<P> {
     }
 }
 
-/// Writes a parquet file, and its `_pm` sidecar, a frame at a time.
-///
-/// `template` names the columns and their types; every frame carries the same
-/// columns, each with its own column top. The file records every column top as 0:
-/// a frame's top rows are written as nulls, so a partition built from frames whose
-/// tops differ - folders of different ages, pieces of a composite partition - reads
-/// back as one whose columns all start at row 0.
+/// Writes a parquet file and its `_pm` sidecar a frame at a time. A frame's column top
+/// rows are written as nulls, so the file records every column top as 0.
 pub(crate) struct PartitionFrameWriter {
     template: Partition,
     chunked_writer: ChunkedWriter<File>,
@@ -211,8 +190,6 @@ impl PartitionFrameWriter {
         &self.template
     }
 
-    /// Takes one frame and writes every row group it completes. Returns the rows
-    /// written to row groups so far.
     pub(crate) fn write_frame(&mut self, frame: Partition) -> ParquetResult<usize> {
         if self.is_finished {
             return Err(fmt_err!(InvalidLayout, "parquet frame writer is finished"));
@@ -224,8 +201,6 @@ impl PartitionFrameWriter {
         Ok(self.frames.rows_written_to_row_groups())
     }
 
-    /// Writes the last row group, the footer and the `_pm` sidecar. Returns the
-    /// size of the parquet file.
     pub(crate) fn finish(&mut self, sync: bool) -> ParquetResult<u64> {
         if self.is_finished {
             return Err(fmt_err!(InvalidLayout, "parquet frame writer is finished"));

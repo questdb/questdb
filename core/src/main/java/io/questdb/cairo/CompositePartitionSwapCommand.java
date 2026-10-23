@@ -40,13 +40,10 @@ import io.questdb.tasks.TableWriterTask;
  *     {@code liveRows} and the recorded tops go unused.</li>
  *     <li>MERGE ({@link #ofMerge}): the whole LOGICAL partition - the main directory plus every MOVE-TAIL split -
  *     copied into one staging directory, which replaces the run of {@code _txn} entries it was built from.</li>
- *     <li>PARQUET CONVERSION ({@link #ofParquetConversion}): a MERGE whose staging directory holds the logical
- *     partition as one parquet file instead of native column files. The run may be a single folder.</li>
- *     <li>PARQUET GENERATION ({@link #ofParquetGeneration}): a parquet copy of one plain native folder, installed
- *     beside its native files - nothing is swapped, the partition stays native.</li>
+ *     <li>PARQUET CONVERSION ({@link #ofParquetConversion}): a MERGE into one parquet file, maybe of one folder.</li>
+ *     <li>PARQUET GENERATION ({@link #ofParquetGeneration}): a parquet copy beside a plain native folder.</li>
  * </ul>
- * All five are the same errand - rebuild this partition off a reader - so they share one command and one lock
- * reason.
+ * All five are the same errand - rebuild this partition off a reader - so they share one command and one lock reason.
  */
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     /**
@@ -268,11 +265,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
     }
 
-    /**
-     * The PARQUET CONVERSION mode: {@link #ofMerge}, but the staging directory holds one parquet file and the run may
-     * be a single folder. The build reports the file's size through {@link #setParquetFileSize} before the command
-     * is published.
-     */
+    /** {@link #ofMerge} into one parquet file; the build calls {@link #setParquetFileSize} before publishing. */
     public void ofParquetConversion(
             TableToken tableToken,
             int tableId,
@@ -286,11 +279,6 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.parquetFileSize = 0;
     }
 
-    /**
-     * The PARQUET GENERATION mode: the staging directory, {@code <partition>.<nameTxn>.generating}, holds a parquet
-     * copy of the plain native folder at {@code partitionTimestamp}, built off a reader whose snapshot of the folder
-     * the rest of the arguments describe.
-     */
     public void ofParquetGeneration(
             TableToken tableToken,
             int tableId,

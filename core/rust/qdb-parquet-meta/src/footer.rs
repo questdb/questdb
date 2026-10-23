@@ -452,9 +452,7 @@ impl<'a> Footer<'a> {
             .map(|(_, content)| content)
     }
 
-    /// Total index rows the partition's symbol indexes cover, dead rows
-    /// included, or `None` when the footer uses the identity map (see
-    /// [`FooterFeatureFlags::INDEX_ROW_MAP_BIT`]).
+    /// Index rows the symbol indexes cover, dead included; `None` for the identity map.
     pub fn index_row_count(&self) -> Option<u64> {
         if !self.raw.feature_flags.has_index_row_map() {
             return None;
@@ -466,8 +464,7 @@ impl<'a> Footer<'a> {
         ))
     }
 
-    /// First index row of the row group at `index`, or `None` when the footer
-    /// uses the identity map (see [`FooterFeatureFlags::INDEX_ROW_MAP_BIT`]).
+    /// First index row of row group `index`; `None` for the identity map.
     pub fn row_group_index_row_lo(&self, index: usize) -> ParquetMetaResult<Option<u64>> {
         if index >= self.raw.row_group_count as usize {
             return Err(parquet_meta_err!(
@@ -481,7 +478,6 @@ impl<'a> Footer<'a> {
             return Ok(None);
         }
         let off = self.section_offsets[INDEX_ROW_MAP_SECTION_IDX] as usize + 8 + index * 8;
-        // Unwrap: Footer::new validated the section against the CRC offset.
         Ok(Some(u64::from_le_bytes(
             self.data[off..off + 8].try_into().unwrap(),
         )))
@@ -548,8 +544,6 @@ pub struct FooterBuilder {
     bloom_filter_section: Vec<u8>,
     seq_txn: Option<SeqTxn>,
     scratchpad: Vec<(u32, Vec<u8>)>,
-    /// `(index_row_count, index_row_lo per row group)`; `None` writes the
-    /// identity map (no section).
     index_row_map: Option<(u64, Vec<u64>)>,
 }
 
@@ -569,14 +563,11 @@ impl FooterBuilder {
         }
     }
 
-    /// Sets the index row map: the total index rows and the first index row of
-    /// each row group, in row group order. `None` writes the identity map.
     pub fn set_index_row_map(&mut self, map: Option<(u64, Vec<u64>)>) -> &mut Self {
         self.index_row_map = map;
         self
     }
 
-    /// Rejects an index row map whose length differs from the row group count.
     pub fn validate_index_row_map(&self) -> ParquetMetaResult<()> {
         if let Some((_, lows)) = &self.index_row_map {
             if lows.len() != self.row_group_offsets.len() {
@@ -709,8 +700,7 @@ impl FooterBuilder {
         }
 
         // Header-flag sections first (bloom), then footer-flag sections
-        // in ascending bit order: seq_txn (bit 0), scratchpad (bit 1),
-        // index row map (bit 32).
+        // in ascending bit order: seq_txn (bit 0), scratchpad (bit 1), index row map (bit 32).
         if !self.bloom_filter_section.is_empty() {
             buf.extend_from_slice(&self.bloom_filter_section);
         }
@@ -826,8 +816,6 @@ mod tests {
 
     #[test]
     fn index_row_map_truncated_section_rejected() {
-        // The flag claims a section for two row groups, but the bytes before the
-        // CRC only hold the base footer.
         let mut fb = FooterBuilder::new(0, 0);
         fb.add_row_group_offset(0).unwrap();
         fb.add_row_group_offset(64).unwrap();

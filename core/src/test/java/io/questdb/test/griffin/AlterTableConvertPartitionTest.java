@@ -1365,11 +1365,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testConvertPartitionsWithColTopSpanningRowGroupsRoundTrips() throws Exception {
-        // Converting to parquet records each column's top in the file, and the decoder returns
-        // empty buffers for every row group inside it. 10 rows before the columns were added:
-        // with row groups of 4, the top spans two whole row groups and part of a third.
-        // Converting back to native must still produce file rows and a column top that add up
-        // to the partition's rows, so that queries and a second conversion read the right rows.
+        // The top spans two whole row groups and part of a third; converting back to native must
+        // produce file rows and a column top that add up to the partition's rows.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1574,11 +1571,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void assertConvertToNativeIndexesSymbolColTopOnce(String indexClause, boolean isWal) throws Exception {
-        // Converting to parquet writes the column top's rows into the symbol index as explicit NULL
-        // postings and zeroes the top. Converting back to native publishes the leading row groups
-        // the decoder skips as the column top again, and the native index readers synthesize NULL
-        // rows for it, so the native partition's index must not hold those rows as well. 10 rows
-        // before the column was added, row groups of 4: the top covers two whole row groups.
+        // Back to native, the skipped leading row groups become the column top again, for which index
+        // readers synthesize NULL rows, so the native index must not also hold them.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
@@ -1614,8 +1608,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     11\t2024-01-01T00:11:00.000000Z\taa
                     14\t2024-01-01T00:14:00.000000Z\taa
                     """;
-            // the second round trip converts the native partition the first one wrote: the
-            // column top it published and the index it rebuilt
+            // the second round trip converts the column top and index the first one wrote
             for (int i = 0; i < 2; i++) {
                 execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
                 drainWalQueue();

@@ -49,18 +49,10 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.tools.TestUtils;
 
-/**
- * Reads the table while other transactions may be applied to it in parallel.
- * <p>
- * Half of the time it scans the table, to verify that the column files from intermediate
- * txns are not corrupted. Otherwise, when the table has an indexed SYMBOL column, it looks
- * up a random existing value of that column through the index, forward or backward in time.
- * NULL is picked more often than other values: it takes the index's special null paths. The
- * query cannot know the right answer while commits land under it, but every row it returns
- * must hold the looked-up value, in timestamp order, and re-reading a row by its row id must
- * return the same row. A cursor whose index entries point at rows of another layout fails the
- * value check, and a cursor that serves a re-read from recycled memory fails the last one.
- */
+// Reads contents of the table while other transactions may be applied to it in parallel.
+// That's to verify that the column files from intermediate txns are not corrupted.
+// Half the time it looks up an indexed SYMBOL value instead: every row must hold it, in timestamp order,
+// and re-read the same by row id, which catches stale index layouts and recycled decode memory.
 public class FuzzQueryOperation implements FuzzTransactionOperation {
     // NULL is looked up with this probability, any existing value otherwise
     private static final double NULL_KEY_PROBABILITY = 0.3;
@@ -147,8 +139,7 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
     }
 
     /**
-     * Looks up a random existing value of a random indexed SYMBOL column and checks the rows the
-     * query returns. Returns false when the table has no indexed SYMBOL column.
+     * Returns false when the table has no indexed SYMBOL column.
      */
     private boolean queryIndex(
             Rnd rnd,

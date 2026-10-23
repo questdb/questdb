@@ -37,10 +37,8 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * Wraps a {@link PartitionFrameCursor}, translating each delegate frame's directory-cumulative {@code [rowLo, rowHi)}
- * into one or more physical, file-row-space sub-frames.
- * <p>
- * A parquet partition gets the same treatment once an in-place O3 update has moved some of its row groups to other
- * index rows (see {@link ParquetMetaFileReader#getRowGroupIndexRowLo}): one sub-frame per row group, in index rows.
+ * into one or more physical, file-row-space sub-frames. A parquet partition with an index row map gets one sub-frame
+ * per row group, in index rows.
  */
 public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor {
     private final CompositePartitionFrame frame = new CompositePartitionFrame();
@@ -52,7 +50,6 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     private ParquetPartitionDecoder pendingParquetDecoder;
     private int pendingPartitionIndex = -1;
     private int pendingPieceOrdinal;
-    // Partition row of the first row of row group pendingPieceOrdinal, parquet only.
     private long pendingRowGroupStartRow;
 
     @Override
@@ -100,8 +97,7 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
                 return null;
             }
             if (delegateFrame.getPartitionFormat() != PartitionFormat.NATIVE) {
-                // A parquet partition is never composite, but its index rows differ from its partition rows once
-                // an in-place O3 update moved row groups to fresh index rows.
+                // Never composite, but an index row map makes its index rows differ from partition rows.
                 final ParquetPartitionDecoder decoder = delegateFrame.getParquetMetaDecoder();
                 if (decoder == null || !decoder.metadata().hasIndexRowMap()) {
                     return delegateFrame;
@@ -183,10 +179,6 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
         pendingParquetDecoder = null;
     }
 
-    /**
-     * Positions {@link #pendingPieceOrdinal} and {@link #pendingRowGroupStartRow} at the row group holding partition
-     * row {@code row}.
-     */
     private void findRowGroup(ParquetMetaFileReader metadata, long row) {
         long rowGroupStartRow = 0;
         int rowGroup = 0;
@@ -238,10 +230,7 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
         return null;
     }
 
-    /**
-     * Emits the next parquet sub-frame from the pending range: the part of one row group the range covers, in index
-     * rows, advancing {@link #pendingCumLo}/{@link #pendingCumHi} and the pending row group past it.
-     */
+    /** Emits the part of the pending row group the range covers, in index rows, and advances past it. */
     private @Nullable PartitionFrame nextRowGroup() {
         final ParquetMetaFileReader metadata = pendingParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();

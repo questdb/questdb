@@ -116,12 +116,7 @@ public final class TableUtils {
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
-    /**
-     * Marks a native partition's parquet copy - {@code data.parquet} and {@code _pm} - built off a
-     * {@link io.questdb.cairo.TableReader} snapshot and staged next to the partition before the writer installs it
-     * beside the native files, the partition staying native. Named {@code <partition>.<nameTxn>.generating}; see
-     * {@code PartitionCompactionScanJob}.
-     */
+    /** Suffix of {@code <partition>.<nameTxn>.generating}, the staging dir of a native partition's parquet copy. */
     public static final String GENERATING_DIR_MARKER = ".generating";
     public static final int INITIAL_TXN = 0;
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
@@ -2004,11 +1999,7 @@ public final class TableUtils {
         }
     }
 
-    /**
-     * {@link #produceParquetFromNative}, writing {@code data.parquet} and {@code _pm} into the directory
-     * {@code dstPartitionDir} names, which has to exist - a staging directory, say - rather than into a partition
-     * directory of the table. {@code dstPartitionDir} is trimmed back on return.
-     */
+    /** {@link #produceParquetFromNative} into the existing {@code dstPartitionDir}, trimmed back on return. */
     public static long produceParquetFromNativeInto(
             Path path,
             Path dstPartitionDir,
@@ -2255,7 +2246,6 @@ public final class TableUtils {
                 if (commitMode != CommitMode.NOSYNC) {
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
-                        // The partition dir itself.
                         other.trimTo(dstDirLen).$();
                         final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
                         if (dirFd != -1) {

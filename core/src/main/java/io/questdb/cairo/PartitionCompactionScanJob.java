@@ -62,9 +62,7 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
 /**
  * Periodically scans every WAL table for idle LOGICAL partitions - one period of the table's PARTITION BY unit, i.e.
  * the main directory plus every MOVE-TAIL split inside it - and dispatches the appropriate compaction entry point.
- * The sweep leaves non-WAL tables alone - see {@code scanTable}. A request still folds or rebuilds a non-WAL table's
- * logical partition - see {@code compactRequestedPartition}. A request can also ask for a logical partition to be
- * converted into one parquet folder, whatever its shape, in a single pass - see {@code convertRequestedPartition}.
+ * The sweep leaves non-WAL tables alone; requests still serve them.
  * <p>
  * A logical partition whose every folder has been idle for {@code cairo.partition.compaction.squash.idle.timeout} is
  * merged whole: one staging copy of all its live rows replaces its run of {@code _txn} entries with a single entry.
@@ -78,8 +76,7 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
     private static final int IN_FLIGHT_EXPIRY_OFFSET = 5;
-    // A PARQUET GENERATION's target generation: the folder keeps its name txn and generation, so what tells the
-    // record its install landed is the folder taking parquet_generated.
+    // A PARQUET GENERATION's in-flight target: its install landed once the folder takes parquet_generated.
     private static final long IN_FLIGHT_PARQUET_GENERATION = -2L;
     private static final int IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET = 1;
     private static final int IN_FLIGHT_STRIDE = 7;
@@ -231,11 +228,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * <p>
      * A folder this job never rebuilds counts as compact: a REMOTE one, or one that is not the whole of its logical
      * partition (see {@link #isParquetRebuildTarget}). Any other is compact unless its footer carries dead row-group
-     * bytes, a schema the table has moved on from (see {@link #isParquetSchemaStale}), or an index row map (see
-     * {@link ParquetMetaFileReader#hasIndexRowMap}). The rebuild clears all three. The map matters to the upload: the
-     * {@code _pm} it ships is built from the parquet footer alone and so always has the identity map, while the local
-     * index files a cold switch links next to it describe the local map's index rows. The in-place update that adds
-     * a map also leaves the footer it replaced as dead bytes, so the map test only states that dependency outright.
+     * bytes, a schema the table has moved on from (see {@link #isParquetSchemaStale}), or an index row map: an uploaded
+     * {@code _pm} always has the identity map, so local index files would not match it.
      *
      * @param parquetMeta the folder's {@code _pm}, its footer resolved against the folder's committed parquet file
      *                    size in {@code txFile}
@@ -564,9 +558,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (command.isFullyMaterialized() || command.isIndexRowMapDropped()) {
                 // Every column of the new file starts at row 0 and the swap zeroes every column top, so the
                 // source's index files - built past a top, or never built for a column the source file lacked -
-                // do not describe the copy. Neither do index files an in-place O3 update grew over an index
-                // row map the copy drops. Build them afresh off the new file, here, so the swap stays
-                // metadata-only.
+                // do not describe the copy. Build them afresh off the new file, here, so the swap stays
+                // metadata-only. Same for index files grown over an index row map the copy drops.
                 getParquetIndexBuilder().buildIndexes(
                         other,
                         command.getNewParquetFileSize(),
@@ -740,17 +733,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         return command;
     }
 
-    /**
-     * Writes the live rows of a WHOLE logical partition - every folder in {@code [lo, hi)}, plain or composite - into
-     * one parquet file in a staging directory, straight off {@code reader}'s own snapshot and holding no writer: each
-     * live piece goes to the encoder as one frame (see {@link ParquetPartitionConverter}), so nothing is first folded
-     * into a native directory. The directory's indexes are built off the new file.
-     *
-     * @param folders  the source folders, {@link #LONGS_PER_SCANNED_FOLDER} longs each, as {@link #collectFolders}
-     *                 filled them
-     * @param liveRows the live rows the file has to end up holding
-     * @return a command ready to publish
-     */
     private CompositePartitionSwapCommand buildParquetConversion(
             TableToken tableToken,
             TableReader reader,
@@ -786,8 +768,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 ff.rmdir(other, false);
             }
             TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
-            // The file's version: the latest one among the folders it replaces, the rule a squash applies. A folder
-            // with none recorded falls back to the table's.
+            // The latest version among the folders it replaces (the squash rule), else the table's.
             final PartitionGeometry readerGeometry = reader.getGeometry();
             long seqTxn = -1;
             for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
@@ -802,7 +783,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             final ParquetPartitionConverter converter = getParquetConverter();
             final long parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, null, Double.NaN);
             if (converter.getRowCount() != liveRows) {
-                // The row count the swap will publish has to be the one the file holds.
                 throw CairoException.critical(0)
                         .put("converted logical partition holds a different row count than _txn states [table=")
                         .put(tableToken.getTableName())
@@ -823,8 +803,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             built = true;
         } finally {
             if (!built) {
-                // Best-effort: the swap only cleans up a directory it was actually handed via a command,
-                // so a partial build has to remove its own.
                 if (ff.exists(other.$())) {
                     ff.rmdir(other, false);
                 }
@@ -934,12 +912,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * compact parquet one, has a swap in flight, is the active one, or holds a folder no native copy can carry - is
      * dropped, and the requester asks again on its next cycle if it still needs the fold.
      * <p>
-     * A non-WAL table is served too. Its writer may hold a transaction open when the swap reaches it, and every swap -
-     * a parquet rebuild, a REWRITE, a MERGE - commits around that transaction unless it may write to the partition
-     * (see {@link TableWriter#swapCompactedParquetPartition}). MAKE-PLAIN has no such path - it commits the writer
-     * itself and trims the column files back to the committed row count - so a non-WAL composite folder takes a REWRITE
-     * instead. A swap the writer refuses leaves the in-flight record standing until its timeout, which spaces out the
-     * rebuilds for a writer that keeps writing to the partition.
+     * A non-WAL table is served too, but takes REWRITE for MAKE-PLAIN, which cannot commit around an open transaction.
      *
      * @return true when a fold was dispatched, false for a request that cost no more than a {@code _txn} read (and,
      * for a lone parquet folder, a {@code _pm} footer read)
@@ -1035,15 +1008,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    /**
-     * Converts the requested logical partition into one parquet folder in a single pass, whatever its shape - one
-     * plain folder, a composite one, a run of splits - see {@link #buildParquetConversion}. Like a MERGE it never
-     * touches the active logical partition, whose files carry rows no piece accounts for. A logical partition already
-     * in parquet is left alone. A REMOTE folder - a native partition uploaded as it stood - is converted too: its
-     * rows do not change, so the swap carries the upload over when every folder of the run had one.
-     *
-     * @return true when the conversion was dispatched
-     */
+    /** Converts the requested logical partition into one parquet folder; true when dispatched. */
     private boolean convertRequestedPartition(
             TableToken tableToken,
             int timestampType,
@@ -1071,14 +1036,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         return true;
     }
 
-    /**
-     * Builds a parquet copy of the requested logical partition's lone plain native folder and has the writer install it
-     * beside the folder's native files - see {@link TableWriter#installGeneratedParquet}. The partition stays native:
-     * cold storage uploads the copy. The active partition, a folder that already has a copy, and an uploaded one are
-     * left alone.
-     *
-     * @return true when the build was dispatched
-     */
     private boolean generateRequestedParquet(
             TableToken tableToken,
             int timestampType,
@@ -1101,10 +1058,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * One entry of the source partition directory: everything but {@code data.parquet}, {@code _pm} and the staging
-     * pair Enterprise storage policy leaves in a partition directory is an index file and is carried into the staging
-     * directory, hard-linked where the file system allows. A staging file describes the source directory's own
-     * generation, so it must not outlive it.
+     * One entry of the source partition directory: everything but {@code data.parquet}, {@code _pm} and their staging
+     * pair is an index file and is carried into the staging directory, hard-linked where the file system allows.
      */
     private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
         if (!Files.notDots(pUtf8NameZ)) {
@@ -1396,11 +1351,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         );
     }
 
-    /**
-     * Builds a parquet copy of the logical partition's lone plain native folder off a {@link TableReader} snapshot,
-     * into {@code <partition>.<nameTxn>.generating}, then publishes the {@link CompositePartitionSwapCommand} that
-     * installs it beside the native files.
-     */
     private void dispatchParquetGeneration(TableToken tableToken, long partitionTimestamp, long expectedState) {
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
         final TimestampDriver timestampDriver;
@@ -1486,11 +1436,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         );
     }
 
-    /**
-     * Builds the whole logical partition's parquet conversion off a {@link TableReader} snapshot
-     * ({@link #buildParquetConversion}), then publishes the {@link CompositePartitionSwapCommand} that replaces its run
-     * of {@code _txn} entries with one parquet entry.
-     */
     private void dispatchParquetConversion(TableToken tableToken, long logicalPartitionTimestamp, long expectedState) {
         final CompositePartitionSwapCommand command;
         final TimestampDriver timestampDriver;
@@ -1507,7 +1452,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             folderCount = hi - lo;
             collectFolders(txFile, reader.getGeometry(), lo, hi);
             if (logicalPartitionState(folders) != expectedState) {
-                // The logical partition moved between the request's _txn snapshot and this reader's.
                 return;
             }
             long liveRows = 0;

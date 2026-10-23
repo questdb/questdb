@@ -2194,8 +2194,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         long parquetSize = parquetFileSize;
-        // Index rows the committed snapshot's symbol indexes cover; an in-place update
-        // appends the rows of the row groups it writes from here on.
+        // Index rows the committed indexes cover; an in-place update appends from here.
         long prevIndexRowCount = 0;
         try {
             int parquetNameLen = path.size();
@@ -2998,8 +2997,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .$(", unusedBytes=").$size(resultUnusedBytes)
                     .$(", fullyMaterialized=").$(isFullyMaterialized)
                     .I$();
-            // The compacted file uses the identity index row map: index files built over another map
-            // describe the source's index rows, not the copy's.
+            // The copy uses the identity index row map; index files built over another map do not describe it.
             command.setResult(newParquetSize, isFullyMaterialized, parquetMeta.hasIndexRowMap());
             isBuilt = true;
         } finally {
@@ -5902,22 +5900,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    /**
-     * Brings the symbol indexes of a parquet partition in line with the file the O3 job just
-     * wrote. The indexes store index rows, see {@link ParquetMetaFileReader#getRowGroupIndexRowLo}.
-     * <p>
-     * In update mode the file and its indexes stay in the live directory, which readers of the
-     * committed snapshot keep using. The update keeps the index rows of the row groups it kept
-     * and gives the row groups it wrote fresh index rows past {@code prevIndexRowCount}, so this
-     * method only appends those rows to the existing indexes. Entries a reader's snapshot refers
-     * to stay as they are. A column whose committed column top is nonzero has an index without
-     * the committed rows, so update mode builds it in full. In rewrite mode, and for a fresh
-     * partition, the indexes are built from scratch in the new directory.
-     *
-     * @param srcNameTxn        name txn of the directory that holds the file and its indexes
-     * @param isInPlaceUpdate   true when the O3 job updated the file in its live directory
-     * @param prevIndexRowCount index row count of the committed snapshot, used in update mode
-     */
+    /** Syncs symbol indexes with the new parquet file: append past {@code prevIndexRowCount}, or rebuild. */
     private static void updateParquetIndexes(
             int partitionBy,
             long partitionTimestamp,
@@ -6014,14 +5997,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
 
-                        // Update mode appends to the committed index, which must then hold every index
-                        // row below prevIndexRowCount. It does when the committed column top is 0. A
-                        // nonzero top on a parquet partition spans the whole partition (or the column
-                        // is absent there, -1), and an index built under it, e.g. by ADD INDEX, holds
-                        // none of its rows. The commit zeroes the top, so a full build replaces that
-                        // index. Readers of the committed snapshot answer such a column with stand-in
-                        // null readers and never open its index files. A full build also creates the
-                        // index files of a column that has none yet.
+                        // Appending needs the committed index to hold every index row below prevIndexRowCount, true
+                        // only under a zero column top; an index built under a nonzero top holds none of its rows.
                         final boolean isAppend = isInPlaceUpdate
                                 && tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex) == 0
                                 && ff.exists(IndexFactory.keyFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn));
@@ -6044,14 +6021,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // zeros it when the partition update is committed, and an O3 merge
                         // can place values below that old top.
                         if (newPartitionSize > 0) {
-                            // Index rows below this are already in the index. A failed attempt at
-                            // this commit can have left entries at or above it, which must go before
-                            // the rows are added again. rollbackValues() trims them even when the
-                            // failure left the index's max value unchanged.
+                            // A failed attempt at this commit may have left entries at or above appendLo;
+                            // rollbackValues() trims them even when the max value did not move.
                             final long appendLo = isAppend ? prevIndexRowCount : 0;
                             if (isAppend) {
-                                // A posting rollback reseals; tag that chain entry with the upcoming
-                                // txn too, so readers of the committed snapshot never pick it.
+                                // Tag the rollback's reseal with the upcoming txn so committed readers never pick it.
                                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                                 indexWriter.rollbackValues(appendLo - 1);
                             }
@@ -6060,8 +6034,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             parquetColumns.add(parquetColumnIndex);
                             parquetColumns.add(ColumnType.SYMBOL);
 
-                            // Index values grow per key, so add the row groups in the order of their
-                            // index rows. A kept row group sits below appendLo and is skipped.
+                            // Index values grow per key; kept row groups sit below appendLo and are skipped.
                             parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
                             for (int i = 0, n = rowGroupOrder.size(); i < n; i++) {
                                 final int rowGroupIndex = rowGroupOrder.getQuick(i);
@@ -6119,8 +6092,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // finite-future.
                             try {
                                 if (isAppend) {
-                                    // Appends one generation; a dense commit would rewrite the index
-                                    // the committed snapshot reads.
+                                    // A dense commit would rewrite the index the committed snapshot reads.
                                     indexWriter.commit();
                                 } else {
                                     indexWriter.commitDense();

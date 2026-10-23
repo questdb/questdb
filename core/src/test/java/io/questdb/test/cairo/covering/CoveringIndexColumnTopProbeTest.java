@@ -155,12 +155,8 @@ public class CoveringIndexColumnTopProbeTest extends AbstractCairoTest {
     @Test
     public void testParquetPartitionMatchesSearchWalk() throws Exception {
         // The probe reads _cv and the transaction file only, so a Parquet partition must answer
-        // as its _cv records say. The record branch walks past a converted partition. CONVERT
-        // PARTITION writes every column from row 0 and publishes a zero top for each - one it
-        // records for a column the partition predates too - so converting the deciding partition
-        // sends the walk off the end, and converting a predating partition moves the answer from
-        // the predates branch to the record branch of the next partition. The probe has to follow
-        // the walk each time.
+        // as its _cv records say. CONVERT PARTITION publishes a zero top for every column, even one
+        // the partition predates, so each conversion moves where the walk decides.
         assertMemoryLeak(() -> {
             createColumnTopTable("t_probe_parquet");
             assertProbeMatchesSearchWalk("t_probe_parquet", "TOP_RECORD@2");

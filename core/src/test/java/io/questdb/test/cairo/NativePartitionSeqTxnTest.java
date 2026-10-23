@@ -178,9 +178,8 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             // writing physical NULL values or leaving the older-partition -1 sentinel.
             execute("ALTER TABLE t ADD COLUMN x STRING");
             drainWalQueue();
-            // Converted while still active: the active partition's conversion keeps an all-NULL column's full
-            // top in the parquet file. An older partition goes through the single-pass conversion instead,
-            // which writes every column from row 0 and publishes every top as zero.
+            // Converted while active, which keeps an all-NULL column's full top in the parquet file; the
+            // single-pass conversion of an older partition publishes every top as zero.
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
             execute("INSERT INTO t (ts, x) VALUES ('2024-01-02T00:00:00', 'active')");
@@ -540,9 +539,8 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
 
     @Test
     public void testParquetCopyNonWalLeavesUnknownVersion() throws Exception {
-        // Non-WAL partition never carries a seqTxn (offset 3 stays -1). Installing its parquet copy
-        // skips the stamp because there is no real version to write, yet still flags the partition
-        // parquet-generated and reads its native data unchanged.
+        // Non-WAL partition never carries a seqTxn (offset 3 stays -1): installing its copy skips the
+        // stamp but still flags the partition parquet-generated.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
@@ -1367,8 +1365,7 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         }
     }
 
-    // Has the compaction job build a parquet copy of table t's first partition and install it beside the
-    // native files, the way cold storage asks before it uploads a native partition. Returns its timestamp.
+    // Builds and installs a parquet copy of the first partition, as cold storage asks. Returns its timestamp.
     private long installParquetCopy(String table) throws Exception {
         final TableToken tt = engine.verifyTableName(table);
         final long partitionTs;

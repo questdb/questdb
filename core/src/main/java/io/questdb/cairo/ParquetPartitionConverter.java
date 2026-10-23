@@ -44,18 +44,11 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Writes the live rows of one logical partition - every folder of it, plain or composite, main directory or split -
- * into a single parquet file, straight off a {@link TableReader} snapshot and holding no writer. Each live piece of
- * each folder is handed to {@link PartitionFrameEncoder} as one frame, in {@code _txn} order and then piece order,
- * which is timestamp order; the encoder cuts row groups across the frames. Nothing is first folded into a native
- * directory.
- * <p>
- * The result holds every column from row 0: a frame's column top is written as nulls, so the caller publishes the
- * partition with every column top zero. Not thread-safe.
+ * Writes the live rows of one logical partition into a single parquet file off a {@link TableReader} snapshot,
+ * holding no writer. Each live piece is one {@link PartitionFrameEncoder} frame; tops are written as nulls.
  */
 final class ParquetPartitionConverter implements QuietCloseable {
-    // Longs per column of a frame: column top, primary address and size, secondary address and size, symbol
-    // offsets address and count - see PartitionFrameEncoder.
+    // Per column: top, primary addr/size, secondary addr/size, symbol offsets addr/count - see PartitionFrameEncoder.
     private static final int FRAME_LONGS_PER_COLUMN = 7;
     private static final Log LOG = LogFactory.getLog(ParquetPartitionConverter.class);
     private final DirectIntList bloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
@@ -79,16 +72,6 @@ final class ParquetPartitionConverter implements QuietCloseable {
         Misc.free(frameData);
     }
 
-    /**
-     * Writes {@code data.parquet} and {@code _pm} of the folders {@code [lo, hi)} of {@code reader}'s snapshot into
-     * {@code dstPartitionDir}, which has to exist.
-     *
-     * @param seqTxn             the version the footer is stamped with
-     * @param bloomFilterColumns comma-separated names of the columns to build bloom filters for - the CONVERT
-     *                           PARTITION override - or null to take them from the column metadata
-     * @param bloomFilterFpp     the bloom filter false-positive probability, NaN for the configured one
-     * @return the parquet file size; {@link #getRowCount()} is the row count it holds
-     */
     long convert(
             TableReader reader,
             int lo,
@@ -124,8 +107,7 @@ final class ParquetPartitionConverter implements QuietCloseable {
             final int nameStart = columnNames.size();
             columnNames.put(metadata.getColumnName(columnIndex));
             this.columnMetadata.add(columnNames.size() - nameStart);
-            // The file keys each column by its ORIGINAL writer index, so a column re-keyed by ALTER COLUMN TYPE is
-            // still found under the id the rest of the parquet code looks it up by.
+            // Keyed by ORIGINAL writer index, so a column re-keyed by ALTER COLUMN TYPE keeps its parquet id.
             this.columnMetadata.add((long) columnMetadata.getOriginalWriterIndex() << 32 | (columnType & 0xFFFFFFFFL));
             this.columnMetadata.add(columnMetadata.getParquetEncodingConfig());
             activeColumnCount++;
@@ -191,9 +173,7 @@ final class ParquetPartitionConverter implements QuietCloseable {
             final boolean isSync = configuration.getCommitMode() != CommitMode.NOSYNC;
             final long parquetFileSize = PartitionFrameEncoder.finish(writer, isSync);
             if (isSync) {
-                // The encoder syncs both files itself; the _pm fd is ours, so it goes through the facade too, the
-                // way TableUtils.produceParquetFromNativeInto syncs it. Both files are new in the directory, so
-                // its entries have to be made durable as well before the caller's _txn commit points at them.
+                // The encoder syncs both files; the _pm fd is ours, and new dir entries must be durable before _txn.
                 ff.fsync(parquetMetaFd);
                 if (!Os.isWindows()) {
                     dstPartitionDir.trimTo(dstDirLen).$();
@@ -219,10 +199,6 @@ final class ParquetPartitionConverter implements QuietCloseable {
         return rowCount;
     }
 
-    /**
-     * Whether any row of the symbol column is null in the folders {@code [lo, hi)}: a column top makes one, and so does
-     * a null value the symbol table holds.
-     */
     private static boolean hasNulls(TableReader reader, int lo, int hi, int columnIndex) {
         if (reader.getSymbolMapReader(columnIndex).containsNullValue()) {
             return true;
@@ -241,10 +217,7 @@ final class ParquetPartitionConverter implements QuietCloseable {
         return false;
     }
 
-    /**
-     * Hands the encoder the FILE rows {@code [rowLo, rowLo + rows)} of folder {@code partitionIndex} as one frame. A
-     * column's top is in file rows too: rows below it are null and its files start at it.
-     */
+    /** Hands the encoder FILE rows {@code [rowLo, rowLo + rows)} of a folder as one frame; tops are in file rows. */
     private void writeFrame(long writer, TableReader reader, int partitionIndex, long rowLo, long rows) {
         final TableMetadata metadata = reader.getMetadata();
         final int columnBase = reader.getColumnBase(partitionIndex);
@@ -262,7 +235,6 @@ final class ParquetPartitionConverter implements QuietCloseable {
                     : Math.max(0, reader.getColumnTop(columnBase, columnIndex));
             final long frameTop = columnTop - rowLo >= rows ? rows : Math.max(0, columnTop - rowLo);
             final long dataRows = rows - frameTop;
-            // The first file row of the column the frame reads.
             final long fileRowLo = dataRows > 0 ? Math.max(rowLo, columnTop) - columnTop : 0;
             frameData.add(frameTop);
             if (dataRows == 0) {

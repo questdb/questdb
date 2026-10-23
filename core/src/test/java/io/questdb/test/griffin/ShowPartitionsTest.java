@@ -286,8 +286,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            // Stage the generated-not-switched shape: the compaction job builds a parquet copy of the first
-            // partition and installs it beside the native files, the partition staying native-format.
+            // Generated-not-switched: a parquet copy installed beside the native files of the first partition.
             TableToken token = engine.verifyTableName(tableName);
             final long partitionTs;
             final long nameTxn;

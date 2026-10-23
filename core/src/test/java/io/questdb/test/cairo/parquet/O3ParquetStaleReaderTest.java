@@ -317,11 +317,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testIndexCursorOpenedBeforeInPlaceO3KeepsItsSnapshot() throws Exception {
-        // Reproduces https://github.com/questdb/questdb/issues/7910: an in-place
-        // O3 update of a parquet partition rebuilds the SYMBOL index files under
-        // the same names, so a cursor opened before the commit decodes the old
-        // parquet footer while reading row ids from the rebuilt index.
-        // Small row groups and permissive rewrite thresholds keep the merge in place.
+        // Reproduces https://github.com/questdb/questdb/issues/7910: an in-place O3 update rebuilds
+        // the SYMBOL index files under the same names, under a cursor that decodes the old footer.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
@@ -349,7 +346,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             assertQuery(query).noLeakCheck().assertsPlanContaining("Index forward scan on: s");
             try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    // O3 commit into the parquet partition while the cursor is open
                     execute("INSERT INTO pt VALUES ('a', 101, '2024-01-01T04:30:00.000000Z')");
                     drainWalQueue();
                     Assert.assertEquals(

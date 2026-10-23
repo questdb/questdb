@@ -108,18 +108,16 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction holding a row
-     * for the partition: the staged copy was built off a reader snapshot taken before that uncommitted row
-     * existed, so swapping it in would drop it. Declining leaves the transaction for its owner to commit normally - which is asserted
+     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction holding a row for
+     * the partition: the staged copy predates that row, so swapping it in would drop it. Declining leaves the
+     * transaction for its owner to commit normally - which is asserted
      * here, row by row.
      * <p>
      * The table stays non-WAL because that is the shape the guard was written for: {@code
      * TableUpdateDetails.commitIfMaxUncommittedRowsCountReached()} ticks a non-WAL writer every {@code
      * cairo.writer.tick.rows.count} rows WITHOUT committing first, so an ILP-over-TCP table sits
-     * mid-transaction for most of a tick. A swap requested for such a table does reach the writer, and it
-     * commits around a transaction that cannot touch the partition (see
-     * {@link #testSwapCommitsAroundAnOpenTransactionThatMissesThePartition}); an O3 row inside the partition
-     * is what it must refuse. The test calls the entry point directly.
+     * mid-transaction for most of a tick. A swap commits around a transaction that cannot touch the partition; an
+     * O3 row inside the partition is what it must refuse.
      */
     @Test
     public void testSwapInsideAnOpenTransactionIsRefused() throws Exception {
@@ -177,9 +175,121 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * A compaction request serves a non-WAL table's lone parquet partition: the sweep leaves non-WAL tables
-     * alone (see {@link #testIdleSweepLeavesANonWalTableAlone}), but Enterprise cold storage asks for the
-     * rebuild explicitly before it uploads the partition. An idle writer takes the swap inline.
+     * The swap must not commit around a transaction that opened a new partition: the swap's commit would move
+     * {@code _txn} past that directory's name txn without listing it, and the O3 purge job would delete it.
+     */
+    @Test
+    public void testSwapAroundAnOpenTransactionThatOpenedAPartitionIsRefused() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("op", false);
+            final TableToken tableToken = engine.verifyTableName("op");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long parquetFileSizeBefore = parquetPartitionFileSize(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                appendRow(ownerWriter, "2020-01-03T00:00:00.000000Z", 202, "k1");
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertFalse("the fixture must hold no O3 row", ownerWriter.hasO3());
+                Assert.assertEquals("the row must have opened a partition", 3, ownerWriter.getPartitionCount());
+
+                try {
+                    ownerWriter.swapCompactedParquetPartition(
+                            DAY_2020_01_01,
+                            nameTxnBefore,
+                            parquetFileSizeBefore,
+                            ownerWriter.getMetadataVersion(),
+                            parquetFileSizeBefore,
+                            false
+                    );
+                    Assert.fail("the swap ran around a transaction that opened a partition");
+                } catch (TableReferenceOutOfDateException ignore) {
+                }
+
+                Assert.assertTrue("the swap committed the writer's open transaction", ownerWriter.inTransaction());
+                Assert.assertEquals("a declined swap must not replace the live partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                assertUnusedBytesPositive(tableToken);
+                ownerWriter.commit();
+            }
+
+            assertQuery("SELECT count() FROM op")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n17\n");
+            assertQuery("SELECT a, s, ts FROM op WHERE ts >= '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    99\tk1\t2020-01-02T00:00:00.000000Z
+                                    202\tk1\t2020-01-03T00:00:00.000000Z
+                                    """
+                    );
+        });
+    }
+
+    /**
+     * The last committed partition is never swapped around an open transaction, even one with no rows for it.
+     */
+    @Test
+    public void testSwapOfTheLastPartitionAroundAnOpenTransactionIsRefused() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("lp", false);
+            execute("ALTER TABLE lp DROP PARTITION LIST '2020-01-02'");
+            final TableToken tableToken = engine.verifyTableName("lp");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long parquetFileSizeBefore = parquetPartitionFileSize(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                Assert.assertEquals("the parquet day must be the last partition", 1, ownerWriter.getPartitionCount());
+                appendRow(ownerWriter, "2019-12-31T12:00:00.000000Z", 201, "k2");
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertTrue("the fixture must hold an O3 row", ownerWriter.hasO3());
+
+                try {
+                    ownerWriter.swapCompactedParquetPartition(
+                            DAY_2020_01_01,
+                            nameTxnBefore,
+                            parquetFileSizeBefore,
+                            ownerWriter.getMetadataVersion(),
+                            parquetFileSizeBefore,
+                            false
+                    );
+                    Assert.fail("the swap of the last partition ran around an open transaction");
+                } catch (TableReferenceOutOfDateException ignore) {
+                }
+
+                Assert.assertTrue("the swap committed the writer's open transaction", ownerWriter.inTransaction());
+                Assert.assertEquals("a declined swap must not replace the live partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                ownerWriter.commit();
+            }
+
+            assertQuery("SELECT count() FROM lp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n16\n");
+            assertQuery("SELECT a, s, ts FROM lp WHERE ts < '2020-01-01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    201\tk2\t2019-12-31T12:00:00.000000Z
+                                    """
+                    );
+        });
+    }
+
+    /**
+     * The sweep skips non-WAL tables, but Enterprise cold storage requests the rebuild explicitly.
      */
     @Test
     public void testRequestCompactsANonWalParquetPartition() throws Exception {
@@ -207,22 +317,13 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * A swap queued on a non-WAL writer that holds a transaction open commits on its own when none of the
-     * transaction's rows can land in the swapped partition. The transaction here holds every kind of pending
-     * state: in-order rows appended to the last partition, an in-order row that opens a new partition, and an
-     * O3 row for the last partition. None is published by the swap; the owner's commit publishes them all on
-     * top of the swapped-in partition.
+     * A swap commits around an open non-WAL transaction none of whose rows can land in the swapped partition.
      */
     @Test
     public void testSwapCommitsAroundAnOpenTransactionThatMissesThePartition() throws Exception {
         assertSwapAroundOpenTransaction(true);
     }
 
-    /**
-     * {@link #testSwapCommitsAroundAnOpenTransactionThatMissesThePartition}, with the owner rolling its
-     * transaction back instead: the swap, committed on its own, survives the rollback, and none of the
-     * pending rows does.
-     */
     @Test
     public void testSwapCommittedAroundAnOpenTransactionSurvivesItsRollback() throws Exception {
         assertSwapAroundOpenTransaction(false);
@@ -1024,7 +1125,6 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
 
             try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
                 appendRow(ownerWriter, "2020-01-02T01:00:00.000000Z", 201, "k2");
-                appendRow(ownerWriter, "2020-01-03T00:00:00.000000Z", 202, "k1");
                 appendRow(ownerWriter, "2020-01-02T00:30:00.000000Z", 203, "k2");
                 Assert.assertTrue(ownerWriter.inTransaction());
                 Assert.assertTrue("the fixture must hold O3 rows", ownerWriter.hasO3());
@@ -1059,7 +1159,7 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n19\n");
+                    .returns("count\n18\n");
             assertQuery("SELECT count() FROM ot WHERE s = 'k1' AND ts IN '2020-01-01'")
                     .noLeakCheck()
                     .expectSize()
@@ -1074,7 +1174,6 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                                     99\tk1\t2020-01-02T00:00:00.000000Z
                                     203\tk2\t2020-01-02T00:30:00.000000Z
                                     201\tk2\t2020-01-02T01:00:00.000000Z
-                                    202\tk1\t2020-01-03T00:00:00.000000Z
                                     """
                     );
         });

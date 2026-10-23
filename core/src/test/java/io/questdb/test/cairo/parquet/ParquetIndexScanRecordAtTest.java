@@ -34,10 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * An index scan over a parquet partition decodes every row group frame, matching or not, and
- * the page frame memory pool recycles its decode buffers once its cache is full. A record bound
- * to a recycled buffer must not keep serving it: {@code recordAt()} on a row of an early frame,
- * after the scan decoded later frames into that frame's buffer, has to decode the frame again.
+ * {@code recordAt()} on an early frame whose decode buffer the pool recycled for later frames must decode it again.
  */
 public class ParquetIndexScanRecordAtTest extends AbstractCairoTest {
 

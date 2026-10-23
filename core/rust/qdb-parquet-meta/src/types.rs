@@ -240,18 +240,11 @@ impl FooterFeatureFlags {
     /// length])*]`.
     pub const SCRATCHPAD_BIT: u64 = 1 << 1;
 
-    /// The footer maps each row group to the index rows its rows occupy.
-    /// Section: `[u64 index_row_count][u64 index_row_lo; row_group_count]`.
-    /// Row group `i` occupies index rows `[index_row_lo[i], index_row_lo[i] +
-    /// num_rows[i])`. An in-place update keeps the index rows of the row groups
-    /// it keeps and gives the row groups it writes fresh rows past
-    /// `index_row_count`, so the partition's symbol indexes only ever grow.
-    /// Absent means the identity map: row group `i` starts at the sum of the
-    /// preceding row groups' rows. Required: a reader that ignored the map would
-    /// resolve index rows at the wrong row group.
+    /// Required: row group `i` occupies `num_rows[i]` index rows from `index_row_lo[i]`.
+    /// Section: `[u64 index_row_count][u64 index_row_lo; row_group_count]`. Absent means the
+    /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
     pub const INDEX_ROW_MAP_BIT: u64 = 1 << 32;
 
-    /// Required footer bits this reader understands.
     pub const KNOWN_REQUIRED: u64 = Self::INDEX_ROW_MAP_BIT;
 
     pub const fn new() -> Self {

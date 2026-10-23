@@ -223,10 +223,8 @@ pub fn update_parquet_metadata(
         existing_parquet_meta_file_size,
     )?;
 
-    // A row group the update kept may sit at a new position, for example when
-    // the update inserted a row group in front of it. Find it by fingerprint
-    // so the writer reuses its block, bloom filters and index rows instead of
-    // treating it as new data.
+    // A kept row group may have shifted; find it by fingerprint so the writer
+    // reuses its block, bloom filters and index rows.
     let mut existing_by_fingerprint: HashMap<u64, usize> =
         HashMap::with_capacity(existing_rg_count);
     for (i, fp) in existing_fingerprints.iter().enumerate() {
@@ -1725,10 +1723,7 @@ mod tests {
 
     #[test]
     fn update_parquet_metadata_reuses_shifted_row_group() {
-        // An update that inserts a row group in front of the committed one shifts
-        // it to position 1. update_parquet_metadata must recognize it by its
-        // fingerprint, reuse its block, and keep its index rows: the inserted row
-        // group takes fresh index rows past the committed ones.
+        // Inserting in front shifts the committed row group to 1; it keeps its block and index rows.
         let parquet_data = write_multi_column_parquet(80);
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
@@ -1792,7 +1787,6 @@ mod tests {
         // the shifted row group reuses the committed block and keeps index rows [0, n)
         assert_eq!(footer.row_group_block_offset(1).unwrap(), committed_block);
         assert_eq!(footer.row_group_index_row_lo(1).unwrap(), Some(0));
-        // the inserted row group takes [n, 2n)
         assert_eq!(
             footer.row_group_index_row_lo(0).unwrap(),
             Some(committed_rows)

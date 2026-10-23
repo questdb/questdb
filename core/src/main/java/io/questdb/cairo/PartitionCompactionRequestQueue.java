@@ -30,10 +30,10 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Os;
 
 /**
- * Bounded, lossy queue of requests to fold one logical partition into a single plain folder, to convert it into a
- * single parquet folder, or to build a parquet copy of it beside its native files, served by
- * {@link PartitionCompactionScanJob} ahead of its own sweep. Any thread may make one - the enterprise storage policy
- * does - and a full queue refuses rather than blocks. Requests are not de-duplicated: a requester that wants the fold keeps asking
+ * Bounded, lossy queue of requests to fold a logical partition into one plain folder, convert it into one parquet
+ * folder, or build a parquet copy beside its native files, served by {@link PartitionCompactionScanJob} ahead of its
+ * own sweep. A full queue refuses rather than blocks. Requests are not de-duplicated: a requester that wants the fold
+ * keeps asking
  * until it sees it, and the job ignores a request whose logical partition is already plain or already has a swap
  * in flight.
  */
@@ -92,23 +92,12 @@ public class PartitionCompactionRequestQueue {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_FOLD);
     }
 
-    /**
-     * Asks for the logical partition at {@code logicalPartitionTimestamp} - whatever its folders, plain or composite,
-     * main directory or splits - to be converted into one parquet folder in a single pass.
-     *
-     * @return false when the queue is full and the request was not taken
-     */
+    /** Asks for the logical partition to be converted into one parquet folder; false when the queue is full. */
     public boolean tryRequestParquetConversion(TableToken tableToken, long logicalPartitionTimestamp) {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_CONVERSION);
     }
 
-    /**
-     * Asks for a parquet copy of the logical partition at {@code logicalPartitionTimestamp} to be built and installed
-     * beside its native files, the partition staying native - what cold storage uploads a native partition from. A
-     * logical partition that is not one plain folder is folded first, and the requester asks again.
-     *
-     * @return false when the queue is full and the request was not taken
-     */
+    /** Asks for a parquet copy installed beside the native files; false when the queue is full. */
     public boolean tryRequestParquetGeneration(TableToken tableToken, long logicalPartitionTimestamp) {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION);
     }
@@ -131,9 +120,6 @@ public class PartitionCompactionRequestQueue {
         private long logicalPartitionTimestamp = Long.MIN_VALUE;
         private TableToken tableToken;
 
-        /**
-         * One of {@link #KIND_FOLD}, {@link #KIND_PARQUET_CONVERSION}, {@link #KIND_PARQUET_GENERATION}.
-         */
         public int getKind() {
             return kind;
         }

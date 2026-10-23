@@ -526,8 +526,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
             frame.partitionLo = adjustedLo;
             frame.partitionHi = partitionHi;
-            // The partition's symbol indexes store index rows; see
-            // ParquetMetaFileReader#getRowGroupIndexRowLo.
+            // Symbol indexes store index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo.
             frame.pieceShift = metadata.getRowGroupIndexRowLo(targetGroup, targetGroupStart) - targetGroupStart;
             frame.skipSkeleton = false;
             frame.format = PartitionFormat.PARQUET;

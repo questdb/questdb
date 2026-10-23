@@ -581,9 +581,6 @@ public class FuzzRunner {
         }
     }
 
-    /**
-     * The probability that an O3 data block is a backfill - see {@link FuzzTransactionGenerator#generateSet}.
-     */
     public void setBackfillProb(double backfillProb) {
         this.backfillProb = backfillProb;
     }
@@ -1530,8 +1527,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Path.clearThreadLocals();
-            // A parquet rebuild runs the O3 parquet merge on this thread, which keeps its merge context in a
-            // thread local - a worker pool frees it on halt, this bare thread has to free it itself.
+            // A parquet rebuild leaves the O3 merge context in a thread local, which a worker pool would free on halt.
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }

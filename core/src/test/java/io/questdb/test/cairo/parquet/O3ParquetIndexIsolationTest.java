@@ -57,13 +57,8 @@ import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * An O3 commit that updates a parquet partition in place keeps the partition directory and
- * its index files, but it changes the row layout. The symbol indexes therefore store index
- * rows rather than partition rows: the update keeps the index rows of the row groups it kept,
- * gives the row groups it wrote fresh index rows, and appends only those to the indexes.
- * Every test opens index-driven cursors before the commit and checks that they keep returning
- * their snapshot, then checks that new queries see the merged rows, and pins how many index
- * rows the partition covers after the commit.
+ * An in-place O3 update of a parquet partition keeps its index files, so symbol indexes store index rows: kept row
+ * groups keep theirs, written ones get fresh rows appended. Cursors opened before a commit keep their snapshot.
  * <p>
  * The parquet partition holds 12 rows in 3 row groups of 4 rows:
  * RG0 01:00-04:00, RG1 05:00-08:00, RG2 09:00-12:00.
@@ -74,10 +69,8 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     private static final String[] ORDERS = {"", " ORDER BY ts DESC"};
     private static final String PARTITION = "2024-01-01";
     private static final long PARTITION_TIMESTAMP = 1704067200000000L;
-    // the same keys through a cast, so the filter does not use the index
     private static final String[] TRUTH_FILTERS = {"s::STRING = 'a'", "s::STRING = 'b'", "s::STRING = 'c'", "s::STRING IS NULL"};
     private final String indexClause;
-    // a covering index knows the result size, and its forward scan has no random access
     private final boolean isCovering;
 
     public O3ParquetIndexIsolationTest(String indexClause, @SuppressWarnings("unused") byte indexType, boolean isCovering) {
@@ -106,8 +99,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testAddIndexAfterInPlaceUpdate() throws Exception {
-        // ADD INDEX builds the index of a partition whose row groups an in-place update
-        // moved to fresh index rows, so it must build in index rows too
+        // ADD INDEX must build in index rows over a partition that has an index row map
         assertMemoryLeak(() -> {
             createParquetPartition("", false);
             execute("INSERT INTO pt VALUES ('b', 100, '2024-01-01T00:30:00.000000Z'), ('a', 101, '2024-01-01T06:30:00.000000Z')");
@@ -116,16 +108,13 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
             drainWalQueue();
             assertIndexQueriesMatchTruth();
-            // and the next in-place update appends to the index ADD INDEX built
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T10:30:00.000000Z')", true);
         });
     }
 
     @Test
     public void testAddIndexOverAbsentColumnThenInPlaceUpdate() throws Exception {
-        // The column is added after the partition, which then holds no rows of it (column top -1). ADD INDEX
-        // creates the index files of the parquet partition but adds nothing to them, so the first in-place
-        // update must build the index in full rather than append to it.
+        // Column top -1: ADD INDEX leaves the index files empty, so the first in-place update builds it in full.
         assertMemoryLeak(() -> {
             createAllNullSymbolPartition(true, true);
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
@@ -138,7 +127,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testAddIndexOverAllNullColumnThenInPlaceUpdate() throws Exception {
-        // The column is added while the partition is the last one, so its column top spans the whole partition
         assertMemoryLeak(() -> {
             createAllNullSymbolPartition(false, true);
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + PARTITION + "'");
@@ -172,16 +160,13 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                             """,
                     true
             );
-            // a row group added after the last one keeps the identity map
             Assert.assertFalse(hasIndexRowMap());
         });
     }
 
     @Test
     public void testBackgroundCompactionAfterInPlaceUpdate() throws Exception {
-        // The idle sweep copies the live row groups into a fresh file that uses the identity
-        // index row map, so it must index the copy afresh rather than carry over index files
-        // that an in-place update grew over another map
+        // The sweep's copy uses the identity row map, so it must reindex rather than keep the old index files
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
         assertMemoryLeak(() -> {
@@ -203,15 +188,13 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                 Misc.freeObjList(pinned);
             }
             assertIndexQueriesMatchTruth();
-            // the compacted partition keeps taking in-place updates
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T02:30:00.000000Z')", true);
         });
     }
 
     @Test
     public void testConvertIndexedAllNullColumnThenInPlaceUpdate() throws Exception {
-        // CONVERT TO PARQUET fills the index of an all-NULL column with NULL entries but keeps the column
-        // top, so the first in-place update builds the index in full, over the files the conversion wrote
+        // CONVERT keeps the column top, so the first in-place update builds the index in full
         assertMemoryLeak(() -> {
             createAllNullSymbolPartition(false, true);
             execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
@@ -252,9 +235,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testFailedInPlaceUpdateRollsBackIndexTail() throws Exception {
-        // s2 is indexed after s, so failing to open its index files leaves the failed
-        // in-place update with rows appended to the index of s. The retry must drop them
-        // before it appends the same rows again.
+        // Failing on s2's index leaves rows appended to s's index; the retry must drop them first.
         final AtomicBoolean isArmed = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -294,8 +275,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                 final TableToken tableToken = engine.verifyTableName("pt");
                 Assert.assertTrue("failed update must suspend the table", engine.getTableSequencerAPI().isSuspended(tableToken));
 
-                // the committed snapshot is unchanged, and the rows the failed update
-                // appended to the index of s are out of every reader's reach
                 Assert.assertEquals(indexRowCount, getIndexRowCount());
                 assertPinnedSnapshots(pinned);
                 assertIndexQueriesMatchTruth();
@@ -439,10 +418,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testRandomInPlaceUpdates() throws Exception {
-        // Random O3 batches into the parquet partition, with the readers of the last few
-        // versions pinned across every commit. The batches land anywhere in the day, so the
-        // updates mix appends, prepends, merges and row group splits, and the index row map
-        // keeps growing.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             createParquetPartition("", true);
@@ -463,10 +438,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                         if (i > 0) {
                             sql.put(", ");
                         }
-                        // minutes in [0, 14 * 60): around and past the committed rows. Every
-                        // generated row has its own non-zero microseconds, so no two rows share
-                        // a timestamp: a covering DESC plan sorts, and ties would come out in an
-                        // order the backward table scan does not reproduce.
+                        // Unique timestamps: a covering DESC plan sorts, and ties would differ from the table scan.
                         final int minute = rnd.nextInt(14 * 60);
                         final int micros = 1 + iteration * 6 + i;
                         sql.put('(').put(keys[rnd.nextInt(keys.length)])
@@ -504,9 +476,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testRewriteDropsIndexRowMap() throws Exception {
-        // with a zero ratio, the first commit updates in place (no unused bytes yet),
-        // and its unused bytes make the second commit rewrite the file, which rebuilds
-        // the index in partition rows
+        // zero ratio: the first commit is in place, its unused bytes make the second one rewrite
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.0");
         assertMemoryLeak(() -> {
             createParquetPartition("", true);
@@ -530,10 +500,8 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testSkippedFailedCommitLeavesNoStaleIndexRows() throws Exception {
-        // The O3 commit updates two parquet partitions in place and fails on the second
-        // one. The first partition's index keeps the rows the failed update appended.
-        // After skipping the failed transaction, the next in-place update of the first
-        // partition must drop them before it appends its own rows at the same index rows.
+        // A commit failing on the second partition leaves appended rows in the first one's index; after the
+        // transaction is skipped, the next update must drop them before appending at the same index rows.
         final AtomicBoolean isArmed = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -569,7 +537,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("pt");
 
-            // the first partition takes the update, 'a' goes to fresh index rows
             isArmed.set(true);
             execute(
                     """
@@ -582,8 +549,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             isArmed.set(false);
             Assert.assertTrue("failed update must suspend the table", engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            // skip the failed transaction, then update the first partition again: the same
-            // row group gets the same fresh index rows, now holding a different key
             final long failedSeqTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
             execute("ALTER TABLE pt RESUME WAL FROM TXN " + (failedSeqTxn + 1));
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 200, '2024-01-01T06:30:00.000000Z')", true);
@@ -616,7 +581,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                     drainWalQueue();
                     Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn());
                     Assert.assertTrue("index rows only grow", getIndexRowCount() > indexRowCount);
-                    // every reader keeps its own version, the older ones included
                     for (int v = 0, n = pinnedPerVersion.size(); v < n; v++) {
                         assertPinnedSnapshots(pinnedPerVersion.getQuick(v));
                     }
@@ -691,8 +655,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
         return queryToString("SELECT s, v, ts FROM pt WHERE " + TRUTH_FILTERS[key] + " AND ts IN '" + PARTITION + "'" + ORDERS[order]);
     }
 
-    // The factory-property battery of assertIndexQueriesMatchTruth does not apply once an ALTER changes the type
-    // of a column a covering index includes: the index no longer covers it.
+    // Skips the factory-property checks: after ALTER COLUMN TYPE a covering index no longer covers the column.
     private void assertKeyQueriesMatchTruth() throws Exception {
         for (int key = 0; key < KEY_FILTERS.length; key++) {
             for (int order = 0; order < ORDERS.length; order++) {
@@ -704,7 +667,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     private void assertMultiKeyQueriesMatchTruth() throws Exception {
-        // multi-key lookups and DISTINCT read the index of every key at once
         final String partitionFilter = " FROM pt WHERE ts IN '" + PARTITION + "' AND ";
         TestUtils.assertEquals(
                 sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "s::STRING IN ('a', 'c')")),
@@ -718,9 +680,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     private void assertRequestedCompactionAfterInPlaceUpdateAndAlterColumnType(boolean isWal) throws Exception {
-        // An ALTER COLUMN TYPE over a parquet partition whose in-place update gave it an index row map: the
-        // requested rebuild re-encodes the file under the identity map and indexes it afresh. This is how
-        // Enterprise cold storage brings such a partition to the current schema before it uploads it.
+        // The requested rebuild re-encodes under the identity map and reindexes, as Enterprise cold storage does.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
         assertMemoryLeak(() -> {
             createParquetPartition("", true, isWal);
@@ -755,14 +715,12 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     private void assertInPlaceUpdatesIndexAllNullSymbol() throws Exception {
-        // Before the update the column top answers the queries, and a covering index has no size to report.
         assertKeyQueriesMatchTruth();
         // The commit zeroes the column top, so the index must hold the kept row groups' NULL rows too.
         assertIsolatedAcrossCommit(
                 "INSERT INTO pt (s, v, ts) VALUES ('a', 100, '2024-01-01T06:30:00.000000Z'), (NULL, 101, '2024-01-01T06:45:00.000000Z')",
                 true
         );
-        // the next update appends to the index the first one built
         assertIsolatedAcrossCommit("INSERT INTO pt (s, v, ts) VALUES ('b', 102, '2024-01-01T10:30:00.000000Z')", true);
     }
 
@@ -799,7 +757,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
             if (isInPlaceExpected) {
                 Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn());
-                // the indexes only grow: kept row groups keep their index rows
                 Assert.assertTrue("index rows only grow", getIndexRowCount() > indexRowCount);
             } else {
                 Assert.assertNotEquals("O3 merge must rewrite the parquet partition", nameTxn, getPartitionNameTxn());
@@ -811,8 +768,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
         assertIndexQueriesMatchTruth();
     }
 
-    // A native partition 2024-01-01 with the rows of createParquetPartition and an all-NULL symbol column s,
-    // whose column top there is either the whole partition or, when the column is absent, -1.
+    // All-NULL symbol s whose column top in 2024-01-01 is the whole partition, or -1 when absent.
     private void createAllNullSymbolPartition(boolean isColumnAbsent, boolean isWal) throws Exception {
         execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
         execute(
@@ -833,7 +789,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
         }
         execute("ALTER TABLE pt ADD COLUMN s SYMBOL");
         drainWalQueue();
-        // every key of the queries must be in the symbol table
         execute(
                 """
                         INSERT INTO pt (s, v, ts) VALUES
@@ -892,8 +847,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     /**
-     * An index-driven cursor opened before an O3 commit. The cursor reads its first row
-     * before the commit, so its index reader maps the index files of the snapshot.
+     * Reads its first row before the commit, so its index reader maps the snapshot's index files.
      */
     private static class PinnedQuery implements Closeable {
         private final RecordCursor cursor;
@@ -935,7 +889,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
         void assertSnapshot() {
             if (!isFirstPassDone) {
-                // finish the pass that started before the commit
                 sink.clear();
                 sink.put(head);
                 while (cursor.hasNext()) {
@@ -944,7 +897,6 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                 TestUtils.assertEquals(sql, expected, sink);
                 isFirstPassDone = true;
             }
-            // another pass over the same snapshot
             cursor.toTop();
             TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
         }

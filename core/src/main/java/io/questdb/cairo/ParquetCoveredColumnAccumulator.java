@@ -81,15 +81,12 @@ final class ParquetCoveredColumnAccumulator {
     private final IntList slotWriterIndices = new IntList();
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    // True until the first chunk is appended. Every later chunk drops the leading aux entry
-    // a var-size chunk carries, since the previous chunk's trailing entry already holds it.
+    // Later chunks drop a var-size chunk's leading aux entry: the previous trailing entry holds it.
     private boolean isFirstChunk = true;
 
     /**
      * Appends one decoded row group's worth of every decoded slot to its scratch files, which grow via mmap
-     * extend. Called once per row group, in the order the index build adds the row groups' rows, from the
-     * index build's row-group loop. The scratch files hold one entry per index row, see
-     * {@link #accumulateNulls}.
+     * extend. Called once per row group, in index row order, from the index build's row-group loop.
      */
     void accumulate(RowGroupBuffers rowGroupBuffers, long rowGroupRowCount) {
         final boolean isFirstChunk = this.isFirstChunk;
@@ -171,11 +168,7 @@ final class ParquetCoveredColumnAccumulator {
         }
     }
 
-    /**
-     * Appends {@code rowCount} null entries to every decoded slot. The index build calls it for the index rows
-     * no live row group occupies - rows of row groups an in-place O3 update replaced - so that each scratch
-     * entry sits at its index row. The index holds no entry for these rows, so nothing reads them.
-     */
+    /** Appends null entries for index rows of replaced row groups, keeping each entry at its index row. */
     void accumulateNulls(long rowCount) {
         if (rowCount <= 0) {
             return;

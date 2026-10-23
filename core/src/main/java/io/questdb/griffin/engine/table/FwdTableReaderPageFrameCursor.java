@@ -488,8 +488,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.parquetMetaDecoder = reenterParquetDecoder;
                 frame.partitionLo = partitionLo;
                 frame.partitionHi = adjustedHi;
-                // The partition's symbol indexes store index rows; see
-                // ParquetMetaFileReader#getRowGroupIndexRowLo.
+                // Symbol indexes store index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo.
                 frame.pieceShift = metadata.getRowGroupIndexRowLo(i, rowGroupStartRow) - rowGroupStartRow;
                 frame.skipSkeleton = false;
                 frame.format = PartitionFormat.PARQUET;

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
@@ -36,27 +37,30 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8StringZ;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
- * A requested parquet conversion writes a whole logical partition - one plain folder, a composite folder whose pieces
- * sit anywhere in its files, a run of MOVE-TAIL splits - into one parquet file in a single pass, its live pieces handed
- * to the encoder as frames that need not line up with row groups. Every test compares the converted table against a
- * native copy taken before the conversion, and reads it through its symbol index too. The {@code DiscardsTheSwap}
- * tests commit into the day between the conversion's build and its swap, which the swap has to decline.
+ * A requested parquet conversion writes a whole logical partition (plain, composite or split) into one parquet file in
+ * a single pass. Tests compare against a native copy taken before the conversion.
  */
 public class PartitionCompactionParquetConversionTest extends AbstractCairoTest {
     private static final long DAY = parse("2020-01-01T00:00:00.000000Z");
-    // The rows a test commits into the day between the conversion's build and its swap.
     private static final int LATE_ROWS = 200;
 
     @Override
@@ -64,9 +68,48 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
-        // Row groups far smaller than any folder or piece, and not a divisor of either, so row groups cut across
-        // frames and frames across row groups.
+        // Not a divisor of any folder or piece size, so row groups and frames cut across each other.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 997);
+    }
+
+    @Test
+    public void testAlterConversionThatFailsToLinkAnIndexLeavesThePlainDayNative() throws Exception {
+        final AtomicBoolean isLinkFailing = new AtomicBoolean(true);
+        final FilesFacade linkFailingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (isLinkFailing.get() && isDayIndexFile(src, "s")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(linkFailingFf, () -> {
+            createTable("lf", false);
+            execute("CREATE TABLE lf_oracle AS (SELECT * FROM lf) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final long nameTxnBefore = dayNameTxn("lf");
+            try {
+                execute("ALTER TABLE lf CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+                Assert.fail("the conversion must fail when an index file does not link");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not create hard link");
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader("lf")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("a failed conversion must leave the day native", tx.isPartitionParquet(tx.getPartitionIndex(DAY)));
+            }
+            Assert.assertEquals("the day's name txn", nameTxnBefore, dayNameTxn("lf"));
+            Assert.assertEquals("a failed conversion must remove its directory", 1, countDayDirectories(engine.verifyTableName("lf")));
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM lf_oracle", "SELECT * FROM lf", LOG);
+
+            isLinkFailing.set(false);
+            assertAlterConversionMatchesOracle("lf", false, "");
+        });
     }
 
     @Test
@@ -90,6 +133,63 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A plain day keeps its row ids, so a no-top column's index is linked; columns with a top get theirs rebuilt.
+     */
+    @Test
+    public void testAlterConvertsAPlainDayLinkingTheIndexesOfColumnsWithNoTop() throws Exception {
+        final AtomicInteger noTopLinks = new AtomicInteger();
+        final AtomicInteger topLinks = new AtomicInteger();
+        final AtomicInteger absentLinks = new AtomicInteger();
+        final FilesFacade linkCountingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (isDayIndexFile(src, "s")) {
+                    noTopLinks.incrementAndGet();
+                } else if (isDayIndexFile(src, "top_s")) {
+                    topLinks.incrementAndGet();
+                } else if (isDayIndexFile(src, "absent_s")) {
+                    absentLinks.incrementAndGet();
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(linkCountingFf, () -> {
+            final String[] indexClauses = {
+                    "INDEX",
+                    "INDEX TYPE POSTING",
+                    "INDEX TYPE POSTING DELTA",
+                    "INDEX TYPE POSTING EF",
+                    "INDEX TYPE POSTING INCLUDE (i, v)"
+            };
+            for (int t = 0; t < indexClauses.length; t++) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String tableName = "pl" + t + (isWal ? "w" : "n");
+                    createTableWithIndexedColumnTops(tableName, isWal, indexClauses[t]);
+                    execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    noTopLinks.set(0);
+                    topLinks.set(0);
+                    absentLinks.set(0);
+                    assertAlterConversionMatchesOracle(tableName, isWal, "");
+                    Assert.assertTrue("the index of a column with no top must be linked [" + indexClauses[t] + ']', noTopLinks.get() > 0);
+                    Assert.assertEquals("the index of a column with a top must be built [" + indexClauses[t] + ']', 0, topLinks.get());
+                    Assert.assertEquals("the index of a column the day predates must be built [" + indexClauses[t] + ']', 0, absentLinks.get());
+                    for (String filter : new String[]{
+                            "top_s = 't1'", "top_s = 't2'", "top_s IS NULL", "absent_s = 'a1'", "absent_s IS NULL"
+                    }) {
+                        TestUtils.assertSqlCursors(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT * FROM " + tableName + "_oracle WHERE " + filter,
+                                "SELECT * FROM " + tableName + " WHERE " + filter,
+                                LOG
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     @Test
     public void testAlterConvertsASplitDay() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
@@ -105,9 +205,8 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
-     * The active day goes through the fold before its conversion. Its split folded away, the day is the last
-     * partition again, so the writer has to let go of the native files it had open on it - a column a later
-     * ALTER COLUMN TYPE swaps out must not leave the others open over the parquet partition.
+     * After the conversion the writer must release the native files it had open on the last partition, else a later
+     * ALTER COLUMN TYPE leaves them open over the parquet partition.
      */
     @Test
     public void testAlterConvertsASplitActiveDay() throws Exception {
@@ -119,7 +218,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             execute("INSERT INTO aa SELECT x::INT, rnd_symbol('k1', 'k2', NULL), x, timestamp_sequence('2020-01-01', 10 * 1_000_000L)" +
                     " FROM long_sequence(4000)");
             drainWalQueue();
-            // Lands near the end of the active day, so the O3 path splits it.
             execute("INSERT INTO aa SELECT x::INT + 70_000, rnd_symbol('k1', 'k2', NULL), x + 1_000_000," +
                     " timestamp_sequence('2020-01-01T11:06:07', 5 * 1_000_000L) FROM long_sequence(200)");
             drainWalQueue();
@@ -129,7 +227,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             drainWalQueue();
             assertFolders("aa", 1, false);
             execute("ALTER TABLE aa ALTER COLUMN late TYPE DOUBLE");
-            // O3 into the parquet last partition, under the changed schema.
             execute("INSERT INTO aa SELECT x::INT + 90_000, rnd_symbol('k1', 'k2', NULL), x + 2_000_000," +
                     " timestamp_sequence('2020-01-01T05:00:03', 7 * 1_000_000L) FROM long_sequence(300)");
             drainWalQueue();
@@ -172,7 +269,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             assertFolders("ab", 2, false);
             execute("CREATE TABLE ab_oracle AS (SELECT * FROM ab) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             assertAlterConversionMatchesOracle("ab", true, " WITH (bloom_filter_columns = 'i, late', fpp = '0.05')");
-            // A point lookup the bloom filters can prune row groups for still finds its row.
             for (String filter : new String[]{"i = 70_005", "late = 1_000_007", "i = -1"}) {
                 TestUtils.assertSqlCursors(
                         engine,
@@ -191,7 +287,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
         assertMemoryLeak(() -> {
             createTable("cc", true);
-            // Lands only inside 2020-01-01, cutting it into pieces.
             insertBackfill("cc", "2020-01-01T04:00:07");
             assertFolders("cc", 1, true);
             assertConversion("cc", true);
@@ -215,17 +310,12 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
         assertMemoryLeak(() -> {
             createTable("cs", true);
-            // Lands near the END of 2020-01-01, so the O3 path splits the day rather than rewriting it whole.
             insertBackfill("cs", "2020-01-01T22:00:07");
             assertFolders("cs", 2, false);
             assertConversion("cs", true);
         });
     }
 
-    /**
-     * A non-WAL writer holding a transaction open does not stop the conversion: the swap commits on its own, and the
-     * transaction's rows - for the last partition only - stay the owner's to commit.
-     */
     @Test
     public void testConvertsASplitDayAroundANonWalOpenTransaction() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
@@ -265,8 +355,7 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
-     * A non-WAL writer - the one ILP holds - appends rows past the day's last row in place: the folder keeps its
-     * name txn and grows. The swap's row-count check is the one that catches it.
+     * An in-place append keeps the name txn; only the swap's row-count check catches it.
      */
     @Test
     public void testDiscardsTheSwapWhenANonWalWriterAppendsToTheDayBetweenBuildAndSwap() throws Exception {
@@ -277,10 +366,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
-    /**
-     * A WAL transaction appends rows past the day's last row in place: the folder keeps its name txn and grows.
-     * The swap's row-count check is the one that catches it.
-     */
     @Test
     public void testDiscardsTheSwapWhenAWalTransactionAppendsToTheDayBetweenBuildAndSwap() throws Exception {
         assertMemoryLeak(() -> {
@@ -290,11 +375,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
-    /**
-     * A WAL transaction landing near the end of the day splits it: a second folder of the same day appears
-     * behind the one the build read, taking the day's tail rows with it. The swap's run-shape check catches it,
-     * and so does the first folder's row count on its own.
-     */
     @Test
     public void testDiscardsTheSwapWhenAWalTransactionSplitsTheDayBetweenBuildAndSwap() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
@@ -308,10 +388,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
-    /**
-     * A WAL transaction landing inside the day turns it composite in place: the folder keeps its name txn, grows
-     * and moves its generation. The swap's row-count and generation checks are the ones that catch it.
-     */
     @Test
     public void testDiscardsTheSwapWhenAWalTransactionTurnsTheDayCompositeBetweenBuildAndSwap() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
@@ -386,6 +462,20 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         }
     }
 
+    private static int countDayDirectories(TableToken token) {
+        final int[] count = new int[1];
+        try (Path path = new Path()) {
+            final DirectUtf8StringZ name = new DirectUtf8StringZ();
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            ff.iterateDir(path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).$(), (pUtf8NameZ, _) -> {
+                if (name.of(pUtf8NameZ).toString().startsWith("2020-01-01")) {
+                    count[0]++;
+                }
+            });
+        }
+        return count[0];
+    }
+
     private static long dayNameTxn(String tableName) {
         try (TableReader reader = engine.getReader(tableName)) {
             final TxReader tx = reader.getTxFile();
@@ -393,9 +483,17 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         }
     }
 
+    private static boolean isDayIndexFile(LPSZ file, String columnName) {
+        final String filePath = Utf8s.stringFromUtf8Bytes(file);
+        final int nameLo = filePath.lastIndexOf(Files.SEPARATOR) + 1;
+        final String fileName = filePath.substring(nameLo);
+        return filePath.substring(0, nameLo).contains(Files.SEPARATOR + "2020-01-01")
+                && fileName.startsWith(columnName + '.')
+                && !fileName.equals(columnName + ".d");
+    }
+
     /**
-     * {@link #LATE_ROWS} rows every 5 seconds from {@code from}, deterministic so {@link #commitLateRows} can write
-     * the same rows without SQL.
+     * Deterministic, so {@link #commitLateRows} can write the same rows without SQL.
      */
     private static String lateRowsInsert(String tableName, String from) {
         return "INSERT INTO " + tableName + " (i, s, late, ts) SELECT x::INT + 80_000, CASE WHEN x % 2 = 0 THEN 'k1' ELSE 'k2' END," +
@@ -440,10 +538,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         assertAlterConversionMatchesOracle(tableName, isWal, "");
     }
 
-    /**
-     * CONVERT PARTITION on the table writer converts the whole logical partition in a single pass too: one commit,
-     * with no fold of its splits or pieces first.
-     */
     private void assertAlterConversionMatchesOracle(String tableName, boolean isWal, String withClause) throws Exception {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -482,7 +576,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         TestUtils.assertSqlCursors(
                 engine, sqlExecutionContext, "SELECT * FROM " + tableName + "_oracle", "SELECT * FROM " + tableName, LOG
         );
-        // Through the index the conversion built off the new file.
         for (String filter : new String[]{"s = 'k1'", "s = 'k2'", "s IS NULL", "s IN ('k1', 'k2')"}) {
             TestUtils.assertSqlCursors(
                     engine,
@@ -495,11 +588,8 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
-     * Requests the conversion while holding the writer, so the job builds the file off its reader snapshot and
-     * queues the swap; commits {@link #LATE_ROWS} rows from {@code from} into the day through the held writer; then
-     * ticks the swap - the order the WAL apply loop runs a swap queued mid-batch in. The swap must decline: the
-     * day stays native in the shape the write left it, under the same name txn, with every row, and the next
-     * request converts it with the late rows in the file.
+     * Builds the conversion while holding the writer, commits late rows, then ticks the swap - the order the WAL apply
+     * loop runs a swap queued mid-batch in. The swap must decline and leave the day native with every row.
      */
     private void assertWriteBetweenBuildAndSwapIsKept(
             String tableName,
@@ -520,7 +610,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             runJobOnAnotherThread();
             commitLateRows(ownerWriter, from);
             Assert.assertFalse(ownerWriter.inTransaction());
-            // The queued swap runs against the day as the commit left it.
             ownerWriter.tick();
         }
         execute(lateRowsInsert(tableName + "_oracle", from));
@@ -538,13 +627,11 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         TestUtils.assertSqlCursors(
                 engine, sqlExecutionContext, "SELECT * FROM " + tableName + "_oracle", "SELECT * FROM " + tableName, LOG
         );
-        // The next request builds off the day as the write left it.
         assertConversionMatchesOracle(tableName, isWal);
     }
 
     /**
-     * Commits {@link #lateRowsInsert}'s rows through the held writer. A non-WAL writer takes them as rows; a WAL
-     * table takes them as a WAL transaction, applied on the held writer the way {@code ApplyWal2TableJob} does.
+     * For WAL, applies the transaction on the held writer the way {@code ApplyWal2TableJob} does.
      */
     private void commitLateRows(TableWriter ownerWriter, String from) throws Exception {
         final TableToken token = ownerWriter.getTableToken();
@@ -575,9 +662,7 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
-     * 2020-01-01 with 5760 rows, a column added part-way through so the day's folders carry a column top, every
-     * kind of column the frames have to slice - fixed, symbol, var-size of both aux layouts, array - and an active
-     * 2020-01-03.
+     * 2020-01-01 with 5760 rows, a column top, every column kind the frames slice, and an active 2020-01-03.
      */
     private void createTable(String tableName, boolean isWal) throws Exception {
         execute("CREATE TABLE " + tableName + " (i INT, s SYMBOL INDEX, v VARCHAR, str STRING, d DOUBLE, arr DOUBLE[], ts TIMESTAMP)" +
@@ -593,6 +678,33 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                 " timestamp_sequence('2020-01-01T11:06:40', 25 * 1_000_000L) ts, x late FROM long_sequence(1760)");
         drainWalQueue();
         execute("INSERT INTO " + tableName + " (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60 * 1_000_000L) ts" +
+                " FROM long_sequence(50)");
+        drainWalQueue();
+    }
+
+    /**
+     * Indexed symbols: {@code s} has no top, {@code top_s} a top in 2020-01-01, {@code absent_s} postdates 2020-01-01.
+     */
+    private void createTableWithIndexedColumnTops(String tableName, boolean isWal, String indexClause) throws Exception {
+        execute("CREATE TABLE " + tableName + " (i INT, s SYMBOL " + indexClause + ", v VARCHAR, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " SELECT x::INT i, rnd_symbol('k1', 'k2', NULL) s, rnd_varchar(1, 40, 1) v," +
+                " timestamp_sequence('2020-01-01', 10 * 1_000_000L) ts FROM long_sequence(4000)");
+        drainWalQueue();
+        final String addedIndexClause = indexClause.contains("INCLUDE") ? "INDEX TYPE POSTING" : indexClause;
+        execute("ALTER TABLE " + tableName + " ADD COLUMN top_s SYMBOL " + addedIndexClause);
+        drainWalQueue();
+        execute("INSERT INTO " + tableName + " SELECT x::INT + 10_000 i, rnd_symbol('k1', 'k2', NULL) s, rnd_varchar(1, 40, 1) v," +
+                " timestamp_sequence('2020-01-01T11:06:40', 25 * 1_000_000L) ts, rnd_symbol('t1', 't2', NULL) top_s" +
+                " FROM long_sequence(1760)");
+        drainWalQueue();
+        execute("INSERT INTO " + tableName + " (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60 * 1_000_000L) ts" +
+                " FROM long_sequence(50)");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " ADD COLUMN absent_s SYMBOL " + addedIndexClause);
+        drainWalQueue();
+        execute("INSERT INTO " + tableName + " (i, ts, absent_s) SELECT x::INT + 95_000 i," +
+                " timestamp_sequence('2020-01-03T01:00', 60 * 1_000_000L) ts, rnd_symbol('a1', 'a2', NULL) absent_s" +
                 " FROM long_sequence(50)");
         drainWalQueue();
     }
