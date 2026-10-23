@@ -20,7 +20,7 @@ use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
-use std::{cmp, mem::size_of, ptr, slice};
+use std::{cmp, mem::size_of, ops::Range, ptr, slice};
 
 // The metadata fields are accessed from Java.
 // This struct contains only immutable metadata.
@@ -186,10 +186,26 @@ pub(crate) fn decompress_varchar_slice_data<'a>(
 
 /// Apply post-decode conversions that cannot be handled by the per-page decode dispatch,
 /// typically because the source and target share the same physical representation.
+/// `leading_nulls` is the count of column-top rows at the start of the buffer.
 pub(super) fn post_convert(
     from_type: ColumnType,
     to_type: ColumnType,
     leading_nulls: usize,
+    bufs: &mut ColumnChunkBuffers,
+) -> ParquetResult<()> {
+    let top_rows = 0..leading_nulls;
+    post_convert_with_top_rows(from_type, to_type, slice::from_ref(&top_rows), bufs)
+}
+
+/// [`post_convert`] for a buffer whose column-top rows are not one leading block: a run of
+/// row groups decoded into one buffer, where each group's column top starts at that group's
+/// first row. `top_rows` holds the rows of the column tops, as sorted, disjoint ranges of
+/// buffer rows. Byte/Short/Boolean have no in-band null sentinel, so these rows are their
+/// only nulls, and a target with a sentinel must read NULL in them.
+pub(super) fn post_convert_with_top_rows(
+    from_type: ColumnType,
+    to_type: ColumnType,
+    top_rows: &[Range<usize>],
     bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<()> {
     let src_tag = from_type.tag();
@@ -206,22 +222,22 @@ pub(super) fn post_convert(
         // sentinel-bearing targets must stamp the target NULL over the column-top rows.
         (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
             expand_bool::<i32>(&mut bufs.data_vec)?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::INT);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::INT);
         }
         (
             ColumnTypeTag::Boolean,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             expand_bool::<i64>(&mut bufs.data_vec)?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Float) => {
             expand_bool::<f32>(&mut bufs.data_vec)?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f32::NAN);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, f32::NAN);
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Double) => {
             expand_bool::<f64>(&mut bufs.data_vec)?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f64::NAN);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, f64::NAN);
         }
         // Fixed → Boolean: contract decoded source-sized values to 1-byte booleans.
         // Null sentinels (i32::MIN, i64::MIN, NaN) map to 0 (false), not 1.
@@ -311,15 +327,15 @@ pub(super) fn post_convert(
             ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long,
             dst,
         ) if is_decimal_tag(dst) => {
-            let dec_leading_nulls = match src_tag {
-                ColumnTypeTag::Byte | ColumnTypeTag::Short => leading_nulls,
-                _ => 0,
+            let dec_top_rows: &[Range<usize>] = match src_tag {
+                ColumnTypeTag::Byte | ColumnTypeTag::Short => top_rows,
+                _ => &[],
             };
             convert_fixed_to_decimal(
                 &mut bufs.data_vec,
                 src_tag,
                 dst,
-                dec_leading_nulls,
+                dec_top_rows,
                 to_type.decimal_scale(),
                 to_type.decimal_precision(),
             )?;
@@ -331,19 +347,19 @@ pub(super) fn post_convert(
         // for the def-level=0 top rows, but a legacy (9.4.x) Required chunk has no def
         // levels and stores its top rows as 0, which the decode returns as is.
         (ColumnTypeTag::Byte | ColumnTypeTag::Short, ColumnTypeTag::Int) => {
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::INT);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::INT);
         }
         (
             ColumnTypeTag::Byte | ColumnTypeTag::Short,
             ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
         ) => {
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
         }
         // Int32 → Int64 widening. Byte/Short → Date has no dedicated DeltaBinaryPacked
         // decode arm yet, so it stays a two-pass widen.
         (ColumnTypeTag::Byte, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i16, i64>(
@@ -352,7 +368,7 @@ pub(super) fn post_convert(
                 0i64,
                 |v| v as i64,
             )?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
         }
         // Int → Long/Date/Timestamp stays Source: i32::MIN → i64::MIN via the value check.
         (
@@ -409,7 +425,7 @@ pub(super) fn post_convert(
                 0.0f32,
                 |v| v as f32,
             )?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f32::NAN);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, f32::NAN);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Float) => {
             convert_numeric_in_place::<i16, f32>(
@@ -418,7 +434,7 @@ pub(super) fn post_convert(
                 0.0f32,
                 |v| v as f32,
             )?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f32::NAN);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, f32::NAN);
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Float) => {
             convert_numeric_in_place::<i32, f32>(
@@ -447,7 +463,7 @@ pub(super) fn post_convert(
                 0.0f64,
                 |v| v as f64,
             )?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f64::NAN);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, f64::NAN);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<i16, f64>(
@@ -456,7 +472,7 @@ pub(super) fn post_convert(
                 0.0f64,
                 |v| v as f64,
             )?;
-            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f64::NAN);
+            stamp_top_rows(&mut bufs.data_vec, top_rows, f64::NAN);
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<i32, f64>(
@@ -669,17 +685,23 @@ where
 /// decoder materialises those as an in-band 0 indistinguishable from a real 0, so the count
 /// of leading nulls (`count`, derived from the column top) is needed to stamp the target
 /// sentinel and keep the lazy parquet read in step with the native ALTER path.
-fn stamp_leading_nulls<D: Copy>(data: &mut AcVec<u8>, count: usize, null_value: D) {
-    if count == 0 {
-        return;
-    }
+fn stamp_top_rows<D: Copy>(data: &mut AcVec<u8>, top_rows: &[Range<usize>], null_value: D) {
     let elem = size_of::<D>();
-    let count = count.min(data.len() / elem);
+    let len = data.len() / elem;
     let ptr = data.as_mut_ptr();
-    for i in 0..count {
-        // SAFETY: i < count <= data.len()/size_of::<D>(), so the write stays in bounds.
-        unsafe { (ptr.add(i * elem) as *mut D).write_unaligned(null_value) };
+    for rows in top_rows {
+        let end = rows.end.min(len);
+        for i in rows.start.min(end)..end {
+            // SAFETY: i < end <= data.len()/size_of::<D>(), so the write stays in bounds.
+            unsafe { (ptr.add(i * elem) as *mut D).write_unaligned(null_value) };
+        }
     }
+}
+
+/// Whether buffer row `i` lies in one of the column-top row ranges.
+#[inline]
+fn is_top_row(top_rows: &[Range<usize>], i: usize) -> bool {
+    top_rows.iter().any(|rows| rows.contains(&i))
 }
 
 /// Returns true for decimal type tags.
@@ -1262,7 +1284,7 @@ fn convert_fixed_to_decimal(
     data: &mut AcVec<u8>,
     src_tag: ColumnTypeTag,
     dst_tag: ColumnTypeTag,
-    leading_nulls: usize,
+    top_rows: &[Range<usize>],
     dst_scale: u8,
     dst_precision: u8,
 ) -> ParquetResult<()> {
@@ -1312,7 +1334,7 @@ fn convert_fixed_to_decimal(
             if dst_size >= src_size {
                 for i in (0..count).rev() {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
-                    let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
+                    let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
                         scale_or_null_i64(val, factor, limit, null_sentinel)
@@ -1322,7 +1344,7 @@ fn convert_fixed_to_decimal(
             } else {
                 for i in 0..count {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
-                    let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
+                    let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
                         scale_or_null_i64(val, factor, limit, null_sentinel)
@@ -1357,7 +1379,7 @@ fn convert_fixed_to_decimal(
                 // the Decimal128 NULL pair on overflow; a result within i128 that
                 // still exceeds the target precision (|scaled| >= 10^precision) is
                 // also NULLed, mirroring the i64 path in scale_or_null_i64.
-                let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
+                let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
                     None
                 } else {
                     (val as i128).checked_mul(factor)
@@ -1388,7 +1410,7 @@ fn convert_fixed_to_decimal(
                 // Decimal256 NULL on overflow. A value within i256 that still
                 // exceeds the target precision (|scaled| >= 10^precision) is also
                 // NULLed, mirroring the Decimal128 path.
-                let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
+                let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
                     None
                 } else {
                     let sign = if val < 0 { u64::MAX } else { 0 };
@@ -4495,6 +4517,245 @@ mod multi_dict_tests {
         assert_eq!(bufs.data_vec.as_slice(), stored_i8_bytes.as_slice());
     }
 
+    /// A run of row groups decoded into one buffer holds the column top of each group at
+    /// that group's first row. post_convert_with_top_rows stamps the target NULL over the
+    /// rows of each range, clamped to the buffer, and leaves the other rows as they are, a
+    /// real 0 included. Expected values: the source value widened to the target, NULL in the
+    /// ranges.
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn post_convert_with_top_rows_stamps_each_range() {
+        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::parquet::tests::ColumnTypeTagExt;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let make = |bytes: &[u8]| -> ColumnChunkBuffers {
+            let mut data_vec = AcVec::new_in(allocator.clone());
+            data_vec.extend_from_slice(bytes).unwrap();
+            ColumnChunkBuffers {
+                data_size: 0,
+                data_ptr: std::ptr::null_mut(),
+                data_vec,
+                aux_size: 0,
+                aux_ptr: std::ptr::null_mut(),
+                aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers_size: 0,
+                page_buffers: Vec::new(),
+                column_top: 0,
+                page_buffers_capacity: 0,
+                page_buffers_charged: 0,
+                page_buffers_counted: 0,
+            }
+        };
+        // rows 0..6 hold 0, 0, 5, 0, -3, 7; None marks a row the ranges cover
+        let stored = [0i64, 0, 5, 0, -3, 7];
+        type Case<'a> = (&'a [Range<usize>], [Option<i64>; 6]);
+        let cases: [Case; 5] = [
+            (&[1..2, 3..5], [Some(0), None, Some(5), None, None, Some(7)]),
+            // past the end of the buffer: clamped
+            (&[4..100], [Some(0), Some(0), Some(5), Some(0), None, None]),
+            (
+                &[10..12],
+                [Some(0), Some(0), Some(5), Some(0), Some(-3), Some(7)],
+            ),
+            (&[], [Some(0), Some(0), Some(5), Some(0), Some(-3), Some(7)]),
+            (
+                &[0..2, 5..6],
+                [None, None, Some(5), Some(0), Some(-3), None],
+            ),
+        ];
+        let rows_of = |bufs: &ColumnChunkBuffers, size: usize| -> Vec<Vec<u8>> {
+            assert_eq!(bufs.data_size, bufs.data_vec.len());
+            bufs.data_vec
+                .as_slice()
+                .chunks_exact(size)
+                .map(|c| c.to_vec())
+                .collect()
+        };
+        type Encode = fn(Option<i64>) -> Vec<u8>;
+        let int: Encode = |v| v.map_or(nulls::INT, |v| v as i32).to_le_bytes().to_vec();
+        let long: Encode = |v| v.map_or(nulls::LONG, |v| v).to_le_bytes().to_vec();
+        let float: Encode = |v| v.map_or(f32::NAN, |v| v as f32).to_le_bytes().to_vec();
+        let double: Encode = |v| v.map_or(f64::NAN, |v| v as f64).to_le_bytes().to_vec();
+        let byte_bytes: Vec<u8> = stored.iter().map(|&v| v as i8 as u8).collect();
+        let short_bytes: Vec<u8> = stored
+            .iter()
+            .flat_map(|&v| (v as i16).to_le_bytes())
+            .collect();
+        let int_bytes: Vec<u8> = stored
+            .iter()
+            .flat_map(|&v| (v as i32).to_le_bytes())
+            .collect();
+        let long_bytes: Vec<u8> = stored.iter().flat_map(|&v| v.to_le_bytes()).collect();
+        // (source, decoded source bytes, target, target width, encoding of the expected row)
+        let conversions: [(ColumnTypeTag, &[u8], ColumnTypeTag, usize, Encode); 13] = [
+            // decoded at the target width
+            (ColumnTypeTag::Byte, &int_bytes, ColumnTypeTag::Int, 4, int),
+            (ColumnTypeTag::Short, &int_bytes, ColumnTypeTag::Int, 4, int),
+            (
+                ColumnTypeTag::Byte,
+                &long_bytes,
+                ColumnTypeTag::Long,
+                8,
+                long,
+            ),
+            (
+                ColumnTypeTag::Short,
+                &long_bytes,
+                ColumnTypeTag::Timestamp,
+                8,
+                long,
+            ),
+            // decoded at the source width and widened
+            (
+                ColumnTypeTag::Byte,
+                &byte_bytes,
+                ColumnTypeTag::Date,
+                8,
+                long,
+            ),
+            (
+                ColumnTypeTag::Short,
+                &short_bytes,
+                ColumnTypeTag::Date,
+                8,
+                long,
+            ),
+            (
+                ColumnTypeTag::Byte,
+                &byte_bytes,
+                ColumnTypeTag::Float,
+                4,
+                float,
+            ),
+            (
+                ColumnTypeTag::Short,
+                &short_bytes,
+                ColumnTypeTag::Float,
+                4,
+                float,
+            ),
+            (
+                ColumnTypeTag::Byte,
+                &byte_bytes,
+                ColumnTypeTag::Double,
+                8,
+                double,
+            ),
+            (
+                ColumnTypeTag::Short,
+                &short_bytes,
+                ColumnTypeTag::Double,
+                8,
+                double,
+            ),
+            // a source with a NULL sentinel: the ranges do not apply
+            (ColumnTypeTag::Int, &int_bytes, ColumnTypeTag::Long, 8, long),
+            // no NULL in the target: nothing stamps
+            (
+                ColumnTypeTag::Byte,
+                &short_bytes,
+                ColumnTypeTag::Short,
+                2,
+                |v| (v.unwrap_or(0) as i16).to_le_bytes().to_vec(),
+            ),
+            (
+                ColumnTypeTag::Short,
+                &byte_bytes,
+                ColumnTypeTag::Byte,
+                1,
+                |v| vec![v.unwrap_or(0) as i8 as u8],
+            ),
+        ];
+        for (src, bytes, dst, size, encode) in conversions {
+            // INT has a NULL sentinel of its own, SHORT and BYTE targets have no NULL
+            let is_stamped = !matches!(
+                (src, dst),
+                (ColumnTypeTag::Int, _) | (_, ColumnTypeTag::Short | ColumnTypeTag::Byte)
+            );
+            for (top_rows, expected) in &cases {
+                let mut bufs = make(bytes);
+                post_convert_with_top_rows(src.into_type(), dst.into_type(), top_rows, &mut bufs)
+                    .unwrap();
+                let expected: Vec<Vec<u8>> = stored
+                    .iter()
+                    .zip(expected)
+                    .map(|(&v, e)| encode(if is_stamped { *e } else { Some(v) }))
+                    .collect();
+                assert_eq!(
+                    rows_of(&bufs, size),
+                    expected,
+                    "{src:?} -> {dst:?}, top rows {top_rows:?}"
+                );
+            }
+        }
+
+        // Boolean expands to the target width; its top rows decode as false
+        let bool_bytes = [0u8, 0, 1, 0, 1, 1];
+        let bool_values = [0i64, 0, 1, 0, 1, 1];
+        let bool_conversions: [(ColumnTypeTag, usize, Encode); 6] = [
+            (ColumnTypeTag::Int, 4, int),
+            (ColumnTypeTag::Long, 8, long),
+            (ColumnTypeTag::Date, 8, long),
+            (ColumnTypeTag::Timestamp, 8, long),
+            (ColumnTypeTag::Float, 4, float),
+            (ColumnTypeTag::Double, 8, double),
+        ];
+        for (dst, size, encode) in bool_conversions {
+            for (top_rows, covered) in &cases {
+                let mut bufs = make(&bool_bytes);
+                post_convert_with_top_rows(
+                    ColumnTypeTag::Boolean.into_type(),
+                    dst.into_type(),
+                    top_rows,
+                    &mut bufs,
+                )
+                .unwrap();
+                let expected: Vec<Vec<u8>> = bool_values
+                    .iter()
+                    .zip(covered)
+                    .map(|(&v, c)| encode(c.map(|_| v)))
+                    .collect();
+                assert_eq!(
+                    rows_of(&bufs, size),
+                    expected,
+                    "Boolean -> {dst:?}, top rows {top_rows:?}"
+                );
+            }
+        }
+
+        // to DECIMAL(18,2): a BYTE source NULLs the ranges, an INT source, which has a NULL
+        // sentinel of its own, ignores them
+        let decimal = ColumnType::new_decimal(18, 2).unwrap();
+        let decimal_long: Encode = |v| v.map_or(nulls::LONG, |v| v * 100).to_le_bytes().to_vec();
+        for (src, bytes) in [
+            (ColumnTypeTag::Byte, &byte_bytes),
+            (ColumnTypeTag::Int, &int_bytes),
+        ] {
+            for (top_rows, expected) in &cases {
+                let mut bufs = make(bytes);
+                post_convert_with_top_rows(src.into_type(), decimal, top_rows, &mut bufs).unwrap();
+                let expected: Vec<Vec<u8>> = stored
+                    .iter()
+                    .zip(expected)
+                    .map(|(&v, e)| {
+                        decimal_long(if src == ColumnTypeTag::Byte {
+                            *e
+                        } else {
+                            Some(v)
+                        })
+                    })
+                    .collect();
+                assert_eq!(
+                    rows_of(&bufs, 8),
+                    expected,
+                    "{src:?} -> DECIMAL(18,2), top rows {top_rows:?}"
+                );
+            }
+        }
+    }
+
     /// DATE (ms), TIMESTAMP (μs) and TIMESTAMP_NS (ns) conversions are pure
     /// power-of-1000 rescales. post_convert folds the cross-unit factor into a
     /// single pass (DATE → TIMESTAMP_NS is ×1_000_000, not ×1000 then ×1000) while
@@ -5105,8 +5366,15 @@ mod decimal_convert_tests {
         // INT -> Decimal8(2,0): 100/-100 fit the i8 width but exceed precision 2 -> null; 99/-99/0 survive.
         let null8 = i8::MIN as i64;
         let mut b = buf(&allocator, &le_small(&[100, 99, -100, -99, 0], 4));
-        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal8, 0, 0, 2)
-            .unwrap();
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal8,
+            &[],
+            0,
+            2,
+        )
+        .unwrap();
         assert_eq!(read_small(b.as_slice(), 0, 1), null8);
         assert_eq!(read_small(b.as_slice(), 1, 1), 99);
         assert_eq!(read_small(b.as_slice(), 2, 1), null8);
@@ -5121,7 +5389,7 @@ mod decimal_convert_tests {
             &mut b,
             ColumnTypeTag::Int,
             ColumnTypeTag::Decimal32,
-            0,
+            &[],
             0,
             9,
         )
@@ -5138,7 +5406,7 @@ mod decimal_convert_tests {
             &mut b,
             ColumnTypeTag::Int,
             ColumnTypeTag::Decimal64,
-            0,
+            &[],
             18,
             18,
         )
@@ -5160,7 +5428,7 @@ mod decimal_convert_tests {
             &mut b,
             ColumnTypeTag::Int,
             ColumnTypeTag::Decimal128,
-            0,
+            &[],
             19,
             20,
         )
@@ -5183,13 +5451,161 @@ mod decimal_convert_tests {
             &mut b,
             ColumnTypeTag::Int,
             ColumnTypeTag::Decimal256,
-            0,
+            &[],
             75,
             76,
         )
         .unwrap();
         assert_eq!(&b.as_slice()[0..32], &d256_null());
         assert_ne!(&b.as_slice()[32..64], &d256_null());
+    }
+
+    /// A BYTE/SHORT source converts its column-top rows, the rows of `top_rows`, to the decimal
+    /// NULL of the target width, and every other row, a real 0 included, to the value times
+    /// 10^scale. Decimal8 from SHORT narrows the buffer, the other small widths widen it.
+    #[test]
+    fn convert_fixed_to_decimal_top_rows() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let values = [3i64, 0, -2, 5, 0, 1];
+        let top_rows = [1..2usize, 3..5];
+        let is_top = |i: usize| i == 1 || i == 3 || i == 4;
+        for (src, src_size) in [(ColumnTypeTag::Byte, 1), (ColumnTypeTag::Short, 2)] {
+            for (dst, dst_size, precision, scale, null) in [
+                (ColumnTypeTag::Decimal8, 1, 2, 1, i8::MIN as i64),
+                (ColumnTypeTag::Decimal16, 2, 4, 2, i16::MIN as i64),
+                (ColumnTypeTag::Decimal32, 4, 9, 2, i32::MIN as i64),
+                (ColumnTypeTag::Decimal64, 8, 18, 3, i64::MIN),
+            ] {
+                let mut b = buf(&allocator, &le_small(&values, src_size));
+                convert_fixed_to_decimal(&mut b, src, dst, &top_rows, scale, precision).unwrap();
+                assert_eq!(b.len(), values.len() * dst_size);
+                for (i, &v) in values.iter().enumerate() {
+                    let expected = if is_top(i) {
+                        null
+                    } else {
+                        v * 10i64.pow(scale as u32)
+                    };
+                    assert_eq!(
+                        read_small(b.as_slice(), i, dst_size),
+                        expected,
+                        "{src:?} -> {dst:?}, row {i}"
+                    );
+                }
+            }
+
+            let mut b = buf(&allocator, &le_small(&values, src_size));
+            convert_fixed_to_decimal(&mut b, src, ColumnTypeTag::Decimal128, &top_rows, 4, 38)
+                .unwrap();
+            for (i, &v) in values.iter().enumerate() {
+                let expected = if is_top(i) {
+                    d128_null()
+                } else {
+                    v as i128 * 10_000
+                };
+                assert_eq!(
+                    read_d128(b.as_slice(), i),
+                    expected,
+                    "{src:?} -> Decimal128, row {i}"
+                );
+            }
+
+            let mut b = buf(&allocator, &le_small(&values, src_size));
+            convert_fixed_to_decimal(&mut b, src, ColumnTypeTag::Decimal256, &top_rows, 4, 76)
+                .unwrap();
+            for (i, &v) in values.iter().enumerate() {
+                let expected = if is_top(i) {
+                    d256_null()
+                } else {
+                    d256_from_i128(v as i128 * 10_000)
+                };
+                assert_eq!(
+                    &b.as_slice()[i * 32..(i + 1) * 32],
+                    &expected,
+                    "{src:?} -> Decimal256, row {i}"
+                );
+            }
+        }
+    }
+
+    /// An INT source has no column-top rows to NULL: its NULL is i32::MIN, which converts to the
+    /// decimal NULL of each target width, while 0 and the other values scale by 10^scale.
+    /// Decimal8/16 narrow the buffer, the wider targets widen it.
+    #[test]
+    fn convert_fixed_to_decimal_int_null() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let values = [3i64, i32::MIN as i64, 0, -2];
+        let is_null = |i: usize| i == 1;
+        for (dst, dst_size, precision, scale, null) in [
+            (ColumnTypeTag::Decimal8, 1, 2, 1, i8::MIN as i64),
+            (ColumnTypeTag::Decimal16, 2, 4, 2, i16::MIN as i64),
+            (ColumnTypeTag::Decimal32, 4, 9, 2, i32::MIN as i64),
+            (ColumnTypeTag::Decimal64, 8, 18, 3, i64::MIN),
+        ] {
+            let mut b = buf(&allocator, &le_small(&values, 4));
+            convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, dst, &[], scale, precision)
+                .unwrap();
+            assert_eq!(b.len(), values.len() * dst_size);
+            for (i, &v) in values.iter().enumerate() {
+                let expected = if is_null(i) {
+                    null
+                } else {
+                    v * 10i64.pow(scale as u32)
+                };
+                assert_eq!(
+                    read_small(b.as_slice(), i, dst_size),
+                    expected,
+                    "Int -> {dst:?}, row {i}"
+                );
+            }
+        }
+
+        let mut b = buf(&allocator, &le_small(&values, 4));
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal128,
+            &[],
+            4,
+            38,
+        )
+        .unwrap();
+        for (i, &v) in values.iter().enumerate() {
+            let expected = if is_null(i) {
+                d128_null()
+            } else {
+                v as i128 * 10_000
+            };
+            assert_eq!(
+                read_d128(b.as_slice(), i),
+                expected,
+                "Int -> Decimal128, row {i}"
+            );
+        }
+
+        let mut b = buf(&allocator, &le_small(&values, 4));
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal256,
+            &[],
+            4,
+            76,
+        )
+        .unwrap();
+        for (i, &v) in values.iter().enumerate() {
+            let expected = if is_null(i) {
+                d256_null()
+            } else {
+                d256_from_i128(v as i128 * 10_000)
+            };
+            assert_eq!(
+                &b.as_slice()[i * 32..(i + 1) * 32],
+                &expected,
+                "Int -> Decimal256, row {i}"
+            );
+        }
     }
 
     /// Pins round-half-away-from-zero on decimal scale reduction across the i64 and i128 backings,

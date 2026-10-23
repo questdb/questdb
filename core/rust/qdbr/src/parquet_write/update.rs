@@ -6977,4 +6977,350 @@ mod tests {
         }
         Ok(())
     }
+
+    /// Builds a parquet file and its `_pm` with row groups of 4 rows: [ts(id=0), val(id=1),
+    /// added(id=2)]. `added` is a column the source file lacks; `tops` gives the column top of
+    /// each row group in it, the leading rows that hold NULL. A row group with a top of 4 gets
+    /// the backfilled NULL chunk of `copy_row_group_with_null_columns()`, as an O3 merge copies
+    /// it; one with a smaller top is re-encoded, as an O3 merge re-encodes it, with the top
+    /// followed by `values[top..]`.
+    #[allow(clippy::type_complexity)]
+    fn build_added_column_layout<T: Copy>(
+        added: ColumnType,
+        values: &[T; 4],
+        tops: &[usize],
+    ) -> Result<(Vec<u8>, Vec<u8>, u64), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use std::io::Read as _;
+
+        let rows = tops.len() * 4;
+        let ts: Vec<i64> = (1..=rows as i64).collect();
+        let val: Vec<i32> = (1..=rows as i32).map(|v| v * 10).collect();
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(true)
+            .with_row_group_size(Some(4))
+            .finish(Partition {
+                table: "t".to_string(),
+                columns: vec![
+                    make_designated_ts_with_id(0, "ts", &ts),
+                    make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                ],
+            })?;
+        let src_len = src.as_file().metadata()?.len();
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        updater.set_target_schema(&Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_column_with_id(2, "added", added, &values[..1]),
+            ],
+        })?;
+        for (rg, &top) in tops.iter().enumerate() {
+            assert!(top <= 4, "top {top} exceeds the row group size 4");
+            if top == 4 {
+                updater.copy_row_group_with_null_columns(rg as i32, &[(2, added)])?;
+            } else {
+                let lo = rg * 4;
+                let added_values = &values[top..];
+                updater.replace_row_group(
+                    &Partition {
+                        table: "t".to_string(),
+                        columns: vec![
+                            make_designated_ts_with_id(0, "ts", &ts[lo..lo + 4]),
+                            make_column_with_id(
+                                1,
+                                "val",
+                                ColumnTypeTag::Int.into_type(),
+                                &val[lo..lo + 4],
+                            ),
+                            Column::from_raw_data(
+                                2,
+                                "added",
+                                added.code(),
+                                top as i64,
+                                4,
+                                added_values.as_ptr() as *const u8,
+                                std::mem::size_of_val(added_values),
+                                null(),
+                                0,
+                                null(),
+                                0,
+                                false,
+                                false,
+                                0,
+                            )?,
+                        ],
+                    },
+                    rg as i32,
+                    lo,
+                )?;
+            }
+        }
+        updater.end(None)?;
+        let pm_size = updater.result_parquet_meta_size() as u64;
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let mut parquet_bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut parquet_bytes)?;
+        Ok((parquet_bytes, pm_bytes, pm_size))
+    }
+
+    /// Decodes row groups `0..tops.len()` of `added` (the file of
+    /// [`build_added_column_layout`]) as `target` in one range decode, and asserts that the
+    /// buffer equals the row groups decoded one by one and laid end to end, and that the
+    /// surfaced column top is `expected_column_top`. An all-NULL row group that
+    /// decode_row_group returns empty (the fast path) stands for `null_bytes` per row, as the
+    /// O3 merge fills it.
+    #[allow(clippy::too_many_arguments)]
+    fn assert_range_decode_equals_per_group_decodes(
+        added: ColumnType,
+        parquet_bytes: &[u8],
+        pm_bytes: &[u8],
+        pm_size: u64,
+        tops: &[usize],
+        target: ColumnType,
+        null_bytes: &[u8],
+        expected_column_top: usize,
+    ) -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use crate::parquet_read::parquet_meta_decode::{
+            decode_row_group, decode_row_group_range, ColumnChunkSource,
+        };
+        use crate::parquet_read::{DecodeContext, RowGroupBuffers};
+
+        let alloc = TestAllocatorState::new();
+        let reader = ParquetMetaReader::from_file_size(pm_bytes, pm_size)?;
+        let col_pairs = [(2i32, target)];
+        let mut expected = Vec::new();
+        for rg in 0..tops.len() {
+            let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), parquet_bytes.len() as u64);
+            let mut bufs = RowGroupBuffers::new(alloc.allocator());
+            decode_row_group(
+                &mut ctx,
+                &mut bufs,
+                ColumnChunkSource::File(parquet_bytes),
+                &reader,
+                &col_pairs,
+                rg,
+                0,
+                4,
+            )?;
+            let data = bufs.column_buffers()[0].data_vec.as_slice();
+            if data.is_empty() {
+                for _ in 0..4 {
+                    expected.extend_from_slice(null_bytes);
+                }
+            } else {
+                expected.extend_from_slice(data);
+            }
+        }
+        let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), parquet_bytes.len() as u64);
+        let mut bufs = RowGroupBuffers::new(alloc.allocator());
+        let decoded = decode_row_group_range(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::File(parquet_bytes),
+            &reader,
+            &col_pairs,
+            0,
+            tops.len() - 1,
+        )?;
+        assert_eq!(decoded, tops.len() * 4);
+        let chunk = &bufs.column_buffers()[0];
+        assert_eq!(
+            chunk.data_vec.as_slice(),
+            expected.as_slice(),
+            "{added:?} -> {target:?}, tops {tops:?}"
+        );
+        assert_eq!(
+            chunk.column_top, expected_column_top,
+            "{added:?} -> {target:?}, tops {tops:?}"
+        );
+        Ok(())
+    }
+
+    /// The targets of a lazy conversion of `source`, a type without a NULL sentinel, with the
+    /// bytes of the target NULL. SHORT and BYTE have no NULL either: the O3 merge fills 0, and
+    /// nothing stamps.
+    fn no_sentinel_targets(source: ColumnTypeTag) -> Vec<(ColumnType, Vec<u8>)> {
+        use qdb_core::col_type::{nulls, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+        let int_null = nulls::INT.to_le_bytes().to_vec();
+        let long_null = nulls::LONG.to_le_bytes().to_vec();
+        let mut targets = vec![
+            (ColumnTypeTag::Int.into_type(), int_null),
+            (ColumnTypeTag::Long.into_type(), long_null.clone()),
+            (ColumnTypeTag::Date.into_type(), long_null.clone()),
+            (ColumnTypeTag::Timestamp.into_type(), long_null.clone()),
+            (
+                ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG),
+                long_null,
+            ),
+            (
+                ColumnTypeTag::Float.into_type(),
+                nulls::FLOAT.to_le_bytes().to_vec(),
+            ),
+            (
+                ColumnTypeTag::Double.into_type(),
+                nulls::DOUBLE.to_le_bytes().to_vec(),
+            ),
+        ];
+        if source != ColumnTypeTag::Boolean {
+            let mut decimal256_null = nulls::DECIMAL256[0].to_le_bytes().to_vec();
+            decimal256_null.extend_from_slice(&nulls::DECIMAL256[1].to_le_bytes());
+            for (precision, scale, null_bytes) in [
+                (2, 0, nulls::DECIMAL8.to_le_bytes().to_vec()),
+                (4, 1, nulls::DECIMAL16.to_le_bytes().to_vec()),
+                (9, 2, nulls::DECIMAL32.to_le_bytes().to_vec()),
+                (18, 2, nulls::DECIMAL64.to_le_bytes().to_vec()),
+                (38, 4, nulls::DECIMAL128.to_le_bytes().to_vec()),
+                (76, 4, decimal256_null),
+            ] {
+                targets.push((
+                    ColumnType::new_decimal(precision, scale).unwrap(),
+                    null_bytes,
+                ));
+            }
+            targets.push((ColumnTypeTag::Short.into_type(), vec![0u8; 2]));
+            targets.push((ColumnTypeTag::Byte.into_type(), vec![0u8]));
+        }
+        targets
+    }
+
+    /// Builds the file of [`build_added_column_layout`] for `source` with the values that
+    /// [`no_sentinel_targets`] decode: 0, a positive value and the extremes of the type.
+    #[allow(clippy::type_complexity)]
+    fn build_no_sentinel_layout(
+        source: ColumnTypeTag,
+        tops: &[usize],
+    ) -> Result<(Vec<u8>, Vec<u8>, u64), Box<dyn Error>> {
+        match source {
+            ColumnTypeTag::Byte => {
+                build_added_column_layout(source.into_type(), &[0i8, 5, i8::MIN, i8::MAX], tops)
+            }
+            ColumnTypeTag::Short => {
+                build_added_column_layout(source.into_type(), &[0i16, 5, i16::MIN, i16::MAX], tops)
+            }
+            _ => build_added_column_layout(source.into_type(), &[1u8, 0, 1, 1], tops),
+        }
+    }
+
+    /// A run of row groups decoded into one buffer must equal the row groups decoded one by
+    /// one and laid end to end, for a column added after the file was written and lazily
+    /// converted from a type without a NULL sentinel. Java reads the surfaced column top as
+    /// one leading block of NULLs: the top rows from row 0 up to the first row with a value.
+    #[test]
+    fn decode_row_group_range_equals_per_group_decodes() -> Result<(), Box<dyn Error>> {
+        // (tops of the row groups, column top Java reads)
+        let layouts: [(&[usize], usize); 10] = [
+            (&[0, 4], 0),
+            (&[4, 0], 4),
+            (&[4, 4], 8),
+            (&[0, 0], 0),
+            (&[0, 4, 4], 0),
+            (&[4, 0, 4], 4),
+            (&[0, 3, 4], 0),
+            (&[2, 4], 2),
+            (&[4, 2, 0], 6),
+            (&[1, 0, 2, 4], 1),
+        ];
+        for source in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Boolean,
+        ] {
+            for (tops, column_top) in layouts {
+                let (pq, pm, pm_size) = build_no_sentinel_layout(source, tops)?;
+                for (target, null_bytes) in no_sentinel_targets(source) {
+                    assert_range_decode_equals_per_group_decodes(
+                        source.into_type(),
+                        &pq,
+                        &pm,
+                        pm_size,
+                        tops,
+                        target,
+                        &null_bytes,
+                        column_top,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`decode_row_group_range_equals_per_group_decodes`] over random runs of 2 to 6 row
+    /// groups, each holding values, a partial top or only its top, with a random source and
+    /// target. The seed is printed.
+    #[test]
+    fn decode_row_group_range_matches_per_group_decodes_fuzz() -> Result<(), Box<dyn Error>> {
+        use rand::rngs::StdRng;
+        use rand::{RngExt, SeedableRng};
+
+        let seed: u64 = rand::rng().random();
+        println!("decode_row_group_range_matches_per_group_decodes_fuzz seed: {seed}");
+        let mut rng = StdRng::seed_from_u64(seed);
+        let sources = [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Boolean,
+        ];
+        for _ in 0..40 {
+            let source = sources[rng.random_range(0..sources.len())];
+            let tops: Vec<usize> = (0..rng.random_range(2..=6))
+                .map(|_| match rng.random_range(0..3) {
+                    0 => 0,
+                    1 => rng.random_range(1..4),
+                    _ => 4,
+                })
+                .collect();
+            // the leading block: the tops of the row groups that hold only their top, and
+            // the top of the first row group that holds a value
+            let mut column_top = 0;
+            for &top in &tops {
+                column_top += top;
+                if top < 4 {
+                    break;
+                }
+            }
+            let (pq, pm, pm_size) = build_no_sentinel_layout(source, &tops)?;
+            let targets = no_sentinel_targets(source);
+            let (target, null_bytes) = &targets[rng.random_range(0..targets.len())];
+            assert_range_decode_equals_per_group_decodes(
+                source.into_type(),
+                &pq,
+                &pm,
+                pm_size,
+                &tops,
+                *target,
+                null_bytes,
+                column_top,
+            )
+            .map_err(|e| format!("seed {seed}: {e}"))?;
+        }
+        Ok(())
+    }
 }

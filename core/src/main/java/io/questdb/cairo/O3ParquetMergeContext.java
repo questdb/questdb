@@ -73,6 +73,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
     private LongList srcPtrs;
+    private LongList topRows;
 
     public O3ParquetMergeContext() {
         super(MemoryTag.NATIVE_O3);
@@ -89,6 +90,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rgO3Ranges = new LongList();
         rowGroupBounds = new LongList();
         srcPtrs = new LongList();
+        topRows = new LongList();
     }
 
     @Override
@@ -102,6 +104,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rgO3Ranges.clear();
         rowGroupBounds.clear();
         srcPtrs.clear();
+        topRows.clear();
     }
 
     @Override
@@ -127,6 +130,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rgO3Ranges = null;
         rowGroupBounds = null;
         srcPtrs = null;
+        topRows = null;
         super.close();
     }
 
@@ -230,6 +234,11 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         srcPtrs.setPos(requiredLen);
         srcPtrs.fill(0, requiredLen, 0);
         return srcPtrs;
+    }
+
+    // the column-top rows of a coalesced run, see ParquetColumnTypeConverter.fillRangeTopRows()
+    public LongList getTopRows() {
+        return topRows;
     }
 
     public boolean isPreparedMergeKeyColumnsOnly() {
