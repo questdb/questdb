@@ -52,6 +52,7 @@ public final class PurgingOperator {
     private final FilesFacade ff;
     private final Log log;
     private final MessageBus messageBus;
+    private final PostingIndexUtils.SealedFileRemover sealedFileRemover = new PostingIndexUtils.SealedFileRemover();
     private final IntList updateColumnIndexes = new IntList();
 
     public PurgingOperator(
@@ -202,12 +203,12 @@ public final class PurgingOperator {
                                     if (IndexType.isPosting(indexType)) {
                                         // Enumerate every sealed .pv / .pc<N> for this column
                                         // instance across all on-disk sealTxn generations.
-                                        // removeAllSealedFiles tolerates missing files, so
+                                        // sealedFileRemover tolerates missing files, so
                                         // successive purge passes are idempotent. Returns true
                                         // if at least one removal failed and the file is still
                                         // on disk — fold that into columnPurged so the column
                                         // version is rescheduled for async purge.
-                                        boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathPartitionLen, columnName, columnVersion);
+                                        boolean sidecarRemovalFailed = sealedFileRemover.remove(ff, path, pathPartitionLen, columnName, columnVersion);
                                         IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
                                         columnPurged &= ff.removeQuiet(path.$());
                                         columnPurged &= !sidecarRemovalFailed;
