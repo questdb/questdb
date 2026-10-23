@@ -31,6 +31,8 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.sql.PartitionFrameDecoder;
+import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -2139,8 +2141,33 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public DeltaCheckpoint newDeltaCheckpoint() {
+        return getDelegate().newDeltaCheckpoint();
+    }
+
+    @Override
     public ParquetPartitionDecoder newParquetPartitionDecoder() {
         return getDelegate().newParquetPartitionDecoder();
+    }
+
+    @Override
+    public PartitionDeltaWriter newPartitionDeltaWriter() {
+        return getDelegate().newPartitionDeltaWriter();
+    }
+
+    @Override
+    public PartitionFrameDecoder newPartitionFrameDecoder() {
+        return getDelegate().newPartitionFrameDecoder();
+    }
+
+    @Override
+    public PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
+        return getDelegate().newPartitionFrameStateFactory(tableToken);
+    }
+
+    @Override
+    public AbstractTimestampFinder newTimestampFinder() {
+        return getDelegate().newTimestampFinder();
     }
 
     public void setDelegate(CairoConfiguration delegate) {

@@ -25,6 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
@@ -186,6 +188,73 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.NONE, increment, N, "", 0);
+    }
+
+    @Test
+    public void testBoundedIntervalSearch() throws Exception {
+        assertMemoryLeak(() -> {
+            final int rowCount = 12;
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowCount);
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .timestamp(timestampType.getTimestampType()));
+            final long start = timestampType.getDriver().parseFloorLiteral("2020-01-01T00:00");
+            final long hour = timestampType.getDriver().fromHours(1);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < rowCount; i++) {
+                    writer.newRow(start + (i / 2) * hour).append();
+                }
+                writer.newRow(start + timestampType.getDriver().fromDays(1)).append();
+                writer.commit();
+            }
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            }
+            intervals.add(start + hour, start + hour);
+            intervals.add(start + 3 * hour, start + 3 * hour);
+            intervals.add(start + 4 * hour, start + 4 * hour);
+
+            final IntList decodedRowHi = new IntList();
+            final CairoConfiguration trackingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public ParquetPartitionDecoder newParquetPartitionDecoder() {
+                    return new ParquetPartitionDecoder() {
+                        @Override
+                        public int decodeRowGroup(RowGroupBuffers buffers, DirectIntList columns, int rowGroup, int rowLo, int rowHi) {
+                            decodedRowHi.add(rowHi);
+                            return super.decodeRowGroup(buffers, columns, rowGroup, rowLo, rowHi);
+                        }
+                    };
+                }
+            };
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            trackingConfiguration,
+                            new RuntimeIntervalModel(timestampType.getDriver(), reader.getPartitionedBy(), intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+                for (int pass = 0; pass < 2; pass++) {
+                    assertFrameRows(cursor.next(), 8, 10);
+                    decodedRowHi.clear();
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(counter);
+                    Assert.assertEquals(4, counter.get());
+                    assertDecodeBound(decodedRowHi, 8);
+
+                    // Calculating the remaining size must not advance the iteration's bound.
+                    decodedRowHi.clear();
+                    assertFrameRows(cursor.next(), 6, 8);
+                    assertDecodeBound(decodedRowHi, 8);
+                    decodedRowHi.clear();
+                    assertFrameRows(cursor.next(), 2, 4);
+                    Assert.assertNull(cursor.next());
+                    assertDecodeBound(decodedRowHi, 6);
+                    cursor.toTop();
+                }
+            }
+        });
     }
 
     @Test
@@ -381,6 +450,29 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalSpansPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("v", ColumnType.INT)
+                    .timestamp(timestampType.getTimestampType()));
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2020-01-01T21:00'),
+                    (2, '2020-01-02T10:00'),
+                    (3, '2020-01-02T11:00'),
+                    (4, '2020-01-03T00:00')
+                    """);
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+            }
+            assertQuery("SELECT v FROM x WHERE timestamp IN '2020-01-01T20:00;9h' ORDER BY timestamp DESC")
+                    .noLeakCheck()
+                    .withPlanContaining("Interval backward scan")
+                    .returns("v\n1\n");
+        });
+    }
+
+    @Test
     public void testNegativeReloadByDay() throws Exception {
         // day partition
         // two-hour interval between timestamps
@@ -413,6 +505,107 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 """, timestampType.getTypeName());
 
         testReload(increment, intervals, N, expected);
+    }
+
+    @Test
+    public void testOverlappingIntervals() throws Exception {
+        // Each row must stay in one frame when the interval list is unsorted or overlaps. On
+        // 2020-01-01 two unsorted intervals share 02:00, which three rows hold across a row group
+        // boundary. On 2020-01-02 the earlier interval ends inside the row group that starts at the
+        // later interval's first row.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 3);
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .timestamp(timestampType.getTimestampType()));
+            final long start = timestampType.getDriver().parseFloorLiteral("2020-01-01T00:00");
+            final long hour = timestampType.getDriver().fromHours(1);
+            final long day = timestampType.getDriver().fromDays(1);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int h : new int[]{0, 1, 2, 2, 2, 3, 4, 5}) {
+                    writer.newRow(start + h * hour).append();
+                }
+                for (int h = 0; h < 6; h++) {
+                    writer.newRow(start + day + h * hour).append();
+                }
+                writer.newRow(start + 2 * day).append();
+                writer.commit();
+            }
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+            }
+            intervals.add(start + 2 * hour, start + 4 * hour + hour / 2);
+            intervals.add(start + hour, start + 2 * hour);
+            intervals.add(start + day + hour, start + day + 4 * hour + hour / 2);
+            intervals.add(start + day + 3 * hour, start + day + 6 * hour);
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            configuration,
+                            new RuntimeIntervalModel(timestampType.getDriver(), reader.getPartitionedBy(), intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+                for (int pass = 0; pass < 2; pass++) {
+                    // 2020-01-02 01:00..05:00 and 2020-01-01 01:00..04:00, each row once
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(counter);
+                    Assert.assertEquals(11, counter.get());
+                    assertFrameRows(cursor.next(), 1, 6);
+                    assertFrameRows(cursor.next(), 1, 7);
+                    Assert.assertNull(cursor.next());
+                    cursor.toTop();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingTickIntervals() throws Exception {
+        // The spring-forward gap makes the '...@Europe/London;50m;1h;4' intervals overlap in UTC.
+        // Each row must appear once in both scan directions and in count().
+        assertMemoryLeak(() -> {
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .timestamp(timestampType.getTimestampType()));
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-03-31T00:40'),
+                    ('2024-03-31T01:10'),
+                    ('2024-03-31T01:35'),
+                    ('2024-03-31T01:40'),
+                    ('2024-04-01T12:00')
+                    """);
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+            }
+            final String where = " FROM x WHERE timestamp IN '2024-03-31T00:30@Europe/London;50m;1h;4'";
+            assertQuery("SELECT timestamp" + where)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(replaceTimestampSuffix1("""
+                            timestamp
+                            2024-03-31T00:40:00.000000Z
+                            2024-03-31T01:10:00.000000Z
+                            2024-03-31T01:35:00.000000Z
+                            2024-03-31T01:40:00.000000Z
+                            """, timestampType.getTypeName()));
+            assertQuery("SELECT timestamp" + where + " ORDER BY timestamp DESC")
+                    .noLeakCheck()
+                    .timestampDesc("timestamp")
+                    .returns(replaceTimestampSuffix1("""
+                            timestamp
+                            2024-03-31T01:40:00.000000Z
+                            2024-03-31T01:35:00.000000Z
+                            2024-03-31T01:10:00.000000Z
+                            2024-03-31T00:40:00.000000Z
+                            """, timestampType.getTypeName()));
+            assertQuery("SELECT count()" + where)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n4\n");
+        });
     }
 
     @Test
@@ -687,6 +880,12 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
 
+    private static void assertFrameRows(PartitionFrame frame, long lo, long hi) {
+        Assert.assertNotNull(frame);
+        Assert.assertEquals(lo, frame.getRowLo());
+        Assert.assertEquals(hi, frame.getRowHi());
+    }
+
     private static void assertIndexRowsMatchSymbol(PartitionFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedCount) {
         // SymbolTable is a table at table scope, so it will be the same for every
         // partition frame here. Get its instance outside of partition frame loop.
@@ -728,6 +927,15 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         }
         if (allNative) {
             Assert.assertEquals(expectedCount, rowCount);
+        }
+    }
+
+    private void assertDecodeBound(IntList decodedRowHi, int rowHi) {
+        if (convertToParquet) {
+            Assert.assertTrue("the interval search must decode timestamps", decodedRowHi.size() > 0);
+            for (int i = 0; i < decodedRowHi.size(); i++) {
+                Assert.assertTrue("decoded rows from a previously searched interval", decodedRowHi.getQuick(i) <= rowHi);
+            }
         }
     }
 

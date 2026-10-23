@@ -178,14 +178,17 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         private boolean fetchSlave = true;
         private boolean hasMaster;
         private boolean hasMasterPending = true;
+        private boolean hasSameKey;
         private boolean hasSlave;
         private boolean hasSlavePending = true;
         private boolean isOpen;
-        private long masterKeyValueAddress = -1;
+        private long masterNextSlaveRowId;
+        private long masterPrevSlaveRowId;
         private Record masterRecord;
         private Record masterRecord2;
         private long masterTimestamp = -1;
-        private long slaveKeyValueAddress = -1;
+        private long slaveNextMasterRowId;
+        private long slavePrevMasterRowId;
         private Record slaveRecord;
         private Record slaveRecord2;
         private long slaveTimestamp = -1;
@@ -247,7 +250,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                     final MapKey key = joinKeyMap.withKey();
                     key.put(masterRecord, masterKeySink);
                     final MapValue value = key.createValue();
-                    masterKeyValueAddress = value.getStartAddress();
                     if (value.isNew()) {
                         value.putLong(VAL_MASTER_PREV, NULL_ROWID);
                         value.putLong(VAL_SLAVE_PREV, NULL_ROWID);
@@ -257,6 +259,14 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                         value.putLong(VAL_MASTER_PREV, value.getLong(VAL_MASTER_NEXT));
                     }
                     value.putLong(VAL_MASTER_NEXT, masterRecord.getRowId());
+                    // Cache row IDs because inserts can relocate map values.
+                    masterPrevSlaveRowId = value.getLong(VAL_SLAVE_PREV);
+                    masterNextSlaveRowId = value.getLong(VAL_SLAVE_NEXT);
+                    hasSameKey = hasSlave && masterNextSlaveRowId == slaveRecord.getRowId();
+                    if (hasSameKey) {
+                        slavePrevMasterRowId = value.getLong(VAL_MASTER_PREV);
+                        slaveNextMasterRowId = value.getLong(VAL_MASTER_NEXT);
+                    }
                     masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 } else {
                     masterTimestamp = Long.MAX_VALUE;
@@ -272,7 +282,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                     final MapKey key = joinKeyMap.withKey();
                     key.put(slaveRecord, slaveKeySink);
                     final MapValue value = key.createValue();
-                    slaveKeyValueAddress = value.getStartAddress();
                     if (value.isNew()) {
                         value.putLong(VAL_MASTER_PREV, NULL_ROWID);
                         value.putLong(VAL_MASTER_NEXT, NULL_ROWID);
@@ -281,6 +290,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                         value.putLong(VAL_SLAVE_PREV, value.getLong(VAL_SLAVE_NEXT));
                     }
                     value.putLong(VAL_SLAVE_NEXT, slaveRecord.getRowId());
+                    slavePrevMasterRowId = value.getLong(VAL_MASTER_PREV);
+                    slaveNextMasterRowId = value.getLong(VAL_MASTER_NEXT);
+                    hasSameKey = hasMaster && slaveNextMasterRowId == masterRecord.getRowId();
+                    if (hasSameKey) {
+                        masterPrevSlaveRowId = value.getLong(VAL_SLAVE_PREV);
+                        masterNextSlaveRowId = value.getLong(VAL_SLAVE_NEXT);
+                    }
                     slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 } else {
                     slaveTimestamp = Long.MAX_VALUE;
@@ -303,7 +319,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                 if (slaveTimestamp == Long.MAX_VALUE) {
                     return false;
                 }
-                if (masterKeyValueAddress == slaveKeyValueAddress) {
+                if (hasSameKey) {
                     record.of(masterRecord, slaveRecord);
                 } else {
                     masterRecordLeads();
@@ -334,7 +350,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         private void masterRecordLeads() {
             // lookup previous slave
-            final long rowid = joinKeyMap.valueAt(masterKeyValueAddress).getLong(hasSlave ? VAL_SLAVE_PREV : VAL_SLAVE_NEXT);
+            final long rowid = hasSlave ? masterPrevSlaveRowId : masterNextSlaveRowId;
             if (rowid == NULL_ROWID) {
                 record.of(masterRecord, nullSlaveRecord);
             } else {
@@ -345,13 +361,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         private void resetState() {
             joinKeyMap.clear();
-            masterKeyValueAddress = -1L;
-            slaveKeyValueAddress = -1L;
             masterTimestamp = -1L;
             slaveTimestamp = -1L;
             fetchMaster = true;
+            hasMaster = false;
             hasMasterPending = true;
             fetchSlave = true;
+            hasSlave = false;
             hasSlavePending = true;
             // wasn't there originally
             dualRecord = false;
@@ -359,7 +375,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         private void slaveRecordLeads() {
             // lookup previous master
-            final long rowid = joinKeyMap.valueAt(slaveKeyValueAddress).getLong(hasMaster ? VAL_MASTER_PREV : VAL_MASTER_NEXT);
+            final long rowid = hasMaster ? slavePrevMasterRowId : slaveNextMasterRowId;
             if (rowid == NULL_ROWID) {
                 record.of(nullMasterRecord, slaveRecord);
             } else {

@@ -106,18 +106,22 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
                         baseTableReader.getMetadataVersion()
                 );
             }
-            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            final TableReader reader = getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            reader.setMemoryTracker(getMemoryTracker());
+            return reader;
         }
-        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
+        return super.getReader(tableToken, version);
     }
 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
             // Base table reader txn is fixed throughout the mat view refresh.
-            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            final TableReader reader = getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            reader.setMemoryTracker(getMemoryTracker());
+            return reader;
         }
-        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+        return super.getReader(tableToken);
     }
 
     @Override

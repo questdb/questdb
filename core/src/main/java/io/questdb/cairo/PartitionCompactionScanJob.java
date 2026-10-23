@@ -857,7 +857,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
 
             final int lo = findLogicalPartitionRunStart(txReader, logicalPartitionTimestamp);
-            if (lo < 0) {
+            if (lo < 0 || txReader.isPartitionDeltaActive(lo)) {
                 return false;
             }
             final int hi = findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp);
@@ -1666,6 +1666,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long nowMicros,
             long nowInTableUnits
     ) {
+        // Delta catalogs identify frozen base files; only the Delta lifecycle can replace them.
+        if (txReader.isPartitionDeltaActive(lo)) {
+            return true;
+        }
         final int partitionCount = txReader.getPartitionCount();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         // The END of the logical partition, not of one split inside it: every folder of it is a candidate,

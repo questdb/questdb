@@ -581,7 +581,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId
                         IndexReader symbolIndexReader = frame.getIndexReader(groupBySymbolColIndex, IndexReader.DIR_FORWARD);
-                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameLo, frameHi);
+                        indexCursor = symbolIndexReader.getFrameCursor(
+                                groupBySymbolKey,
+                                frameLo,
+                                frameHi - 1,
+                                frameMemory.getSourceRowResolver()
+                        );
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
@@ -782,7 +787,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.memoryTracker = sqlExecutionContext.getMemoryTracker();
-            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor);
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;

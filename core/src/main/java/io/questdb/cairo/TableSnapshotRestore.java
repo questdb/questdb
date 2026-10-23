@@ -804,8 +804,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // size are not MVCC-visible.
                 final long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
                 // An empty parquet partition still needs a valid _pm but no index
-                // rebuild (rebuildBitmapIndexes skips rowCount<=0 too).
-                final boolean doRebuild = rebuildIndexes && partitionRowCount > 0;
+                // rebuild (rebuildBitmapIndexes skips rowCount<=0 too). Delta
+                // catalogs retain frozen indexes, so preserve those as well.
+                final boolean doRebuild = rebuildIndexes && partitionRowCount > 0 && !txWriter.isPartitionDeltaActive(i);
                 try {
                     processParquetPartition(
                             path,
@@ -1319,7 +1320,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                         : liveRows;
                 // Append before any continue below, so entry i really is partition i.
                 partitionFileRows.add(partitionRowCount);
-                if (partitionRowCount <= 0) {
+                if (partitionRowCount <= 0 || (isPartitioned && txWriter.isPartitionDeltaActive(partitionIndex))) {
+                    // Frozen indexes retain the identities recorded by Delta catalogs.
                     continue;
                 }
                 if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {

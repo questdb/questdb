@@ -54,6 +54,14 @@ public interface TablePageFrameCursor extends PageFrameCursor {
                             : readerMetadata.getWriterIndex(colIdx)
             );
         }
+        final int timestampIndex = readerMetadata.getTimestampIndex();
+        if (timestampIndex >= 0) {
+            columnMapping.setTimestamp(
+                    timestampIndex,
+                    readerMetadata.getWriterIndex(timestampIndex),
+                    readerMetadata.getColumnType(timestampIndex)
+            );
+        }
     }
 
     /**

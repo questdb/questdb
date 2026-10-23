@@ -64,6 +64,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.NanosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<TableReader> {
@@ -287,6 +288,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public String getBaseColumnName(int idx) {
         return base.getBaseColumnName(idx);
+    }
+
+    @TestOnly
+    public RecordCursor getBaseCursor() {
+        return cursor.base;
     }
 
     @Override
@@ -586,6 +592,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public boolean hasActivePushdownFilter() {
             return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
         }
 
         @Override

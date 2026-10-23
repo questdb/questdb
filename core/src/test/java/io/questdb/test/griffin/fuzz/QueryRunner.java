@@ -1522,7 +1522,7 @@ public final class QueryRunner {
             if (aJ != null) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
                 Outcome bindOn = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic());
-                return reconcilePair(
+                Result onResult = reconcilePair(
                         query.sql(),
                         aJ,
                         bindOn,
@@ -1533,6 +1533,7 @@ public final class QueryRunner {
                         "literal",
                         "bind   "
                 );
+                return onResult.isFailed() || onResult.isSkipped() ? onResult : offResult;
             }
             return offResult;
         } finally {
@@ -1612,6 +1613,7 @@ public final class QueryRunner {
 
             Outcome aJ = null;
             Result jitResult = null;
+            Result skippedResult = null;
             if (diffJit) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
                 aJ = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
@@ -1619,6 +1621,9 @@ public final class QueryRunner {
                         "JIT divergence", "jit on ", "jit off");
                 if (jitResult.isFailed()) {
                     return jitResult;
+                }
+                if (jitResult.isSkipped()) {
+                    skippedResult = jitResult;
                 }
             }
 
@@ -1640,6 +1645,9 @@ public final class QueryRunner {
                 if (storageResult.isFailed()) {
                     return storageResult;
                 }
+                if (storageResult.isSkipped()) {
+                    skippedResult = storageResult;
+                }
             }
 
             if (isFusedAxisApplicable(query)) {
@@ -1654,9 +1662,12 @@ public final class QueryRunner {
                 if (bindResult != null && bindResult.isFailed()) {
                     return bindResult;
                 }
+                if (bindResult != null && bindResult.isSkipped()) {
+                    skippedResult = bindResult;
+                }
             }
 
-            return jitResult != null ? jitResult : Result.ok();
+            return skippedResult != null ? skippedResult : Result.ok();
         } finally {
             executionContext.setJitMode(prevJitMode);
         }

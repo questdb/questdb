@@ -84,7 +84,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                             Assert.assertFalse(txnScoreboard.isTxnAvailable(3));
                         }
                         // bump max txn to new value, > 3
-                        txnScoreboard.acquireTxn(5, 4);
+                        txnScoreboard.acquireTxn(5, 4, w.getSeqTxn());
                         txnScoreboard.releaseTxn(5, 4);
 
                         // expect 0, the writer is released
@@ -113,7 +113,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertFalse(txnScoreboard.isTxnAvailable(4));
                 }
                 // bump max txn to new value, > 4
-                txnScoreboard.acquireTxn(5, 5);
+                txnScoreboard.acquireTxn(5, 5, w.getSeqTxn());
                 txnScoreboard.releaseTxn(5, 5);
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(4));
             }
@@ -156,7 +156,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 }
 
                 assertMin(2, txnScoreboard);
-                txnScoreboard.acquireTxn(0, 3);
+                txnScoreboard.acquireTxn(0, 3, writer.getSeqTxn());
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
             }
         });

@@ -2867,6 +2867,42 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasAnyDeltaCacheInvalidatedOnReload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp) timestamp(ts) partition by day");
+            try (
+                    TableWriter writer = newOffPoolWriter(configuration, "x");
+                    TableReader reader = newOffPoolReader(configuration, "x")
+            ) {
+                final TableWriter.Row row = writer.newRow(0);
+                row.append();
+                writer.commit();
+                Assert.assertTrue(reader.reload());
+
+                Assert.assertFalse(reader.hasAnyDelta());
+                Assert.assertFalse(reader.hasAnyDelta());
+
+                final int partitionIndex = 0;
+                final long partitionTimestamp = writer.getPartitionTimestamp(partitionIndex);
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(partitionTimestamp);
+                writer.getTxWriter().setPartitionHasDelta(partitionIndex, true);
+                writer.bumpPartitionTableVersion();
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertTrue(reader.hasAnyDelta());
+                Assert.assertTrue(reader.hasAnyDelta());
+
+                writer.getTxWriter().setPartitionHasDelta(partitionIndex, false);
+                writer.bumpPartitionTableVersion();
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertFalse(reader.hasAnyDelta());
+                Assert.assertFalse(reader.hasAnyDelta());
+            }
+        });
+    }
+
+    @Test
     public void testReloadByDaySwitch() throws Exception {
         testReload(PartitionBy.DAY, 15, 60L * 60000, MUST_SWITCH);
     }
@@ -3336,6 +3372,82 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("only the two rows that predate sym are NULL, direction=" + direction, 2, rows);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMetadataReloadDoesNotReopenInlineVarchar() throws Exception {
+        final AtomicInteger auxOpenCount = new AtomicInteger();
+        final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "v.i")) {
+                    auxOpenCount.incrementAndGet();
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            execute("CREATE TABLE x (v VARCHAR, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('short', 1, '2024-01-01T00:00:00.000000Z')");
+
+            try (TableReader reader = getReader("x")) {
+                reader.openPartition(0);
+                final int varcharIndex = reader.getMetadata().getColumnIndex("v");
+                final int columnBase = reader.getColumnBase(0);
+                final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, varcharIndex);
+                Assert.assertEquals(0, reader.getColumn(primaryIndex).size());
+                Assert.assertTrue(reader.getColumn(primaryIndex + 1).size() > 0);
+                Assert.assertTrue(auxOpenCount.get() > 0);
+
+                execute("ALTER TABLE x ADD COLUMN b LONG");
+
+                auxOpenCount.set(0);
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals("metadata reload must preserve the mapped VARCHAR aux file", 0, auxOpenCount.get());
+            }
+        });
+    }
+
+    @Test
+    public void testOpenPageFrameColumnDoesNotReopenInlineVarchar() throws Exception {
+        final AtomicInteger auxOpenCount = new AtomicInteger();
+        final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "v.i")) {
+                    auxOpenCount.incrementAndGet();
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+            execute("CREATE TABLE x (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('short', '2024-01-01T00:00:00.000000Z')");
+
+            try (TableReader reader = getReader("x")) {
+                final int timestampIndex = reader.getMetadata().getTimestampIndex();
+                final int varcharIndex = reader.getMetadata().getColumnIndex("v");
+                final IntList activeColumns = new IntList();
+                activeColumns.add(timestampIndex);
+                reader.setActiveColumns(activeColumns);
+                reader.openPartition(0);
+
+                auxOpenCount.set(0);
+                reader.openPageFrameColumn(0, varcharIndex);
+                final int firstOpenCount = auxOpenCount.get();
+                Assert.assertTrue(firstOpenCount > 0);
+
+                final int columnBase = reader.getColumnBase(0);
+                final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, varcharIndex);
+                Assert.assertEquals(0, reader.getColumn(primaryIndex).size());
+                Assert.assertTrue(reader.getColumn(primaryIndex + 1).size() > 0);
+
+                reader.openPageFrameColumn(0, varcharIndex);
+                Assert.assertEquals("the mapped VARCHAR aux file must not be reopened", firstOpenCount, auxOpenCount.get());
             }
         });
     }
