@@ -37,92 +37,64 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectString;
 
 /**
- * Per-live-view eager-interning symbol cache for the in-memory tier's
- * un-flushed lead (Mode A, "eager symbol interning").
+ * Per-live-view eager-interning symbol cache for the in-memory tier's un-flushed
+ * lead (Mode A, "eager symbol interning").
  * <p>
- * A SYMBOL output column stores an integer symbol id in the tier. For rows that
- * are already on the LV's on-disk table (the overlap), that id is the LV-table
- * symbol id and a query resolves it against the disk reader's symbol table. The
- * un-flushed lead, however, has no disk row yet, and a value that is new to the
- * lead has no committed LV-table id at all - the apply that would assign one only
- * runs at flush. This cache assigns those new lead values an id that is
- * <em>consistent with</em> the LV-table id the eventual flush will produce, and
- * holds the {@code id -> string} mapping so a query can resolve the lead from RAM.
- * <p>
- * Id assignment keeps a single LV-table id space so that read paths which
- * resolve a SYMBOL by its raw int key against {@code getSymbolTable()} (WHERE
- * filters, GROUP BY, static ORDER BY) stay correct, not just the {@code getSymA}
- * per-record path (printing, HTTP / PGWire):
+ * The tier stores SYMBOL columns as int ids. Overlap rows (already on disk) carry
+ * LV-table ids that a query resolves against the disk reader. A value new to the
+ * un-flushed lead has no committed id yet - apply assigns one only at flush - so this
+ * cache assigns it the id the flush will produce and holds the {@code id -> string}
+ * mapping so a query can resolve the lead from RAM. A single LV-table id space keeps
+ * raw-key consumers of {@code getSymbolTable()} (WHERE filters, GROUP BY, static
+ * ORDER BY) correct, not just the {@code getSymA} path (printing, HTTP / PGWire):
  * <ul>
- *   <li>An already-committed value resolves to its committed id via the LV
- *     table's {@link SymbolMapReader#keyOf}.</li>
- *   <li>A value new to the un-flushed lead is assigned the next id at or above the
- *     committed symbol count. Because the refresh worker drains base commits in
- *     the same order the flush's apply re-interns them (in-order leads only; an
- *     out-of-order arrival is diverted to {@code o3Replay}, which recomputes from
- *     disk), the assigned id equals the one apply will produce. After flush the
- *     lead becomes overlap and its stored ids already agree with disk.</li>
+ *   <li>A committed value resolves to its committed id via
+ *     {@link SymbolMapReader#keyOf}.</li>
+ *   <li>A new value gets the next id at or above the committed symbol count. The
+ *     refresh worker drains base commits in the order the flush's apply re-interns
+ *     them (in-order leads only; an O3 arrival diverts to {@code o3Replay}, which
+ *     recomputes from disk), so the ids match and survive the flush.</li>
  * </ul>
  * <p>
- * That equality only holds while every id the cache assigned reaches a flush. A
- * recovery that discards an un-flushed pass - the mid-drain timeline restore, an O3
- * hand-off whose replay commits fewer values than the pass interned - leaves
- * {@code nextNewId} above the committed count, and {@link #anchor} only raises it, so
- * the next new value would be assigned an id the flush's apply gives to another value.
- * {@link #rewind} takes that band back. Because readers resolve ids without a lock,
- * it runs only through {@link LiveViewInMemoryTier#tryRewindSymbolCache}, which proves
- * that no reader pins a slot whose symbol horizon reaches the band. A rewind alone does
- * not restore the equality, though: the
- * view's WAL writer goes back to its pool after a rollback still holding the values the
- * discarded pass appended, and its next commit assigns those first, in whatever order
- * the next pass meets its new values. So after every apply that lands slot rows on disk,
- * the refresh job checks {@link #isInStepWith}, which compares the values themselves, and
- * never stamps a slot whose ids the disk does not share as a subset of disk.
+ * <b>Keeping ids in step.</b> The match holds only while every assigned id reaches a
+ * flush. A recovery that discards an un-flushed pass - the mid-drain timeline
+ * restore, an O3 hand-off whose replay commits fewer values than the pass interned -
+ * leaves {@code nextNewId} above the committed count, and {@link #anchor} only raises
+ * it. {@link #rewind} takes that band back. It runs only through
+ * {@link LiveViewInMemoryTier#tryRewindSymbolCache}, which proves that no reader pins a
+ * slot whose symbol horizon reaches the band. A rewind alone is not enough: the view's
+ * pooled WAL writer still holds the values the discarded pass appended and assigns
+ * them first on its next commit. So after every apply that lands slot rows on disk,
+ * the refresh job checks {@link #isInStepWith}, which compares the values themselves,
+ * and never stamps a slot whose ids disk does not share.
  * <p>
- * Threading: the refresh worker is the only writer ({@link #intern},
- * {@link #anchor}, {@link #onFlush}, {@link #onO3}, {@link #rewind}). Cursors read the
+ * <b>Threading.</b> The refresh worker is the only writer ({@link #intern},
+ * {@link #anchor}, {@link #onFlush}, {@link #onO3}, {@link #rewind}). Cursors read
  * {@code id -> string} lists through {@link #newSymbolValueOf} and the concurrent
  * {@code string -> id history} maps through {@link #newSymbolKeyOf}. Both are
- * append-only except for {@link #rewind}. A stored id
- * and its reverse-index entry are assigned before the slot that carries the id is
- * published. The lists and maps publish their entries with release/acquire semantics.
+ * append-only except for {@link #rewind} and publish with release/acquire semantics;
+ * a stored id and its reverse entry are assigned before the slot carrying the id is
+ * published. A reader never resolves an id at or beyond its pinned slot's symbol
+ * horizon ({@link LiveViewInMemoryBuffer#newSymbolMaxId}), which comes from the slot,
+ * never from a live {@link #newSymbolMaxIdExclusive} read. The reverse index keeps a
+ * newest-first immutable chain per value, because O3 or replica rebinding can give a
+ * value a later id while an older pinned slot still needs the earlier one;
+ * {@link #newSymbolKeyOf} returns the newest assignment below {@code toId}.
+ * {@link ConcurrentCharSequenceList} release-stores each grown page index and
+ * acquire-loads it on read, so a reader never sees a stale null at an in-bounds id
+ * (which a plain {@link ObjList} would expose as a transient spurious miss).
  * <p>
- * A reader must never resolve an assignment at or beyond its pinned slot's symbol
- * horizon - the
- * exclusive id bound stamped on the slot at publish (see
- * {@link LiveViewInMemoryBuffer#newSymbolMaxId}). The reverse index retains a
- * newest-first immutable chain because O3 or replica rebinding can assign the same
- * string a later id while an older pinned slot must still resolve the earlier id.
- * {@link #newSymbolKeyOf} walks past assignments at or beyond {@code toId} and
- * returns the newest one in the requested band. The overlay sources {@code toId}
- * from the slot, never from a live {@link #newSymbolMaxIdExclusive} read.
- * <p>
- * {@link ConcurrentCharSequenceList} provides value safety for id-to-string
- * resolution. A later refresh cycle can grow a store's page index after the reader's
- * slot published, so the store release-stores each new index and acquire-loads it on
- * every read. A reader that observes a new index thus also observes the page
- * references copied into it, never a stale null at an in-bounds id (which a plain
- * {@link ObjList}, storing the array with no fence, would expose as a transient
- * spurious miss).
- * <p>
- * Memory: {@link #idToString} retains an immutable string per lead assignment and
- * the reverse map retains one key per distinct value. Neither is cleared before
- * close ({@link #rewind} drops only the band no flush committed), because a cursor
- * pinned on an older slot holds a disk reader whose
- * committed count predates the flush that committed those ids, so it resolves them
- * through {@link #newSymbolValueOf} rather than from disk - the cache cannot tell
- * how far back the oldest such reader sits. The id space itself advances once per
- * assignment, so both grow with the number of assignments, not with cardinality.
- * {@link #anchor} also re-bases it onto the committed symbol count on every drain, so
- * the ids the cache holds are a sparse band of a much larger space;
- * {@link ConcurrentCharSequenceList} pages the {@code id -> string} store so that gap
- * costs one reference per page of ids, not a slot per committed symbol.
- * <p>
- * The reverse index, in contrast, IS pruned: {@link #pruneReverseIndex} drops chain
- * nodes a live slot can no longer reach, which bounds both the node count and the
- * {@link #newSymbolKeyOf} walk. Without it a view taking repeated O3 replays - each
- * re-assigning the same values a fresh id - grows one permanent node per assignment
- * and makes every lookup walk them all.
+ * <b>Memory.</b> {@link #idToString} keeps one string per lead assignment and the
+ * reverse map one key per distinct value. Neither is cleared before close
+ * ({@link #rewind} drops only the band no flush committed): a cursor pinned on an
+ * older slot holds a disk reader whose committed count predates the flush, so it
+ * still resolves those ids here, and the cache cannot tell how old the oldest such
+ * reader is. Both grow with assignments, not cardinality. {@link #anchor} re-bases ids
+ * onto the committed count on every drain, so the held ids are a sparse band of a
+ * much larger space; {@link ConcurrentCharSequenceList} pages the store so a gap costs
+ * one reference per page of ids. The reverse index, in contrast, IS pruned:
+ * {@link #pruneReverseIndex} drops chain nodes no live slot can reach, which bounds
+ * both node count and the {@link #newSymbolKeyOf} walk under repeated O3 replays.
  */
 public class LiveViewSymbolCache implements QuietCloseable {
     // Assignments a column must accumulate before pruneReverseIndex walks its

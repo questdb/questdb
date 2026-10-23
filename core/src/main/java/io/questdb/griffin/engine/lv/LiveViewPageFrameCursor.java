@@ -52,96 +52,67 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Exposes a live view's two tiers as one page-frame stream: the LV table's own
- * disk frames plus synthetic frames over the pinned in-memory slot. It is the
- * page-frame twin of {@link LiveViewRecordCursor}'s routing modes, and serves
- * exactly the same rows in the same order - so a read routed through here sees the
- * un-flushed lead without giving up the engine's frame machinery (the parallel
- * filter, the JIT filter, LIMIT pushdown), which the record-cursor path cannot
- * offer.
+ * Exposes a live view's two tiers as one page-frame stream: the LV table's disk
+ * frames plus synthetic frames over the pinned in-memory slot. It is the page-frame
+ * twin of {@link LiveViewRecordCursor}'s routing modes and serves the same rows in
+ * the same order, so a read sees the un-flushed lead while keeping the engine's
+ * frame machinery (parallel filter, JIT filter, LIMIT pushdown).
  * <p>
- * <b>The modes</b>, picked in {@link #of} from the direction the base's frames arrive in
- * and whether it carries an interval filter, mirror the record path's own (see
- * {@link LiveViewRecordCursor}'s {@code ROUTING_*} constants). A slot's rows split at
+ * <b>Modes.</b> {@link #of} picks one from the base frames' direction and whether the
+ * base carries an interval filter, mirroring {@link LiveViewRecordCursor}'s
+ * {@code ROUTING_*} constants. A slot splits at
  * {@code leadStart = rowCount - leadRowCount}: rows {@code [0, leadStart)} are the
  * overlap (also on disk), rows {@code [leadStart, rowCount)} the un-flushed lead.
  * <ul>
- *   <li><b>Seam split</b>, for an ascending unfiltered frame stream: the disk scan's
- *   leading {@code base.size() - leadStart} frames, then the whole slot. Under the seqTxn
- *   fence the overlap band IS the disk scan's trailing {@code leadStart} rows - the
- *   ones at or above {@code seamTs} - so this covers every row exactly once, disk
- *   below the seam and slot at or above it, and serves the LV table's hot tail
- *   partition(s) from RAM instead.</li>
- *   <li><b>Lead-only descending</b>, for a descending one: the lead band alone,
- *   reversed, then the disk scan in FULL. Disk holds every applied row and the lead
- *   holds exactly what disk lacks, so the union still covers every row once - with no
- *   cut to take. It gives up the hot-tail skip, which is the right trade for a read the
- *   seam cannot serve at all: the seam's cut takes the scan's LEADING rows, which over a
- *   descending stream are the newest rather than the oldest, so it would serve the slot
- *   on top of rows it already yielded.</li>
- *   <li><b>Lead-only forward</b>, for an ascending stream carrying an INTERVAL filter: the
- *   disk scan in full, then the lead band. The interval narrows the base scan BENEATH this
- *   cursor, so the scan's trailing rows are no longer the slot's overlap and the seam's
- *   row-count cut has nothing sound to cut against - it also leaves the scan unable to
- *   size itself at all. Lead-only depends on neither.</li>
+ *   <li><b>Seam split</b> (ascending, unfiltered): the disk scan's leading
+ *   {@code base.size() - leadStart} frames, then the whole slot. Under the seqTxn
+ *   fence the overlap IS the disk scan's trailing {@code leadStart} rows, so every
+ *   row appears once and the hot tail partition(s) come from RAM.</li>
+ *   <li><b>Lead-only descending</b>: the reversed lead band, then the full disk scan.
+ *   Disk holds every applied row and the lead exactly what disk lacks, so no cut is
+ *   needed. The seam cannot serve this direction: its cut takes the scan's leading
+ *   rows, which in a descending stream are the newest.</li>
+ *   <li><b>Lead-only forward</b> (ascending with an INTERVAL filter): the full disk
+ *   scan, then the lead band. The interval narrows the base scan, so its trailing
+ *   rows no longer match the slot's overlap and the seam has nothing sound to cut
+ *   against.</li>
  * </ul>
- * <b>The interval filter cuts the slot too</b>, which is what makes such a read routable at
- * all rather than merely orderable. The base applies it to its own frames; {@link #of}
- * applies the same list to the slot's band through {@link LiveViewIntervalBands}, so the
- * frames tile the surviving row sub-bands and the two tiers answer to one filter. Serving
- * the band whole instead would emit lead rows the query excluded - wrong results, not stale
- * ones. Every other mode's band is uncut, which is simply the one-band case of the same
- * machinery.
+ * <b>The interval filter cuts the slot too.</b> {@link #of} applies the base's interval
+ * list to the slot's band through {@link LiveViewIntervalBands}, so both tiers answer
+ * to one filter; serving the band whole would emit lead rows the query excluded.
+ * Other modes use the uncut, single-band case of the same machinery.
  * <p>
- * <b>The overlap/lead split is taken by ROW COUNT</b> rather than by comparing each row's
- * timestamp against {@code seamTs}. The two are the same boundary, but the row count is the
- * identity {@link LiveViewRecordCursor#size} and {@code skipRows} already use, so all
- * three agree by construction rather than by an invariant holding; it also needs no
- * timestamp read, which a parquet frame or a metadata-only skip frame cannot serve
- * anyway. It disposes of the lead/disk timestamp tie for free - the split is by row, so
- * a lead row sharing a timestamp with a disk row is still a distinct row, and no mode may
- * assert a strict {@code >} on that boundary. {@code leadStart == 0} (a slot that is pure
- * lead) collapses the seam to "disk serves everything", matching
- * {@link LiveViewRecordCursor#hasNext}'s branch for it. The INTERVAL cut above is the one
- * timestamp-driven boundary here, and it is a different question - which rows the query
- * asked for, not which tier holds them - so it is taken against the slot's own ts ladder
- * and never against disk.
+ * <b>The overlap/lead split is by ROW COUNT</b>, not by comparing timestamps with
+ * {@code seamTs}. The boundary is the same, but the row count is the identity
+ * {@link LiveViewRecordCursor#size} and {@code skipRows} use, it needs no timestamp
+ * read (which a parquet or metadata-only skip frame cannot serve), and it keeps a lead
+ * row that ties a disk row's timestamp distinct - so no mode may assert a strict
+ * {@code >} there. {@code leadStart == 0} collapses the seam to "disk serves
+ * everything", matching {@link LiveViewRecordCursor#hasNext}. The INTERVAL cut is the
+ * only timestamp-driven boundary, and it is taken against the slot's own ts ladder.
  * <p>
- * <b>Why descending serves the lead FIRST.</b> The bound is
- * {@code min(lead ts) >= max(disk ts)}, so the reversed lead runs down to the on-disk
- * maximum and the disk scan continues down from it: the stream stays non-increasing
- * across the band boundary. Equal-ts neighbours across it need no particular relative
- * order.
+ * <b>Descending serves the lead first</b> because {@code min(lead ts) >= max(disk ts)}:
+ * the reversed lead runs down to the disk maximum and the disk scan continues from
+ * there, so the stream stays non-increasing. Equal-ts neighbours need no order.
  * <p>
- * <b>Slot lifetime.</b> The cursor carries the tier pin for its whole life and
- * drops it in {@link #close()}. The synthetic frame publishes the slot's native
- * addresses directly, so anything that can still read a frame - a parallel filter
- * worker above all - must not outlive this cursor. That is a memory-safety
- * constraint, not a staleness one: a worker touching a released slot reads freed
- * native memory.
+ * <b>Ownership and lifetime.</b> {@link #of} takes ownership of the base cursor and the
+ * tier pin first thing, so any later failure releases both through {@link #close()}.
+ * The synthetic frames publish the slot's native addresses, so nothing that can read
+ * a frame - a parallel filter worker above all - may outlive this cursor, or it reads
+ * freed native memory. SYMBOL resolution goes through {@link LiveViewSymbolTableSource},
+ * so a frame consumer that resolves symbols without a record still sees the lead's
+ * eager-interned values.
  * <p>
- * <b>SYMBOL resolution</b> goes through {@link LiveViewSymbolTableSource}, bound
- * once here, so a frame consumer that resolves symbols without a record (again, a
- * filter worker) still sees the lead's eager-interned values.
- * <p>
- * The cursor takes ownership of the base cursor and the tier pin in {@link #of},
- * first thing, so any later failure releases both through {@link #close()}.
- * <p>
- * <b>Why it is a {@link TablePageFrameCursor}.</b> Both tiers belong to the LV's own
- * table, but the reason is mechanical: consumers that treat a frame source as a table -
- * a WINDOW / HORIZON JOIN slave, the {@code SelectedRecordCursorFactory} and
+ * <b>Why a {@link TablePageFrameCursor}.</b> Consumers that treat a frame source as a
+ * table - a WINDOW / HORIZON JOIN slave, the {@code SelectedRecordCursorFactory} and
  * {@code ExtraNullColumnCursorFactory} projections - cast what
- * {@link LiveViewRecordCursorFactory#getPageFrameCursor} hands back to this interface.
- * The table-shaped members delegate to the base cursor, which the routing fence has
- * already established is a plain table scan.
- * <p>
- * <b>The two scoped walks.</b> A consumer that models this cursor as a table asks for its
- * frames one group at a time rather than as the mode's stream: {@link #toPartition} hands
- * out one disk partition's frames, {@link #toLeadFrames} the un-flushed lead's. Together
- * they cover every row exactly once - disk holds every applied row, the lead exactly what
- * disk lacks - which is lead-only's own union argument, reached through a different door.
- * The seam has no place there and neither scope offers it: a caller assembling the whole
- * disk scan from partitions has already counted the slot's overlap.
+ * {@link LiveViewRecordCursorFactory#getPageFrameCursor} returns to this interface. The
+ * table-shaped members delegate to the base cursor, which the routing fence has
+ * established is a plain table scan. Such consumers walk scoped groups:
+ * {@link #toPartition} yields one disk partition's frames, {@link #toLeadFrames} the
+ * lead's. Together they cover every row once by the lead-only union argument. Neither
+ * scope offers the seam, since a caller assembling the disk scan from partitions has
+ * already counted the overlap.
  */
 public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // Partition index the synthetic slot frame reports. Its only consumer is the

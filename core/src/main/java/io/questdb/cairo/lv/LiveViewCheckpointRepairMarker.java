@@ -40,77 +40,60 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * The durable "prefix-preserving out-of-order repair in progress" marker,
- * {@code _checkpoints/_repairing}. It closes the crash-safety gap a
- * prefix-preserving repair opens: such a repair truncates the timeline down to
- * its surviving prefix (making an old prefix root the head) and only re-seals a
- * fresh head after the replay. Between the truncate and the re-seal the
- * superblock's watermark still names the discarded higher head, so an
- * incremental restore of the truncated head would replay base WAL from the
- * wrong coordinate and rehydrate silently wrong state.
+ * {@code _checkpoints/_repairing}. Such a repair truncates the timeline to its
+ * surviving prefix (making an old prefix root the head) and re-seals a fresh head
+ * only after the replay. In between, the superblock watermark still names the
+ * discarded head, so an incremental restore of the truncated head would replay base
+ * WAL from the wrong coordinate and rehydrate silently wrong state. The repair writes
+ * the marker durably <em>before</em> the truncate and clears it only <em>after</em>
+ * the post-replay seal. A restart that finds it treats the timeline as retired and
+ * rebuilds from the durable applied base table (see {@code LiveViewRefreshJob}'s
+ * restore path), which is always correct.
  * <p>
- * The marker forecloses that: it is written durably <em>before</em> the
- * truncate and cleared only <em>after</em> the post-replay seal. A restart that
- * finds it present treats the timeline as if retired and rebuilds from the
- * fully durable applied base table (see {@code LiveViewRefreshJob}'s restore
- * path), which is always correct.
+ * <b>Stale markers.</b> Two recorded fields let a restart ignore a marker that a crash
+ * left behind:
+ * <ul>
+ *   <li>{@link #readBaseGeneration(CairoConfiguration, Path) Base generation}: the
+ *   truncate publishes {@code baseGeneration + 1} and the seal
+ *   {@code baseGeneration + 2}, so a superblock generation above
+ *   {@code baseGeneration + 1} proves the repair completed.</li>
+ *   <li>{@link #readLvSeqTxn(CairoConfiguration, Path) Live view seqTxn}: the last txn
+ *   the view's own WAL had committed when the marker was written, immediately before
+ *   the commit that replaces the output. A truncate or splice publishes a generation
+ *   past {@code baseGeneration}, so a superblock still at {@code baseGeneration}, a
+ *   view sequencer still ending at the recorded seqTxn and a view table that applied
+ *   nothing past it prove the repair moved nothing durable. The table's applied
+ *   seqTxn is part of the proof because, under NOSYNC and ASYNC commit modes, an OS
+ *   crash can drop the sequencer's record of a replacement the table kept.
+ *   {@link Numbers#LONG_NULL} means not recorded, and the generation rule decides
+ *   alone.</li>
+ * </ul>
+ * A torn or unreadable marker (reachable only when the marker write itself crashed,
+ * before any truncate) reads as {@link Numbers#LONG_NULL} and forces the conservative
+ * rebuild.
  * <p>
- * A recorded {@link #readBaseGeneration(CairoConfiguration, Path) base
- * generation} - the timeline generation the repair started from - lets a
- * restart distinguish a live repair from a stale marker that a crash left
- * behind after a successful seal: the truncate publishes
- * {@code baseGeneration + 1} and the seal publishes
- * {@code baseGeneration + 2}, so a superblock generation strictly greater than
- * {@code baseGeneration + 1} proves the repair completed and the marker is safe
- * to ignore. A torn or unreadable marker (only reachable if the marker write
- * itself crashed, before any truncate) reads as {@link Numbers#LONG_NULL} and
- * forces the conservative rebuild.
+ * <b>Layouts.</b> Fields the two versions share sit at the same offsets. Version 2
+ * ({@link #SIZE} bytes, written by this build) carries the seqTxn at
+ * {@link #LV_SEQ_TXN_OFFSET} and the CRC after it. Version 1 ({@link #V1_SIZE} bytes,
+ * written by older builds including 10.0.x) ends at the floor timestamp, has its CRC
+ * at {@link #V1_CRC_OFFSET} and reports no seqTxn. A version-1-only reader rejects a
+ * version 2 record on its size as torn. 10.0.x never meets one: its startup
+ * reconciliation first removes a checkpoint directory in this build's format.
  * <p>
- * A recorded {@link #readLvSeqTxn(CairoConfiguration, Path) live view seqTxn} -
- * the last transaction the view's own WAL had committed when the marker was
- * written - covers the other end of the window. A repair writes the marker
- * immediately before the commit that replaces its output, and a truncate or a
- * splice publishes a generation past {@code baseGeneration}. So a superblock
- * still at {@code baseGeneration}, a view sequencer that still ends at the
- * recorded seqTxn and a view table that has applied nothing past it prove the
- * repair moved nothing durable: the timeline still describes the output on
- * disk, and the marker is stale. The table's own applied seqTxn is part of the
- * proof because, under the NOSYNC and ASYNC commit modes, an OS crash can drop
- * the sequencer's record of a replacement the table kept. {@link Numbers#LONG_NULL}
- * means the seqTxn was not recorded, and the generation rule decides alone.
+ * <b>Crash safety of the write.</b> The file is one fixed-size, CRC-checked record
+ * staged through a {@code .tmp} sibling and renamed into place. If a crash precedes
+ * the rename, a previous record under the final name decides. Without one, the
+ * staged record decides - complete or torn depending on when the crash hit. The
+ * staged write maps an existing {@code .tmp} without truncating it, so a crash before
+ * it changes any byte of a complete leftover record leaves that older CRC-valid
+ * record to decide. An older record decides soundly because the marker write
+ * precedes the interrupted repair's truncate and commit, so that repair moved nothing
+ * durable. Rewriting is atomic on POSIX; on Windows it briefly unlinks the previous
+ * record first, so a crash in that window leaves only the complete staged record (see
+ * {@link LiveViewCheckpointLayout#publishOverwrite}). {@link #exists} counts a staged
+ * record as a marker and the reads fall back to it when no final name exists.
  * <p>
- * Two layouts exist, and every field both carry sits at the same offset.
- * Format version 2 ({@link #SIZE} bytes) carries the seqTxn at
- * {@link #LV_SEQ_TXN_OFFSET} and its CRC after it. Version 1
- * ({@link #V1_SIZE} bytes), which builds before it wrote (10.0.x among them),
- * ends at the floor timestamp and has its CRC at {@link #V1_CRC_OFFSET}. This
- * build writes version 2 and reads both; a version 1 record reports no seqTxn.
- * A build that reads only version 1 rejects a version 2 record on its size and
- * reads it as torn, which forces the conservative rebuild. 10.0.x never meets
- * one: its startup reconciliation removes a checkpoint directory in this
- * build's timeline format before anything reads the marker.
- * <p>
- * The file is a single fixed-size, CRC-checked record staged through a
- * {@code .tmp} sibling and renamed into place. A crash ahead of the rename that
- * rewrites an existing marker keeps the previous record under the final name
- * beside the staged one, and the final name decides. With no previous record,
- * the crash leaves the record under the staged name alone: complete when the
- * crash came after the staged write, torn when it came during it. The staged
- * write maps an existing {@code .tmp} without truncating it, though: when it
- * runs over a complete leftover record and the crash comes before it has
- * changed any of that record's bytes, the older record survives intact and
- * CRC-valid, and that record decides. Either older record decides soundly: the
- * marker write precedes the interrupted repair's truncate and commit, so that
- * repair moved nothing durable and the older record's staleness verdict still
- * holds. Rewriting an existing marker is atomic on POSIX; on Windows it
- * briefly unlinks the previous record first, so a crash inside that window
- * leaves the staged record alone after all - the older record gone, the
- * complete new one staged - see
- * {@link LiveViewCheckpointLayout#publishOverwrite}. {@link #exists} counts the
- * staged record as a marker, and the reads fall back to it when no final name
- * exists, so a restart decides on a complete staged record exactly as it would
- * once the rename had published it. A torn one reads as
- * {@link Numbers#LONG_NULL} and forces the conservative rebuild. This type is
- * stateless; every method is static.
+ * This type is stateless; every method is static.
  */
 public final class LiveViewCheckpointRepairMarker {
 
