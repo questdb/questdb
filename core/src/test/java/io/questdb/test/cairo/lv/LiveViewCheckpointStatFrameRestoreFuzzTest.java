@@ -138,7 +138,7 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
 
     @Test
     public void testBivariateRangeRestoreFuzz() throws Exception {
-        assertRangeFuzz("BivarStatOverPartitionRangeFrameFunction", BIVARIATE_NAMES, true, false, BIVARIATE_RANGE_SLOTS);
+        assertRangeFuzz("BivarStatOverPartitionRangeFrameFunction", BIVARIATE_NAMES, true, BIVARIATE_RANGE_SLOTS);
     }
 
     @Test
@@ -148,12 +148,12 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
 
     @Test
     public void testKSumRangeRestoreFuzz() throws Exception {
-        assertRangeFuzz("KSumOverPartitionRangeFrameFunction", KSUM_NAMES, false, false, SINGLE_VALUE_RANGE_SLOTS);
+        assertRangeFuzz("KSumOverPartitionRangeFrameFunction", KSUM_NAMES, false, SINGLE_VALUE_RANGE_SLOTS);
     }
 
     @Test
     public void testStdDevRangeRestoreFuzz() throws Exception {
-        assertRangeFuzz("StdDevOverPartitionRangeFrameFunction", STDDEV_NAMES, false, false, SINGLE_VALUE_RANGE_SLOTS);
+        assertRangeFuzz("StdDevOverPartitionRangeFrameFunction", STDDEV_NAMES, false, SINGLE_VALUE_RANGE_SLOTS);
     }
 
     @Test
@@ -247,7 +247,7 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
         throw new AssertionError("unexpected partition key " + key);
     }
 
-    private static double randomValue(Rnd rnd, boolean isExact, int nullPct) {
+    private static double randomValue(Rnd rnd, int nullPct) {
         final int draw = rnd.nextInt(100);
         if (draw < nullPct) {
             return Double.NaN;
@@ -255,9 +255,6 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
         if (draw < nullPct + 2) {
             // Never in a RANGE ring; a raw cell a ROWS ring keeps and never counts.
             return rnd.nextBoolean() ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
-        }
-        if (isExact) {
-            return rnd.nextInt(2001) - 1000;
         }
         if (draw < nullPct + 3) {
             return -0.0;
@@ -305,7 +302,6 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
             String className,
             String[] names,
             boolean isBivariate,
-            boolean isExact,
             int[] ringSlots
     ) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -315,7 +311,7 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
                 setProperty(PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, bufferSize);
                 Assert.assertEquals(bufferSize, configuration.getSqlWindowInitialRangeBufferSize());
                 for (int spelling = 0; spelling < FRAME_SPELLINGS; spelling++) {
-                    runCase(rnd, className, names, isBivariate, true, spelling, isExact, ringSlots, stats);
+                    runCase(rnd, className, names, isBivariate, true, spelling, ringSlots, stats);
                 }
             }
             stats.assertExercised();
@@ -334,7 +330,7 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
             final RestoreStats stats = new RestoreStats();
             for (int round = 0; round < ROWS_ROUNDS; round++) {
                 for (int spelling = 0; spelling < FRAME_SPELLINGS; spelling++) {
-                    runCase(rnd, className, names, isBivariate, false, spelling, false, null, stats);
+                    runCase(rnd, className, names, isBivariate, false, spelling, null, stats);
                 }
             }
             stats.assertExercised();
@@ -357,7 +353,6 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
             boolean isBivariate,
             boolean isRange,
             int spelling,
-            boolean isExact,
             int[] ringSlots,
             RestoreStats stats
     ) throws Exception {
@@ -392,8 +387,8 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
                 if (!isNullKey) {
                     row.putSym(1, SYMBOLS[rnd.nextInt(symCount)]);
                 }
-                row.putDouble(2, randomValue(rnd, isExact, nullPct));
-                row.putDouble(3, randomValue(rnd, isExact, nullPct));
+                row.putDouble(2, randomValue(rnd, nullPct));
+                row.putDouble(3, randomValue(rnd, nullPct));
                 row.append();
             }
             writer.commit();
@@ -464,8 +459,8 @@ public class LiveViewCheckpointStatFrameRestoreFuzzTest extends AbstractCairoTes
                 for (int r = 0; r < restores; r++) {
                     // The last restore is the one the suffix runs on; a first one, when there
                     // is one, takes the other form and leaves state the last must replace.
-                    final boolean useDurable = r == restores - 1 ? isDurable : !isDurable;
-                    if (useDurable) {
+                    final boolean isDurableRestore = r == restores - 1 ? isDurable : !isDurable;
+                    if (isDurableRestore) {
                         if (isRange) {
                             ringStore.restore(reference, restored, rowTimestamp);
                         } else {

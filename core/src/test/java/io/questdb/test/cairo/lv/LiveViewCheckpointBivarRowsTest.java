@@ -30,14 +30,8 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -165,10 +159,9 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
                 }
                 // Outside a live view compile the same class declines: the codec needs the
                 // tombstone slot and the key layout copy only a live view compile builds.
-                Assert.assertFalse(
-                        fn + " outside a live view compile must not claim checkpoint state",
-                        compileSoleWindowFunction(fn + "(px, qty)", FRAME_CURRENT, false).supportsCheckpointState
-                );
+                final LiveViewCheckpointCompiledFunction plain =
+                        LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn + "(px, qty)", FRAME_CURRENT, false);
+                Assert.assertFalse(fn + " outside a live view compile must not claim checkpoint state", plain.supportsCheckpointState);
             }
         });
     }
@@ -343,26 +336,6 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
         });
     }
 
-    private static CompiledFunction compileSoleWindowFunction(String fn, String frame, boolean liveViewCompile) throws Exception {
-        final String sql = "SELECT ts, sym, " + fn + " OVER (" + frame + ") AS v FROM fx";
-        sqlExecutionContext.setLiveViewCompile(liveViewCompile);
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
-        ) {
-            RecordCursorFactory root = factory;
-            while (root instanceof QueryProgress) {
-                root = root.getBaseFactory();
-            }
-            Assert.assertTrue(sql, root instanceof WindowRecordCursorFactory);
-            final ObjList<WindowFunction> functions = ((WindowRecordCursorFactory) root).getWindowFunctions();
-            Assert.assertEquals(sql + ": expected exactly one window function", 1, functions.size());
-            return new CompiledFunction(functions.getQuick(0));
-        } finally {
-            sqlExecutionContext.setLiveViewCompile(false);
-        }
-    }
-
     private static String projection(String frame) {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0; i < FUNCTIONS.length; i++) {
@@ -479,7 +452,8 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
 
     private void assertWholeStateDisposition(String fn, String frame) throws Exception {
         final String label = fn + " OVER (" + frame + ")";
-        final CompiledFunction compiled = compileSoleWindowFunction(fn, frame, true);
+        final LiveViewCheckpointCompiledFunction compiled =
+                LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn, frame, true);
         Assert.assertEquals(label, "BivarStatOverPartitionRowsFrameFunction", compiled.className);
         Assert.assertTrue(label + " must support checkpoint state", compiled.supportsCheckpointState);
         Assert.assertFalse(
@@ -587,25 +561,5 @@ public class LiveViewCheckpointBivarRowsTest extends AbstractLiveViewTest {
     private void restartCycle() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
-    }
-
-    // What the assertions read off the sole window function, captured before the factory
-    // closes.
-    private static class CompiledFunction {
-        private final String className;
-        private final LiveViewCheckpointDependency dependency;
-        private final int fixedStateLength;
-        private final boolean hasFrameLocalCheckpointState;
-        private final boolean supportsCheckpointRingState;
-        private final boolean supportsCheckpointState;
-
-        private CompiledFunction(WindowFunction function) {
-            this.className = function.getClass().getSimpleName();
-            this.dependency = function.checkpointDependency();
-            this.fixedStateLength = function.checkpointStateFixedLength();
-            this.hasFrameLocalCheckpointState = function.hasFrameLocalCheckpointState();
-            this.supportsCheckpointRingState = function.supportsCheckpointRingState();
-            this.supportsCheckpointState = function.supportsCheckpointState();
-        }
     }
 }

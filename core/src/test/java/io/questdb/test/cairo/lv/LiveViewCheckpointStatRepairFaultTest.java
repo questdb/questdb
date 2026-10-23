@@ -105,8 +105,13 @@ public class LiveViewCheckpointStatRepairFaultTest extends AbstractLiveViewTest 
         // base's px column: the turn faults with nothing published, and the retry rebuilds again.
         final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "px", "sym");
         assertFaultedRepairStaysBitExact(fault, (job, instance) -> {
-            fault.armAppliedScan();
             commitLateRow(0, "btc", 65_001.37, 1.234);
+            // The base's WAL apply merged the late row into its composite partition in place,
+            // and a pooled base reader picks the merged rows up without reopening px. Releasing
+            // the inactive pools has the rebuild open the partition afresh, and the fault, armed
+            // behind the apply, fails only an open made under the rebuild's scan.
+            engine.releaseInactive();
+            fault.armRebuildScan();
             driveRefreshToQuiescence(job);
             Assert.assertTrue("the rebuild's scan of the applied base must have met the fault", fault.hasAppliedScanFired());
             Assert.assertEquals("the scan fault must cost exactly one refresh fault", 1, instance.getRefreshFaultCount());

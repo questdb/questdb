@@ -789,18 +789,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * The arena holding every partition's ring slab. The live-view frontier sweep is its only
-         * reader, and only for a function {@link #newCompactionScratch()} enrols; this one stays
-         * out. The sweep walks an anchored window's functions alone, an ANCHOR is refused on a
-         * bounded frame, and {@link #supportsCheckpointState()} declines the one unbounded-start
-         * RANGE shape that keeps its ANCHOR, so no sweep reaches this class.
-         */
-        @Override
-        public MemoryARW getRingArena() {
-            return memory;
-        }
-
         @Override
         public boolean hasFrameLocalCheckpointState() {
             // With a bounded frame start the ring holds the frame's own pairs, plus those a
@@ -857,8 +845,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset, ported for parity with avg's RANGE frame; no anchored window
-            // reaches this class today (see getRingArena). Drop the partition's frame to empty:
+            // ANCHOR-driven reset, kept for parity with max/min's RANGE frame
+            // (MaxMinWindowFunctionFactoryHelper). No anchored window reaches this class: the one
+            // anchored spelling that lands here, RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            // EXCLUDE CURRENT ROW, is the unbounded-start shape supportsCheckpointState() declines,
+            // so CREATE LIVE VIEW refuses it. Drop the partition's frame to empty:
             // sum, compensation, frameSize, size and firstIdx go to zero; the ring slab stays
             // allocated and the next row writes from index 0.
             partitionByRecord.of(record);
@@ -997,11 +988,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             super.toTop();
             memory.truncate();
             freeList.clear();
-        }
-
-        @Override
-        protected LongList getRingFreeList() {
-            return freeList;
         }
 
         // The shared reader checks only the frame size's sign. The bounded frame start

@@ -49,13 +49,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -166,7 +163,8 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
             final String frame = "PARTITION BY sym ORDER BY ts "
                     + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
             for (String fn : FUNCTIONS) {
-                final CompiledFunction compiled = compileSoleWindowFunction(fn + "(px, qty)", frame, true);
+                final LiveViewCheckpointCompiledFunction compiled =
+                        LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn + "(px, qty)", frame, true);
                 Assert.assertEquals(fn, CLASS_NAME, compiled.className);
                 Assert.assertFalse(fn + " over an unbounded start must decline", compiled.supportsCheckpointState);
                 Assert.assertFalse(fn + " over an unbounded start must decline", compiled.supportsCheckpointRingState);
@@ -274,7 +272,8 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 }
                 // Outside a live view compile the same class declines: the codec needs the
                 // tombstone slot and the key layout copy only a live view compile builds.
-                final CompiledFunction plain = compileSoleWindowFunction(fn + "(px, qty)", FRAME_CURRENT, false);
+                final LiveViewCheckpointCompiledFunction plain =
+                        LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn + "(px, qty)", FRAME_CURRENT, false);
                 Assert.assertEquals(fn, CLASS_NAME, plain.className);
                 Assert.assertFalse(fn + " outside a live view compile must not claim checkpoint state", plain.supportsCheckpointState);
                 Assert.assertFalse(fn + " outside a live view compile must not claim a ring", plain.supportsCheckpointRingState);
@@ -380,7 +379,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                     MemoryCARWImpl page = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 sqlExecutionContext.setLiveViewCompile(false);
-                final WindowFunction function = soleWindowFunction(factory, sql);
+                final WindowFunction function = LiveViewCheckpointCompiledFunction.soleWindowFunction(factory, sql);
                 Assert.assertEquals(CLASS_NAME, function.getClass().getSimpleName());
                 Assert.assertEquals(5, function.checkpointRingScalarWords());
                 Assert.assertEquals(1, function.getCheckpointKeyColumnTypes().getColumnCount());
@@ -714,19 +713,6 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
-    private static CompiledFunction compileSoleWindowFunction(String fn, String frame, boolean liveViewCompile) throws Exception {
-        final String sql = "SELECT ts, sym, " + fn + " OVER (" + frame + ") AS v FROM fx";
-        sqlExecutionContext.setLiveViewCompile(liveViewCompile);
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
-        ) {
-            return new CompiledFunction(soleWindowFunction(factory, sql));
-        } finally {
-            sqlExecutionContext.setLiveViewCompile(false);
-        }
-    }
-
     private static String frameOf(String view) {
         return switch (view) {
             case "lv_cur" -> FRAME_CURRENT;
@@ -764,17 +750,6 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
         return sb.toString();
     }
 
-    private static WindowFunction soleWindowFunction(RecordCursorFactory factory, String sql) {
-        RecordCursorFactory root = factory;
-        while (root instanceof QueryProgress) {
-            root = root.getBaseFactory();
-        }
-        Assert.assertTrue(sql, root instanceof WindowRecordCursorFactory);
-        final ObjList<WindowFunction> functions = ((WindowRecordCursorFactory) root).getWindowFunctions();
-        Assert.assertEquals(sql + ": expected exactly one window function", 1, functions.size());
-        return functions.getQuick(0);
-    }
-
     private static String timestamp(int second) {
         return String.format(
                 "2026-01-%02dT%02d:%02d:%02d.000000Z",
@@ -810,7 +785,8 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
 
     private void assertRingDisposition(String fn, String frame) throws Exception {
         final String label = fn + " OVER (" + frame + ")";
-        final CompiledFunction compiled = compileSoleWindowFunction(fn, frame, true);
+        final LiveViewCheckpointCompiledFunction compiled =
+                LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn, frame, true);
         Assert.assertEquals(label, CLASS_NAME, compiled.className);
         Assert.assertTrue(label + " must support checkpoint state", compiled.supportsCheckpointState);
         Assert.assertTrue(label + " must persist through the chunked ring codec", compiled.supportsCheckpointRingState);
@@ -824,7 +800,6 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128,
                 compiled.ringValueKind
         );
-        Assert.assertTrue(label + " must expose its ring arena", compiled.hasRingArena);
         // A ring-shaped function never declares a fixed image width.
         Assert.assertEquals(label, -1, compiled.fixedStateLength);
         // A warm-up from the frame's lower edge would re-sum the running sums, and the
@@ -1087,32 +1062,6 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
                 scalarWords[i] = 0;
             }
             scalarWordCount = 0;
-        }
-    }
-
-    // What the assertions read off the sole window function, captured before the factory
-    // closes.
-    private static class CompiledFunction {
-        private final String className;
-        private final LiveViewCheckpointDependency dependency;
-        private final int fixedStateLength;
-        private final boolean hasFrameLocalCheckpointState;
-        private final boolean hasRingArena;
-        private final int ringScalarWords;
-        private final int ringValueKind;
-        private final boolean supportsCheckpointRingState;
-        private final boolean supportsCheckpointState;
-
-        private CompiledFunction(WindowFunction function) {
-            this.className = function.getClass().getSimpleName();
-            this.dependency = function.checkpointDependency();
-            this.fixedStateLength = function.checkpointStateFixedLength();
-            this.hasFrameLocalCheckpointState = function.hasFrameLocalCheckpointState();
-            this.hasRingArena = function.getRingArena() != null;
-            this.ringScalarWords = function.checkpointRingScalarWords();
-            this.ringValueKind = function.checkpointRingValueKind();
-            this.supportsCheckpointRingState = function.supportsCheckpointRingState();
-            this.supportsCheckpointState = function.supportsCheckpointState();
         }
     }
 

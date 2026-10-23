@@ -72,6 +72,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * fails every such open until {@link #disarmAll()}. {@link #armFrontierRootRestoreOpen} fails the
  * open the same restore makes for a segment loop instead, from {@code restoreRuntimeAtFrontierRoot}.
  * <p>
+ * {@link #armRebuildScan} fails the open {@link #armAppliedScan} fails, but only the one a
+ * rebuild's scan makes: the open made while {@code o3HeadMissReplay} is on the stack. The base's
+ * WAL apply opens the same file when it merges rows into a composite partition in place, and a
+ * pooled reader picks the merged rows up without opening it again, so a case arms it behind the
+ * apply, on a base whose pooled readers it released.
+ * <p>
  * {@link #armRuntimeRestore} fails nothing itself: it runs an action once, right before a
  * running recovery's restore from the timeline reads the view's table, so a case can stage what
  * that read meets - a reader pool every reader of the view's table is taken from, say.
@@ -151,6 +157,9 @@ final class LiveViewMidDrainFault {
     private volatile String anchorRestoreCaller;
     // The errno the failed anchor restore open reports.
     private volatile int anchorRestoreOpenErrno;
+    // The refresh job method the open armAppliedScan fails must be made under; null fails it
+    // under any caller.
+    private volatile String appliedScanCaller;
     // The partition the open armAppliedScan fails must be in; null fails it in any partition.
     private volatile String appliedScanPartition;
     private volatile String baseDir;
@@ -220,10 +229,7 @@ final class LiveViewMidDrainFault {
      * open the fault skips is another reader's first look at the partition.
      */
     void armAppliedScan(String partition, int skip) {
-        appliedScanPartition = partition;
-        appliedScanSkip.set(skip);
-        appliedScanFired.set(false);
-        appliedScanArmed.set(true);
+        armAppliedScan(partition, skip, null);
     }
 
     /**
@@ -244,6 +250,16 @@ final class LiveViewMidDrainFault {
      */
     void armFrontierRootRestoreOpen(int errno) {
         armAnchorRestoreOpen("restoreRuntimeAtFrontierRoot", errno, false);
+    }
+
+    /**
+     * Arms the open {@link #armAppliedScan()} fails, but only one a rebuild's scan of the applied
+     * base makes: an open made while {@code o3HeadMissReplay} is on the stack. The base's WAL
+     * apply, which opens the same file to merge rows into a composite partition, and any reader
+     * outside the rebuild open it unharmed.
+     */
+    void armRebuildScan() {
+        armAppliedScan(null, 0, "o3HeadMissReplay");
     }
 
     void armTimelineOpen() {
@@ -359,6 +375,7 @@ final class LiveViewMidDrainFault {
                         && !Utf8s.containsAscii(name, "wal")
                         && isInAppliedScanPartition(name)
                         && Utf8s.endsWithAscii(name, appliedScanFileName)
+                        && isAppliedScanCaller()
                         && appliedScanSkip.getAndDecrement() <= 0
                         && appliedScanArmed.compareAndSet(true, false)) {
                     appliedScanFired.set(true);
@@ -504,6 +521,25 @@ final class LiveViewMidDrainFault {
         anchorRestoreOpenErrno = errno;
         isAnchorRestoreOpenPersistent.set(isPersistent);
         isAnchorRestoreOpenArmed.set(true);
+    }
+
+    // Sets the partition, the skip and the caller before it arms, so an open that sees the arm
+    // reads all three.
+    private void armAppliedScan(String partition, int skip, String caller) {
+        appliedScanPartition = partition;
+        appliedScanCaller = caller;
+        appliedScanSkip.set(skip);
+        appliedScanFired.set(false);
+        appliedScanArmed.set(true);
+    }
+
+    // Read behind the armed check: armAppliedScan sets the caller before it arms.
+    private boolean isAppliedScanCaller() {
+        final String caller = appliedScanCaller;
+        return caller == null || StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName())
+                        && caller.equals(frame.getMethodName())
+        ));
     }
 
     // Read behind the armed check: armAppliedScan sets the partition before it arms.

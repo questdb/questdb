@@ -545,6 +545,10 @@ public interface WindowFunction extends Function {
      * only ever appends, its footprint would otherwise track the view's LIFETIME partition
      * cardinality rather than its live one, and both the arena and the function's map are
      * charged to {@code cairo.live.view.refresh.memory.limit.bytes}.
+     * <p>
+     * Only a function that enrols in that sweep through
+     * {@code BasePartitionedWindowFunction.newCompactionScratch()} needs to answer non-null. A
+     * function the sweep never reaches may answer {@code null} even when it keeps a ring.
      */
     @Nullable
     default MemoryARW getRingArena() {

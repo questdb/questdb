@@ -35,8 +35,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
-import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
-import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -49,17 +47,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -163,7 +156,8 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
             final String frame = "PARTITION BY sym ORDER BY ts "
                     + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
             for (String fn : FUNCTIONS) {
-                final CompiledFunction compiled = compileSoleWindowFunction(fn + "(px)", frame, true);
+                final LiveViewCheckpointCompiledFunction compiled =
+                        LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn + "(px)", frame, true);
                 Assert.assertEquals(fn, CLASS_NAME, compiled.className);
                 Assert.assertFalse(fn + " over an unbounded start must decline", compiled.supportsCheckpointState);
                 Assert.assertFalse(fn + " over an unbounded start must decline", compiled.supportsCheckpointRingState);
@@ -270,7 +264,8 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
                 }
                 // Outside a live view compile the same class declines: the codec needs the
                 // tombstone slot and the key layout copy only a live view compile builds.
-                final CompiledFunction plain = compileSoleWindowFunction(fn + "(px)", FRAME_CURRENT, false);
+                final LiveViewCheckpointCompiledFunction plain =
+                        LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn + "(px)", FRAME_CURRENT, false);
                 Assert.assertFalse(fn + " outside a live view compile must not claim checkpoint state", plain.supportsCheckpointState);
                 Assert.assertFalse(fn + " outside a live view compile must not claim a ring", plain.supportsCheckpointRingState);
             }
@@ -375,7 +370,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
                     MemoryCARWImpl page = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
                 sqlExecutionContext.setLiveViewCompile(false);
-                final WindowFunction function = soleWindowFunction(factory, sql);
+                final WindowFunction function = LiveViewCheckpointCompiledFunction.soleWindowFunction(factory, sql);
                 Assert.assertEquals(CLASS_NAME, function.getClass().getSimpleName());
                 Assert.assertEquals(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, function.checkpointRingValueKind());
                 Assert.assertEquals(1, function.getCheckpointKeyColumnTypes().getColumnCount());
@@ -386,7 +381,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
                 ((Reopenable) function).reopen();
                 function.onCheckpointRestoreBegin();
                 final Map map = function.getPartitionMap();
-                final StubRingSource source = new StubRingSource();
+                final LiveViewCheckpointStubDoubleRingSource source = new LiveViewCheckpointStubDoubleRingSource();
                 final int initialCapacity = configuration.getSqlWindowInitialRangeBufferSize();
 
                 // Sums no summation over these rows would produce, so a restore that re-summed
@@ -404,7 +399,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
                 assertRestoredState(value, carriedSum, carriedSumSq, 2, 3, initialCapacity);
 
                 // The durable form re-freezes to the words and rows it restored from.
-                final CapturingRingSink ringSink = new CapturingRingSink();
+                final LiveViewCheckpointCapturingDoubleRingSink ringSink = new LiveViewCheckpointCapturingDoubleRingSink();
                 function.freezeCheckpointRingState(ringSink, value);
                 ringSink.assertCaptured(source);
 
@@ -649,7 +644,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
             WindowFunction function,
             Map map,
             String key,
-            StubRingSource source,
+            LiveViewCheckpointStubDoubleRingSource source,
             String expectedMessage
     ) {
         final MapValue value = newValue(map, key);
@@ -686,19 +681,6 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-    }
-
-    private static CompiledFunction compileSoleWindowFunction(String fn, String frame, boolean liveViewCompile) throws Exception {
-        final String sql = "SELECT ts, sym, " + fn + " OVER (" + frame + ") AS v FROM fx";
-        sqlExecutionContext.setLiveViewCompile(liveViewCompile);
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
-        ) {
-            return new CompiledFunction(soleWindowFunction(factory, sql));
-        } finally {
-            sqlExecutionContext.setLiveViewCompile(false);
-        }
     }
 
     private static String frameOf(String view) {
@@ -743,17 +725,6 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
         return sb.toString();
     }
 
-    private static WindowFunction soleWindowFunction(RecordCursorFactory factory, String sql) {
-        RecordCursorFactory root = factory;
-        while (root instanceof QueryProgress) {
-            root = root.getBaseFactory();
-        }
-        Assert.assertTrue(sql, root instanceof WindowRecordCursorFactory);
-        final ObjList<WindowFunction> functions = ((WindowRecordCursorFactory) root).getWindowFunctions();
-        Assert.assertEquals(sql + ": expected exactly one window function", 1, functions.size());
-        return functions.getQuick(0);
-    }
-
     private static String timestamp(int second) {
         return String.format(
                 "2026-01-%02dT%02d:%02d:%02d.000000Z",
@@ -789,12 +760,12 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
 
     private void assertRingDisposition(String fn, String frame) throws Exception {
         final String label = fn + " OVER (" + frame + ")";
-        final CompiledFunction compiled = compileSoleWindowFunction(fn, frame, true);
+        final LiveViewCheckpointCompiledFunction compiled =
+                LiveViewCheckpointCompiledFunction.compile(engine, sqlExecutionContext, fn, frame, true);
         Assert.assertEquals(label, CLASS_NAME, compiled.className);
         Assert.assertTrue(label + " must support checkpoint state", compiled.supportsCheckpointState);
         Assert.assertTrue(label + " must persist through the chunked ring codec", compiled.supportsCheckpointRingState);
         Assert.assertEquals(label + " carries (sum, sumSq) as a two-word scalar", 2, compiled.ringScalarWords);
-        Assert.assertTrue(label + " must expose its ring arena", compiled.hasRingArena);
         // A ring-shaped function never declares a fixed image width.
         Assert.assertEquals(label, -1, compiled.fixedStateLength);
         // A warm-up from the frame's lower edge would re-sum the running sums, and the
@@ -970,178 +941,5 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
     private void restartCycle() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
-    }
-
-    // Records what freezeCheckpointRingState streams, for comparison with the source a
-    // restore read.
-    private static class CapturingRingSink implements LiveViewCheckpointRingStateSink {
-        private final LongList rows = new LongList();
-        private long frameSize = -1;
-        private long scalarWord0;
-        private long scalarWord1;
-        private int scalarWords;
-
-        @Override
-        public void putRow(long timestamp) {
-            throw new AssertionError("a stddev ring streams one-word rows");
-        }
-
-        @Override
-        public void putRow(long timestamp, long valueBits) {
-            rows.add(timestamp);
-            rows.add(valueBits);
-        }
-
-        @Override
-        public void putRow(long timestamp, long hi, long lo) {
-            throw new AssertionError("a stddev ring streams one-word rows");
-        }
-
-        @Override
-        public void putRow(long timestamp, long hh, long hl, long lh, long ll) {
-            throw new AssertionError("a stddev ring streams one-word rows");
-        }
-
-        @Override
-        public void putScalarState(long scalarBits, long frameSize) {
-            throw new AssertionError("a stddev ring carries a two-word scalar");
-        }
-
-        @Override
-        public void putScalarState(long hi, long lo, long frameSize) {
-            Assert.assertEquals("one scalar per partition", 0, scalarWords);
-            Assert.assertEquals("the scalar precedes the rows", 0, rows.size());
-            this.scalarWords = 2;
-            this.scalarWord0 = hi;
-            this.scalarWord1 = lo;
-            this.frameSize = frameSize;
-        }
-
-        @Override
-        public void putScalarState(long hh, long hl, long lh, long ll, long frameSize) {
-            throw new AssertionError("a stddev ring carries a two-word scalar");
-        }
-
-        @Override
-        public void putScalarState(long word0, long word1, long word2, long word3, long word4, long frameSize) {
-            throw new AssertionError("a stddev ring carries a two-word scalar");
-        }
-
-        private void assertCaptured(StubRingSource source) {
-            Assert.assertEquals(2, scalarWords);
-            Assert.assertEquals("sum", source.scalarWord0, scalarWord0);
-            Assert.assertEquals("sumSq", source.scalarWord1, scalarWord1);
-            Assert.assertEquals("count", source.frameSize, frameSize);
-            TestUtils.assertEquals(source.rows, rows);
-        }
-
-        private void clear() {
-            rows.clear();
-            frameSize = -1;
-            scalarWord0 = 0;
-            scalarWord1 = 0;
-            scalarWords = 0;
-        }
-    }
-
-    // What the assertions read off the sole window function, captured before the factory
-    // closes.
-    private static class CompiledFunction {
-        private final String className;
-        private final LiveViewCheckpointDependency dependency;
-        private final int fixedStateLength;
-        private final boolean hasFrameLocalCheckpointState;
-        private final boolean hasRingArena;
-        private final int ringScalarWords;
-        private final boolean supportsCheckpointRingState;
-        private final boolean supportsCheckpointState;
-
-        private CompiledFunction(WindowFunction function) {
-            this.className = function.getClass().getSimpleName();
-            this.dependency = function.checkpointDependency();
-            this.fixedStateLength = function.checkpointStateFixedLength();
-            this.hasFrameLocalCheckpointState = function.hasFrameLocalCheckpointState();
-            this.hasRingArena = function.getRingArena() != null;
-            this.ringScalarWords = function.checkpointRingScalarWords();
-            this.supportsCheckpointRingState = function.supportsCheckpointRingState();
-            this.supportsCheckpointState = function.supportsCheckpointState();
-        }
-    }
-
-    // Injects a corrupt or hand-built persisted ring straight into the restore path. It stands
-    // in for the chunk reader, not for a peer: the rows it replays are ones a correct seal
-    // would never write, which is the point.
-    private static class StubRingSource implements LiveViewCheckpointRingStateSource {
-        private final LongList rows = new LongList();
-        private long frameSize;
-        private long rowCount;
-        private long scalarWord0;
-        private long scalarWord1;
-
-        @Override
-        public void forEachRow(@NotNull RowConsumer consumer) {
-            for (int i = 0, n = rows.size(); i < n; i += 2) {
-                consumer.accept(rows.getQuick(i), rows.getQuick(i + 1));
-            }
-        }
-
-        @Override
-        public void forEachRow(@NotNull Decimal128RowConsumer consumer) {
-            throw new AssertionError("a stddev ring replays one-word rows");
-        }
-
-        @Override
-        public void forEachRow(@NotNull Decimal256RowConsumer consumer) {
-            throw new AssertionError("a stddev ring replays one-word rows");
-        }
-
-        @Override
-        public void forEachTimestamp(@NotNull TimestampConsumer consumer) {
-            throw new AssertionError("a stddev ring replays one-word rows");
-        }
-
-        @Override
-        public long getFrameSize() {
-            return frameSize;
-        }
-
-        @Override
-        public long getRowCount() {
-            return rowCount;
-        }
-
-        @Override
-        public long getScalarBits() {
-            return scalarWord0;
-        }
-
-        @Override
-        public long getScalarWord(int index) {
-            return switch (index) {
-                case 0 -> scalarWord0;
-                case 1 -> scalarWord1;
-                default -> throw new AssertionError("a stddev ring carries two scalar words, asked for " + index);
-            };
-        }
-
-        @Override
-        public int getScalarWordCount() {
-            return 2;
-        }
-
-        private StubRingSource of(long rowCount, long frameSize, double sum, double sumSq) {
-            this.rowCount = rowCount;
-            this.frameSize = frameSize;
-            this.scalarWord0 = Double.doubleToRawLongBits(sum);
-            this.scalarWord1 = Double.doubleToRawLongBits(sumSq);
-            rows.clear();
-            return this;
-        }
-
-        private StubRingSource row(long timestamp, double value) {
-            rows.add(timestamp);
-            rows.add(Double.doubleToRawLongBits(value));
-            return this;
-        }
     }
 }

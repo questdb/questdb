@@ -989,18 +989,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * The arena holding every partition's ring slab. Only the live-view frontier sweep of a
-         * {@code BasePartitionedWindowFunction} reads it, so it is inert here: this class
-         * descends from {@link BasePartitionedBivariateWindowFunction}, whose sweep enrols no
-         * ring, and {@link #supportsCheckpointState()} declines the one unbounded-start RANGE
-         * shape that keeps its ANCHOR, so no sweep reaches this class anyway.
-         */
-        @Override
-        public MemoryARW getRingArena() {
-            return memory;
-        }
-
         @Override
         public boolean hasFrameLocalCheckpointState() {
             // Declined on numeric grounds, although the ring holds the whole frame. A replay from
@@ -1044,8 +1032,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset, ported for parity with avg's RANGE frame; no anchored window
-            // reaches this class today (see getRingArena). Drop the partition's frame to empty:
+            // ANCHOR-driven reset, kept for parity with max/min's RANGE frame
+            // (MaxMinWindowFunctionFactoryHelper). No anchored window reaches this class: the one
+            // anchored spelling that lands here, RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            // EXCLUDE CURRENT ROW, is the unbounded-start shape supportsCheckpointState() declines,
+            // so CREATE LIVE VIEW refuses it. Drop the partition's frame to empty:
             // the five sums, count, size and firstIdx go to zero; the ring slab stays allocated
             // and the next row writes from index 0.
             partitionByRecord.of(record);
@@ -1556,10 +1547,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset. Drop the partition's frame to empty: the five sums, the
-            // count and loIdx go to zero and every ring pair back to NaN, so the next row
-            // re-anchors cleanly. The ring's startOffset (slot 7) stays allocated and the
-            // next row's write reuses it from index 0.
+            // ANCHOR-driven reset, kept for parity with the other bounded ROWS frames. No anchored
+            // window reaches this class: SqlParser refuses an ANCHOR on a ROWS frame, and
+            // LiveViewWindow resets only the anchored window's calls. Drop the partition's
+            // frame to empty: the five sums, the count and loIdx go to zero and every ring pair
+            // back to NaN, so the next row re-anchors cleanly. The ring's startOffset (slot 7)
+            // stays allocated and the next row's write reuses it from index 0.
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
