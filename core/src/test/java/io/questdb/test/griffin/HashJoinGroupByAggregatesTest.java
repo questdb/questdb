@@ -691,7 +691,9 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                 // no rows at all, where the keyed query returns nothing and the unkeyed one a row of NULLs.
                 for (String where : new String[]{"", " WHERE " + argument + " > 0",
                         isNullable ? " WHERE " + argument + " IS NULL" : null, " WHERE r.k > 100"}) {
-                    if (where == null) {
+                    // A RIGHT join whose preserved input (p) has a filter keeps the ordinary plan; see
+                    // HashJoinGroupByCandidate.hasInputFilter().
+                    if (where == null || (join.equals(" RIGHT JOIN ") && where.contains("p."))) {
                         continue;
                     }
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, Integer.MAX_VALUE);
