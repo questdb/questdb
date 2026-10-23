@@ -186,7 +186,7 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                 // which is what publishes the frozen build and the slots' probes to the reducers.
                 // A failure closes the cursor below, and with it the build.
                 atom.build(circuitBreaker);
-                if (atom.shouldProbe()) {
+                if (atom.isProbeNeeded()) {
                     frameSequence.prepareForDispatch();
                     long probeRows = 0;
                     for (int i = 0, n = frameSequence.getFrameCount(); i < n; i++) {

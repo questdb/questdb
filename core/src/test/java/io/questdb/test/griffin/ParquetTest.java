@@ -2126,10 +2126,10 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testLimitOverParquetIndexedSymbolOrderBy() throws Exception {
-        // Regression: the decode-window clamp must not apply to a symbol-index scan.
-        // SortedSymbolIndexRowCursorFactory yields rows in symbol order, scattered across the
-        // frame, so clamping the parquet decode to the leading rows would read undecoded memory
-        // for the high row indexes. 'aa' sorts first but lives at rows 5-7, past a 3-row window.
+        // Regression: the decode-window clamp must not apply to a symbol-index scan. An index row
+        // cursor yields the rows of one symbol only, scattered across the frame, so clamping the
+        // parquet decode to the leading rows would read undecoded memory for the high row indexes.
+        // 'aa' lives at rows 5-7, past the 3-row window LIMIT 3 would otherwise clamp to.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2153,6 +2153,15 @@ public class ParquetTest extends AbstractCairoTest {
                     .withPlanContaining("Top K")
                     .withPlanNotContaining("SortedSymbolIndex")
                     .sizeMayVary()
+                    .returns("""
+                            s	i
+                            aa	5
+                            aa	6
+                            aa	7
+                            """);
+            assertQuery("SELECT s, i FROM x WHERE ts in '2024-01-01' AND s = 'aa' LIMIT 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
                     .returns("""
                             s	i
                             aa	5

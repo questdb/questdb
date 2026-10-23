@@ -167,8 +167,6 @@ public class QwpResultBatchBufferBlockTest {
                                 assertEmitsMatch(rowBuffer, blockBuffer, k, batch == 0, wireA, wireB);
                                 rowBuffer.advanceStartRow(k);
                                 blockBuffer.advanceStartRow(k);
-                                rowBuffer.advanceDeltaStart();
-                                blockBuffer.advanceDeltaStart();
                                 row += fill(rowBuffer, blockBuffer, block, record, row, rows, Integer.MAX_VALUE, rnd, stops);
                             }
                             assertEmitsMatch(rowBuffer, blockBuffer, rowBuffer.getRowCount(), batch == 0, wireA, wireB);

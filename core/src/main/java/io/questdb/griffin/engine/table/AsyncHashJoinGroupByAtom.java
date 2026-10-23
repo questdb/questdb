@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -143,8 +144,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final boolean isParallelBuildCapable;
     // The INT layout's lone SYMBOL pair, whose probe keys the reducer translates per row.
     private final boolean isSymbolKey;
-    // The RIGHT join bound in build table rows, Long.MAX_VALUE for the joins without one.
-    private final long maxBuildTableRows;
     // The build input's row count, before any filter, from which the build runs on the workers.
     private final long parallelBuildMinRows;
     private final PerWorkerLocks perWorkerLocks;
@@ -187,6 +186,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private boolean isFiltersInitialized;
     private boolean isFunctionsInitialized;
     private boolean isPayloadCopied;
+    // The rows of the open cursor's build that come from Parquet frames, among the rows the build
+    // kept; see maybeCopyPayload().
+    private long parquetBuildRows;
+    // The Parquet frames that hold any of those kept rows, each of which a payload copy decodes once;
+    // see maybeCopyPayload().
+    private int parquetFrameCount;
+    // The rows of the Parquet frames that hold any of those kept rows. A probe reader decodes the
+    // payload columns of such a frame for all its rows, so these are the rows it may decode; see
+    // maybeCopyPayload().
+    private long parquetFrameRows;
     // The sequence that owns this atom, through which a parallel build dispatches its rounds.
     private UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
     // The open cursor's tracker, which init() takes for build(): the build runs after getCursor()
@@ -220,11 +229,17 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.isKeyStaged = metadata.isKeyStaged();
         this.isSymbolKey = metadata.isSymbolKey();
         this.isKeyCapacityPresized = metadata.isKeyCapacityPresized();
-        this.maxBuildTableRows = metadata.getMaxBuildTableRows();
         // An outer join counts a probe row without a match too, which no key's row count covers.
         this.isCountOnly = !isOuter && isPairCount(functions);
         this.countValueIndex = isCountOnly ? functions.getGroupByFunctions(-1).getQuick(0).getValueIndex() : -1;
-        this.buildFrames = new HashJoinBuildFrames(engine.getConfiguration(), metadata.getBuildColumns(), buildFactory.getMetadata());
+        // Each slot's probe reads the build's payload through a reader of its own, so the readers of
+        // an execution are one per worker and the owner's, and share the Parquet decode cache.
+        this.buildFrames = new HashJoinBuildFrames(
+                engine.getConfiguration(),
+                metadata.getBuildColumns(),
+                buildFactory.getMetadata(),
+                workerCount + 1
+        );
         this.probeKeyColumn = isKeyStaged ? -1 : metadata.getProbeKeyColumn();
         this.buildKeyColumn = isKeyStaged ? -1 : metadata.getBuildKeyColumn();
         symbolKeyProbeColumns.addAll(metadata.getSymbolKeyProbeColumns());
@@ -299,6 +314,33 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
     }
 
+    /**
+     * True when the matches of a probe of {@code probeRows} rows can land on as many Parquet frames
+     * as a copy of the build's payload decodes, the {@code parquetFrameCount} frames that hold the
+     * build's kept Parquet rows, each of which the copy decodes once. Without the copy, a probe reader
+     * decodes a Parquet frame for a match on any of its rows, at most once per match, however often
+     * its frames evict each other, so the probe's matches decode at most as many frames as there are
+     * matches. A probe row matches the rows of one key. Both build layouts link every row they keep
+     * into the chain of its key, NULL as a key of its own, which NULL probe keys match, and count each
+     * key once: a build in rounds counts it in the key table of the one partition that its hash
+     * selects. Each of the {@code buildKeyCount} keys therefore holds at least one of the
+     * {@code buildRows} rows, no key holds more than {@code buildRows - buildKeyCount + 1} of them,
+     * and the probe's matches decode at most {@code probeRows * (buildRows - buildKeyCount + 1)}
+     * frames in all, whichever keys it asks for. That holds for a probe of hot keys too, such as NULL
+     * or a sentinel in a column of otherwise unique keys, which the average rows per key would miss.
+     * A build without Parquet frames passes, and a build without rows has no keys. A probe whose keys
+     * the build holds fewer rows of decodes fewer frames than this assumes, so a build with a
+     * repeated key may count as in reach of a probe that cannot decode that many frames. The product
+     * compares exactly: its high word is nonzero only past any frame count, and otherwise its low
+     * word holds the product, unsigned.
+     */
+    public static boolean isParquetInProbeReach(long probeRows, long buildRows, long buildKeyCount, long parquetFrameCount) {
+        assert probeRows >= 0 && buildKeyCount >= 0 && buildKeyCount <= buildRows && (buildKeyCount > 0 || buildRows == 0) && parquetFrameCount >= 0;
+        // No key holds more rows than the build's other keys leave it, one row each.
+        final long maxKeyRows = buildRows - Math.max(buildKeyCount, 1) + 1;
+        return Math.multiplyHigh(probeRows, maxKeyRows) != 0 || Long.compareUnsigned(probeRows * maxKeyRows, parquetFrameCount) >= 0;
+    }
+
     @Override
     public void clear() {
         Throwable failure = null;
@@ -371,6 +413,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         isCountedByMatch = false;
         isCountedInRounds = false;
         isPayloadCopied = false;
+        parquetBuildRows = 0;
+        parquetFrameCount = 0;
+        parquetFrameRows = 0;
         failure = Misc.freeBestEffort(failure, intBuild);
         failure = Misc.freeBestEffort(failure, mapBuild);
         // The slots released their symbol tables above, so the shared caches go next.
@@ -551,12 +596,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             if (buildOnFilter != null) {
                 buildOnFilter.init(buildSymbols, executionContext);
                 if (workerBuildOnFilters != null) {
-                    final boolean current = executionContext.getCloneSymbolTables();
+                    final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
                     executionContext.setCloneSymbolTables(true);
                     try {
                         Function.init(workerBuildOnFilters, buildSymbols, executionContext, buildOnFilter);
                     } finally {
-                        executionContext.setCloneSymbolTables(current);
+                        executionContext.setCloneSymbolTables(isCloneSymbolTables);
                     }
                 }
             }
@@ -845,6 +890,18 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         frozen = isKeyStaged ? mapBuild.freezePartitioned(buildFrames) : intBuild.freezePartitioned(buildFrames);
         isBuiltInRounds = true;
         isBuildPartitioned = partitionCount > 1;
+        if (buildFrames.hasParquetFrames()) {
+            // A frame's kept rows are its segments, one per partition.
+            for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE) {
+                    long keptRows = 0;
+                    for (int partition = 0, n = getPartitionCount(); partition < n; partition++) {
+                        keptRows += getSegmentRowCount(frameIndex, partition);
+                    }
+                    countParquetFrame(frameIndex, keptRows);
+                }
+            }
+        }
     }
 
     // Walks the build frames on the owner, appending each frame's kept rows as it goes.
@@ -883,6 +940,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 } else {
                     intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount);
                 }
+                // The address cache gives the frame format that the payload readers go by.
+                if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE) {
+                    countParquetFrame(frameIndex, isFiltered ? rows.size() : rowCount);
+                }
             } finally {
                 // Each frame is read once, so a decoded Parquet frame has no later use.
                 pool.releaseParquetBuffers();
@@ -907,9 +968,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * inserts. The alternate orientation of {@link HashJoinGroupByBuildChoiceRecordCursorFactory}
      * builds the table that the primary probes, which held at least as many rows at compile time.
      * The planner presizes its key table only when the two tables held equal rows, and this rule
-     * then checks the alternate as it checks the primary.</li>
-     * <li>A RIGHT join keeps the ordinary plan when its build table holds more rows than the bound
-     * allows, and an execution holds the build table to the same bound.</li>
+     * then checks the alternate as it checks the primary. An outer join's ON condition on the
+     * build alone that reads a variable-size column, and does more than compare columns,
+     * constants and bind variables, takes the fused plan only under the presize condition, since
+     * the build runs it on every build row, and so does one that passes a STRING, VARCHAR, BINARY
+     * or ARRAY value that it computes from a build column to anything but a comparison, so the
+     * new compile also returns such a query to the ordinary plan.</li>
+     * <li>A RIGHT join takes the fused plan only under the presize condition, so the first rule
+     * returns it to the ordinary plan once its build table holds more than twice the preserved
+     * table's rows. A reused factory keeps building the larger table while it holds between one
+     * and two times the preserved table's rows.</li>
      * </ul>
      * A new compile reads the same sizes and passes this check, so a recompile repeats only when
      * the tables change again in between. An input that is not a table scan offers no reader, and
@@ -930,7 +998,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         final long buildRows = buildReader.size();
         // Row counts stay far below 2^62, so twice the probe rows cannot overflow.
-        if (buildRows > maxBuildTableRows || (isKeyCapacityPresized && buildRows > 2 * probeReader.size())) {
+        if (isKeyCapacityPresized && buildRows > 2 * probeReader.size()) {
             throw TableReferenceOutOfDateException.of(buildReader.getTableToken());
         }
     }
@@ -973,6 +1041,17 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             throw th;
         }
         isCountedInRounds = true;
+    }
+
+    // Counts the rows that a Parquet build frame kept, and the frame and its rows when it kept any: a
+    // probe reader decodes the payload columns of the whole frame for a match on any of its kept
+    // rows, and a payload copy decodes them once.
+    private void countParquetFrame(int frameIndex, long keptRows) {
+        parquetBuildRows += keptRows;
+        if (keptRows > 0) {
+            parquetFrameCount++;
+            parquetFrameRows += buildFrames.getFrameRowCount(frameIndex);
+        }
     }
 
     /**
@@ -1115,7 +1194,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * cursor, whose clear() closes the build, the filters and the frames.
      */
     void build(SqlExecutionCircuitBreaker circuitBreaker) {
-        assert frozen == null && buildFrames.getSymbolTableSource() != null;
+        assert frozen == null && buildFrames.getSymbolTableSource() != null && parquetBuildRows == 0 && parquetFrameCount == 0
+                && parquetFrameRows == 0;
         buildFrames.loadFrames();
         final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
         buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
@@ -1225,8 +1305,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return isSymbolKey;
     }
 
-    int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker breaker) {
-        return workerId == -1 && owner ? -1 : perWorkerLocks.acquireSlot(workerId, breaker);
+    int maybeAcquire(int workerId, boolean isOwner, SqlExecutionCircuitBreaker breaker) {
+        return workerId == -1 && isOwner ? -1 : perWorkerLocks.acquireSlot(workerId, breaker);
     }
 
     GroupByShardingContext getShardingContext() {
@@ -1261,36 +1341,80 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     /**
      * True when some execution may copy the build's payload columns, as EXPLAIN reports.
      */
-    boolean canCopyPayload() {
+    boolean isPayloadCopyable() {
         return buildFrames.getCopyRowSize() > 0 && copyMaxSize >= buildFrames.getCopyRowSize();
     }
 
     /**
      * True when this build copies its payload columns for a probe of this many rows: a payload that
-     * the copy can hold, a copy within the byte bound, and a probe that holds at least the given
-     * ratio of the build's rows, so that the matches read enough build rows to repay the copy. The
-     * probe's count is its frame rows, before any row filter, so a selective probe filter can copy a
-     * build it need not; the byte bound caps what that costs.
+     * the copy can hold, a copy within the byte bound, and a probe that the copy repays. A probe
+     * repays the copy of a native build once it holds at least the given ratio of the build's rows,
+     * so that its matches read enough of them. The build's rows from Parquet frames change that only
+     * for a probe whose matches can land on as many of those frames as the copy decodes,
+     * {@code isParquetReached}, see {@link #isParquetInProbeReach(long, long, long, long)}:
+     * without the copy, every slot that probes decodes the frames its matches land on into its own
+     * share of the decode cache, where the copy decodes each frame once and caches none of them for
+     * the probe. While those frames fit a share, the ratio then weighs the native rows alone, so a
+     * build of Parquet rows alone copies for any such probe. Once they decode past a share,
+     * {@code isParquetOverReaderCache}, a slot whose matches move between them decodes them again and
+     * again, so the build copies for any such probe, however many native rows it has. The matches of
+     * a probe that cannot land on that many frames make the slots decode fewer frames in all than
+     * the copy would, however often they decode one again, so the ratio weighs all the build's rows,
+     * Parquet rows too, as it does a native build's, whatever the cache: such a build copies exactly
+     * when a native build of as many rows would. A native build is always in reach, and weighs all
+     * its rows. The probe's count is its frame rows, before any row filter, so a selective probe
+     * filter can copy a build it need not; the byte bound caps what that costs.
      */
-    static boolean isPayloadCopyWorthIt(long buildRows, int copyRowSize, long probeRows, long copyMaxSize, double copyMinProbeRatio) {
-        return copyRowSize > 0
-                && buildRows > 0
-                && buildRows <= copyMaxSize / copyRowSize
-                && probeRows >= copyMinProbeRatio * buildRows;
+    static boolean isPayloadCopyWorthIt(
+            long buildRows,
+            long parquetBuildRows,
+            boolean isParquetReached,
+            boolean isParquetOverReaderCache,
+            int copyRowSize,
+            long probeRows,
+            long copyMaxSize,
+            double copyMinProbeRatio
+    ) {
+        // A build with Parquet rows is in reach of a probe with rows only.
+        assert !isParquetReached || parquetBuildRows == 0 || probeRows > 0;
+        if (copyRowSize <= 0 || buildRows <= 0 || buildRows > copyMaxSize / copyRowSize) {
+            return false;
+        }
+        if (!isParquetReached) {
+            return probeRows >= copyMinProbeRatio * buildRows;
+        }
+        return isParquetOverReaderCache || probeRows >= copyMinProbeRatio * (buildRows - parquetBuildRows);
     }
 
     /**
      * Copies the build's payload columns when the probe is large enough to repay the copy; see
      * {@link #isPayloadCopyWorthIt}. A build in rounds copies on the workers, which also run the
      * probe that the copy speeds up, so a smaller probe repays it than repays the owner's copy,
-     * which runs alone before the workers probe: each takes its own ratio. The owner calls it once
-     * the probe's frames are known and before it dispatches the probes, which then read the copy.
-     * On failure the caller closes the cursor, whose clear() releases the copy.
+     * which runs alone before the workers probe: each takes its own ratio. For a probe whose matches
+     * can land on as many Parquet frames as the copy decodes, the ratio weighs only the native rows
+     * that the build kept, although the copy holds every kept row: a build that reads a few Parquet
+     * row groups among many native rows, or whose filter keeps none of its Parquet rows, copies only
+     * for a probe that would repay the copy of its native rows alone, while a build of Parquet rows
+     * alone copies for any such probe. A build whose Parquet frames with kept rows decode past a
+     * probe reader's share of the decode cache, see
+     * {@link HashJoinBuildFrames#isReaderCacheExceeded(long)}, copies for any such probe, however
+     * many native rows it has. A reader decodes the payload columns alone, so a join key or a column
+     * that only the build's filters read adds nothing to that test. A smaller probe weighs all the
+     * kept rows, as for a native build. The build's key and row counts bound the build rows that one
+     * probe row can match, whichever key it asks for, and build() counts the Parquet frames that hold
+     * kept rows, once per execution; see {@link #isParquetInProbeReach(long, long, long, long)}. The
+     * owner calls this once the probe's frames are known and before it dispatches the probes, which
+     * then read the copy. On failure the caller closes the cursor, whose clear() releases the copy.
      */
     void maybeCopyPayload(long probeRows, SqlExecutionCircuitBreaker circuitBreaker) {
         assert frozen != null && !isPayloadCopied;
         final double minProbeRatio = isBuiltInRounds ? copyParallelMinProbeRatio : copyMinProbeRatio;
-        if (isPayloadCopyWorthIt(frozen.getRowCount(), buildFrames.getCopyRowSize(), probeRows, copyMaxSize, minProbeRatio)) {
+        final long buildRows = frozen.getRowCount();
+        final boolean isParquetReached = isParquetInProbeReach(probeRows, buildRows, frozen.getKeyCount(), parquetFrameCount);
+        final boolean isParquetOverReaderCache = isParquetReached
+                && parquetBuildRows > 0
+                && buildFrames.isReaderCacheExceeded(parquetFrameRows);
+        if (isPayloadCopyWorthIt(buildRows, parquetBuildRows, isParquetReached, isParquetOverReaderCache, buildFrames.getCopyRowSize(), probeRows, copyMaxSize, minProbeRatio)) {
             if (isBuiltInRounds) {
                 // A parallel build keeps each partition's rows in one region of the heap, so a pass in
                 // heap order would walk the frames once per partition, or it keeps each frame's rows
@@ -1313,7 +1437,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
     }
 
-    boolean shouldProbe() {
+    boolean isProbeNeeded() {
         return isOuter || frozen.getRowCount() > 0;
     }
 

@@ -55,6 +55,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
     private final int orderDirection;
+    // Drives the cursorFactories sort and the plan's symbolOrder attribute. It keeps reading the
+    // key-column claim on purpose: initRecordCursor sorts so that findDuplicates() sees equal
+    // symbols adjacently, and the sort direction is plan-visible, so it must not follow
+    // followedOrderByAdvice() into "false" for the heap cursor.
+    private final boolean symbolOrderAsc;
     private AbstractPageFrameRecordCursor cursor;
     // a single key walked forward keeps the designated timestamp's order, see setKeyMajorTimestampIndex()
     private boolean isKeyMajorForward;
@@ -87,6 +92,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.orderDirection = orderDirection;
+        this.symbolOrderAsc = (orderByKeyColumn || orderByTimestamp) && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
         cursorFactories = new ObjList<>(nKeyValues);
         cursorFactoriesIdx = new int[]{0};
         for (int i = 0; i < nKeyValues; i++) {
@@ -119,7 +125,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
             cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        // the heap cursor merges keys into row order, so it never follows ORDER BY the key column
+        // The heap cursor merges keys into row order, so it never follows ORDER BY the key column.
+        // The sequential cursor does only through KeyMajorPageFrameRecordCursor, which walks each
+        // key across all page frames: a per-frame SequentialRowCursorFactory restarts at key 0 on
+        // every frame, so its key order holds only within a frame.
         this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
         this.isOrderByAdviceFollowed = followedOrderByAdvice;
     }
@@ -220,7 +229,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(symbolOrderAsc ? "asc" : "desc");
         }
         if (cursor instanceof KeyMajorPageFrameRecordCursor) {
             sink.attr("keyMajor").val(true);
@@ -318,7 +327,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
         // sort values to facilitate duplicate removal (even for heap row cursor)
         // sorting here can produce order of cursorFactories different from one shown by explain command       
-        if (followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+        if (symbolOrderAsc) {
             cursorFactories.sort(COMPARATOR);
         } else {
             cursorFactories.sort(COMPARATOR_DESC);

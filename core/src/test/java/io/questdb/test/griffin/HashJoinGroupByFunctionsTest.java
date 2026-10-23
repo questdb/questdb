@@ -176,7 +176,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                     sources.add(cursor);
                 }
                 TrackingDouble arg = (TrackingDouble) ((UnaryFunction) fixture.functions.getGroupByFunctions(1).getQuick(0)).getArg();
-                arg.state.failInit = true;
+                arg.state.isInitFailing = true;
                 try {
                     fixture.functions.init(sources, sqlExecutionContext);
                     Assert.fail();
@@ -185,7 +185,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                 }
                 Assert.assertFalse(sqlExecutionContext.getCloneSymbolTables());
                 fixture.functions.cursorClosed();
-                arg.state.failInit = false;
+                arg.state.isInitFailing = false;
                 fixture.functions.init(sources, sqlExecutionContext);
                 Assert.assertEquals(2, arg.state.value);
                 Assert.assertEquals(0, arg.state.ownerEvaluations);
@@ -301,7 +301,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             String sql = "select p.c country, year(r.ts) yr, month(r.ts) mo, sum(r.e) energy, avg(r.irr) irradiance, sum(p.cap) capacity"
                     + " from (" + build + ") p right join (" + probe + ") r on r.id=p.id where p.cap is null";
             try (Fixture fixture = new Fixture(sql, probe, ints(2, 1, 0, 3), build, ints(2, 0, 1))) {
-                Assert.assertTrue(fixture.outer);
+                Assert.assertTrue(fixture.isOuter);
                 Assert.assertEquals(2, fixture.metadata.getProbeKeyColumn());
                 Assert.assertEquals(1, fixture.metadata.getBuildKeyColumn());
                 Assert.assertEquals("[2,0]", fixture.metadata.getBuildColumns().toString());
@@ -495,7 +495,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
         private int closeCount;
         private int cursorClosedCount;
         private int donated;
-        private boolean failInit;
+        private boolean isInitFailing;
         private int initCount;
         private int offerCount;
         private int ownerEvaluations;
@@ -503,7 +503,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
 
         private void init() throws SqlException {
             initCount++;
-            if (failInit) {
+            if (isInitFailing) {
                 throw SqlException.$(0, "injected init failure");
             }
             value = donated > 0 ? donated : ++ownerEvaluations;
@@ -628,7 +628,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
         private RecordCursorFactory buildFactory;
         private HashJoinGroupByFunctions functions;
         private HashJoinGroupByMetadata metadata;
-        private boolean outer;
+        private boolean isOuter;
         private final int workers;
         private RecordCursorFactory probeFactory;
 
@@ -658,7 +658,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                     }
                     HashJoinGroupByCandidate candidate = SqlCodeGenerator.getHashJoinGroupByCandidate(model, new FunctionParser(configuration, engine.getFunctionFactoryCache()), sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
-                    outer = candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER;
+                    isOuter = candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER;
                     metadata = new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate, probeFactory.getMetadata(), probeColumns,
                             buildFactory.getMetadata(), buildColumns);
                     functions = generator.compileHashJoinGroupByFunctions(model, metadata, workers, sqlExecutionContext);
@@ -739,7 +739,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                                             record.setHasMatch(true);
                                             update(map, record, slot);
                                         } while (probe.hasNext());
-                                    } else if (outer) {
+                                    } else if (isOuter) {
                                         record.setHasMatch(false);
                                         update(map, record, slot);
                                     }

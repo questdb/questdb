@@ -136,14 +136,14 @@ public final class IntHashJoinBuild implements Closeable {
      * Its snapshot is a flyweight; retained probes must explicitly reopen for each
      * execution. The ordinary constructor keeps execution-specific snapshots.
      */
-    public IntHashJoinBuild(boolean hasPayload, int initialSlots, long initialRowCapacity, boolean reusable) {
+    public IntHashJoinBuild(boolean hasPayload, int initialSlots, long initialRowCapacity, boolean isReusable) {
         if (initialSlots < 2 || initialSlots > IntHashJoinKeyTable.MAX_SLOTS || Integer.bitCount(initialSlots) != 1) {
             throw new IllegalArgumentException("invalid hash join build capacity");
         }
         this.initialSlots = initialSlots;
         heap = new HashJoinRowHeap(hasPayload, initialRowCapacity);
-        reusableFrozen = reusable ? new Frozen() : null;
-        reusablePartitionedFrozen = reusable ? new PartitionedFrozen() : null;
+        reusableFrozen = isReusable ? new Frozen() : null;
+        reusablePartitionedFrozen = isReusable ? new PartitionedFrozen() : null;
         tables.add(keys);
     }
 

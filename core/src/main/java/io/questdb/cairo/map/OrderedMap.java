@@ -1471,7 +1471,7 @@ public class OrderedMap implements Map, Reopenable {
         public MapValue findValueIn(Map map) {
             final OrderedMap orderedMap = (OrderedMap) map;
             assert orderedMap.isOpen() && keySize == orderedMap.keySize && valueSize == orderedMap.valueSize
-                    && sameValueOffsets(orderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
+                    && hasSameValueOffsets(orderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
             return lookup(orderedMap.heapAddr, orderedMap.offsetsAddr, orderedMap.mask);
         }
 
@@ -1527,7 +1527,7 @@ public class OrderedMap implements Map, Reopenable {
                 valueSize = map.valueSize;
                 valueOffsets = map.valueOffsets;
                 value = new FlyweightPackedMapValue(valueSize, valueOffsets);
-            } else if (keySize != map.keySize || valueSize != map.valueSize || !sameValueOffsets(map.valueOffsets)) {
+            } else if (keySize != map.keySize || valueSize != map.valueSize || !hasSameValueOffsets(map.valueOffsets)) {
                 throw CairoException.nonCritical().put("map probe view is bound to a different key or value layout");
             }
             if (stagingAddr == 0) {
@@ -1767,8 +1767,8 @@ public class OrderedMap implements Map, Reopenable {
             if (tracker == memoryTracker) {
                 return;
             }
-            final boolean wasPrimed = stagingAddr != 0;
-            if (wasPrimed) {
+            final boolean isPrimed = stagingAddr != 0;
+            if (isPrimed) {
                 stagingAddr = Unsafe.free(stagingAddr, stagingCapacity, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
                 stagingCapacity = 0;
                 stagingLimit = 0;
@@ -1776,7 +1776,7 @@ public class OrderedMap implements Map, Reopenable {
                 isCommitted = false;
             }
             memoryTracker = tracker;
-            if (wasPrimed) {
+            if (isPrimed) {
                 // Hand the view back whole, at its initial capacity, rather than leave it bound to
                 // a map with no buffer to stage into.
                 primeStaging();
@@ -1836,7 +1836,7 @@ public class OrderedMap implements Map, Reopenable {
             appendAddr = newAddr + used;
         }
 
-        private boolean eq(long heap, long offset) {
+        private boolean isStagedKeyEqual(long heap, long offset) {
             final long a = heap + offset;
             if (keySize == -1) {
                 // Check the length first.
@@ -1868,7 +1868,7 @@ public class OrderedMap implements Map, Reopenable {
             while (!isEmptySlot(rawOffset)) {
                 if (hashCodeLo == Numbers.decodeHighInt(slotValue)) {
                     final long offset = decompressOffset(rawOffset);
-                    if (eq(heap, offset)) {
+                    if (isStagedKeyEqual(heap, offset)) {
                         final long startAddr = heap + offset;
                         return value.of(startAddr, startAddr + keyOffset + stagedKeySize, false);
                     }
@@ -1910,7 +1910,7 @@ public class OrderedMap implements Map, Reopenable {
             isCommitted = false;
         }
 
-        private boolean sameValueOffsets(long[] other) {
+        private boolean hasSameValueOffsets(long[] other) {
             if (valueOffsets == other) {
                 return true;
             }

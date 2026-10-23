@@ -406,33 +406,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * Returns true when the consumer that required a designated timestamp also requires the base to
-     * already scan it ascending, because it has no way to obtain that order itself. A consumer that
-     * does have one - {@code SqlCodeGenerator.generateSampleBy}, which either restates the requirement
-     * as an ORDER BY the planner can satisfy with a merge or sorts at its own gate - pushes the
-     * requirement with {@link #pushTimestampRequiredFlag(boolean, boolean)} and
-     * {@code ascOrderRequired = false}, so the projection models between it and the base hand the base
-     * through instead of refusing on its behalf.
-     * <p>
-     * Always false when {@link #isTimestampRequired()} is false.
-     */
-    default boolean isTimestampAscOrderRequired() {
-        return isTimestampRequired();
-    }
-
-    /**
-     * Returns whether a factory may keep the plan choices that its compile took from the tables'
-     * row counts after the tables change size. A context that runs a factory which no holder
-     * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
-     * join then keeps its compile-time build side, RIGHT join bound and key table presizing, which
-     * cost memory and never change the rows, instead of throwing
-     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} to ask for a recompile.
-     */
-    default boolean isTableRowCountChangeTolerated() {
-        return false;
-    }
-
-    /**
      * A table-name function or a SHOW statement in a view reads the object it names through that
      * view, not as the caller, when the view's definition names the object, see
      * {@link TableFunctionView#isDependency(TableToken)}. Any other object, such as one a caller
@@ -479,6 +452,35 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         }
         getSecurityContext().authorizeSelect(viewDefinition);
         return true;
+    }
+
+    /**
+     * Returns true when the consumer that required a designated timestamp also requires the base to
+     * already scan it ascending, because it has no way to obtain that order itself. A consumer that
+     * does have one - {@code SqlCodeGenerator.generateSampleBy}, which either restates the requirement
+     * as an ORDER BY the planner can satisfy with a merge or sorts at its own gate - pushes the
+     * requirement with {@link #pushTimestampRequiredFlag(boolean, boolean)} and
+     * {@code ascOrderRequired = false}, so the projection models between it and the base hand the base
+     * through instead of refusing on its behalf.
+     * <p>
+     * Always false when {@link #isTimestampRequired()} is false.
+     */
+    default boolean isTimestampAscOrderRequired() {
+        return isTimestampRequired();
+    }
+
+    /**
+     * Returns whether a factory may keep the plan choices that its compile took from the tables'
+     * row counts after the tables change size. A context that runs a factory which no holder
+     * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
+     * join then keeps its compile-time build side and key table presizing, which cost memory and
+     * never change the rows, instead of throwing {@link TableReferenceOutOfDateException} to ask
+     * for a recompile. A RIGHT join that took the fused plan while the table before it held no
+     * more rows than the table after it therefore keeps building the table before it, however
+     * large that table grows.
+     */
+    default boolean isTableRowCountChangeTolerated() {
+        return false;
     }
 
     boolean isTimestampRequired();
@@ -602,7 +604,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
 
-    void setParallelHashJoinGroupByEnabled(boolean enabled);
+    void setParallelHashJoinGroupByEnabled(boolean isEnabled);
 
     void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 

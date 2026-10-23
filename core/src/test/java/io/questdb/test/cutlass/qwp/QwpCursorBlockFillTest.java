@@ -520,7 +520,6 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
                     bytes[deltaBytes + tableBytes + 2] = (byte) (rows >>> 16);
                     batches.add(bytes);
                     buffer.advanceStartRow(rows);
-                    buffer.advanceDeltaStart();
                     first = false;
                 }
             }

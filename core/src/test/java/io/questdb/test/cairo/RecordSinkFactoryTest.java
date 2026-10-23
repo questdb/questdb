@@ -33,6 +33,7 @@ import io.questdb.cairo.LoopingRecordSink;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -1112,6 +1113,156 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testRecordSinkTemplateKeepsWriteFlagsForAllCopierTypes() {
+        // The template keeps the column types, filter and write flags, so every copier type
+        // (single-method, chunked and looping) writes the same key, and each call returns a new
+        // instance. The looping type covers the fallback: getInstanceClass() returns null when
+        // CairoConfiguration#getCopierType() forces the looping sink (SINK_TYPE_LOOPING), and a
+        // bare null class has nothing to build the LoopingRecordSink from.
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        columnTypes.add(ColumnType.SYMBOL);
+        columnTypes.add(ColumnType.SYMBOL);
+        columnTypes.add(ColumnType.STRING);
+        columnTypes.add(ColumnType.TIMESTAMP);
+
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0, n = columnTypes.getColumnCount(); i < n; i++) {
+            columnFilter.add(i + 1);
+        }
+
+        BitSet writeSymbolAsString = new BitSet();
+        writeSymbolAsString.set(1);
+        BitSet writeStringAsVarchar = new BitSet();
+        writeStringAsVarchar.set(2);
+        BitSet writeTimestampAsNanos = new BitSet();
+        writeTimestampAsNanos.set(3);
+
+        IntList expectedPutTypes = new IntList();
+        expectedPutTypes.add(ColumnType.INT);
+        expectedPutTypes.add(ColumnType.STRING);
+        expectedPutTypes.add(ColumnType.VARCHAR);
+        expectedPutTypes.add(ColumnType.TIMESTAMP);
+
+        final int[] copierTypes = {
+                RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
+                RecordSinkFactory.SINK_TYPE_CHUNKED,
+                RecordSinkFactory.SINK_TYPE_LOOPING
+        };
+        for (int copierType : copierTypes) {
+            CairoConfiguration copierConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return copierType;
+                }
+            };
+            RecordSinkTemplate template = new RecordSinkTemplate(
+                    copierConfiguration,
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos
+            );
+            RecordSink first = template.newInstance();
+            RecordSink second = template.newInstance();
+            Assert.assertNotSame(first, second);
+            Assert.assertEquals(copierType == RecordSinkFactory.SINK_TYPE_LOOPING, first instanceof LoopingRecordSink);
+            Assert.assertSame(first.getClass(), second.getClass());
+
+            for (RecordSink sink : new RecordSink[]{first, second}) {
+                final long[] recordedTimestamp = new long[1];
+                TestRecordSink testRecordSink = new TestRecordSink() {
+                    @Override
+                    public void putTimestamp(long value) {
+                        recordedTimestamp[0] = value;
+                        super.putTimestamp(value);
+                    }
+                };
+                sink.copy(new TestRecord(), testRecordSink);
+                Assert.assertEquals("copierType=" + copierType, expectedPutTypes, testRecordSink.recordedTypes);
+                // the test record returns 1 for every timestamp, and the flag scales it to nanos
+                Assert.assertEquals("copierType=" + copierType, 1000L, recordedTimestamp[0]);
+            }
+        }
+    }
+
+    @Test
+    public void testTimestampAsNanosKeepsNull() {
+        // A join key widens a TIMESTAMP column to nanos when its partner is TIMESTAMP_NS. NULL has to
+        // stay NULL: multiplied, it overflows to 0, so a NULL key would match epoch keys instead of
+        // NULL keys. 500 columns make the chunked sink split the copy across two methods.
+        final int columnCount = 500;
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        BitSet writeTimestampAsNanos = new BitSet();
+        final long[] timestamps = new long[columnCount];
+        final long[] expected = new long[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            columnTypes.add(ColumnType.TIMESTAMP);
+            columnFilter.add(i + 1);
+            timestamps[i] = switch (i % 3) {
+                case 0 -> Numbers.LONG_NULL;
+                case 1 -> 0;
+                default -> i;
+            };
+            // the last column stays in micros
+            if (i < columnCount - 1) {
+                writeTimestampAsNanos.set(i);
+                expected[i] = timestamps[i] == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamps[i] * 1000;
+            } else {
+                expected[i] = timestamps[i];
+            }
+        }
+
+        for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_CHUNKED, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+            CairoConfiguration sinkTypeConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return sinkType;
+                }
+            };
+            RecordSink sink = RecordSinkFactory.getInstance(
+                    sinkTypeConfiguration,
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    null,
+                    writeTimestampAsNanos
+            );
+            // a generated class name carries a hidden class suffix after the slash
+            final String expectedSinkClass = switch (sinkType) {
+                case RecordSinkFactory.SINK_TYPE_SINGLE_METHOD -> "io.questdb.cairo.sink/";
+                case RecordSinkFactory.SINK_TYPE_CHUNKED -> "io.questdb.cairo.chunkedsink/";
+                default -> LoopingRecordSink.class.getName();
+            };
+            final String sinkClass = sink.getClass().getName();
+            Assert.assertTrue(sinkClass, sinkClass.startsWith(expectedSinkClass));
+
+            final long[] written = new long[columnCount];
+            TestRecordSink testRecordSink = new TestRecordSink() {
+                private int writtenCount;
+
+                @Override
+                public void putTimestamp(long value) {
+                    written[writtenCount++] = value;
+                    super.putTimestamp(value);
+                }
+            };
+            TestRecord testRecord = new TestRecord() {
+                @Override
+                public long getTimestamp(int col) {
+                    super.getTimestamp(col);
+                    return timestamps[col];
+                }
+            };
+            sink.copy(testRecord, testRecordSink);
+            Assert.assertArrayEquals(expectedSinkClass, expected, written);
+        }
+    }
+
     @NotNull
     private static ArrayColumnTypes allArrayColumnTypes() {
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();
@@ -1964,78 +2115,4 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testTimestampAsNanosKeepsNull() {
-        // A join key widens a TIMESTAMP column to nanos when its partner is TIMESTAMP_NS. NULL has to
-        // stay NULL: multiplied, it overflows to 0, so a NULL key would match epoch keys instead of
-        // NULL keys. 500 columns make the chunked sink split the copy across two methods.
-        final int columnCount = 500;
-        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-        ListColumnFilter columnFilter = new ListColumnFilter();
-        BitSet writeTimestampAsNanos = new BitSet();
-        final long[] timestamps = new long[columnCount];
-        final long[] expected = new long[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            columnTypes.add(ColumnType.TIMESTAMP);
-            columnFilter.add(i + 1);
-            timestamps[i] = switch (i % 3) {
-                case 0 -> Numbers.LONG_NULL;
-                case 1 -> 0;
-                default -> i;
-            };
-            // the last column stays in micros
-            if (i < columnCount - 1) {
-                writeTimestampAsNanos.set(i);
-                expected[i] = timestamps[i] == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamps[i] * 1000;
-            } else {
-                expected[i] = timestamps[i];
-            }
-        }
-
-        for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_CHUNKED, RecordSinkFactory.SINK_TYPE_LOOPING}) {
-            CairoConfiguration sinkTypeConfiguration = new CairoConfigurationWrapper(configuration) {
-                @Override
-                public int getCopierType() {
-                    return sinkType;
-                }
-            };
-            RecordSink sink = RecordSinkFactory.getInstance(
-                    sinkTypeConfiguration,
-                    new BytecodeAssembler(),
-                    columnTypes,
-                    columnFilter,
-                    null,
-                    null,
-                    writeTimestampAsNanos
-            );
-            // a generated class name carries a hidden class suffix after the slash
-            final String expectedSinkClass = switch (sinkType) {
-                case RecordSinkFactory.SINK_TYPE_SINGLE_METHOD -> "io.questdb.cairo.sink/";
-                case RecordSinkFactory.SINK_TYPE_CHUNKED -> "io.questdb.cairo.chunkedsink/";
-                default -> io.questdb.cairo.LoopingRecordSink.class.getName();
-            };
-            final String sinkClass = sink.getClass().getName();
-            Assert.assertTrue(sinkClass, sinkClass.startsWith(expectedSinkClass));
-
-            final long[] written = new long[columnCount];
-            TestRecordSink testRecordSink = new TestRecordSink() {
-                private int writtenCount;
-
-                @Override
-                public void putTimestamp(long value) {
-                    written[writtenCount++] = value;
-                    super.putTimestamp(value);
-                }
-            };
-            TestRecord testRecord = new TestRecord() {
-                @Override
-                public long getTimestamp(int col) {
-                    super.getTimestamp(col);
-                    return timestamps[col];
-                }
-            };
-            sink.copy(testRecord, testRecordSink);
-            Assert.assertArrayEquals(expectedSinkClass, expected, written);
-        }
-    }
 }

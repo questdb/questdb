@@ -946,6 +946,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.o3.max.lag\tQDB_CAIRO_O3_MAX_LAG\t600000\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.min.lag\tQDB_CAIRO_O3_MIN_LAG\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.open.column.queue.capacity\tQDB_CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.cluster.bin.width\tQDB_CAIRO_O3_PARTITION_CLUSTER_BIN_WIDTH\t60000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.cluster.max.bins\tQDB_CAIRO_O3_PARTITION_CLUSTER_MAX_BINS\t4096\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.max.splits\tQDB_CAIRO_O3_PARTITION_MAX_SPLITS\t20\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.merge.append.enabled\tQDB_CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.merge.append.frame.cache.size\tQDB_CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE\t2\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.presplit.max.cuts\tQDB_CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS\t10000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.presplit.min.piece.multiple\tQDB_CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.purge.list.initial.capacity\tQDB_CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.queue.capacity\tQDB_CAIRO_O3_PARTITION_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.split.min.size\tQDB_CAIRO_O3_PARTITION_SPLIT_MIN_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
@@ -958,6 +965,31 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.page.frame.shard.count\tQDB_CAIRO_PAGE_FRAME_SHARD_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.index.threshold\tQDB_CAIRO_PARALLEL_INDEX_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.avg.rows.piece.lim\tQDB_CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM\t4096\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.check.interval\tQDB_CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL\t120000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.dead.min.size\tQDB_CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.dead.rows.ratio\tQDB_CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO\t1.0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.decline.backoff.max\tQDB_CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.decline.backoff.min\tQDB_CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN\t60000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.decline.backoff.multiplier\tQDB_CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER\t2\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.idle.timeout\tQDB_CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.io.budget\tQDB_CAIRO_PARTITION_COMPACTION_IO_BUDGET\t1073741824\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.io.cost.multiplier\tQDB_CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER\t2\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.hot.commits\tQDB_CAIRO_PARTITION_COMPACTION_HOT_COMMITS\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.move.tail.dead.rows.percent\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.move.tail.piece.threshold\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.move.tail.prefix.multiple\tQDB_CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE\t2\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.piece.threshold\tQDB_CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD\t20\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.squash.idle.timeout\tQDB_CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT\t1800000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.squash.target.size.multiple\tQDB_CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE\t4\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.swap.timeout\tQDB_CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT\t1800000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.stop.percent\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.stop.trigger.percent\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT\t50\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.threshold\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD\t52428800\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.threshold.percent\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT\t50\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.trigger\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_TRIGGER\t10737418240\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.pressure.dead.ratio\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.time.budget\tQDB_CAIRO_PARTITION_COMPACTION_TIME_BUDGET\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.auto.include.timestamp\tQDB_CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.indexer.spill.bytes.max\tQDB_CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.row.id.encoding\tQDB_CAIRO_POSTING_INDEX_ROW_ID_ENCODING\tadaptive\tdefault\tfalse\tfalse\n" +
@@ -1078,13 +1110,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.window.round.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS\t2097152\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.minmax.rewrite.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MINMAX_REWRITE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS\t300000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.build.rows.per.partition\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.max.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE\t134217728\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO\t0.4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO\t0.125\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.hash.join.groupby.right.join.max.build.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.probe.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_PROBE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.batch.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.batch.kernels.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_BATCH_KERNELS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -1166,6 +1197,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.block.size\tQDB_CAIRO_WAL_APPLY_BLOCK_SIZE\t78643200\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.block.max.rows\tQDB_CAIRO_WAL_APPLY_BLOCK_MAX_ROWS\t100000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.block.memory.percent\tQDB_CAIRO_WAL_APPLY_BLOCK_MEMORY_PERCENT\t25\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.parallel.sql.enabled\tQDB_CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.memory.limit.bytes\tQDB_CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
@@ -1188,6 +1222,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.writer.pool.max.segments\tQDB_CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.view.wal.writer.pool.max.segments\tQDB_CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.sequencer.check.interval\tQDB_CAIRO_WAL_SEQUENCER_CHECK_INTERVAL\t10000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.sequencer.check.min.interval\tQDB_CAIRO_WAL_SEQUENCER_CHECK_MIN_INTERVAL\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.madvise.mode\tQDB_CAIRO_WAL_WRITER_MADVISE_MODE\tnone\tdefault\tfalse\tfalse\n" +
                                     "cairo.work.steal.timeout.nanos\tQDB_CAIRO_WORK_STEAL_TIMEOUT_NANOS\t10000\tdefault\tfalse\tfalse\n" +
@@ -1239,7 +1274,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.net.queued.connection.timeout\tQDB_HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.accept.loop.timeout\tQDB_HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.affinity\tQDB_HTTP_MIN_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tdefault\tfalse\tfalse\n"
+                    ).concat(
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +

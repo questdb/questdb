@@ -25,16 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
 import io.questdb.test.cairo.Overrides;
-
-import java.util.ArrayList;
-import java.util.Collection;
 
 /**
  * The two ways a fused hash join GROUP BY's probes read the build's payload columns. The operator
- * picks one per execution from the build's and the probe's row counts; a differential suite runs
- * once under each, forced through the payload copy properties, so that every query it checks reads
- * both the columns where they live and the copy.
+ * picks one per execution from the build's and the probe's row counts; a differential suite forces
+ * one through the payload copy properties, picked at random per test, so that across runs every
+ * query it checks reads both the columns where they live and the copy.
  */
 public enum HashJoinPayloadLayout {
     // Probes read each payload column at the matched build row's id.
@@ -54,12 +52,11 @@ public enum HashJoinPayloadLayout {
         }
     };
 
-    public static Collection<Object[]> parameters() {
-        final Collection<Object[]> parameters = new ArrayList<>();
-        for (HashJoinPayloadLayout layout : values()) {
-            parameters.add(new Object[]{layout});
-        }
-        return parameters;
+    /**
+     * A payload layout drawn from the test's generator, whose seeds the test logs.
+     */
+    public static HashJoinPayloadLayout random(Rnd rnd) {
+        return values()[rnd.nextInt(values().length)];
     }
 
     public abstract void apply(Overrides overrides);

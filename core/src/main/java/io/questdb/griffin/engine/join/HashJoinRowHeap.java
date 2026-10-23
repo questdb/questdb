@@ -97,8 +97,8 @@ final class HashJoinRowHeap implements Closeable {
     }
 
     /**
-     * Bytes of one row, so that a planner can bound a build's heap by its row count before
-     * choosing to build. The payload's width does not matter: a row stores its id, not its columns.
+     * Bytes of one row: a link, plus the build row's id when the build has payload columns. The
+     * payload's width does not matter: a row stores its id, not its columns.
      */
     static int getRowSize(boolean hasPayload) {
         return hasPayload ? ROW_ID_ROW_SIZE : LINK_SIZE;

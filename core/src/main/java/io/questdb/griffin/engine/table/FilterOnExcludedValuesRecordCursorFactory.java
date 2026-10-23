@@ -63,8 +63,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final boolean heapCursorUsed;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
-    private final int orderDirection;
     private final RowCursorFactory rowCursorFactory;
+    // Drives the cursorFactories sort and the plan's symbolOrder attribute. It keeps reading the
+    // key-column claim on purpose: recalculateIncludedValues() sorts so that
+    // upsertRowCursorFactory() groups equal symbols, and the sort direction is plan-visible, so it
+    // must not follow followedOrderByAdvice() into "false" for the heap cursor.
+    private final boolean symbolOrderAsc;
     private AbstractPageFrameRecordCursor cursor;
     private Function filter;
     private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
@@ -87,7 +91,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             int maxSymbolNotEqualsCount
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.orderDirection = orderDirection;
+        this.symbolOrderAsc = (orderByKeyColumn || orderByTimestamp) && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
         keyExcludedValueFunctions.addAll(keyValues);
@@ -122,7 +126,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
             cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        // the heap cursor merges keys into row order, so it never follows ORDER BY the key column
+        // The heap cursor merges keys into row order, so it never follows ORDER BY the key column.
+        // The sequential cursor does only through KeyMajorPageFrameRecordCursor, which walks each
+        // key across all page frames: a per-frame SequentialRowCursorFactory restarts at key 0 on
+        // every frame, so its key order holds only within a frame.
         this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
 
         comparator = this::compareStrFunctions;
@@ -181,7 +188,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             // sorting values makes no sense for heap row cursor
             if (!heapCursorUsed) {
                 // sorting here can produce order of cursorFactories different from one shown by explain command
-                if (followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+                if (symbolOrderAsc) {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparator);
                 } else {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparatorDesc);
@@ -201,7 +208,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(symbolOrderAsc ? "asc" : "desc");
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);

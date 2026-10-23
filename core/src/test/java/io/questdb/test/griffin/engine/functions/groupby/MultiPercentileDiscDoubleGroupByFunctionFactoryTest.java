@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -136,6 +137,44 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                         .noRandomAccess()
                         .expectSize()
                         .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testDescendingLargeBindArrayAcrossGroups() throws Exception {
+        // A caller can bind thousands of percentiles in reverse order. Sorting their selected
+        // indices must not do quadratic work for each group, and results retain input order.
+        assertMemoryLeak(() -> {
+            final int count = 2048;
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            try (DirectArray percentiles = new DirectArray()) {
+                percentiles.setType(arrayType);
+                percentiles.setDimLen(0, count);
+                percentiles.applyShape();
+                for (int i = 0; i < count; i++) {
+                    percentiles.putDouble(i, (double) (count - i) / count);
+                }
+                bindVariableService.clear();
+                bindVariableService.setArray(0, percentiles);
+                try (RecordCursorFactory factory = select("SELECT k, percentile_disc(v, $1) disc, percentile_cont(v, $1) cont " +
+                        "FROM (SELECT x::DOUBLE v, (x % 2)::INT k FROM long_sequence(4096)) GROUP BY k ORDER BY k");
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int k = 0; k < 2; k++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(k, cursor.getRecord().getInt(0));
+                        final ArrayView disc = cursor.getRecord().getArray(1, arrayType);
+                        final ArrayView cont = cursor.getRecord().getArray(2, arrayType);
+                        Assert.assertEquals(count, disc.getDimLen(0));
+                        Assert.assertEquals(count, cont.getDimLen(0));
+                        for (int i = 0; i < count; i++) {
+                            double p = (double) (count - i) / count;
+                            Assert.assertEquals(2.0 * (count - i) - (k == 1 ? 1 : 0), disc.getDouble(i), 0.0);
+                            Assert.assertEquals((k == 0 ? 2 : 1) + (2.0 * count - 2) * p, cont.getDouble(i), 1e-9);
+                        }
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
             }
         });
     }

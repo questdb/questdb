@@ -32,6 +32,13 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -45,11 +52,15 @@ import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -58,6 +69,10 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     private static final String SELECT = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
@@ -78,19 +93,19 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             createTables();
             Assert.assertTrue(new DefaultCairoConfiguration(root).isSqlParallelHashJoinGroupByEnabled());
             Assert.assertTrue(configuration.isSqlParallelHashJoinGroupByEnabled());
-            for (boolean global : new boolean[]{false, true}) {
-                for (boolean experimental : new boolean[]{false, true}) {
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, Boolean.toString(global));
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, Boolean.toString(experimental));
-                    Assert.assertEquals(experimental, configuration.isSqlParallelHashJoinGroupByEnabled());
+            for (boolean isGlobal : new boolean[]{false, true}) {
+                for (boolean isExperimental : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, Boolean.toString(isGlobal));
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, Boolean.toString(isExperimental));
+                    Assert.assertEquals(isExperimental, configuration.isSqlParallelHashJoinGroupByEnabled());
                     for (int workers : new int[]{0, 1, 4}) {
                         try (SqlExecutionContextImpl context = context(workers)) {
-                            boolean enabled = global && experimental && workers > 0;
-                            Assert.assertEquals(enabled, context.isParallelHashJoinGroupByEnabled());
+                            boolean isEnabled = isGlobal && isExperimental && workers > 0;
+                            Assert.assertEquals(isEnabled, context.isParallelHashJoinGroupByEnabled());
                             for (String join : JOINS) {
-                                assertDifferential(SELECT + join + " order by country, yr, mo", context, enabled);
-                                assertDifferential(SCALAR_SELECT + join, context, enabled);
-                                assertDifferential("select count(*)" + join, context, enabled);
+                                assertDifferential(SELECT + join + " order by country, yr, mo", context, isEnabled);
+                                assertDifferential(SCALAR_SELECT + join, context, isEnabled);
+                                assertDifferential("select count(*)" + join, context, isEnabled);
                             }
                         }
                     }
@@ -110,14 +125,20 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         String sql = SELECT + JOINS[j] + " where r.reading_ts >= '2020-01-01'"
                                 + " and r.reading_ts < '2021-01-01' and r.energy_kwh > 10"
                                 + " and p.country in ('ES','IT') order by country, yr, mo limit 3";
-                        assertDifferential(sql, context, true);
-                        assertDifferential(sql.replace(SELECT, SCALAR_SELECT).replace(" order by country, yr, mo", " order by energy"), context, true);
+                        // The RIGHT join's filters and interval on r reduce the rows that the
+                        // ordinary plan hashes, so the RIGHT join keeps the ordinary plan.
+                        final boolean isFused = j < 2;
+                        assertDifferential(sql, context, isFused);
+                        assertDifferential(sql.replace(SELECT, SCALAR_SELECT).replace(" order by country, yr, mo", " order by energy"), context, isFused);
+                        if (!isFused) {
+                            continue;
+                        }
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             String plan = plan(factory, context);
                             Assert.assertTrue(plan, plan.contains("Interval forward scan on: r"));
                             Assert.assertTrue(plan, plan.contains("buildStrategy: shared"));
                             Assert.assertTrue(plan, plan.contains("physicalJoinType: " + (j == 0 ? "inner" : "left outer")));
-                            Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j == 2)));
+                            Assert.assertTrue(plan, plan.contains("inputSwapped: false"));
                             Assert.assertTrue(plan, plan.contains("probeFilter:"));
                             if (j > 0) {
                                 Assert.assertTrue(plan, plan.contains("postJoinFilter:"));
@@ -146,12 +167,15 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 assertBuild("r join p", "p", false, 5, context);
                 assertBuild("p join r", "r", false, 5, context);
                 execute("INSERT INTO p VALUES (3, 'FR', 13), (4, 'DE', 17)");
-                // p has 7 rows and r has 5. INNER builds r in either order, and the outer joins
-                // keep building the table that does not preserve its rows, whatever its size.
+                // p has 7 rows and r has 5. INNER builds r in either order, and a LEFT join keeps
+                // building the table after it, whatever its size. A RIGHT join builds the table
+                // before it only when that table holds no more rows than the preserved one, and
+                // otherwise keeps the ordinary plan.
                 assertBuild("r join p", "r", true, 5, context);
                 assertBuild("p join r", "r", false, 5, context);
                 assertBuild("r left join p", "p", false, 7, context);
-                assertBuild("p right join r", "p", true, 7, context);
+                assertDifferential(SELECT + " from p right join r on r.plant_id=p.plant_id order by country, yr, mo", context, false);
+                assertDifferential(SCALAR_SELECT + " from p right join r on r.plant_id=p.plant_id", context, false);
                 assertBuild("p left join r", "r", false, 5, context);
                 assertBuild("r right join p", "r", true, 5, context);
                 execute("INSERT INTO r VALUES (4, '2021-02-01', 60, 600), (5, '2021-03-01', 70, 700), (NULL, '2021-04-01', 80, NULL)");
@@ -159,7 +183,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 assertBuild("r join p", "p", false, 7, context);
                 assertBuild("p join r", "p", true, 7, context);
                 assertBuild("p left join r", "r", false, 8, context);
-                assertBuild("r right join p", "r", true, 8, context);
+                assertDifferential(SELECT + " from r right join p on r.plant_id=p.plant_id order by country, yr, mo", context, false);
+                assertDifferential(SCALAR_SELECT + " from r right join p on r.plant_id=p.plant_id", context, false);
+                assertBuild("p right join r", "p", true, 7, context);
                 assertQuery("SELECT count(*) pairs, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity"
                         + " FROM p JOIN r ON r.plant_id = p.plant_id")
                         .withContext(context)
@@ -316,6 +342,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k",
                     "SELECT count(*) n, sum(pb.v) v FROM pb RIGHT JOIN pa ON pa.k = pb.k"
             }) {
+                final boolean isRight = sql.contains("RIGHT JOIN");
                 execute("TRUNCATE TABLE pb");
                 execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(500)");
                 try (SqlExecutionContextImpl context = enabledContext()) {
@@ -330,6 +357,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             Assert.assertTrue(cursor.hasNext());
                             Assert.assertEquals(sql, 4_096 * 8 + 2_000 * 16, fused(factory).getAtom().getFrozenBuild().getSizeInBytes());
                         }
+                        // A new compile of the RIGHT join keeps the ordinary plan, which hashes pa, once
+                        // pb, the table before the join, holds more rows than pa. The LEFT join keeps
+                        // building pb.
+                        assertDifferential(sql, context, !isRight);
                         execute("INSERT INTO pb VALUES (1, 1)");
                         try {
                             builtRows(factory, context);
@@ -340,8 +371,292 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                         }
                     }
-                    // A new compile lets the key table grow to the ten keys.
-                    assertBuildSize(sql, 2_001, 10, 64 * 8 + 2_001 * 16, context);
+                    if (isRight) {
+                        // The new compile keeps the ordinary plan.
+                        assertDifferential(sql, context, false);
+                    } else {
+                        // A new compile lets the key table grow to the ten keys.
+                        assertBuildSize(sql, 2_001, 10, 64 * 8 + 2_001 * 16, context);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedVariableSizeBuildOnFilterRecompilesOnceItsBuildTableOutgrowsTheProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, v DOUBLE, vc VARCHAR)");
+            execute("INSERT INTO p SELECT x::INT, (x % 2)::INT FROM long_sequence(10)");
+            // b's ON condition holds for the rows whose text contains a 1.
+            final String[] queries = {
+                    "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s FROM p LEFT JOIN b ON p.id = b.id AND b.vc ~ '1' ORDER BY k",
+                    "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s FROM b RIGHT JOIN p ON p.id = b.id AND b.vc ~ '1' ORDER BY k"
+            };
+            for (String sql : queries) {
+                execute("TRUNCATE TABLE b");
+                execute("INSERT INTO b SELECT x::INT, x, 'x' || x FROM long_sequence(10)");
+                try (SqlExecutionContextImpl context = enabledContext()) {
+                    RecordCursorFactory factory = engine.select(sql, context);
+                    try {
+                        // Both joins build b, which holds as many rows as p, so the query takes the
+                        // fused plan.
+                        final String fusedPlan = plan(factory, context);
+                        Assert.assertTrue(sql + '\n' + fusedPlan, fusedPlan.contains("buildOnFilter: vc ~ 1"));
+                        assertFactory(factory).withContext(context).expectSize().returns("""
+                                k\tc\tm\ts
+                                0\t5\t1\t10.0
+                                1\t5\t1\t1.0
+                                """);
+                        // At twice the rows of p, a reused factory keeps the fused plan, while a new
+                        // compile keeps the ordinary plan.
+                        execute("INSERT INTO b SELECT (x % 10 + 1)::INT, 100 + x, 'y' || x FROM long_sequence(10)");
+                        final String expected = """
+                                k\tc\tm\ts
+                                0\t5\t2\t111.0
+                                1\t6\t2\t111.0
+                                """;
+                        assertFactory(factory).withContext(context).expectSize().returns(expected);
+                        assertQuery(sql)
+                                .withContext(context)
+                                .noLeakCheck()
+                                .withPlanNotContaining("Hash Join Group By")
+                                .expectSize()
+                                .returns(expected);
+                        // Past twice the rows of p, the factory asks the caches to compile the query
+                        // again, as the HTTP and PG query caches run a cached factory, and the new
+                        // compile keeps the ordinary plan.
+                        execute("INSERT INTO b VALUES (5, 1_000, 'z1')");
+                        int recompileCount = 0;
+                        while (true) {
+                            try {
+                                result(factory, context);
+                                break;
+                            } catch (TableReferenceOutOfDateException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "[table=b]");
+                                Assert.assertNull(context.getMemoryTracker());
+                                Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertEquals(sql, 0, recompileCount++);
+                                factory = Misc.free(factory);
+                                factory = engine.select(sql, context);
+                            }
+                        }
+                        Assert.assertEquals(sql, 1, recompileCount);
+                        final String ordinaryPlan = plan(factory, context);
+                        Assert.assertFalse(sql + '\n' + ordinaryPlan, ordinaryPlan.contains("Hash Join Group By"));
+                        assertFactory(factory).withContext(context).expectSize().returns("""
+                                k\tc\tm\ts
+                                0\t5\t2\t111.0
+                                1\t6\t3\t1111.0
+                                """);
+                    } finally {
+                        Misc.free(factory);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheapVariableSizeBuildOnFilterTakesFusedPlanWithLargerBuildTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createVariableSizeOnFilterTables();
+            // The LEFT join builds b, which holds 6 rows against p's 4. A RIGHT join that builds the
+            // larger table keeps the ordinary plan.
+            // testRightJoinFusesOnlyWhenItsBuildTableHoldsNoMoreRows checks that size rule on the key
+            // equality alone, and
+            // testExpensiveVariableSizeBuildOnFilterNeedsProbeTableAsLargeAsBuildTable runs the
+            // RIGHT join of these tables with ON conditions.
+            final String selectFrom = "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s FROM p LEFT JOIN b ON p.id = b.id AND ";
+            // Each ON condition only compares columns, constants and the text that a cast computes
+            // from a fixed-size column, so it costs about as much on a build row as the hash insert
+            // it spares, and keeps the fused plan whatever the sizes. A comparison of two arrays
+            // counts as one of two texts does. IS NULL and IS NOT NULL parse as a comparison with a
+            // NULL constant.
+            final String[][] cases = {
+                    {"b.vc = 'xa'", "buildOnFilter: vc='xa'", """
+                            k\tc\tm\ts
+                            1\t2\t1\t10.0
+                            2\t2\t0\tnull
+                            """},
+                    {"b.vc IS NULL", "buildOnFilter: vc is null", """
+                            k\tc\tm\ts
+                            1\t2\t0\tnull
+                            2\t2\t1\t40.0
+                            """},
+                    {"b.str = 'sa'", "buildOnFilter: str='sa'", """
+                            k\tc\tm\ts
+                            1\t2\t1\t10.0
+                            2\t2\t1\t40.0
+                            """},
+                    {"b.vc <> 'xa' AND b.v > 15", "buildOnFilter: (vc!='xa' and 15<v)", """
+                            k\tc\tm\ts
+                            1\t2\t2\t50.0
+                            2\t2\t1\t40.0
+                            """},
+                    {"b.vc < 'y' AND NOT b.v > 25", "buildOnFilter: (vc<'y' and not (25<v))", """
+                            k\tc\tm\ts
+                            1\t2\t1\t10.0
+                            2\t2\t0\tnull
+                            """},
+                    {"b.arr = b.arr2", "buildOnFilter: arr=arr2", """
+                            k\tc\tm\ts
+                            1\t2\t2\t40.0
+                            2\t2\t0\tnull
+                            """},
+                    {"b.v::VARCHAR = '10.0'", "buildOnFilter: v::varchar='10.0'", """
+                            k\tc\tm\ts
+                            1\t2\t1\t10.0
+                            2\t2\t0\tnull
+                            """}
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (String[] c : cases) {
+                    final String sql = selectFrom + c[0] + " ORDER BY k";
+                    assertQuery(sql)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanContaining("Async Hash Join Group By", c[1])
+                            .expectSize()
+                            .returns(c[2]);
+                    // The ordinary plan returns the same rows, which checks the expected rows
+                    // apart from the fused plan.
+                    assertDifferential(sql, context, true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExpensiveVariableSizeBuildOnFilterNeedsProbeTableAsLargeAsBuildTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createVariableSizeOnFilterTables();
+            final String select = "SELECT p.k, count(*) c, count(b.id) m, sum(b.v) s";
+            // Both joins build b, which holds 6 rows against p's 4: a LEFT join builds the input after
+            // it, and a RIGHT join the input before it.
+            final String[] froms = {
+                    " FROM p LEFT JOIN b ON p.id = b.id AND ",
+                    " FROM b RIGHT JOIN p ON p.id = b.id AND "
+            };
+            final String regexRows = """
+                    k\tc\tm\ts
+                    1\t2\t2\t40.0
+                    2\t2\t0\tnull
+                    """;
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (String from : froms) {
+                    // The fused plan would run an ON condition over a variable-size build column on
+                    // each of b's rows, and the ordinary plan runs it only on the pairs whose keys
+                    // match, so a build table larger than the probe table keeps the ordinary plan
+                    // for a condition that does more than compare columns and constants: a regular
+                    // expression, LIKE, IN, a function or a cast, alone or next to a comparison.
+                    // The text that a cast computes from a fixed-size column counts as a
+                    // variable-size column once something other than a comparison reads it.
+                    for (String on : new String[]{
+                            "b.vc ~ 'x'", "b.vc LIKE 'x%'", "b.vc IN ('xa', 'xc')", "upper(b.vc) LIKE 'X%'",
+                            "b.v::VARCHAR ~ '^[13]'"
+                    }) {
+                        assertQuery(select + from + on + " ORDER BY k")
+                                .withContext(context)
+                                .noLeakCheck()
+                                .withPlanNotContaining("Hash Join Group By")
+                                .expectSize()
+                                .returns(regexRows);
+                    }
+                    assertQuery(select + from + "b.str::VARCHAR = 'sa' ORDER BY k")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanNotContaining("Hash Join Group By")
+                            .expectSize()
+                            .returns("""
+                                    k\tc\tm\ts
+                                    1\t2\t1\t10.0
+                                    2\t2\t1\t40.0
+                                    """);
+                    assertQuery(select + from + "b.vc = 'xa' AND b.vc ~ 'x' ORDER BY k")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanNotContaining("Hash Join Group By")
+                            .expectSize()
+                            .returns("""
+                                    k\tc\tm\ts
+                                    1\t2\t1\t10.0
+                                    2\t2\t0\tnull
+                                    """);
+                    assertQuery(select + from + "array_sum(b.arr) > 2.5 ORDER BY k")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanNotContaining("Hash Join Group By")
+                            .expectSize()
+                            .returns("""
+                                    k\tc\tm\ts
+                                    1\t2\t1\t30.0
+                                    2\t2\t0\tnull
+                                    """);
+                    // An ON condition over fixed-size columns costs about as much as the hash insert
+                    // it saves, so it keeps the LEFT join's fused plan. The RIGHT join keeps the
+                    // ordinary plan, because its build table holds more rows than the preserved one.
+                    final QueryAssertion fixedSizeOnAssertion = assertQuery(select + from + "b.v > 15 ORDER BY k")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .expectSize();
+                    if (from.contains("RIGHT JOIN")) {
+                        fixedSizeOnAssertion.withPlanNotContaining("Hash Join Group By");
+                    } else {
+                        fixedSizeOnAssertion.withPlanContaining("Async Hash Join Group By", "buildOnFilter: 15<v");
+                    }
+                    fixedSizeOnAssertion.returns("""
+                            k\tc\tm\ts
+                            1\t2\t2\t50.0
+                            2\t2\t1\t40.0
+                            """);
+                }
+                // b's own WHERE clause runs on each of its rows in both plans, so it keeps the LEFT
+                // join's fused plan, and the rows are those of the ON condition that it spells. The
+                // RIGHT join keeps the ordinary plan while b holds more rows than p.
+                final String filteredB = "(SELECT * FROM b WHERE vc ~ 'x') b";
+                final String leftFilteredB = " FROM p LEFT JOIN " + filteredB + " ON p.id = b.id";
+                final String rightFilteredB = " FROM " + filteredB + " RIGHT JOIN p ON p.id = b.id";
+                assertQuery(select + leftFilteredB + " ORDER BY k")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanContaining("Async Hash Join Group By", "buildFilter: vc ~ x")
+                        .expectSize()
+                        .returns(regexRows);
+                assertQuery(select + rightFilteredB + " ORDER BY k")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanNotContaining("Hash Join Group By")
+                        .expectSize()
+                        .returns(regexRows);
+                // p holds as many rows as b now, so the fused plan runs the ON condition on no more
+                // rows than the probe holds, and the query takes it. The RIGHT join takes the fused
+                // plan with b's own WHERE clause as well.
+                execute("INSERT INTO p VALUES (7, 3), (8, 3)");
+                assertQuery(select + rightFilteredB + " ORDER BY k")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanContaining("Async Hash Join Group By", "buildFilter: vc ~ x")
+                        .expectSize()
+                        .returns("""
+                                k\tc\tm\ts
+                                1\t2\t2\t40.0
+                                2\t2\t0\tnull
+                                3\t2\t0\tnull
+                                """);
+                for (String from : froms) {
+                    assertQuery(select + from + "b.vc ~ 'x' ORDER BY k")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanContaining("Async Hash Join Group By", "buildOnFilter: vc ~ x")
+                            .expectSize()
+                            .returns("""
+                                    k\tc\tm\ts
+                                    1\t2\t2\t40.0
+                                    2\t2\t0\tnull
+                                    3\t2\t0\tnull
+                                    """);
                 }
             }
         });
@@ -370,7 +685,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 // that used to build r keeps the ordinary plan as well.
                 assertDifferential(select + " FROM r JOIN p ON r.id = p.id WHERE r.s = 'a'", context, false);
                 assertDifferential(select + " FROM p JOIN r ON r.id = p.id WHERE r.s = 'a'", context, false);
-                // RIGHT builds r whatever the sizes.
+                // RIGHT builds r once p holds as many rows.
+                execute("INSERT INTO p VALUES (3, 128, 'c', '2020-01-06')");
                 assertDifferential(select + " FROM r RIGHT JOIN p ON r.id = p.id", context, true);
             }
         });
@@ -385,10 +701,13 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     String probe = "(select energy_kwh e, reading_ts ts, plant_id id, irradiance_wm2 irr from r" + where + ") a";
                     String build = "(select installed_kwp cap, plant_id id, country c from p where installed_kwp > 0) b";
                     for (String join : new String[]{probe + " join " + build, probe + " left join " + build, build + " right join " + probe}) {
+                        // The RIGHT join preserves a, whose WHERE clause reduces the rows that the
+                        // ordinary plan hashes, so the RIGHT join keeps the ordinary plan then.
+                        final boolean isFused = where.isEmpty() || !join.contains(" right join ");
                         assertDifferential("select b.c, year(a.ts) yr, sum(a.e) energy, avg(a.irr) irradiance, sum(b.cap) capacity from "
-                                + join + " on a.id=b.id group by b.c, year(a.ts) order by b.c, yr", context, true);
+                                + join + " on a.id=b.id group by b.c, year(a.ts) order by b.c, yr", context, isFused);
                         assertDifferential("select sum(a.e) energy, avg(a.irr) irradiance, count(b.c) countries, sum(b.cap) capacity from "
-                                + join + " on a.id=b.id", context, true);
+                                + join + " on a.id=b.id", context, isFused);
                     }
                 }
             }
@@ -412,7 +731,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     insert into r values
                         ('1', '2020-01-01', 10, 100, '1', '1'), ('3', '2020-01-02', 30, 300, '3', '3'),
                         ('1', '2020-01-03', 20, 200, '1', '1'), ('2', '2020-02-01', 40, null, '2', '2'),
-                        (null, '2021-01-01', 50, 500, null, null)
+                        (null, '2021-01-01', 50, 500, null, null), ('1', '2021-02-01', 60, 600, '1', '1')
                     """);
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (int j = 0; j < JOINS.length; j++) {
@@ -426,8 +745,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = engine.select(sql, context)) {
                         String plan = plan(factory, context);
                         Assert.assertTrue(plan, plan.contains("symbolKeyJoin: true"));
-                        // p has one row more than r, so the INNER join builds r, as RIGHT does.
-                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j != 1)));
+                        // p and r hold 6 rows each, so the INNER join keeps the join order and builds
+                        // p, as LEFT does. RIGHT builds p, the table before it.
+                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j == 2)));
                     }
                     // Mixed text keys reconcile to STRING or VARCHAR and stage that text into the
                     // build's map, which selects the same rows the symbol translation selects.
@@ -1286,8 +1606,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String join : JOINS) {
+                    // A filter on r, which the RIGHT join preserves, would keep the ordinary plan.
+                    final String where = join == JOINS[2] ? "" : " where r.energy_kwh > 10";
                     for (String projection : new String[]{SELECT, SCALAR_SELECT}) {
-                        String sql = projection + join + " where r.energy_kwh > 10"
+                        String sql = projection + join + where
                                 + (projection.equals(SELECT) ? " order by country,yr,mo" : "");
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
@@ -1314,11 +1636,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     public void testLargerBuildStillSelectsShared() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // INNER builds the smaller r; LEFT and RIGHT keep building the larger p.
+            // INNER builds the smaller r, and LEFT keeps building the larger p. RIGHT would build
+            // p as well, so it keeps the ordinary plan, which hashes r.
             execute("insert into p select x::int, 'ES', 2.0 from long_sequence(100003)");
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String join : JOINS) {
-                    assertDifferential(SELECT + join + " order by country, yr, mo", context, true);
+                    assertDifferential(SELECT + join + " order by country, yr, mo", context, join != JOINS[2]);
                 }
             }
         });
@@ -1357,8 +1680,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         context.setParallelHashJoinGroupByEnabled(true);
                         context.changePageFrameSizes(1, 1);
                         for (String join : joins) {
-                            assertDifferential("select " + aggregates + join + where, context, true);
-                            assertDifferential("select a.id, " + aggregates + join + where + " order by a.id", context, true);
+                            // The RIGHT join keeps the ordinary plan when its build b holds more rows
+                            // than the preserved a, or when a filter on a reduces the rows that the
+                            // ordinary plan hashes.
+                            final boolean isFused = join != joins[2] || (scenario != 4 && scenario != 6);
+                            assertDifferential("select " + aggregates + join + where, context, isFused);
+                            assertDifferential("select a.id, " + aggregates + join + where + " order by a.id", context, isFused);
                         }
                     }
                 }
@@ -1367,70 +1694,270 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRightJoinBuildSizeBound() throws Exception {
+    public void testRightJoinOfLargerTableStaysUnderTheQueryMemoryLimit() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(256 * Numbers.SIZE_1MB, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-            Assert.assertEquals(256 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-            createTables();
-            // r and p have 5 rows each. A build row is an 8-byte link plus, when the build has payload
-            // columns, the 8-byte id of its row: 16 bytes whatever the number and width of the payload
-            // columns, 8 without any. The key column is not a payload column.
-            final String narrow = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity FROM ";
-            final String wide = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(r.irradiance_wm2) irradiance,"
-                    + " sum(p.installed_kwp) capacity FROM ";
-            final String keysOnly = "SELECT count(*) n, sum(p.installed_kwp) capacity FROM ";
-            final String on = " ON r.plant_id = p.plant_id";
-            final String[] joins = {"r RIGHT JOIN p", "p RIGHT JOIN r", "r LEFT JOIN p", "p LEFT JOIN r"};
+            // big holds 200_000 rows over the ten keys of tiny, which holds an eleventh key that big
+            // lacks. The ordinary plan hashes tiny and streams big in about 0.3 MiB, while a build of
+            // big takes 3.2 MiB of row heap alone.
+            execute("CREATE TABLE big (id INT, v LONG)");
+            execute("CREATE TABLE tiny (id INT, cat SYMBOL)");
+            execute("INSERT INTO big SELECT (x % 10 + 1)::INT, x FROM long_sequence(200_000)");
+            execute("INSERT INTO tiny SELECT x::INT, 'c' || (x % 3) FROM long_sequence(11)");
+            final String sql = """
+                    SELECT tiny.cat, count() c, sum(big.v) s
+                    FROM big RIGHT JOIN tiny ON big.id = tiny.id
+                    GROUP BY tiny.cat
+                    ORDER BY tiny.cat
+                    """;
+            final String expected = """
+                    cat\tc\ts
+                    c0\t60000\t6000000000
+                    c1\t80000\t8000160000
+                    c2\t60001\t5999940000
+                    """;
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, Numbers.SIZE_1MB);
             try (SqlExecutionContextImpl context = enabledContext()) {
-                // Every build with payload columns takes 80 bytes, narrow or wide, so a bound of 80
-                // fuses every spelling.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
-                for (String join : joins) {
-                    assertDifferential(narrow + join + on, context, true);
-                    assertDifferential(wide + join + on, context, true);
-                }
-                // A build of r without payload columns stores links alone: 40 bytes. One byte less
-                // keeps the RIGHT join that builds r on the ordinary plan, and the LEFT joins, which
-                // take no bound, still fuse.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 39);
-                assertDifferential(keysOnly + joins[0] + on, context, false);
-                assertDifferential(keysOnly + joins[3] + on, context, true);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 40);
-                assertDifferential(keysOnly + joins[0] + on, context, true);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
-                // A factory compiled under the bound asks the caches to compile the query again once
-                // the table outgrows it, rather than build the larger table.
-                try (RecordCursorFactory factory = engine.select(narrow + joins[0] + on, context)) {
+                context.setParallelHashJoinGroupByEnabled(false);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .returns(expected);
+                // big holds more rows than tiny, so the RIGHT join keeps the ordinary plan.
+                context.setParallelHashJoinGroupByEnabled(true);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .withPlanNotContaining("Hash Join Group By")
+                        .returns(expected);
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testCachedRightJoinRecompileKeepsTheBuildUnderTheMemoryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            // big starts with 10 rows and tiny has 11, so the RIGHT join fuses and builds big. Once
+            // big has 200_010 rows, a build of big takes over 3 MiB and the ordinary plan, which
+            // hashes tiny, about 0.3 MiB.
+            execute("CREATE TABLE big (id INT, v LONG)");
+            execute("CREATE TABLE tiny (id INT, cat SYMBOL)");
+            execute("INSERT INTO big SELECT x::INT, 0 FROM long_sequence(10)");
+            execute("INSERT INTO tiny SELECT x::INT, 'c' || (x % 3) FROM long_sequence(11)");
+            final String sql = """
+                    SELECT tiny.cat, count() c, sum(big.v) s
+                    FROM big RIGHT JOIN tiny ON big.id = tiny.id
+                    GROUP BY tiny.cat
+                    ORDER BY tiny.cat
+                    """;
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                RecordCursorFactory factory = engine.select(sql, context);
+                try {
                     Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
-                    Assert.assertEquals(5, builtRows(factory, context));
-                    execute("INSERT INTO r VALUES (1, '2021-02-01', 60, 600)");
-                    try {
-                        builtRows(factory, context);
-                        Assert.fail("a factory whose RIGHT join build outgrew the bound must ask for a recompile");
-                    } catch (TableReferenceOutOfDateException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "[table=r]");
-                        Assert.assertNull(context.getMemoryTracker());
-                        Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(10, builtRows(factory, context));
+                    execute("INSERT INTO big SELECT (x % 10 + 1)::INT, x FROM long_sequence(200_000)");
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, Numbers.SIZE_1MB);
+                    // The HTTP and PG query caches run a cached factory this way: when the factory
+                    // throws TableReferenceOutOfDateException, the cache closes it and compiles the
+                    // query again.
+                    int recompileCount = 0;
+                    while (true) {
+                        try {
+                            assertFactory(factory).withContext(context).expectSize().returns("""
+                                    cat\tc\ts
+                                    c0\t60003\t6000000000
+                                    c1\t80004\t8000160000
+                                    c2\t60004\t5999940000
+                                    """);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            Assert.assertEquals(0, recompileCount++);
+                            factory = Misc.free(factory);
+                            factory = engine.select(sql, context);
+                        }
                     }
+                    // big outgrew twice the rows of tiny, and the new compile keeps the ordinary plan,
+                    // which hashes tiny.
+                    Assert.assertEquals(1, recompileCount);
+                    final String recompiledPlan = plan(factory, context);
+                    Assert.assertTrue(recompiledPlan, recompiledPlan.contains("Hash Right Outer Join Light"));
+                    Assert.assertFalse(recompiledPlan, recompiledPlan.contains("Hash Join Group By"));
+                } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    Misc.free(factory);
                 }
-                // A new compile reads the new size: 6 rows take 96 bytes.
-                assertDifferential(narrow + joins[0] + on, context, false);
-                // The bound counts the table's rows, not the rows that a filter leaves in the build.
-                assertDifferential(narrow + joins[0] + on + " AND r.energy_kwh > 100", context, false);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 96);
-                assertDifferential(narrow + joins[0] + on + " AND r.energy_kwh > 100", context, true);
-                // One byte short of the 5-row build of p: the RIGHT join keeps the ordinary plan
-                // and the LEFT join that builds p still fuses.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 79);
-                assertDifferential(narrow + joins[1] + on, context, false);
-                assertDifferential(narrow + joins[2] + on, context, true);
-                assertDifferential(narrow + joins[3] + on, context, true);
-                // A bound of zero fuses a RIGHT join only over an empty build table.
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 0);
-                execute("CREATE TABLE e (plant_id INT, installed_kwp DOUBLE)");
-                assertDifferential("SELECT count(*) n, sum(r.energy_kwh) energy, sum(e.installed_kwp) capacity"
-                        + " FROM e RIGHT JOIN r ON r.plant_id = e.plant_id", context, true);
-                assertDifferential(narrow + joins[1] + on, context, false);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinFusesOnlyWhenItsBuildTableHoldsNoMoreRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // a, the table before the RIGHT JOIN, is the fused plan's build. b, the table after it,
+            // is the table that the ordinary plan hashes.
+            execute("CREATE TABLE a (k SYMBOL, v LONG)");
+            execute("CREATE TABLE b (k SYMBOL, v LONG)");
+            execute("INSERT INTO a VALUES ('x', 1), ('y', 2), ('q', 3)");
+            execute("INSERT INTO b VALUES ('x', 10), ('y', 20), ('y', 30), ('z', 40)");
+            final String select = "SELECT b.k bk, count(*) c, sum(a.v) s, sum(b.v) t";
+            final String right = select + " FROM a RIGHT JOIN b ON a.k = b.k GROUP BY b.k ORDER BY bk";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // a holds 3 rows and b 4.
+                assertQuery(right)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: right outer")
+                        .returns("""
+                                bk\tc\ts\tt
+                                x\t1\t1\t10
+                                y\t2\t4\t50
+                                z\t1\tnull\t40
+                                """);
+                // Equal sizes keep the fused plan.
+                execute("INSERT INTO a VALUES ('y', 5)");
+                final String expected = """
+                        bk\tc\ts\tt
+                        x\t1\t1\t10
+                        y\t4\t14\t100
+                        z\t1\tnull\t40
+                        """;
+                assertQuery(right)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: right outer")
+                        .returns(expected);
+                // a holds 5 rows and b 4. The LEFT spelling builds a whatever its size, and INNER
+                // builds the smaller b.
+                execute("INSERT INTO a VALUES ('w', 7)");
+                assertQuery(select + " FROM b LEFT JOIN a ON a.k = b.k GROUP BY b.k ORDER BY bk")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: left outer")
+                        .returns(expected);
+                assertQuery(select + " FROM a JOIN b ON a.k = b.k GROUP BY b.k ORDER BY bk")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: inner", "inputSwapped: false")
+                        .returns("""
+                                bk\tc\ts\tt
+                                x\t1\t1\t10
+                                y\t4\t14\t100
+                                """);
+                // The RIGHT join keeps the ordinary plan, which hashes b.
+                assertQuery(right)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .withPlanNotContaining("Hash Join Group By")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinWithFilterOnPreservedInputKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            // a, the build, holds 3 rows and b, the preserved input, 5.
+            execute("CREATE TABLE a (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k SYMBOL, v LONG, w LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO a VALUES ('x', 1, '2024-01-01'), ('y', 2, '2024-01-02'), ('q', 3, '2024-01-03')");
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, 1, '2024-01-01'),
+                        ('y', 2, 3, '2024-01-02'),
+                        ('y', 3, 3, '2024-01-02T12:00'),
+                        ('z', 4, 0, '2024-01-03'),
+                        ('w', 5, 5, '2024-01-04')
+                    """);
+            final String select = "SELECT b.k bk, count(*) c, sum(a.v) s FROM ";
+            final String right = "a RIGHT JOIN b ON a.k = b.k";
+            final String groupBy = " GROUP BY b.k ORDER BY bk";
+            // The ordinary plan filters b in its own scan before it hashes b, so the fused plan,
+            // which builds all of a, would not be certain to build fewer rows.
+            final String[] ordinaryQueries = {
+                    select + right + " WHERE b.v > 1" + groupBy,
+                    // An interval, and one that a runtime constant bounds.
+                    select + right + " WHERE b.ts IN '2024-01-02'" + groupBy,
+                    select + right + " WHERE b.ts > dateadd('y', -100, now())" + groupBy,
+                    // A bind variable.
+                    select + right + " WHERE b.v > $1" + groupBy,
+                    // Equalities of two columns of b, and of a column of b and a constant.
+                    select + right + " WHERE b.v = b.w" + groupBy,
+                    select + right + " WHERE b.k = 'x'" + groupBy,
+                    // The optimizer derives b.k = 'x' from the join key and filters b's scan with it.
+                    select + right + " WHERE a.k = 'x'" + groupBy,
+                    // A filter of the sub-query that b is, and an outer query's filter that the
+                    // optimizer moves into b's scan.
+                    select + "a RIGHT JOIN (SELECT * FROM b WHERE v > 1) b ON a.k = b.k" + groupBy,
+                    "SELECT k, count(*) c, sum(av) s FROM (SELECT b.k, a.v av, b.v bv FROM " + right + ") WHERE bv > 1 GROUP BY k ORDER BY k",
+                    // A filter two sub-queries below the join.
+                    select + "a RIGHT JOIN (SELECT k, v FROM (SELECT * FROM b WHERE v > 1)) b ON a.k = b.k" + groupBy,
+                    // Filters of the sub-query that b is that read no column of b: a runtime constant
+                    // and a bind variable can each empty b's scan.
+                    select + "a RIGHT JOIN (SELECT * FROM b WHERE now() > '2020-01-01') b ON a.k = b.k" + groupBy,
+                    select + "a RIGHT JOIN (SELECT * FROM b WHERE $1 = 1) b ON a.k = b.k" + groupBy
+            };
+            // Filters that leave b's scan whole keep the fused plan: the build's own filters, the ON
+            // condition on a alone and the filters after the join.
+            final String[] fusedQueries = {
+                    select + right + groupBy,
+                    select + right + " WHERE a.v > 1" + groupBy,
+                    select + right + " WHERE a.v IS NULL" + groupBy,
+                    select + right + " AND a.v > 1" + groupBy,
+                    select + right + " AND a.k = 'x'" + groupBy,
+                    select + "(SELECT * FROM a WHERE v > 1) a RIGHT JOIN b ON a.k = b.k" + groupBy,
+                    "SELECT k, count(*) c, sum(av) s FROM (SELECT b.k, a.v av, b.v bv FROM " + right + ") WHERE av > 1 GROUP BY k ORDER BY k",
+                    // The LEFT and INNER spellings take a filter on b, their probe, into the probe scan.
+                    select + "b LEFT JOIN a ON a.k = b.k WHERE b.v > 1" + groupBy,
+                    select + "a JOIN b ON a.k = b.k WHERE b.v > 1" + groupBy
+            };
+            // These keep the ordinary plan whatever the table sizes: an ON condition on b alone,
+            // and a filter after the join that reads both inputs.
+            final String[] alwaysOrdinaryQueries = {
+                    select + right + " AND b.v > 1" + groupBy,
+                    select + right + " WHERE a.v + b.v > 2" + groupBy
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                bindVariableService.setLong(0, 1);
+                for (String sql : fusedQueries) {
+                    assertDifferential(sql, context, true);
+                }
+                for (String sql : alwaysOrdinaryQueries) {
+                    assertDifferential(sql, context, false);
+                }
+                assertQuery(select + right + " WHERE a.v > 1" + groupBy)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Hash Join Group By", "logicalJoinType: right outer", "postJoinFilter: 1<a.v")
+                        .returns("""
+                                bk\tc\ts
+                                y\t2\t4
+                                """);
+                for (String sql : ordinaryQueries) {
+                    assertDifferential(sql, context, false);
+                }
+                assertQuery(select + right + " WHERE b.ts IN '2024-01-02'" + groupBy)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Hash Right Outer Join Light", "Interval forward scan on: b")
+                        .withPlanNotContaining("Hash Join Group By")
+                        .returns("""
+                                bk\tc\ts
+                                y\t2\t4
+                                """);
             }
         });
     }
@@ -1492,6 +2019,27 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.l = pb.l",
                             2_000, 10, 129 * 16 + 2_000 * 16, context);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBuildRunsOnWorkersFromDefaultMinRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds one row short of the default bound of 300_000 rows, one per key; pb holds
+            // 400_000 rows, one or two for each key of pa, so that the INNER join builds pa.
+            execute("CREATE TABLE pa (k INT, v DOUBLE)");
+            execute("CREATE TABLE pb (k INT, w DOUBLE)");
+            execute("INSERT INTO pa SELECT x::INT, x FROM long_sequence(299_999)");
+            execute("INSERT INTO pb SELECT (x % 300_000 + 1)::INT, x FROM long_sequence(400_000)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v, sum(pb.w) w FROM pa JOIN pb ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Below the default bound, the owner builds on its own thread.
+                assertBuildRounds(sql, 299_999, 0, context);
+                // From the bound on, the build runs in rounds, over 16 partitions: the power of two
+                // at or above 300_000 rows / 32_768 rows per partition.
+                execute("INSERT INTO pa VALUES (300_000, 300_000)");
+                assertBuildRounds(sql, 300_000, 16, context);
             }
         });
     }
@@ -1588,10 +2136,46 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPayloadCopyProbeReach() {
+        // Each of a build's keys holds at least one of its K rows, so no key holds more than
+        // K - keys + 1 of them, and a probe of R rows, each of which matches one key's rows, reaches
+        // the F Parquet frames that a copy decodes once R x (K - keys + 1) >= F. A build without
+        // Parquet frames is in reach of any probe, and one with Parquet frames out of reach of an
+        // empty one. A build without rows has no keys.
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(0, 0, 0, 0));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(5, 0, 0, 0));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(0, 2_001, 2_001, 0));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(0, 2_001, 2_001, 1));
+        // Unique keys hold one row each.
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(19, 2_001, 2_001, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(20, 2_001, 2_001, 20));
+        // 1_999 keys over 2_001 rows: one key may hold 3 rows, although they hold 1.001 on average.
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(6, 2_001, 1_999, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(7, 2_001, 1_999, 20));
+        // A single probe row reaches 20 frames once one key may hold 20 rows.
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1_982, 20));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1_983, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1_100, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1, 2_001));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1, 2_002));
+        // Products past Long.MAX_VALUE compare exactly. R x (K - keys + 1) of 2^64 would wrap to zero,
+        // of 2^63 and 2^64 - 2 to negative values, and of (2^63 - 1)^2 to one.
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1L << 32, 1L << 32, 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(2, 1L << 62, 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE - 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE, Long.MAX_VALUE, 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, Long.MAX_VALUE, 1, Long.MAX_VALUE));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, Long.MAX_VALUE, 2, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE - 1, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
+    }
+
+    @Test
     public void testPayloadCopyRule() throws Exception {
         assertMemoryLeak(() -> {
             Assert.assertEquals(0.4, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0);
             Assert.assertEquals(0.125, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0);
+            Assert.assertEquals(300_000, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByBuildParallelMinRows());
             // pb has twice the rows of pa. pa spreads its 1_000 rows over four days, 250 a day.
             execute("CREATE TABLE pa (k INT, l LONG, s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE pb (k INT, v DOUBLE)");
@@ -1697,6 +2281,527 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPayloadCopyRuleForParquetBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa spreads 1_000 rows over four days, 250 a day, and pb 2_000 rows over the same days.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 345_600_000L) FROM long_sequence(1_000)");
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 172_800_000L) FROM long_sequence(2_000)");
+            // The LEFT join builds pa's 1_000 rows and probes pb's 2_000, or none of them in an interval
+            // without rows; the reversed one builds pb and probes pa. A copied DOUBLE takes 8 bytes a row.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            // ON filters on the build's columns: the first keeps pa's first three days, 750 rows, and
+            // the second its last day, 250 rows.
+            final String firstDays = sql + " AND pa.v * 2 <= 1_500";
+            final String lastDay = sql + " AND pa.v * 2 > 1_500";
+            final String emptyProbe = " WHERE pb.ts IN '2019-01-01'";
+            final String reversed = "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // At a ratio of 8.001, a probe of 2_000 rows repays no copy of a native build of 1_000.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8.001");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "8.001");
+                assertPayloadCopy(sql, false, context);
+                // Once pa's first three days are Parquet, the ratios weigh the build's 250 native rows
+                // alone: 2_000 probe rows repay their copy at a ratio of 8, and not at 8.001, on the
+                // owner and on the workers alike.
+                execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-04'");
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8");
+                assertPayloadCopy(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "8");
+                assertPayloadCopyInRounds(sql, true, context);
+                // The ratios weigh the native rows the build keeps: a build that keeps Parquet rows
+                // alone copies for a probe whose matches land on as many row groups as the copy decodes,
+                // as the 2_000 probe rows' do on pa's three, and one that keeps the native day's rows
+                // alone weighs all of them.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "8.001");
+                assertPayloadCopyInRounds(firstDays, true, context);
+                assertPayloadCopyInRounds(lastDay, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8.001");
+                assertPayloadCopy(firstDays, true, context);
+                assertPayloadCopy(lastDay, false, context);
+                // A probe without rows lands on no row group, so the ratio weighs all the build's rows,
+                // and even a build of Parquet rows alone keeps row ids.
+                assertPayloadCopy(firstDays + emptyProbe, false, context);
+                // The byte bound still holds.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 7_999);
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 8_000);
+                assertPayloadCopy(sql, true, context);
+                // Only the build's frames count: the native build of a Parquet probe weighs all its rows.
+                assertPayloadCopy(reversed, false, context);
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    Assert.assertTrue(plan(factory, context).contains("buildPayload: copied when the probe is large enough"));
+                }
+                // Without a decode cache, the readers decode a row group again whenever a match moves
+                // to another one, and the results still match the ordinary plan's.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+                assertPayloadCopy(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetBuildOutOfProbeReach() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetRowGroupBuild("k INT", "x::INT", 1);
+            // pb's rows find one build row each, a different one, all of them Parquet rows.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT (x * 101)::INT, x FROM long_sequence(19)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertBuildFrameCount(sql, 21, context);
+                // Without the copy, the 19 probe rows' matches decode at most 19 row groups, fewer than
+                // the 20 that the copy would decode. The build then weighs all its 2_001 rows, as a
+                // native build does, and the tiny probe keeps row ids, on the owner and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // At a ratio of 0.0094, 19 probe rows repay the copy of 2_001 rows, and at 0.0095 they
+                // do not, although they would repay the copy of the build's one native row.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.0094");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.0095");
+                assertPayloadCopyInRounds(sql, false, context);
+                // A 20th probe row reaches as many row groups as the copy decodes, so the ratio weighs
+                // the build's one native row alone, and the build copies, on the workers and on the
+                // owner alike.
+                execute("INSERT INTO pb VALUES (2_000, 20)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetBuildWithRepeatedKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // Over its 2_001 rows, pa's k repeats 1_100 keys, 0 to 1_099, its f repeats 20 keys, and its
+            // u is unique but for the key 1, which rows 1, 1_000 and 1_500 hold, in three row groups.
+            createParquetRowGroupBuild(
+                    "k INT, f INT, u INT",
+                    "(x % 1_100)::INT, (x % 20)::INT, (CASE WHEN x IN (1_000, 1_500) THEN 1 ELSE x END)::INT",
+                    1
+            );
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT x::INT, x FROM long_sequence(6)");
+            execute("CREATE TABLE pc (k INT, v DOUBLE)");
+            execute("INSERT INTO pc VALUES (7, 1)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.u = pb.k";
+            final String fewKeys = "SELECT count(*) n, sum(pa.v) v FROM pc LEFT JOIN pa ON pa.f = pc.k";
+            final String manyKeys = "SELECT count(*) n, sum(pa.v) v FROM pc LEFT JOIN pa ON pa.k = pc.k";
+            final String manyKeysProbe = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertBuildFrameCount(sql, 21, context);
+                // u holds 1_999 keys over 2_001 rows, so no key holds more than 2_001 - 1_998 = 3 rows,
+                // and 6 probe rows match at most 18 build rows: they decode fewer row groups than the 20
+                // that the copy decodes, and keep row ids. A 7th probe row may match 21, so the ratio
+                // weighs the build's one native row alone, and the build copies, on the owner and on the
+                // workers alike. The average, 1.001 rows a key, would ask for 20 probe rows.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                execute("INSERT INTO pb VALUES (7, 7)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                // The rule cannot tell which keys a probe asks for, so it takes the most rows that one
+                // key may hold. k's 1_100 keys may leave 902 rows to one of them, so a single probe row
+                // reaches the 20 row groups, and copies, although each of k's keys holds 1.8 rows, as
+                // the key 7 does. A key that the build repeats 100 times does the same.
+                assertPayloadCopy(manyKeys, true, context);
+                assertPayloadCopy(manyKeysProbe, true, context);
+                assertPayloadCopy(fewKeys, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForMostlyNativeBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            createMostlyNativeBuild();
+            // The LEFT join builds pa's 10_101 rows and probes pb's 10, far fewer than the default
+            // ratios ask to repay the copy of a native build: 0.4 of its rows for a copy on the owner,
+            // and 0.125 for one on the workers.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertPayloadCopy(sql, false, context);
+                // pa's first day turns Parquet, 100 of the build's rows. A copy would copy the 10_001
+                // native rows as well, and the ratios weigh those as before, so the tiny probe keeps
+                // row ids, on the owner and on the workers alike.
+                execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'");
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // Once the second day is Parquet too, one native row is left, which the probe's 10 rows
+                // repay, so the build copies, on the workers and on the owner alike.
+                execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForFilteredParquetBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            createMostlyNativeBuild();
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'");
+            // ON filters on the build's columns: the first keeps the 10_001 rows of pa's native days and
+            // none of its Parquet day, the second the Parquet day's 100 rows alone.
+            final String nativeRows = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.v * 2 > 1_000";
+            final String parquetRows = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.v * 2 < 1_000";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // The ratios weigh the native rows that the build keeps, whatever frames it reads: the
+                // build that reads the Parquet day but keeps none of its rows weighs all of its rows,
+                // as a native build does, and the build that keeps Parquet rows alone copies for the
+                // probe's 10 rows, on the owner and on the workers alike.
+                assertPayloadCopy(nativeRows, false, context);
+                assertPayloadCopy(parquetRows, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(nativeRows, false, context);
+                assertPayloadCopyInRounds(parquetRows, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShare() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds 100 rows on each of its first four days, valued 1 to 400, 10_000 rows on its
+            // fifth, valued 1_001 to 11_000, and one row on its sixth, the last partition, which stays
+            // native. pb holds 10 rows. Both key their rows from 0 to 9.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 864_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, 1_000 + x, timestamp_sequence('2020-01-05', 1_000_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO pa VALUES (0, 1_000_000, '2020-01-06')");
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(10)");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            // The LEFT join builds pa's 10_401 rows and probes pb's 10, far fewer than the default
+            // ratios ask to repay the copy of its 10_001 native rows. The second keeps one row of each
+            // Parquet day and every native row.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            final String sparse = sql + " AND (pa.v IN (1, 101, 201, 301) OR pa.v > 1_000)";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A probe reader decodes the DOUBLE payload alone, 8 bytes a row, and not the INT key,
+                // so the four Parquet days decode to 3_200 bytes, which a reader's share of the default
+                // cache holds many times over: the tiny probe keeps row ids.
+                assertPayloadCopy(sql, false, context);
+                assertPayloadCopy(sparse, false, context);
+                // Each of the five slots' readers takes a quarter of the cache, so at 12_800 bytes a
+                // share holds the decoded Parquet days exactly, and the build keeps row ids. At 12_799
+                // bytes it falls short, and every slot whose matches cycle through the days would decode
+                // them again, so the build copies, whatever the ratios.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_800);
+                assertPayloadCopy(sql, false, context);
+                assertPayloadCopy(sparse, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_799);
+                assertPayloadCopy(sql, true, context);
+                // A reader decodes the payload of every row of a Parquet frame, so the sparse build, which
+                // keeps four Parquet rows, one in each day, weighs the 400 rows of those days and copies as well.
+                assertPayloadCopy(sparse, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                assertPayloadCopyInRounds(sparse, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_800);
+                assertPayloadCopyInRounds(sql, false, context);
+                assertPayloadCopyInRounds(sparse, false, context);
+                // The byte bound still holds: a copied DOUBLE takes 8 bytes a row.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_799);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 10_401 * 8 - 1);
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 10_401 * 8);
+                assertPayloadCopyInRounds(sql, true, context);
+                // Without a decode cache, any Parquet frame would decode again whenever a match moves
+                // to another frame, so the build copies. A native build weighs all its rows whatever
+                // the cache, as before: once the days are native again, the tiny probe keeps row ids.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                execute("ALTER TABLE pa CONVERT PARTITION TO NATIVE WHERE ts < '2020-01-05'");
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareOutOfProbeReach() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetRowGroupBuild("k INT", "x::INT", 10_001);
+            // pb's rows find one build row each, a different one, all of them Parquet rows.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT (x * 101)::INT, x FROM long_sequence(19)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A probe reader decodes the DOUBLE payload alone, 8 bytes a row, so the Parquet days
+                // decode to 16_000 bytes. Each of the five slots' readers takes a quarter of the cache,
+                // which at 63_999 bytes falls short of them.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 63_999);
+                // Without the copy, the 19 probe rows' matches decode at most 19 row groups, however
+                // often they evict each other, fewer than the 20 that the copy would decode. The build
+                // then weighs all its 12_001 rows, as a native build does, and the tiny probe keeps row
+                // ids, on the owner and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // A 20th probe row may decode as many row groups as the copy, so the build copies,
+                // however many native rows it holds, on the workers and on the owner alike.
+                execute("INSERT INTO pb VALUES (2_000, 20)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                // A share that holds the Parquet days leaves the ratio to weigh the 10_001 native rows,
+                // which the 20 probe rows do not repay.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 64_000);
+                assertPayloadCopy(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareWithHotNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa's keys are unique but for a NULL key on the last row of each of its 20 Parquet row
+            // groups, rows 100, 200 and so on to 2_000.
+            createParquetRowGroupBuild("k INT", "(CASE WHEN x <= 2_000 AND x % 100 = 0 THEN NULL ELSE x END)::INT", 10_001);
+            // pb's one row has a NULL key, which matches the 20 NULL build rows, as NULL keys match in
+            // the ordinary hash join.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb VALUES (NULL, 1)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A reader's share of the default cache holds the 16_000 bytes that the Parquet days
+                // decode to, so the ratio weighs the 10_001 native rows, which one probe row does not repay.
+                assertPayloadCopy(sql, false, context);
+                // Each of the five slots' readers takes a quarter of the cache, which at 63_999 bytes falls
+                // short of the Parquet days.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 63_999);
+                // pa's 12_001 rows hold 11_982 keys, the NULL key among them, so no key holds more than
+                // 12_001 - 11_981 = 20 rows, and the probe row may decode as many row groups as the copy
+                // does. This one would: its NULL key walks all 20 row groups, which a share that falls
+                // short of them would decode again for every such probe row. The build copies, on the
+                // owner and on the workers alike, although its keys hold 1.002 rows on average.
+                assertPayloadCopy(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\tv
+                                20\t21000.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareWithHotSentinelKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa's keys are unique but for the key 0 on every 400th of its Parquet rows, rows 400, 800
+            // and so on to 2_000, one in each of five of its 20 Parquet row groups.
+            createParquetRowGroupBuild("k INT", "(CASE WHEN x <= 2_000 AND x % 400 = 0 THEN 0 ELSE x END)::INT", 10_001);
+            // pb's rows all ask for the key 0.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT 0, x FROM long_sequence(3)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Each of the five slots' readers takes a quarter of the cache, which at 63_999 bytes falls
+                // short of the 16_000 bytes that the Parquet days decode to.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 63_999);
+                // pa's 12_001 rows hold 11_997 keys, so no key holds more than 12_001 - 11_996 = 5 rows,
+                // and 3 probe rows match at most 15 build rows: they decode fewer row groups than the 20
+                // that the copy decodes, however often they evict each other. The build then weighs all
+                // its 12_001 rows, as a native build does, and the tiny probe keeps row ids, on the owner
+                // and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // A 4th probe row may match 20 build rows, as these do, so the build copies, however many
+                // native rows it holds, on the workers and on the owner alike, although its keys hold
+                // 1.0003 rows on average.
+                execute("INSERT INTO pb VALUES (0, 4)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\tv
+                                20\t24000.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareWithMixedWidthPayload() throws Exception {
+        assertMemoryLeak(() -> {
+            // As testPayloadCopyRuleForParquetPartOverReaderShare, but the payload holds two columns of
+            // different widths, the DOUBLE v and the INT w.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x, x::INT, timestamp_sequence('2020-01-01', 864_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, 1_000 + x, x::INT, timestamp_sequence('2020-01-05', 1_000_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO pa VALUES (0, 1_000_000, 7, '2020-01-06')");
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(10)");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            final String sql = "SELECT count(*) n, sum(pa.v) v, sum(pa.w) w FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A probe reader decodes v and w, 12 bytes a row, so the four Parquet days decode to
+                // 4_800 bytes. Each of the five slots' readers takes a quarter of the cache, so at 19_200
+                // bytes a share holds them exactly, and the build keeps row ids. At 19_199 bytes it falls
+                // short, and the build copies. A row size that counted one of the two columns alone, 8 or
+                // 4 bytes, would keep row ids at 19_199 bytes, and one of 16 bytes would copy at 19_200.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 19_200);
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 19_199);
+                assertPayloadCopy(sql, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartWithFilterOnlyVarcharOverReaderShare() throws Exception {
+        assertMemoryLeak(() -> {
+            // As testPayloadCopyRuleForParquetPartOverReaderShare, but pa also holds msg, 300 bytes of
+            // text a row that compress well, which only the build scan's WHERE filter reads.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, msg VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x, rpad(x::VARCHAR, 300, ' log line'), timestamp_sequence('2020-01-01', 864_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, 1_000 + x, rpad(x::VARCHAR, 300, ' log line'), timestamp_sequence('2020-01-05', 1_000_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO pa VALUES (0, 1_000_000, 'last', '2020-01-06')");
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(10)");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            // The LEFT join builds the 10_401 rows that the filter keeps, all of them, and probes pb's 10.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN (SELECT k, v FROM pa WHERE msg NOT LIKE '%qqqq%') pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    TestUtils.assertContains(plan(factory, context), "buildFilter: not (msg like %qqqq%)");
+                }
+                // A probe reader decodes the DOUBLE payload alone, 8 bytes a row, and neither the INT key
+                // nor msg, so the four Parquet days decode to 3_200 bytes. Each of the five slots' readers
+                // takes a quarter of the cache, so at 12_800 bytes a share holds them exactly, and the build
+                // keeps row ids. At 12_799 bytes it falls short, and the build copies, whatever the ratios.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_800);
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_799);
+                assertPayloadCopy(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 12_800);
+                assertPayloadCopyInRounds(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testParquetBuildReadersDecodeNoVarcharOfOnCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa's first four days, 1_000 rows each, turn into a Parquet row group each, and its last
+            // day, one row, stays native. msg holds 300 bytes of text a row that compress well, which
+            // only the ON condition on pa alone reads.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, msg VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pa SELECT x::INT, x, rpad(x::VARCHAR, 300, ' log line'), timestamp_sequence('2020-01-01', 86_400_000L) FROM long_sequence(4_000)");
+            execute("INSERT INTO pa VALUES (4_001, 4_001, 'last', '2020-01-05')");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            // pb holds as many rows as pa, so the LEFT join takes the fused plan with an ON condition
+            // on a VARCHAR of pa alone.
+            execute("INSERT INTO pb SELECT x::INT, x FROM long_sequence(4_001)");
+            final String sql = "SELECT count(*) n, count(pa.k) m, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.msg NOT LIKE '%7%'";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A probe this large repays the copy.
+                assertPayloadCopy(sql, true, context);
+                // Without the copy, every slot that probes reads the Parquet days through its reader.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // pb's 4_001 rows make one probe frame, so one slot probes, and its reader decodes each
+                // Parquet day once.
+                context.changePageFrameSizes(8_192, 8_192);
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    TestUtils.assertContains(plan(factory, context), "buildOnFilter: not (msg like %7%)");
+                    final long decodedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertFalse(fused(factory).getAtom().isPayloadCopied());
+                        // The open cursor still holds what the reader decoded: the payload of the four
+                        // Parquet days, pa.k, which count(pa.k) reads, and pa.v, 12 bytes a row, and up
+                        // to an eighth more for the decoder's bookkeeping. msg's 16-byte slice entries
+                        // would add 64_000 bytes.
+                        final long decoded = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER) - decodedBefore;
+                        final long bound = 4_000 * (Integer.BYTES + Double.BYTES);
+                        Assert.assertTrue("decoded " + decoded + ", bound " + bound, decoded >= bound && decoded <= bound + bound / 8);
+                    }
+                    Assert.assertEquals(decodedBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetStringKeyOverReaderShare() throws Exception {
+        // A STRING key of 34 chars would decode to an 8-byte offset a row and 72 bytes of length and
+        // UTF-16 chars, but a reader never decodes it.
+        assertParquetVarSizeKeyCopy("STRING", "STRING", 34);
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetStringKeyStagedAsVarcharOverReaderShare() throws Exception {
+        // A VARCHAR probe key makes the build's STRING key stage as UTF-8, which leaves what a reader
+        // decodes unchanged: the payload alone.
+        assertParquetVarSizeKeyCopy("STRING", "VARCHAR", 36);
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetVarcharKeyOverReaderShare() throws Exception {
+        // A VARCHAR key of 36 chars would decode to a 16-byte slice entry a row and the page bytes
+        // that the entry points into, but a reader never decodes it.
+        assertParquetVarSizeKeyCopy("VARCHAR", "VARCHAR", 36);
+    }
+
+    @Test
+    public void testPayloadCopyRuleFollowsPartitionConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            createMostlyNativeBuild();
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertDifferential(sql, context, true);
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    final String expected = result(factory, context);
+                    // Each execution weighs the frames that it reads: one factory keeps row ids for
+                    // the native build, copies once pa's first two days are Parquet and a single
+                    // native row is left, and keeps row ids again once the days are native again.
+                    assertCopied(factory, false, context);
+                    execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+                    assertCopied(factory, true, context);
+                    Assert.assertEquals(expected, result(factory, context));
+                    execute("ALTER TABLE pa CONVERT PARTITION TO NATIVE WHERE ts < '2020-01-03'");
+                    assertCopied(factory, false, context);
+                    Assert.assertEquals(expected, result(factory, context));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testScalarEmptyInputAndCursorReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1764,7 +2869,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // Each spelling evaluates b's conjuncts in b's scan, in written order, and stops at the
             // first false one; the fused plan's probe filter is that scan's filter. Each row holds a
             // WHERE clause, optionally followed by GROUP BY, and the fused plan's probe filter, or
-            // null where the fused analysis must keep the ordinary plan.
+            // null where the fused analysis must keep the ordinary plan. Every row puts a conjunct
+            // into b's scan, and the RIGHT spelling preserves b, so a filter on b reduces the rows
+            // that its ordinary plan hashes, and the RIGHT spelling keeps the ordinary plan for
+            // every row.
             final String[][] wheres = {
                     {"b.c1 > 5 AND " + cast, "(5<c1 and " + castFilter + ")"},
                     {cast + " AND b.c1 > 5", "(" + castFilter + " and 5<c1)"},
@@ -1790,7 +2898,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // evaluated runtime constants would pick the ordinary plan or fail. a.v > 0 keeps a
             // conjunct that reads a column in the filter after an outer join, so that filter is not
             // a runtime constant alone, which the ordinary plan turns into a gate over the join. An
-            // INNER join pushes a.v > 0 into a's scan, so these rows skip the INNER spelling.
+            // INNER join pushes a.v > 0 into a's scan, so these rows skip the INNER spelling. Each
+            // row's filter is that of the LEFT spelling: the RIGHT spelling keeps the ordinary plan
+            // for the conjunct on b.
             final String[][] runtimeConstantWheres = {
                     {"a.v > 0 AND now() > '1970-01-02' AND " + cast, castFilter},
                     {"a.v > 0 AND $1 = 1 AND b.c1 > 0", "0<c1"}
@@ -1830,8 +2940,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             + " WHERE $1 = 1 AND 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", null},
                     // A filter that also reads a column is not a runtime constant, so it keeps the
                     // fused plan: a.v > 0 reads the NULL-extended input, which an outer join keeps
-                    // above the join.
-                    {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
+                    // above the join. The RIGHT spelling pushes the cast into the scan of b, which
+                    // it preserves, so it keeps the ordinary plan.
+                    {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, null},
                     {select + froms[1] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE " + cast + " AND $1 = 1) WHERE v > 0", castFilter}
             };
@@ -1845,13 +2956,13 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     context.setJitMode(jit);
                     for (String[] where : wheres) {
                         for (String from : froms) {
-                            assertOutcome("SELECT count(*), count(a.v)" + from + " WHERE " + where[0], where[1], context);
+                            assertOutcome("SELECT count(*), count(a.v)" + from + " WHERE " + where[0], from == froms[0] ? null : where[1], context);
                         }
                     }
                     for (String[] where : runtimeConstantWheres) {
                         // The RIGHT and LEFT spellings.
                         for (int i = 0; i < 2; i++) {
-                            assertOutcome("SELECT count(*), count(a.v)" + froms[i] + " WHERE " + where[0], where[1], context);
+                            assertOutcome("SELECT count(*), count(a.v)" + froms[i] + " WHERE " + where[0], i == 0 ? null : where[1], context);
                         }
                     }
                     for (String[] query : gatedQueries) {
@@ -2080,7 +3191,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     "SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 + 1000 d%s) WHERE d > 1000"
             };
             // The optimizer moves a conjunct that names only plain columns below the projection, so
-            // it stays fused, with the probe filter that follows each query.
+            // it stays fused, with the probe filter that follows each query. The RIGHT spelling
+            // preserves b, so the conjunct on b keeps its ordinary plan.
             final String[][] fusedQueries = {
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 x%s) WHERE x > 1000", "1000<c0"},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v, b.c0 + 1000 c0, b.c1%s) WHERE c1 > 0", "0<c1"}
@@ -2099,7 +3211,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             assertOutcome(query.formatted(from), null, context);
                         }
                         for (String[] query : fusedQueries) {
-                            assertOutcome(query[0].formatted(from), query[1], context);
+                            assertOutcome(query[0].formatted(from), from == froms[0] ? null : query[1], context);
                         }
                         for (String query : unfiltered) {
                             assertDifferential(query.formatted(from), context, true);
@@ -2180,7 +3292,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // interval extraction, and keeps the conjuncts on a above the join. Both plans of both
             // spellings then evaluate each conjunct on the same rows in the same order: a.v > 100 does
             // not spare a row of b the cast, and the interval does. Each row holds a query, with %s
-            // for the FROM clause, and the fused plan's probe filter, or null for the ordinary plan.
+            // for the FROM clause, and the LEFT spelling's fused probe filter, or null for the
+            // ordinary plan. The filter on b reduces the rows that the RIGHT spelling's ordinary
+            // plan hashes, so the RIGHT spelling keeps the ordinary plan for every query.
             final String[][] queries = {
                     {"SELECT count(*), count(a.v)%s WHERE a.v > 100 AND " + cast, castFilter},
                     {"SELECT count(*), count(a.v)%s WHERE " + cast + " AND a.v > 100", castFilter},
@@ -2200,7 +3314,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     for (String[] query : queries) {
                         final String rightSql = query[0].formatted(right);
                         final String leftSql = query[0].formatted(left);
-                        assertOutcome(rightSql, query[1], context);
+                        assertOutcome(rightSql, null, context);
                         assertOutcome(leftSql, query[1], context);
                         context.setParallelHashJoinGroupByEnabled(false);
                         try (
@@ -2213,9 +3327,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         }
                     }
                 }
-                // The fused plan of the RIGHT spelling scans b's interval with the cast as its probe
+                // The fused plan of the LEFT spelling scans b's interval with the cast as its probe
                 // filter, as the ordinary plan of either spelling does.
-                assertQuery("SELECT count(*), count(a.v)" + right + " WHERE " + cast + " AND " + interval)
+                assertQuery("SELECT count(*), count(a.v)" + left + " WHERE " + cast + " AND " + interval)
                         .withContext(context)
                         .noLeakCheck()
                         .withPlanContaining("probeFilter: " + castFilter)
@@ -2243,6 +3357,16 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertEquals(sql, rows, build.getRowCount());
             Assert.assertEquals(sql, keys, build.getKeyCount());
             Assert.assertEquals(sql, sizeInBytes, build.getSizeInBytes());
+        }
+    }
+
+    // Checks the page frames that an execution's build reads.
+    private void assertBuildFrameCount(String sql, int frameCount, SqlExecutionContextImpl context) throws Exception {
+        try (RecordCursorFactory factory = engine.select(sql, context);
+             RecordCursor cursor = factory.getCursor(context)) {
+            // The first read builds.
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertEquals(sql, frameCount, fused(factory).getAtom().getBuildFrameCount());
         }
     }
 
@@ -2291,6 +3415,65 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertTrue(atom.isBuiltInRounds());
             Assert.assertEquals(isCopied, atom.isPayloadCopied());
         }
+    }
+
+    // pa holds 100 rows on each of its first four days, which turn Parquet, 10_000 rows on its fifth
+    // and one row on its sixth, which stay native; pb holds 10 rows. Both key their rows by ten strings
+    // of keyLength chars, pa's of the build key type and pb's of the probe key type. The LEFT join
+    // builds pa's 10_401 rows and probes pb's 10, far fewer than the default ratios ask to repay the
+    // copy of its 10_001 native rows. A probe reader decodes the DOUBLE payload of the four Parquet
+    // days alone, 8 bytes a row, and never the key, which the key table holds, so the build copies once
+    // 3_200 bytes exceed a reader's share of the decode cache, however long the key.
+    private void assertParquetVarSizeKeyCopy(String buildKeyType, String probeKeyType, int keyLength) throws Exception {
+        assertMemoryLeak(() -> {
+            final String key = "lpad((x % 10)::VARCHAR, " + keyLength + ", '0')";
+            execute("CREATE TABLE pa (k " + buildKeyType + ", v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k " + probeKeyType + ", v DOUBLE)");
+            execute("INSERT INTO pa SELECT " + key + "::" + buildKeyType + ", x, timestamp_sequence('2020-01-01', 864_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO pa SELECT " + key + "::" + buildKeyType + ", 1_000 + x, timestamp_sequence('2020-01-05', 1_000_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO pa SELECT " + key + "::" + buildKeyType + ", 1_000_000, '2020-01-06' FROM long_sequence(1)");
+            execute("INSERT INTO pb SELECT " + key + "::" + probeKeyType + ", x FROM long_sequence(10)");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            final long parquetDecodedSize = 400L * Double.BYTES;
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A pool that decodes the payload alone, as a reader's pool does, counts 8 bytes a row
+                // for the four Parquet days, where one that decodes the key as well counts more than 50.
+                final IntHashSet payload = new IntHashSet();
+                payload.add(1);
+                Assert.assertEquals(parquetDecodedSize, decodedParquetSize("SELECT k, v FROM pa", payload, context));
+                final long decodedWithKey = decodedParquetSize("SELECT k, v FROM pa", null, context);
+                Assert.assertTrue("decoded " + decodedWithKey, decodedWithKey > 400L * 50);
+                // A reader's share of the default cache holds the Parquet days many times over, so the
+                // tiny probe keeps row ids, on the owner and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // Each of the five slots' readers takes a quarter of the cache. A share that holds the
+                // payload of the Parquet days exactly keeps row ids, however long the key, and one a byte
+                // short copies, on the workers and on the owner alike.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize);
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize - 1);
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize);
+                assertPayloadCopy(sql, false, context);
+                // A build in rounds of many partitions keeps the same boundary.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1_000);
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize - 1);
+                assertPayloadCopyInRounds(sql, true, context);
+                try (RecordCursorFactory factory = engine.select(sql, context);
+                     RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                    Assert.assertTrue("partitions: " + atom.getBuildPartitionCount(), atom.getBuildPartitionCount() > 1);
+                }
+            }
+        });
     }
 
     // Checks keyed and scalar results against the ordinary plan, the build input in EXPLAIN, and the build's row count.
@@ -2421,7 +3604,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
     }
 
-    private void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {
+    private void assertDifferential(String sql, SqlExecutionContextImpl context, boolean isEnabled) throws Exception {
         String expected;
         String baselinePlan;
         int[] types;
@@ -2443,8 +3626,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             String plan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + plan, enabled, plan.contains("Hash Join Group By"));
-            if (!enabled) {
+            Assert.assertEquals(sql + "\n" + plan, isEnabled, plan.contains("Hash Join Group By"));
+            if (!isEnabled) {
                 Assert.assertEquals(sql, baselinePlan, plan);
             }
             Assert.assertEquals(types.length, factory.getMetadata().getColumnCount());
@@ -2505,12 +3688,64 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         insertCountBuildRows();
     }
 
+    /**
+     * pa holds 100 rows on its first day, valued 1 to 100, 10_000 rows on its second, valued 1_001 to
+     * 11_000, and one row on its third, the last partition, which stays native. pb holds 10 rows. Both
+     * key their rows from 0 to 9.
+     */
+    private void createMostlyNativeBuild() throws Exception {
+        execute("CREATE TABLE pa (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE pb (k INT, v DOUBLE)");
+        execute("INSERT INTO pa SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 1_000_000) FROM long_sequence(100)");
+        execute("INSERT INTO pa SELECT (x % 10)::INT, 1_000 + x, timestamp_sequence('2020-01-02', 1_000_000) FROM long_sequence(10_000)");
+        execute("INSERT INTO pa VALUES (0, 1_000_000, '2020-01-03')");
+        execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(10)");
+    }
+
+    // pa holds 2_000 rows over four days, 500 a day, which turn into Parquet row groups of 100 rows, one
+    // build frame each, and nativeRows more on its fifth day, its last partition, which stays native.
+    // Row x holds the keys that keyValues computes from x, and the value x.
+    private void createParquetRowGroupBuild(String keyColumns, String keyValues, long nativeRows) throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        execute("CREATE TABLE pa (" + keyColumns + ", v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO pa SELECT " + keyValues + ", x, timestamp_sequence('2020-01-01', 172_800_000L) FROM long_sequence(2_000)");
+        execute("INSERT INTO pa SELECT " + keyValues + ", x, ts FROM ("
+                + "SELECT 2_000 + x x, timestamp_sequence('2020-01-05', 1_000_000) ts FROM long_sequence(" + nativeRows + "))");
+        execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+    }
+
     private void createTables() throws Exception {
         execute("create table r (plant_id int, reading_ts timestamp, energy_kwh double, irradiance_wm2 double) timestamp(reading_ts) partition by month");
         execute("create table p (plant_id int, country symbol, installed_kwp double)");
         execute("insert into r values (1, '2020-01-01', 10, 100), (3, '2020-01-02', 30, 300), "
                 + "(1, '2020-01-03', 20, 200), (2, '2020-02-01', 40, null), (null, '2021-01-01', 50, 500)");
         execute("insert into p values (1, 'ES', 5), (1, 'ES', 7), (1, 'IT', null), (2, null, null), (null, 'ES', 11)");
+    }
+
+    /**
+     * p holds 4 rows, and b holds 6 rows with variable-size columns, NULLs included. The fused plan
+     * of p LEFT JOIN b and of b RIGHT JOIN p builds b, so the RIGHT join keeps the ordinary plan
+     * until p holds as many rows as b.
+     */
+    private void createVariableSizeOnFilterTables() throws Exception {
+        execute("CREATE TABLE p (id INT, k INT)");
+        execute("CREATE TABLE b (id INT, v DOUBLE, vc VARCHAR, str STRING, arr DOUBLE[], arr2 DOUBLE[])");
+        execute("""
+                INSERT INTO p VALUES
+                    (1, 1),
+                    (2, 1),
+                    (3, 2),
+                    (4, 2)
+                """);
+        execute("""
+                INSERT INTO b VALUES
+                    (1, 10.0, 'xa', 'sa', ARRAY[1.0], ARRAY[1.0]),
+                    (1, 20.0, 'yb', 'sb', ARRAY[2.0], ARRAY[9.0]),
+                    (2, 30.0, 'xc', NULL, ARRAY[3.0], ARRAY[3.0]),
+                    (3, 40.0, NULL, 'sa', NULL, ARRAY[4.0]),
+                    (5, 50.0, 'xe', 'sa', ARRAY[5.0], ARRAY[5.0]),
+                    (6, 60.0, 'xf', 'sb', ARRAY[6.0], ARRAY[6.0])
+                """);
     }
 
     private void insertCountBuildRows() throws Exception {
@@ -2539,19 +3774,38 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 """);
     }
 
+    // Decodes every Parquet frame of the scan whole into a pool of its own, the given columns of each
+    // or every column without a projection, as a probe reader decodes its payload columns, and returns
+    // the bytes that the pool's budget counts for them.
+    private long decodedParquetSize(String scan, @Nullable IntHashSet projection, SqlExecutionContextImpl context) throws Exception {
+        try (
+                RecordCursorFactory factory = engine.select(scan, context);
+                PageFrameCursor frameCursor = factory.getPageFrameCursor(context, PartitionFrameCursorFactory.ORDER_ASC);
+                PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, Long.MAX_VALUE)
+        ) {
+            addressCache.of(factory.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            int frameCount = 0;
+            PageFrame frame;
+            while ((frame = frameCursor.next()) != null) {
+                addressCache.add(frameCount++, frame);
+            }
+            pool.of(addressCache, ParquetDecodeHint.SCATTERED, projection);
+            for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                if (addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET) {
+                    pool.navigateTo(frameIndex);
+                }
+            }
+            Assert.assertTrue(pool.getCachedFrameCount() > 0);
+            return pool.getCachedBytes();
+        }
+    }
+
     private SqlExecutionContextImpl enabledContext() {
         SqlExecutionContextImpl context = context(4);
         context.setParallelGroupByEnabled(true);
         context.setParallelHashJoinGroupByEnabled(true);
         return context;
-    }
-
-    private static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (AsyncHashJoinGroupByRecordCursorFactory) factory;
     }
 
     // Runs the factory once and returns the rows that its execution built, from either orientation.
@@ -2594,20 +3848,6 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             return result(factory, context) + result(factory, context);
         } catch (CairoException | ImplicitCastException e) {
             return "error: " + e.getFlyweightMessage();
-        }
-    }
-
-    private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
-        TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, context);
-        return sink.getSink().toString();
-    }
-
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
         }
     }
 }

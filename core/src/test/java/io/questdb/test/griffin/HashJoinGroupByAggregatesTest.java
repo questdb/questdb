@@ -844,13 +844,14 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
         // Keys repeat on both sides. Key 4 exists only in r and key 7 only in p, so LEFT and RIGHT joins
         // null-extend rows. Every other nullable column holds NULLs, and r's day partitions hold 3, 45 and 12
         // rows. CHAR holds digits and no NULL, because a CHAR argument converts to DOUBLE by parsing the digit.
+        // r and p hold as many rows, so that the RIGHT join, which builds r, takes the fused plan.
         for (String table : new String[]{"r", "p"}) {
             engine.execute("CREATE TABLE " + table + " (k INT, g SYMBOL, b BOOLEAN, y BYTE, h SHORT, c CHAR, i INT,"
                     + " l LONG, dt DATE, t TIMESTAMP, ns TIMESTAMP_NS, f FLOAT, d DOUBLE, s SYMBOL, ts TIMESTAMP)"
                     + " TIMESTAMP(ts) PARTITION BY DAY", context);
         }
         insertRows(engine, context, "r", 60, "CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 5)::INT END", 0, values);
-        insertRows(engine, context, "p", 40, "CASE WHEN x % 9 = 0 THEN NULL WHEN x % 13 = 0 THEN 7 ELSE (x % 4)::INT END", 1, values);
+        insertRows(engine, context, "p", 60, "CASE WHEN x % 9 = 0 THEN NULL WHEN x % 13 = 0 THEN 7 ELSE (x % 4)::INT END", 1, values);
     }
 
     private static String format(ObjList<Object> cells, RecordMetadata metadata) {

@@ -334,7 +334,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void sync(boolean async) {
-        ff.msync(pageAddress, size, async);
+        // An async sync is a no-op: msync(MS_ASYNC) has been a no-op on Linux since 2.6.19, and the
+        // Windows msync ignores the flag and flushes synchronously. The OS writes dirty pages back
+        // on its own.
+        if (!async) {
+            ff.msync(pageAddress, size, false);
+        }
     }
 
     @Override

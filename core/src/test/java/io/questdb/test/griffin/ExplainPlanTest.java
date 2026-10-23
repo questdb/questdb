@@ -178,6 +178,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
@@ -1598,6 +1599,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateLiveViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x int) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create live view test flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab",
+                    "create live view other flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateMatView() throws Exception {
         assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
                 .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
@@ -1617,12 +1631,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateMatViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                    "create materialized view other as (select ts, k, avg(v) from tab sample by 30s) partition by day"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateTable() throws Exception {
         assertQuery("create table a ( l long, d double)")
                 .noLeakCheck()
                 .assertsPlan("""
                         Create table: a
                         """);
+    }
+
+    @Test
+    public void testExplainCreateTableAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> assertExplainAfterCompilerReuse(
+                "create table test (x long)",
+                "create table other (x long)"
+        ));
     }
 
     @Test
@@ -1635,6 +1668,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               functions: [x,1]
                                 long_sequence count: 10
                         """));
+    }
+
+    @Test
+    public void testExplainCreateTableAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create table test as (select ts, x from tab) timestamp(ts) partition by day",
+                    "create table other as (select ts, x from tab) timestamp(ts) partition by day"
+            );
+        });
     }
 
     @Test
@@ -1745,6 +1789,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainInsertAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("insert into test values (1)", "insert into other values (2)");
+        });
+    }
+
+    @Test
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
@@ -1756,6 +1809,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   functions: [x,1]
                                     long_sequence count: 10
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainInsertAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse(
+                    "insert into test select x from long_sequence(10)",
+                    "insert into other select x from long_sequence(20)"
+            );
         });
     }
 
@@ -1897,6 +1962,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: b
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainUpdateAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("update test set x = 1", "update other set x = 2");
         });
     }
 
@@ -5751,24 +5825,56 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 // The scalar count over a LEFT or RIGHT equi-join takes the fused hash join
                 // GROUP BY, which carries the predicate as an attribute of its own instead of a
-                // Filter node above the join. FULL OUTER and the temporal joins keep both.
+                // Filter node above the join. FULL OUTER and the temporal joins keep both. A RIGHT
+                // join pushes a T2 predicate into T2, its preserved side, which reduces the rows
+                // that its ordinary plan hashes, so it keeps the ordinary plan for one.
                 boolean isFused = i < 2;
                 boolean isSwapped = "RIGHT".equals(joinType);
+                boolean isT2Fused = isFused && !isSwapped;
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value")
                         .noLeakCheck()
-                        // A RIGHT join pushes the predicate into T2, its preserved side, where
-                        // the filter compiler folds value=value away: fixed-width NULLs compare
-                        // equal, so the predicate holds for every row.
-                        .assertsPlan(isFused
-                                ? fusedCountPlan(isSwapped, isSwapped ? null : "postJoinFilter: T2.value=T2.value", false)
-                                : "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        // The filter compiler folds value=value away in T2's scan: fixed-width NULLs
+                        // compare equal, so the predicate holds for every row. The RIGHT join
+                        // still keeps the ordinary plan, since the analysis sees the predicate
+                        // before the compile folds it.
+                        .assertsPlan(isT2Fused
+                                ? fusedCountPlan(false, "postJoinFilter: T2.value=T2.value", false)
+                                : isSwapped
+                                  ? """
+                                Count
+                                    Hash Right Outer Join Light
+                                      condition: T2.created=T1.created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                """
+                                  : "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1")
                         .noLeakCheck()
-                        .assertsPlan(isFused
-                                ? fusedCountPlan(isSwapped, isSwapped ? "probeFilter: value!=1" : "postJoinFilter: T2.value!=1", isSwapped)
-                                : "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isT2Fused
+                                ? fusedCountPlan(false, "postJoinFilter: T2.value!=1", false)
+                                : isSwapped
+                                  ? """
+                                Count
+                                    Hash Right Outer Join Light
+                                      condition: T2.created=T1.created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: value!=1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                """
+                                  : "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // Push the predicate down to the 'left' table for joins that keep every left
                 // row (LEFT OUTER, LT, ASOF). RIGHT and FULL OUTER NULL-extend the left table,
@@ -5790,9 +5896,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 // The three-input queries below keep the ordinary plan; the two parent-model
-                // ones are two-input joins that the fused hash join GROUP BY takes.
+                // ones are two-input joins that the fused hash join GROUP BY takes, except for the
+                // RIGHT join's predicate on T2, its preserved side.
                 boolean isFused = i < 2;
                 boolean isSwapped = "RIGHT".equals(joinType);
+                boolean isT2Fused = isFused && !isSwapped;
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
@@ -5814,9 +5922,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 // where clause in parent model
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1")
                         .noLeakCheck()
-                        .assertsPlan(isFused
-                                ? fusedCountPlan(isSwapped, isSwapped ? null : "postJoinFilter: T2.value=T2.value", false)
-                                : "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
+                        .assertsPlan(isT2Fused
+                                ? fusedCountPlan(false, "postJoinFilter: T2.value=T2.value", false)
+                                : isSwapped
+                                  ? """
+                                Count
+                                    SelectedRecord
+                                        Hash Right Outer Join Light
+                                          condition: T2.created=T1.created
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                """
+                                  : "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
                 // value is T1 (the master): RIGHT/FULL OUTER NULL-extend it, so the tautological
                 // not value<>value (T1.value=T1.value) stays a post-join filter instead of pushing
@@ -13589,6 +13711,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from t where x = :v1 ")
                 .noLeakCheck()
                 .assertsPlan("Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
+    }
+
+    private void assertExplainAfterCompilerReuse(String sql, String otherSql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ObjList<String> formats = list("text", "json");
+            ObjList<String> nextQueries = list("select * from long_sequence(1)", "explain " + otherSql);
+            for (int i = 0, n = formats.size(); i < n; i++) {
+                String explain = "explain (format " + formats.getQuick(i) + ") " + sql;
+                StringSink expected = new StringSink();
+                TestUtils.printSql(compiler, sqlExecutionContext, explain, expected);
+                for (int j = 0, m = nextQueries.size(); j < m; j++) {
+                    String nextSql = nextQueries.getQuick(j);
+                    try (RecordCursorFactory factory = compiler.compile(explain, sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursorFactory ignored = compiler.compile(nextSql, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {

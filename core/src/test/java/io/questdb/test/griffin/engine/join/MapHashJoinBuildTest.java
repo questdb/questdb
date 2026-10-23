@@ -754,10 +754,10 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertMapChoice(ColumnTypes keyTypes, boolean expectOrdered) throws Exception {
+    private static void assertMapChoice(ColumnTypes keyTypes, boolean isOrderedExpected) throws Exception {
         try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes, true, 4, 1024, 64)) {
-            Assert.assertEquals(keyTypes.getColumnType(0) + " ordered", expectOrdered, mapOf(build, "orderedMap") != null);
-            Assert.assertEquals(keyTypes.getColumnType(0) + " unordered8", !expectOrdered, mapOf(build, "unordered8Map") != null);
+            Assert.assertEquals(keyTypes.getColumnType(0) + " ordered", isOrderedExpected, mapOf(build, "orderedMap") != null);
+            Assert.assertEquals(keyTypes.getColumnType(0) + " unordered8", !isOrderedExpected, mapOf(build, "unordered8Map") != null);
         }
     }
 

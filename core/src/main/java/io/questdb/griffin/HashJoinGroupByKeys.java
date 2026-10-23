@@ -63,11 +63,11 @@ public final class HashJoinGroupByKeys {
     /**
      * Key types a {@link io.questdb.cairo.RecordSink} stages and the maps store. The join keys and
      * the fused GROUP BY's own grouping expressions both answer to this set, which is wider than
-     * {@link HashJoinGroupByCandidate#supportsValueType(int)}, the build payload set, because a key
+     * {@link HashJoinGroupByCandidate#isSupportedValueType(int)}, the build payload set, because a key
      * reaches a map and never the row heap. BINARY and ARRAY keys keep the ordinary plan, which
      * joins and groups them itself.
      */
-    public static boolean supportsKeyType(int type) {
+    public static boolean isSupportedKeyType(int type) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
                  ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
@@ -90,7 +90,7 @@ public final class HashJoinGroupByKeys {
      * The caller discards these keys when this returns false, so a rejected pair may stay appended.
      */
     public boolean add(int probeColumn, int probeType, int buildColumn, int buildType) {
-        if (!supportsKeyType(probeType) || !supportsKeyType(buildType)) {
+        if (!isSupportedKeyType(probeType) || !isSupportedKeyType(buildType)) {
             return false;
         }
         if (probeType != buildType

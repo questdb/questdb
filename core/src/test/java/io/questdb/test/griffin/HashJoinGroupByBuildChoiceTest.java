@@ -41,9 +41,14 @@ import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.findChoice;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.ordinary;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * An INNER join whose input scans a timestamp interval compiles both orientations under a
@@ -64,7 +69,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T05");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
@@ -233,7 +238,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = "SELECT count() FROM r JOIN q ON r.plant_id = q.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T10");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
@@ -266,7 +271,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T05");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
@@ -303,9 +308,11 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                 String interval = " WHERE r.reading_ts >= '2020-01-01' AND r.reading_ts < '2020-01-01T04:00'";
                 // No interval on either input: the table sizes fix the build.
                 assertChoice(SCALAR + " FROM r JOIN p ON r.plant_id = p.plant_id WHERE r.energy_kwh < 5", context, false, -1);
-                // Outer joins fix the build whatever the intervals select.
+                // Outer joins fix the build whatever the intervals select. A RIGHT join keeps the
+                // ordinary plan for an interval on r, which it preserves, since the interval reduces
+                // the rows that the ordinary plan hashes.
                 assertChoice(SCALAR + " FROM r LEFT JOIN p ON r.plant_id = p.plant_id" + interval, context, false, -1);
-                assertChoice(SCALAR + " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id" + interval, context, false, -1);
+                assertDifferential(SCALAR + " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id" + interval, context, false);
                 // A VARCHAR column reaches the aggregate only from the probe, so r cannot be the build.
                 assertChoice("SELECT count(r.label) labels, count(*) n FROM r JOIN p ON r.plant_id = p.plant_id" + interval,
                         context, false, -1);
@@ -344,7 +351,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T05");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     // QueryProgress hands back its open cursor without asking again, so drive the choice itself.
@@ -368,26 +375,43 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharFilterRunsOnEitherOrientation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // The row heap cannot copy r's VARCHAR label, but only a filter reads it here, and the
+                // filter runs on r's page frames, so r can still be the build. The alternate builds r
+                // and runs the filter over the build's frames; the primary probes r and runs it as the
+                // probe filter.
+                String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
+                        + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 AND r.label <> 'L3' ORDER BY country";
+                // Bind before compiling, as a client that sends typed parameters does.
+                bindInterval("2020-01-01T00", "2020-01-01T05");
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
+                    final String plan = plan(factory, context);
+                    final int alternate = plan.indexOf("Alternate\n");
+                    Assert.assertTrue(plan, plan.contains(BUILD_CHOICE) && alternate > 0);
+                    Assert.assertTrue(plan, plan.substring(0, alternate).contains("probeFilter: label!='L3'"));
+                    Assert.assertTrue(plan, plan.substring(alternate).contains("buildFilter: label!='L3'"));
+                    // 5 interval rows against p's 8: r builds, and its filter drops the L3 row.
+                    bindInterval("2020-01-01T00", "2020-01-01T05");
+                    assertExecution(sql, factory, choice, context, true, 4);
+                    // 30 against 8: p builds, and the probe filter drops r's four L3 rows.
+                    bindInterval("2020-01-01T00", "2020-01-02T06");
+                    assertExecution(sql, factory, choice, context, false, 8);
+                    // 3 against 8: r builds again, and 2 of its rows pass the filter.
+                    bindInterval("2020-01-03T10", "2020-01-03T13");
+                    assertExecution(sql, factory, choice, context, true, 2);
+                }
+            }
+        });
+    }
+
     private static void bindInterval(String lo, String hi) throws Exception {
         bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp(lo + ":00:00.000000Z"));
         bindVariableService.setTimestamp(1, MicrosFormatUtils.parseTimestamp(hi + ":00:00.000000Z"));
-    }
-
-    @Nullable
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
-        // QueryProgress and projections wrap the fused plan.
-        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
-                return choice;
-            }
-        }
-        return null;
-    }
-
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
-        HashJoinGroupByBuildChoiceRecordCursorFactory choice = findChoice(factory);
-        Assert.assertNotNull(choice);
-        return choice;
     }
 
     private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
@@ -400,14 +424,6 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
         return lines.toString();
     }
 
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
-        }
-    }
-
     /**
      * Compiles the query with the fused plan on and off and compares the rows twice. With
      * {@code isChoice}, asserts that the fused plan pairs two orientations, that each execution
@@ -416,7 +432,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
      */
     private void assertChoice(String sql, SqlExecutionContextImpl context, boolean isAlternate, long buildRows) throws Exception {
         final boolean isChoice = buildRows > -1;
-        final String expected = ordinary(sql, context);
+        final String expected = ordinary(engine, sql, context);
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             final String plan = plan(factory, context);
             Assert.assertTrue(sql + '\n' + plan, plan.contains("Hash Join Group By"));
@@ -448,7 +464,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             boolean isCountedByKey,
             long expected
     ) throws Exception {
-        Assert.assertEquals(sql, "count\n" + expected + ":LONG\n", ordinary(sql, context));
+        Assert.assertEquals(sql, "count\n" + expected + ":LONG\n", ordinary(engine, sql, context));
         final AsyncHashJoinGroupByAtom primary = choice.getPrimary().getAtom();
         final AsyncHashJoinGroupByAtom alternate = choice.getAlternate().getAtom();
         try (RecordCursor cursor = factory.getCursor(context)) {
@@ -481,7 +497,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             boolean isAlternate,
             long buildRows
     ) throws Exception {
-        assertExecution(sql, factory, choice, context, isAlternate, buildRows, ordinary(sql, context));
+        assertExecution(sql, factory, choice, context, isAlternate, buildRows, ordinary(engine, sql, context));
     }
 
     private void assertExecution(
@@ -531,15 +547,5 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
         context.setParallelGroupByEnabled(true);
         context.setParallelHashJoinGroupByEnabled(true);
         return context;
-    }
-
-    private String ordinary(String sql, SqlExecutionContextImpl context) throws Exception {
-        context.setParallelHashJoinGroupByEnabled(false);
-        try (RecordCursorFactory baseline = engine.select(sql, context)) {
-            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
-            return result(baseline, context);
-        } finally {
-            context.setParallelHashJoinGroupByEnabled(true);
-        }
     }
 }

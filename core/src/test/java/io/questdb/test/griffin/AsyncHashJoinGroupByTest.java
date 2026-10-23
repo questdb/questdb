@@ -93,6 +93,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
@@ -101,16 +102,11 @@ import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.io.Closeable;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -121,11 +117,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Runs every lifecycle case with INT join keys and with SYMBOL join keys, whose probe
- * translates its keys into the build's symbol keys and whose build cursor stays open
- * until close, both for its payload symbols and for those translation lookups.
+ * Runs every lifecycle case with INT, LONG or SYMBOL join keys, picked at random per test, so
+ * that repeated runs cover all three. A SYMBOL key's probe translates its keys into the build's
+ * symbol keys, and its build cursor stays open until close, both for its payload symbols and for
+ * those translation lookups.
  */
-@RunWith(Parameterized.class)
 public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String AGGREGATES = "select p.country, year(r.reading_ts) yr, month(r.reading_ts) mo, "
             + "sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, sum(p.installed_kwp) capacity";
@@ -135,8 +131,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String OUTER = " from r left join p on r.plant_id=p.plant_id";
     private static final int WORKERS = 3;
     // A LONG key stages into MapHashJoinBuild's map; INT and SYMBOL keys take the INT layout.
-    private final boolean isLongKey;
-    private final boolean isSymbolKey;
+    private boolean isLongKey;
+    private boolean isSymbolKey;
     private int frameRows;
     // When set, fixtures give the build filter context a slot per worker, so that the build may run
     // on the workers; see useParallelBuild().
@@ -146,14 +142,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     // can pin which frames the reducer takes the compiled path on.
     private CompiledFilter probeCompiledFilter;
 
-    public AsyncHashJoinGroupByTest(String keyType) {
-        this.isLongKey = keyType.equals("long");
-        this.isSymbolKey = keyType.equals("symbol");
-    }
-
-    @Parameterized.Parameters(name = "keyType={0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{"int"}, {"symbol"}, {"long"}});
+    public AsyncHashJoinGroupByTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int keyType = rnd.nextInt(3);
+        this.isLongKey = keyType == 1;
+        this.isSymbolKey = keyType == 2;
     }
 
     @After
@@ -311,7 +304,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         // INT and LONG keys over an interval compile both orientations, and each execution builds the
         // input with fewer rows in its intervals, which is the empty one here. A SYMBOL key keeps the
         // orientation that the table sizes picked.
-        Assume.assumeTrue(isSymbolKey);
+        useSymbolKey();
         assertMemoryLeak(() -> {
             createTables();
             // r and p hold five rows each, so p builds. No partition of r falls in 2030, so the probe
@@ -497,7 +490,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             createTables();
             execute("truncate table p");
             Hook hook = new Hook();
-            hook.fail = true;
+            hook.isFailing = true;
             try (Fixture inner = new Fixture(AGGREGATES + INNER, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), "energy_kwh > 0", hook);
                  Fixture outer = new Fixture(AGGREGATES + OUTER, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), "energy_kwh > 0", hook)) {
                 inner.assertResults(AGGREGATES + INNER);
@@ -519,8 +512,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             execute("insert into r select " + key("(x%257)::int") + ", timestamp_sequence('2021-02-01', 1000000), 1.0, 2.0 from long_sequence(4096)");
             execute("insert into p select " + key("(x%257)::int") + ", ('country-' || x)::symbol, 3.0 from long_sequence(4096)");
             frameRows = 64;
-            for (boolean parquet : new boolean[]{false, true}) {
-                if (parquet) {
+            for (boolean isParquet : new boolean[]{false, true}) {
+                if (isParquet) {
                     execute("alter table r convert partition to parquet where reading_ts >= '2021-02-01'");
                 }
                 for (int mode = 0; mode < 3; mode++) {
@@ -566,7 +559,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             // Five probe rows over a five-row build: the default ratio copies the build's payload.
             String sql = AGGREGATES + OUTER;
             Hook hook = new Hook();
-            hook.instrumentProbe = true;
+            hook.isProbeInstrumented = true;
             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
                  LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
                 MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
@@ -626,7 +619,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
             String sql = AGGREGATES + OUTER;
             Hook hook = new Hook();
-            hook.instrumentProbe = true;
+            hook.isProbeInstrumented = true;
             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
                  LimitedMemoryTracker tracker = new LimitedMemoryTracker(1)) {
                 MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
@@ -699,17 +692,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             final long cacheLimit = 512 * 1024;
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0)) {
-                for (boolean keyed : new boolean[]{true, false}) {
+                for (boolean isKeyed : new boolean[]{true, false}) {
                     // A filtered build has no row count, so the build reads rows before it outgrows
                     // the limit. Otherwise the build sizes its rows up front, from its frames.
                     for (boolean isBuildFiltered : new boolean[]{false, true}) {
                         Hook hook = new Hook();
-                        hook.instrumentBuild = true;
+                        hook.isBuildInstrumented = true;
                         hook.isBuildFiltered = isBuildFiltered;
                         hook.isBuildAccepted = true;
                         AtomicLong usedWhileReading = new AtomicLong();
                         hook.onLimit = () -> usedWhileReading.set(tracker.getUsed());
-                        String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                        String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                         try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                             // INT and LONG keys translate nothing, so only the build limit fails them.
                             // The higher limit admits the build and rejects the cache after it.
@@ -798,11 +791,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             SqlExecutionCircuitBreaker previousBreaker = sqlExecutionContext.getCircuitBreaker();
             MemoryTracker previousTracker = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
-                for (boolean keyed : new boolean[]{true, false}) {
-                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                for (boolean isKeyed : new boolean[]{true, false}) {
+                    String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                     Hook hook = new Hook();
-                    hook.instrumentBuild = true;
-                    hook.instrumentProbe = true;
+                    hook.isBuildInstrumented = true;
+                    hook.isProbeInstrumented = true;
                     try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                         // Opening the cursor checks once, and the first read checks at the build
                         // cursor's frames, build phases and per MiB of growth, not per build row.
@@ -870,8 +863,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             MemoryTracker previousTracker = sqlExecutionContext.getMemoryTracker();
             String sql = AGGREGATES + OUTER;
             Hook hook = new Hook();
-            hook.instrumentBuild = true;
-            hook.instrumentProbe = true;
+            hook.isBuildInstrumented = true;
+            hook.isProbeInstrumented = true;
             try (
                     LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
                     Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)
@@ -947,7 +940,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     @Test
     public void testSmallBuildDictionaryTranslatesFromTheBuildSide() throws Exception {
         // INT and LONG keys translate nothing.
-        Assume.assumeTrue(isSymbolKey);
+        useSymbolKey();
         assertMemoryLeak(() -> {
             createTables();
             // p's dictionary holds the texts 1 and 2. r's holds 1, 3 and 2, and then every text up
@@ -955,8 +948,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             execute("INSERT INTO r SELECT " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 FROM long_sequence(2_000)");
             for (String sql : new String[]{AGGREGATES + INNER, AGGREGATES + OUTER}) {
                 Hook hook = new Hook();
-                hook.instrumentBuild = true;
-                hook.instrumentProbe = true;
+                hook.isBuildInstrumented = true;
+                hook.isProbeInstrumented = true;
                 hook.isSymbolLookupCounted = true;
                 try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                     for (int run = 0; run < 2; run++) {
@@ -984,7 +977,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     @Test
     public void testSmallBuildDictionaryTranslatesLazilyOverAnOverloadedProbeDictionary() throws Exception {
         // INT and LONG keys translate nothing.
-        Assume.assumeTrue(isSymbolKey);
+        useSymbolKey();
         // Without auto-scaling, r's dictionary keeps its declared capacity while it grows far past
         // it, so a lookup in r's dictionary scans a long hash bucket.
         setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "false");
@@ -1000,8 +993,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             }
             for (String sql : new String[]{AGGREGATES + INNER, AGGREGATES + OUTER}) {
                 Hook hook = new Hook();
-                hook.instrumentBuild = true;
-                hook.instrumentProbe = true;
+                hook.isBuildInstrumented = true;
+                hook.isProbeInstrumented = true;
                 hook.isSymbolLookupCounted = true;
                 try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                     for (int run = 0; run < 2; run++) {
@@ -1034,10 +1027,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             frameRows = 1;
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
-                for (boolean keyed : new boolean[]{true, false}) {
+                for (boolean isKeyed : new boolean[]{true, false}) {
                     Hook hook = new Hook();
-                    hook.instrumentBuild = true;
-                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                    hook.isBuildInstrumented = true;
+                    String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                     try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                         for (int failAt : new int[]{1, 3, 5}) {
                             hook.buildFailAt = failAt;
@@ -1090,15 +1083,15 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             createTables();
             SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             try {
-                for (boolean timeout : new boolean[]{false, true}) {
+                for (boolean isTimedOut : new boolean[]{false, true}) {
                     execute("truncate table r");
                     execute("truncate table p");
                     execute("insert into r select " + key("1") + ", timestamp_sequence('2020-01-01',1000000), 1.0, 2.0 from long_sequence("
-                            + (timeout ? 1 : 1000) + ")");
-                    if (timeout) {
+                            + (isTimedOut ? 1 : 1000) + ")");
+                    if (isTimedOut) {
                         execute("insert into p select " + key("1") + ",'ES',null::double from long_sequence(100000)");
                     }
-                    for (boolean keyed : new boolean[]{false, true}) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
                         Hook hook = new Hook();
                         AtomicBoolean timedOut = new AtomicBoolean();
                         // Deterministically expire at a joined-pair boundary, without a wall-clock race.
@@ -1117,21 +1110,21 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                             }
                         };
                         ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-                        String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
+                        String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
                         try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                            timedOut.set(timeout);
-                            hook.cancel = timeout ? null : breaker;
+                            timedOut.set(isTimedOut);
+                            hook.cancel = isTimedOut ? null : breaker;
                             try (RecordCursor cursor = f.getCursor()) {
                                 cursor.hasNext();
                                 Assert.fail("expected interruption inside probe");
                             } catch (CairoException ex) {
-                                Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
+                                Assert.assertEquals(isTimedOut ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                         : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                             }
                             // Misses stop at the frame boundary; duplicate pairs stop at the next pair budget of one frame.
                             Assert.assertTrue("bounded probe work: " + hook.calls.get(),
                                     hook.calls.get() >= 32 && hook.calls.get() <= frameRows);
-                            if (!timeout) {
+                            if (!isTimedOut) {
                                 Assert.assertEquals("the single all-miss frame finishes before owner cancellation", 1000, hook.calls.get());
                             }
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
@@ -1253,10 +1246,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             execute("insert into p select " + key("(x % 50)::int") + ", ('s' || (x % 7))::symbol, x * 0.5 from long_sequence(200)");
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1); Reducers ignored = new Reducers()) {
-                for (boolean keyed : new boolean[]{true, false}) {
-                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                for (boolean isKeyed : new boolean[]{true, false}) {
+                    String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                     Hook hook = new Hook();
-                    hook.instrumentProbe = true;
+                    hook.isProbeInstrumented = true;
                     try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                         // The owner reaches the probe's frames once the rounds have frozen the build,
                         // which tells a failure of the build from one of the copy or the probe.
@@ -1317,7 +1310,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 // Frames that keep every row, whose rows go to the heap, and frames that a filter thins.
                 for (String buildSql : new String[]{"p", "p where installed_kwp > 10"}) {
                     Hook hook = new Hook();
-                    hook.instrumentProbe = true;
+                    hook.isProbeInstrumented = true;
                     try (Fixture f = new Fixture(AGGREGATES + OUTER, "r", ints(0, 1, 2, 3), buildSql, ints(0, 1, 2), null, hook);
                          RecordCursor cursor = f.getRawCursor()) {
                         // The first read builds, and the owner reaches the probe's frames once the
@@ -1346,17 +1339,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             createTables();
             execute("insert into p select " + key("x::int") + ", 'ES', 1.0 from long_sequence(1_000)");
             try (Reducers ignored = new Reducers()) {
-                for (boolean keyed : new boolean[]{true, false}) {
-                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                for (boolean isKeyed : new boolean[]{true, false}) {
+                    String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                     Hook hook = new Hook();
                     // The build filter accepts every row and calls the hook, which fails on demand,
                     // on whichever thread filters the frame.
                     hook.isBuildFiltered = true;
                     hook.isBuildAccepted = true;
-                    hook.instrumentProbe = true;
+                    hook.isProbeInstrumented = true;
                     try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                         for (int execution = 0; execution < 2; execution++) {
-                            hook.fail = true;
+                            hook.isFailing = true;
                             final int probeWalks = hook.probeWalks.get();
                             try (RecordCursor cursor = f.getRawCursor()) {
                                 // The first read builds, on the workers, where the filter fails.
@@ -1369,7 +1362,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                             Assert.assertEquals(probeWalks, hook.probeWalks.get());
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(f.factory.getAtom().getFrozenBuild());
-                            hook.fail = false;
+                            hook.isFailing = false;
                             try (RecordCursor cursor = f.getRawCursor()) {
                                 Assert.assertNull(f.factory.getAtom().getFrozenBuild());
                                 Assert.assertTrue(cursor.hasNext());
@@ -1389,20 +1382,20 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final AsyncHashJoinGroupByRecordCursorFactory scalar;
-            final AsyncHashJoinGroupByRecordCursorFactory keyed;
+            final AsyncHashJoinGroupByRecordCursorFactory keyedFactory;
             try (Fixture a = new Fixture("select count(*) n" + INNER);
                  Fixture b = new Fixture("select p.country, count(*) n" + INNER)) {
                 // The choice adopts both factories, so the fixtures must not free them too:
                 // the leak check then fails unless the rejecting constructor closed them.
                 scalar = a.factory;
-                keyed = b.factory;
+                keyedFactory = b.factory;
                 a.factory = null;
                 a.queryFactory = null;
                 b.factory = null;
                 b.queryFactory = null;
             }
             try {
-                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyed);
+                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyedFactory);
                 Assert.fail("orientations with different outputs must be rejected");
             } catch (IllegalArgumentException expected) {
                 Assert.assertEquals("fused hash join orientations disagree on output", expected.getMessage());
@@ -1498,11 +1491,15 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             execute("insert into r values (" + key("1") + ", '2020-01-04', null, null), (" + key("1") + ", '2020-01-05', 70, 800), "
                     + "(" + key("2") + ", '2020-02-02', null, null)");
             frameRows = 2;
-            for (boolean sharded : new boolean[]{false, true}) {
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
-                for (String join : new String[]{INNER, OUTER, " from p right join r on r.plant_id=p.plant_id"}) {
-                    String probeSql = "r where reading_ts >= '2020-01-01' and reading_ts < '2025-01-01'";
-                    String predicate = " where r.reading_ts >= '2020-01-01' and r.reading_ts < '2025-01-01'";
+            for (boolean isSharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
+                final String right = " from p right join r on r.plant_id=p.plant_id";
+                for (String join : new String[]{INNER, OUTER, right}) {
+                    // A RIGHT join keeps the ordinary plan for an interval on r, which it preserves,
+                    // so its fused plan probes all of r.
+                    final boolean isRight = join.equals(right);
+                    String probeSql = isRight ? "r" : "r where reading_ts >= '2020-01-01' and reading_ts < '2025-01-01'";
+                    String predicate = isRight ? "" : " where r.reading_ts >= '2020-01-01' and r.reading_ts < '2025-01-01'";
                     String buildSql = "p";
                     if (join.equals(INNER)) {
                         predicate += " and p.country in ('ES','IT')";
@@ -1516,8 +1513,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 + "sum(r.energy_kwh) total_energy_kwh, avg(r.irradiance_wm2) avg_irradiance, "
                                 + "sum(r.energy_kwh) / nullif(sum(p.installed_kwp), 0) specific_yield_kwh_kwp"
                                 + join + predicate + " order by country, yr, mo";
-                        f.assertOrderedResults(expected, sharded);
-                        f.assertOrderedResults(expected, sharded);
+                        f.assertOrderedResults(expected, isSharded);
+                        f.assertOrderedResults(expected, isSharded);
                     }
                 }
             }
@@ -1528,22 +1525,22 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     public void testHighCardinalityConcurrentMergeBothPaths() throws Exception {
         assertMemoryLeak(() -> {
             createMergeTables();
-            for (boolean sharded : new boolean[]{false, true}) {
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+            for (boolean isSharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
                 Hook hook = new Hook();
                 String sql = mergeSql();
                 try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
                      Reducers reducers = new Reducers()) {
                     hook.gate = new CountDownLatch(2);
-                    hook.mergeGate = sharded ? new CountDownLatch(2) : null;
-                    f.assertResults(sql, sharded);
+                    hook.mergeGate = isSharded ? new CountDownLatch(2) : null;
+                    f.assertResults(sql, isSharded);
                     Assert.assertTrue("must merge overlapping partial states", hook.mergeCalls.get() > 0);
-                    if (sharded) {
+                    if (isSharded) {
                         Assert.assertEquals("merge workers must run concurrently", 0, hook.mergeGate.getCount());
                     }
                     hook.gate = null;
                     hook.mergeGate = null;
-                    f.assertResults(sql, sharded);
+                    f.assertResults(sql, isSharded);
                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                 }
             }
@@ -1554,8 +1551,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     public void testMergeFailureDrainsAndReusesBothPaths() throws Exception {
         assertMemoryLeak(() -> {
             createMergeTables();
-            for (boolean sharded : new boolean[]{false, true}) {
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+            for (boolean isSharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
                 Hook hook = new Hook();
                 String sql = mergeSql();
                 try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
@@ -1564,8 +1561,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
                     sqlExecutionContext.setMemoryTracker(tracker);
                     hook.gate = new CountDownLatch(2);
-                    hook.mergeGate = sharded ? new CountDownLatch(2) : null;
-                    hook.failMerge = true;
+                    hook.mergeGate = isSharded ? new CountDownLatch(2) : null;
+                    hook.isMergeFailing = true;
                     try {
                         try (RecordCursor cursor = f.getRawCursor()) {
                             cursor.hasNext();
@@ -1576,7 +1573,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         Assert.assertTrue(hook.mergeCalls.get() > 0);
                         Assert.assertEquals(0, tracker.getUsed());
                         Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        hook.failMerge = false;
+                        hook.isMergeFailing = false;
                         hook.gate = null;
                         hook.mergeGate = null;
                         try (RecordCursor cursor = f.getRawCursor()) {
@@ -1586,7 +1583,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     } finally {
                         sqlExecutionContext.setMemoryTracker(previous);
                     }
-                    f.assertResults(sql, sharded);
+                    f.assertResults(sql, isSharded);
                 }
             }
         });
@@ -1641,8 +1638,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
             ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
             try {
-                for (boolean sharded : new boolean[]{false, true}) {
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                for (boolean isSharded : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
                     Hook hook = new Hook();
                     String sql = mergeSql();
                     try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
@@ -1672,7 +1669,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         } finally {
                             sqlExecutionContext.setMemoryTracker(previousTracker);
                         }
-                        f.assertResults(sql, sharded);
+                        f.assertResults(sql, isSharded);
                     }
                 }
             } finally {
@@ -1755,11 +1752,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             createMergeTables();
             String sql = "select r.reading_ts, p.country, sum(r.energy_kwh) energy, avg(r.irradiance_wm2) irradiance, "
                     + "sum(p.installed_kwp) capacity" + OUTER;
-            for (boolean sharded : new boolean[]{false, true}) {
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+            for (boolean isSharded : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
                 try (Fixture f = new Fixture(sql); Reducers reducers = new Reducers()) {
-                    f.assertResults(sql, sharded);
-                    f.assertResults(sql, sharded);
+                    f.assertResults(sql, isSharded);
+                    f.assertResults(sql, isSharded);
                 }
             }
         });
@@ -1799,13 +1796,13 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         assertScalarMergeFailureAndReuse(true);
     }
 
-    private void assertNetworkProbeChecksArePeriodicAndBounded(boolean duplicates) throws Exception {
+    private void assertNetworkProbeChecksArePeriodicAndBounded(boolean hasDuplicates) throws Exception {
         assertMemoryLeak(() -> {
             frameRows = 4096;
             createTables();
             execute("truncate table r");
             execute("truncate table p");
-            if (duplicates) {
+            if (hasDuplicates) {
                 execute("insert into r values (" + key("1") + ", '2020-01-01', 1.0, 2.0)");
                 execute("insert into p select " + key("1") + ", 'ES', 10.0 from long_sequence(100000)");
             } else {
@@ -1848,19 +1845,19 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration)) {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-                for (int storage = 0; storage < (duplicates ? 2 : 3); storage++) {
+                for (int storage = 0; storage < (hasDuplicates ? 2 : 3); storage++) {
                     if (storage == 1) {
                         execute("alter table r convert partition to parquet where reading_ts < '2020-02-01'");
                     } else if (storage == 2) {
                         execute("alter table r convert partition to parquet where reading_ts >= '2020-02-01'");
                     }
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        for (int mode = 0; mode < (duplicates ? 1 : 3); mode++) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        for (int mode = 0; mode < (hasDuplicates ? 1 : 3); mode++) {
                             Hook hook = new Hook();
-                            String predicate = duplicates ? "installed_kwp > 0 or p.installed_kwp is null" : mode == 0 ? "energy_kwh < 0" : "energy_kwh > 0";
-                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES)
-                                    + (duplicates || mode == 2 ? OUTER : INNER) + (duplicates ? " where p." : " where r.") + predicate;
-                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), duplicates ? null : predicate, hook)) {
+                            String predicate = hasDuplicates ? "installed_kwp > 0 or p.installed_kwp is null" : mode == 0 ? "energy_kwh < 0" : "energy_kwh > 0";
+                            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES)
+                                    + (hasDuplicates || mode == 2 ? OUTER : INNER) + (hasDuplicates ? " where p." : " where r.") + predicate;
+                            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), hasDuplicates ? null : predicate, hook)) {
                                 breaker.setTimeout(Long.MAX_VALUE);
                                 breaker.resetTimer();
                                 try (RecordCursor cursor = f.getCursor()) {
@@ -1872,7 +1869,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals("the fixture must exercise every row/pair", 100_000, hook.calls.get());
                                 Assert.assertTrue("the shared reducer must check each frame", frameChecks.get() > 0);
-                                if (duplicates) {
+                                if (hasDuplicates) {
                                     Assert.assertTrue("duplicate checks must read the clock periodically", clockReads.get() > 0);
                                     // One check per page frame of matched pairs, independent of the row throttle.
                                     Assert.assertTrue("duplicate checks must use a pair budget, actual=" + clockReads.get(),
@@ -1880,19 +1877,19 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 } else {
                                     Assert.assertEquals("rejected rows, misses and outer null extensions use frame checks", 0, clockReads.get());
                                 }
-                                for (boolean timeout : new boolean[]{false, true}) {
+                                for (boolean isTimedOut : new boolean[]{false, true}) {
                                     hook.calls.set(0);
-                                    breaker.setTimeout(timeout ? 10 : Long.MAX_VALUE);
+                                    breaker.setTimeout(isTimedOut ? 10 : Long.MAX_VALUE);
                                     breaker.resetTimer();
                                     // Reducers measure the timeout from the sequence start time, which the engine
                                     // clock stamps. Start it at the breaker's current tick, as both share a clock in production.
                                     setCurrentMicros(ticks.get() * 1000);
-                                    hook.onLimit = timeout ? () -> ticks.addAndGet(11) : breaker::cancel;
+                                    hook.onLimit = isTimedOut ? () -> ticks.addAndGet(11) : breaker::cancel;
                                     try (RecordCursor cursor = f.getCursor()) {
                                         cursor.hasNext();
                                         Assert.fail("expected interruption inside the probe loop");
                                     } catch (CairoException ex) {
-                                        Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
+                                        Assert.assertEquals(isTimedOut ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                                 : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                                     } finally {
                                         setCurrentMicros(-1);
@@ -1901,7 +1898,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                     // Duplicate pairs stop at the next pair budget of one page frame.
                                     final int maxFrameRows = storage == 0 ? 2 * frameRows : 44_640;
                                     Assert.assertTrue("bounded probe work: " + hook.calls.get(),
-                                            hook.calls.get() >= 32 && hook.calls.get() <= (duplicates ? frameRows : maxFrameRows));
+                                            hook.calls.get() >= 32 && hook.calls.get() <= (hasDuplicates ? frameRows : maxFrameRows));
                                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                     Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                     hook.onLimit = null;
@@ -1940,12 +1937,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     } else if (storage == 2) {
                         execute("alter table r convert partition to parquet where reading_ts >= '2020-02-01'");
                     }
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        for (boolean reject : new boolean[]{false, true}) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        for (boolean isRejecting : new boolean[]{false, true}) {
                             Hook hook = new Hook();
                             // Count rows for both all-miss duplicate builds and all-match unique builds.
-                            String predicate = reject ? "energy_kwh < 0" : "energy_kwh > 0";
-                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER + " where r." + predicate;
+                            String predicate = isRejecting ? "energy_kwh < 0" : "energy_kwh > 0";
+                            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER + " where r." + predicate;
                             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), predicate, hook)) {
                                 ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
                                 breaker.reset();
@@ -2014,22 +2011,22 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     } else if (storage == 2) {
                         execute("alter table p convert partition to parquet where ts >= '2020-01-02'");
                     }
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        for (boolean timeout : new boolean[]{false, true}) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        for (boolean isTimedOut : new boolean[]{false, true}) {
                             Hook hook = new Hook();
                             hook.isBuildFiltered = true;
                             hook.buildFilterMode = filterMode;
-                            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER;
+                            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + INNER;
                             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2, 3, 4), null, hook)) {
                                 ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
                                 breaker.reset();
-                                isTimeout.set(timeout);
+                                isTimeout.set(isTimedOut);
                                 hook.cancel = breaker;
                                 try (RecordCursor cursor = f.getCursor()) {
                                     cursor.hasNext();
                                     Assert.fail("expected interruption inside rejecting build filter");
                                 } catch (CairoException ex) {
-                                    Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
+                                    Assert.assertEquals(isTimedOut ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                             : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                                 }
                                 // Filters observe cancellation at frame boundaries. Native frames absorb short
@@ -2063,15 +2060,15 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void assertMixedParquetNativeReuseAndDecoderFailure(boolean keyed) throws Exception {
+    private void assertMixedParquetNativeReuseAndDecoderFailure(boolean isKeyed) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             // Row ids, so that the limit trips where the reducers decode the Parquet probe frames rather
             // than in the payload copy.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
-            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
             Hook hook = new Hook();
-            hook.instrumentProbe = true;
+            hook.isProbeInstrumented = true;
             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                 f.assertResults(sql);
                 execute("alter table r convert partition to parquet where reading_ts < '2020-02-01'");
@@ -2114,7 +2111,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void assertScalarMergeFailureAndReuse(boolean cancel) throws Exception {
+    private void assertScalarMergeFailureAndReuse(boolean isCancellation) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
         assertMemoryLeak(() -> {
@@ -2133,13 +2130,13 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 try {
                     f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(new CountDownLatch(2));
                     hook.gate = new CountDownLatch(2);
-                    hook.failMerge = !cancel;
-                    hook.mergeCancel = cancel ? breaker : null;
+                    hook.isMergeFailing = !isCancellation;
+                    hook.mergeCancel = isCancellation ? breaker : null;
                     try (RecordCursor cursor = f.getRawCursor()) {
                         cursor.hasNext();
                         Assert.fail("expected a scalar merge failure");
                     } catch (CairoException expected) {
-                        if (cancel) {
+                        if (isCancellation) {
                             Assert.assertTrue(expected.isInterruption());
                         } else {
                             Assert.assertTrue(expected.getFlyweightMessage().toString().contains("injected merge failure"));
@@ -2149,7 +2146,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Assert.assertEquals(0, tracker.getUsed());
                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     hook.gate = null;
-                    hook.failMerge = false;
+                    hook.isMergeFailing = false;
                     hook.mergeCancel = null;
                     breaker.reset();
                     f.assertResults(sql);
@@ -2163,14 +2160,14 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void assertConcurrentProbeAndWorkerFailureReuse(boolean keyed) throws Exception {
+    private void assertConcurrentProbeAndWorkerFailureReuse(boolean isKeyed) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
         assertMemoryLeak(() -> {
             createTables();
             execute("insert into r select " + key("1") + ", timestamp_sequence('2022-01-01', 1000000L), x::double, x::double from long_sequence(1000)");
             Hook hook = new Hook();
-            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
+            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
                  Reducers reducers = new Reducers()) {
                 CountDownLatch acquired = new CountDownLatch(2);
@@ -2182,7 +2179,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue("probe functions must run concurrently", hook.maxActive.get() >= 2);
                 Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                 hook.gate = null;
-                hook.fail = true;
+                hook.isFailing = true;
                 acquired = new CountDownLatch(1);
                 f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
                 try (RecordCursor cursor = f.getCursor()) {
@@ -2193,13 +2190,13 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                 Assert.assertEquals(0, acquired.getCount());
-                hook.fail = false;
+                hook.isFailing = false;
                 f.assertResults(sql);
             }
         });
     }
 
-    private void assertCancellationInsideDuplicateChainAndReuse(boolean keyed, int probeRows, int buildDuplicates) throws Exception {
+    private void assertCancellationInsideDuplicateChainAndReuse(boolean isKeyed, int probeRows, int buildDuplicates) throws Exception {
         assertMemoryLeak(() -> {
             // The pair budget is one page frame. Every probe row lands in one frame, while the
             // matched pairs (100,000) exceed the budget, whether in one chain or across chains.
@@ -2216,7 +2213,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     }
                     for (boolean isRejected : new boolean[]{false, true}) {
                         Hook hook = new Hook();
-                        String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + (isRejected ? " where p.installed_kwp is not null" : " where p.installed_kwp is null");
+                        String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + (isRejected ? " where p.installed_kwp is not null" : " where p.installed_kwp is null");
                         SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
                         AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
                         ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
@@ -2246,14 +2243,14 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void assertInitializationFailureAndReuse(boolean keyed) throws Exception {
+    private void assertInitializationFailureAndReuse(boolean isKeyed) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             Hook hook = new Hook();
-            hook.instrumentBuild = true;
-            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
+            hook.isBuildInstrumented = true;
+            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + " where p.installed_kwp is null";
             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                hook.failInit = true;
+                hook.isInitFailing = true;
                 try (RecordCursor ignored = f.getCursor()) {
                     Assert.fail();
                 } catch (SqlException expected) {
@@ -2266,29 +2263,29 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Assert.assertEquals(1, hook.buildCloses);
                 Assert.assertEquals(0, hook.buildReads);
                 Assert.assertFalse(sqlExecutionContext.getCloneSymbolTables());
-                hook.failInit = false;
+                hook.isInitFailing = false;
                 f.assertResults(sql);
             }
         });
     }
 
-    private void assertCompileCloseEarlyCloseAndReuse(boolean keyed) throws Exception {
+    private void assertCompileCloseEarlyCloseAndReuse(boolean isKeyed) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            try (Fixture ignored = new Fixture((keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER)) {
+            try (Fixture ignored = new Fixture((isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER)) {
                 // No cursor acquisition.
             }
             Hook hook = new Hook();
-            hook.instrumentBuild = true;
-            String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+            hook.isBuildInstrumented = true;
+            String sql = (isKeyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
             try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                 try (RecordCursor cursor = f.getCursor()) {
                     // Acquisition opens the build scan, which serves output symbols, and reads no
                     // frame of it: neither size() nor a symbol lookup starts the build.
                     Assert.assertEquals(1, hook.buildOpens);
                     Assert.assertEquals(0, hook.buildCloses);
-                    Assert.assertEquals(keyed ? -1 : 1, cursor.size());
-                    if (keyed) {
+                    Assert.assertEquals(isKeyed ? -1 : 1, cursor.size());
+                    if (isKeyed) {
                         Assert.assertNull(cursor.getSymbolTable(0).valueOf(SymbolTable.VALUE_IS_NULL));
                     }
                     Assert.assertEquals(0, hook.buildReads);
@@ -2305,7 +2302,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     // Rereading materialized output neither replays nor reacquires the build.
                     cursor.toTop();
                     while (cursor.hasNext()) {
-                        if (keyed) {
+                        if (isKeyed) {
                             cursor.getRecord().getSymA(0);
                         }
                     }
@@ -2368,6 +2365,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         isParallelBuild = true;
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1);
+    }
+
+    // Runs a test that only a SYMBOL key reaches with that key, whichever one the test drew.
+    private void useSymbolKey() {
+        isLongKey = false;
+        isSymbolKey = true;
     }
 
     private void createTables(String keyType) throws Exception {
@@ -2699,9 +2702,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         // When set, the instrumented build and probe scans hand out symbol tables that count
         // their keyOf() calls into buildKeyOfCalls and probeKeyOfCalls.
         boolean isSymbolLookupCounted;
-        boolean instrumentBuild;
+        boolean isBuildInstrumented;
         // When set, the fixture wraps the probe scan in an ObservedProbeFactory.
-        boolean instrumentProbe;
+        boolean isProbeInstrumented;
         // Runs on the owner once an execution's build is frozen, before its payload copy and probes.
         volatile Runnable onProbeFrames;
         int buildFailAt;
@@ -2710,12 +2713,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         int buildReads;
         volatile AtomicBooleanCircuitBreaker cancel;
         volatile Runnable onLimit;
-        volatile boolean fail;
-        volatile boolean failInit;
+        volatile boolean isFailing;
+        volatile boolean isInitFailing;
         volatile CountDownLatch gate;
         final AtomicInteger mergeCalls = new AtomicInteger();
         volatile CountDownLatch mergeGate;
-        volatile boolean failMerge;
+        volatile boolean isMergeFailing;
         volatile LimitedMemoryTracker mergeTracker;
         volatile AtomicBooleanCircuitBreaker mergeCancel;
         volatile long mergeBytes;
@@ -2733,7 +2736,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     throw new AssertionError(e);
                 }
             }
-            if (failMerge) {
+            if (isMergeFailing) {
                 throw CairoException.nonCritical().put("injected merge failure");
             }
             if (mergeCancel != null) {
@@ -2760,7 +2763,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         throw new AssertionError(e);
                     }
                 }
-                if (fail) {
+                if (isFailing) {
                     throw CairoException.nonCritical().put("injected probe failure");
                 }
                 if (onLimit != null && count == 32) {
@@ -2922,7 +2925,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         @Override
         public void init(SymbolTableSource source, SqlExecutionContext context) throws SqlException {
             hook.initCount.incrementAndGet();
-            if (hook.failInit) {
+            if (hook.isInitFailing) {
                 throw SqlException.$(0, "injected init failure");
             }
             arg.init(source, context);
@@ -2967,10 +2970,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 } else {
                     buildFilterContext = buildFilterContext(hook);
                 }
-                if (hook != null && hook.instrumentBuild) {
+                if (hook != null && hook.isBuildInstrumented) {
                     buildFactory = new FaultyBuildFactory(buildFactory, hook);
                 }
-                if (hook != null && hook.instrumentProbe) {
+                if (hook != null && hook.isProbeInstrumented) {
                     probeFactory = new ObservedProbeFactory(probeFactory, hook);
                 }
                 FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
@@ -3002,10 +3005,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                             for (int slot = -1; slot < WORKERS; slot++) {
                                 ObjList<GroupByFunction> decorated = new ObjList<>();
                                 ObjList<GroupByFunction> originals = functions.getGroupByFunctions(slot);
-                                boolean wrapped = false;
+                                boolean isWrapped = false;
                                 for (int i = 0; i < originals.size(); i++) {
                                     GroupByFunction original = originals.getQuick(i);
-                                    if (!wrapped && original instanceof SumDoubleGroupByFunction sum) {
+                                    if (!isWrapped && original instanceof SumDoubleGroupByFunction sum) {
                                         SumDoubleGroupByFunction wrapper = new SumDoubleGroupByFunction(sum.getArg()) {
                                             @Override
                                             public void merge(MapValue dest, MapValue src) {
@@ -3015,7 +3018,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                         };
                                         wrapper.initValueIndex(sum.getValueIndex());
                                         decorated.add(wrapper);
-                                        wrapped = true;
+                                        isWrapped = true;
                                     } else {
                                         decorated.add(original);
                                     }
@@ -3137,7 +3140,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     new RecordComparatorCompiler(new BytecodeAssembler()).newInstance(metadata, order), order);
         }
 
-        void assertOrderedResults(String sql, boolean sharded) throws Exception {
+        void assertOrderedResults(String sql, boolean isSharded) throws Exception {
             List<String> expected = new ArrayList<>();
             try (RecordCursorFactory baseline = selectOrdinary(sql); RecordCursor cursor = baseline.getCursor(sqlExecutionContext)) {
                 Assert.assertEquals(baseline.getMetadata().getColumnCount(), queryFactory.getMetadata().getColumnCount());
@@ -3156,7 +3159,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         appendRow(actual, cursor.getRecord(), queryFactory.getMetadata());
                     }
                     Assert.assertEquals(expected, actual);
-                    Assert.assertEquals(sharded, factory.getAtom().isSharded());
+                    Assert.assertEquals(isSharded, factory.getAtom().isSharded());
                     cursor.toTop();
                 }
             }
@@ -3177,7 +3180,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             assertResults(sql, null);
         }
 
-        void assertResults(String sql, Boolean sharded) throws Exception {
+        void assertResults(String sql, Boolean isSharded) throws Exception {
             List<String> expected;
             try (RecordCursorFactory baseline = selectOrdinary(sql); RecordCursor cursor = baseline.getCursor(sqlExecutionContext)) {
                 expected = rows(cursor, baseline.getMetadata());
@@ -3186,8 +3189,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             try (RecordCursor cursor = getCursor()) {
                 Assert.assertEquals(expected, rows(cursor, factory.getMetadata()));
                 Assert.assertEquals(expected.size(), cursor.size());
-                if (sharded != null) {
-                    Assert.assertEquals(sharded.booleanValue(), factory.getAtom().isSharded());
+                if (isSharded != null) {
+                    Assert.assertEquals(isSharded.booleanValue(), factory.getAtom().isSharded());
                 }
                 cursor.toTop();
                 Assert.assertEquals(expected, rows(cursor, factory.getMetadata()));
@@ -3207,9 +3210,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
                 cursor.toTop();
                 RecordCursor.Counter remaining = new RecordCursor.Counter();
-                boolean first = cursor.hasNext();
+                boolean hasFirstRow = cursor.hasNext();
                 cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), remaining);
-                Assert.assertEquals(expected.size() - (first ? 1 : 0), remaining.get());
+                Assert.assertEquals(expected.size() - (hasFirstRow ? 1 : 0), remaining.get());
             }
         }
     }
@@ -3228,9 +3231,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     try (UnorderedPageFrameReduceJob job = new UnorderedPageFrameReduceJob(engine, engine.getMessageBus())) {
                         GroupByMergeShardJob mergeJob = new GroupByMergeShardJob(engine.getMessageBus());
                         while (running.get()) {
-                            boolean useful = job.run(Job.RUNNING_STATUS);
-                            useful |= mergeJob.run(Job.RUNNING_STATUS);
-                            if (!useful) {
+                            boolean isUseful = job.run(Job.RUNNING_STATUS);
+                            isUseful |= mergeJob.run(Job.RUNNING_STATUS);
+                            if (!isUseful) {
                                 Thread.onSpinWait();
                             }
                         }

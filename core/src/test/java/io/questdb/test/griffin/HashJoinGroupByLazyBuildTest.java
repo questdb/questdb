@@ -38,13 +38,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
-import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -55,15 +54,16 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.choice;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * A fused hash join GROUP BY builds its hash table on the first demand for a row, never when its
@@ -75,7 +75,6 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
  * keyed and scalar; the lone count that counts by key; INT, SYMBOL, LONG and composite keys)
  * without workers, where the query's own thread runs every task, and with a pool of them.
  */
-@RunWith(Parameterized.class)
 public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
     // A condition on the build input alone that fails to evaluate on lb's one row with j = 10:
     // 10 * 1000 does not fit DECIMAL(4,0). A query that carries it fails as soon as it builds.
@@ -101,14 +100,10 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByLazyBuildTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
-        this.payloadLayout = payloadLayout;
-        this.buildMode = buildMode;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> parameters() {
-        return HashJoinBuildMode.parameters();
+    public HashJoinGroupByLazyBuildTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.payloadLayout = HashJoinPayloadLayout.random(rnd);
+        this.buildMode = HashJoinBuildMode.random(rnd);
     }
 
     @Before
@@ -527,14 +522,6 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
         Assert.assertEquals(sql, idle, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
     }
 
-    private static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof HashJoinGroupByBuildChoiceRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (HashJoinGroupByBuildChoiceRecordCursorFactory) factory;
-    }
-
     private static void createLifecycleTables(CairoEngine db, SqlExecutionContext context) throws SqlException {
         db.execute("CREATE TABLE lp (k INT, l LONG, s SYMBOL, g INT, c SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
         db.execute("CREATE TABLE lb (k INT, l LONG, s SYMBOL, t SYMBOL, w DOUBLE, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
@@ -555,22 +542,8 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
                 """, context);
     }
 
-    private static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (AsyncHashJoinGroupByRecordCursorFactory) factory;
-    }
-
     private static String healthy(String shape) {
         return shape.replace("{W}", "").replace("{A}", "");
-    }
-
-    private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
-        TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, context);
-        return sink.getSink().toString();
     }
 
     private static String poisoned(String shape) {
@@ -589,14 +562,6 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
         }
         Collections.sort(rows);
         return rows;
-    }
-
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
-        }
     }
 
     // The query's rows under the ordinary hash join plan, sorted.

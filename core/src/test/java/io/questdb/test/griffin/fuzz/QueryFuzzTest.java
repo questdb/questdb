@@ -209,12 +209,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // and ran) whose pivot must have used the fused hash join GROUP BY. Without it a planner that
     // stops selecting the fused plan leaves the axis comparing the ordinary plan with itself while
     // the run stays green. The share is well below 100% because the generator sends a minority of
-    // its queries through features the fused planner refuses; see HashJoinGroupByClause. Eight
-    // 5_000-query runs, each on its own random schema, measured 58% to 66% over 148 to 186
-    // completed comparisons, and ten default runs 57% to 76% over 30 to 41. At the smallest guarded
-    // sample of MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR comparisons and a 50% share, a run falls below
-    // this floor with a probability of about 5e-4.
-    private static final int MIN_FUSED_SELECTED_PCT = 20;
+    // its queries through features the fused planner refuses, and a RIGHT join takes the fused plan
+    // only under the conditions that HashJoinGroupByClause describes. Eight 5_000-query runs, each on
+    // its own random schema, measured 42% to 52% over 159 to 187 completed comparisons, 46% over
+    // all of them, and ten default runs 32% to 62% over 23 to 39. At the smallest guarded sample of
+    // MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (25) comparisons and a 46% share, a run falls below this
+    // floor (3 or fewer fused) with an exact binomial probability of about 3.4e-4; the integer step
+    // makes 27 comparisons the worst guarded sample, at about 6.7e-4. A planner that stops fusing
+    // (a 0% share) fails every guarded run.
+    private static final int MIN_FUSED_SELECTED_PCT = 15;
     // Differential queries a run needs before runFuzz asserts that a shape it could draw generated
     // at least one query. The rarest such shape takes ~4% of the differential queries, so at this
     // sample size an all-miss run sits below 1e-8; under it a zero is small-sample noise and
@@ -510,8 +513,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // Wire the storage diff to rewrite master_p -> master_s, slave_p -> slave_s.
                 final FuzzTable masterShadow = new FuzzTable("master_s", new ObjList<>(), "ts");
                 final FuzzTable slaveShadow = new FuzzTable("slave_s", new ObjList<>(), "ts");
-                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, masterShadow);
-                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, slaveShadow);
+                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, masterShadow);
+                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, slaveShadow);
                 final ObjList<FuzzTable> tables = new ObjList<>();
                 tables.add(master);
                 tables.add(slave);
@@ -778,6 +781,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
         }
+        if (t.getCompositeDay() != null) {
+            sb.append(" composite=").append(t.getCompositeDay());
+        }
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
@@ -813,6 +819,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 ? TestUtils.generateRandom(LOG, s0, s1)
                 : TestUtils.generateRandom(LOG);
         FuzzConfig config = new FuzzConfig(rnd);
+
+        // Composite partitions ship OFF; the test defaults (Overrides) turn them ON. A per-run coin
+        // here keeps both configurations fuzzed rather than pinning ON every run: on the runs that
+        // draw false the suite exercises the shipped default write path - the OFF branches in
+        // TableWriter and O3PartitionJob - and FuzzTableFactory's per-table backdate lands as an
+        // ordinary O3 overlap rather than a composite one (its outcome feeds only diagnostics, so the
+        // diff-shadow oracle holds either way). The draw comes from the same seed logged above, so a
+        // red run replays it.
+        boolean mergeAppendEnabled = rnd.nextBoolean();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())

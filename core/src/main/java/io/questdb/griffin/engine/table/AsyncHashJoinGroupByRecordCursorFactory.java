@@ -235,7 +235,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         sink.attr("buildStrategy").val("shared");
         // The copy is chosen per execution, from the build's and the probe's row counts, so the plan
         // names the rule rather than the outcome.
-        if (frameSequence.getAtom().canCopyPayload()) {
+        if (frameSequence.getAtom().isPayloadCopyable()) {
             sink.attr("buildPayload").val("copied when the probe is large enough");
         }
         if (!functions.isKeyed()) {
@@ -247,32 +247,34 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             sink.attr("countStrategy").val("per key");
         }
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(functions.getOutputFunctions(), getMetadata()));
-        sink.setMetadata(joinedMetadata);
+        // This plan can print inside another operator's attribute, e.g. as a scalar sub-query in an
+        // aggregate, while that operator has set the sink's metadata or base-metadata mode for its
+        // own columns. The plan resolves its columns against the metadata it sets itself, prints its
+        // children as at the plan's root, and then gives the caller back its metadata and mode for
+        // the columns that follow the sub-query.
+        final RecordMetadata callerMetadata = sink.getMetadata();
+        final boolean isCallerUsingBaseMetadata = sink.getUseBaseMetadata();
+        sink.useBaseMetadata(false);
         try {
+            sink.setMetadata(joinedMetadata);
             sink.optAttr("keyFunctions", functions.getKeyFunctions(-1));
             sink.optAttr("values", functions.getGroupByFunctions(-1));
             sink.optAttr("postJoinFilter", functions.getFilter(-1));
-        } finally {
-            sink.setMetadata(null);
-        }
-        sink.setMetadata(probeFactory.getMetadata());
-        try {
+            sink.setMetadata(probeFactory.getMetadata());
             sink.optAttr("probeFilter", filterContext.getFilter(-1));
-        } finally {
-            sink.setMetadata(null);
-        }
-        sink.setMetadata(buildFactory.getMetadata());
-        try {
+            sink.setMetadata(buildFactory.getMetadata());
             // A compiled build filter runs as JIT code, so its attribute says so; the operator's own
             // name speaks for the probe filter only.
             sink.optAttr(buildFilterContext.getCompiledFilter() != null ? "buildJitFilter" : "buildFilter",
                     buildFilterContext.getFilter(-1));
             sink.optAttr("buildOnFilter", buildOnFilter);
-        } finally {
             sink.setMetadata(null);
+            sink.child("Probe", probeFactory);
+            sink.child("Build", buildFactory);
+        } finally {
+            sink.setMetadata(callerMetadata);
+            sink.useBaseMetadata(isCallerUsingBaseMetadata);
         }
-        sink.child("Probe", probeFactory);
-        sink.child("Build", buildFactory);
     }
 
     @Override
@@ -283,7 +285,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     /**
      * True when the build scan's WHERE filter runs as JIT code.
      */
-    public boolean usesCompiledBuildFilter() {
+    public boolean hasCompiledBuildFilter() {
         return buildFilterContext.getCompiledFilter() != null;
     }
 
@@ -390,7 +392,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long r = 0; r < rowCount; r++) {
@@ -409,7 +411,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -439,7 +441,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -458,7 +460,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -485,13 +487,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -522,7 +524,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long r = 0; r < rowCount; r++) {
@@ -541,7 +543,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -573,7 +575,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -592,7 +594,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -620,13 +622,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -653,13 +655,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
             if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -685,13 +687,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
             if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -722,7 +724,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long r = 0; r < rowCount; r++) {
@@ -741,7 +743,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -772,7 +774,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -791,7 +793,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -817,13 +819,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             if (probe.findSingleUnchecked(keyRecord)) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -855,7 +857,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long r = 0; r < rowCount; r++) {
@@ -874,7 +876,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -907,7 +909,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -926,7 +928,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -955,13 +957,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             if (probe.findSingleUnchecked(keyRecord)) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -989,13 +991,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
             if (probe.findSingleUnchecked(keyRecord)) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -1020,13 +1022,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
             if (probe.findSingleUnchecked(keyRecord)) {
                 record.setHasMatch(true);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -1058,7 +1060,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long r = 0; r < rowCount; r++) {
@@ -1077,7 +1079,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -1108,7 +1110,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -1127,7 +1129,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -1153,7 +1155,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -1179,7 +1181,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
                     slot.resolveProbeKey(probeSymbolKey, 0);
@@ -1219,7 +1221,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long r = 0; r < rowCount; r++) {
@@ -1238,7 +1240,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -1271,7 +1273,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final long pairsPerCheck = atom.getPairsPerCheck();
         long pairsUntilCheck = pairsPerCheck;
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -1290,7 +1292,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     probe.next();
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                 } while (probe.hasNext());
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
             }
@@ -1319,7 +1321,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long p = 0, n = rows.size(); p < n; p++) {
@@ -1332,7 +1334,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
                     addByBuildKey(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord);
@@ -1365,7 +1367,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long r = 0; r < rowCount; r++) {
@@ -1378,7 +1380,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
                     addByBuildKey(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord);
@@ -1408,7 +1410,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
-        final boolean outer = atom.isOuter();
+        final boolean isOuterJoin = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long r = 0; r < rowCount; r++) {
@@ -1434,7 +1436,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
-            } else if (outer) {
+            } else if (isOuterJoin) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
                     slot.resolveProbeKey(probeSymbolKey, 0);

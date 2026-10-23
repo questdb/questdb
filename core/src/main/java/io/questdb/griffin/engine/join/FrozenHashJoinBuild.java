@@ -76,15 +76,6 @@ public interface FrozenHashJoinBuild {
     long getSizeInBytes();
 
     /**
-     * Row heap bytes that one build row takes. Every implementation stores its rows in the same
-     * layout, a link plus the build row's id when the build has payload columns, so a build of N
-     * rows fills N times this whatever its payload width, and whatever its key table adds on top.
-     */
-    static long getRowSize(boolean hasPayload) {
-        return HashJoinRowHeap.getRowSize(hasPayload);
-    }
-
-    /**
      * A build whose probes look up a single INT key.
      */
     interface IntKeyed extends FrozenHashJoinBuild {

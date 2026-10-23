@@ -40,21 +40,19 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Collection;
-
-@RunWith(Parameterized.class)
 public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     private static final String[] JOINS = {
             " from r join p on r.id=p.id",
@@ -65,18 +63,18 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     };
     private static final String AGGREGATES = "count(*) n, count(r.id) ri, count(p.id) pi, "
             + "count(r.s) rs, count(p.s) ps, sum(r.d) rd, sum(p.d) pd, avg(r.d) ra, avg(p.d) pa";
+    // The randomized matrix runs thousands of queries, so a run checks one query in this many,
+    // picked at random, and repeated runs check them all.
+    private static final int MATRIX_SAMPLE_SHARE = 4;
 
     private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
+    private final Rnd rnd;
 
-    public HashJoinGroupByQualificationTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
-        this.payloadLayout = payloadLayout;
-        this.buildMode = buildMode;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> parameters() {
-        return HashJoinBuildMode.parameters();
+    public HashJoinGroupByQualificationTest() {
+        this.rnd = TestUtils.generateRandom(LOG);
+        this.payloadLayout = HashJoinPayloadLayout.random(rnd);
+        this.buildMode = HashJoinBuildMode.random(rnd);
     }
 
     @Before
@@ -129,7 +127,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     public void testRandomizedDifferentialMatrix() throws Exception {
         assertMemoryLeak(() -> {
             // Fixed seeds make the generated SQL and data reproducible independently of test order.
-            Rnd rnd = new Rnd(130, 9);
+            Rnd dataRnd = new Rnd(130, 9);
             // k holds the text of id, so the SYMBOL key joins the same rows as the INT key does.
             execute("create table r (id int, g int, d double, s symbol, k symbol)");
             execute("create table p (id int, g int, d double, s symbol, k symbol)");
@@ -137,30 +135,39 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 execute("truncate table r");
                 execute("truncate table p");
                 int domain = new int[]{1, 3, 17, 128}[scenario % 4];
-                insertRandomRows("r", scenario == 0 ? 0 : 1 + rnd.nextInt(160), domain, scenario, rnd);
-                insertRandomRows("p", scenario == 1 ? 0 : 1 + rnd.nextInt(80), domain, scenario, rnd);
+                final int rRows = insertRandomRows("r", scenario == 0 ? 0 : 1 + dataRnd.nextInt(160), domain, scenario, dataRnd);
+                final int pRows = insertRandomRows("p", scenario == 1 ? 0 : 1 + dataRnd.nextInt(80), domain, scenario, dataRnd);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, scenario % 2 == 0 ? 1 : Integer.MAX_VALUE);
                 for (int workers : new int[]{1, 2, 4}) {
                     try (SqlExecutionContextImpl context = context(engine, workers)) {
-                        context.changePageFrameSizes(1, 1 + rnd.nextInt(19));
+                        context.changePageFrameSizes(1, 1 + dataRnd.nextInt(19));
                         context.setJitMode(scenario % 2 == 0 ? 0 : 2);
                         for (int j = 0; j < JOINS.length; j++) {
                             String build = j < 3 ? "p" : "r";
                             String probe = j < 3 ? "r" : "p";
-                            String on = scenario % 3 == 0 ? " and " + build + ".d > " + (rnd.nextInt(17) - 8) : "";
+                            String on = scenario % 3 == 0 ? " and " + build + ".d > " + (dataRnd.nextInt(17) - 8) : "";
                             String where = switch (scenario % 6) {
                                 case 0 -> "";
                                 case 1 -> " where " + build + ".d is null";
                                 case 2 -> " where " + build + ".d > 1000";
-                                case 3 -> " where " + probe + ".d > " + (rnd.nextInt(17) - 8);
+                                case 3 -> " where " + probe + ".d > " + (dataRnd.nextInt(17) - 8);
                                 case 4 -> " where (" + build + ".s = 's1' or " + build + ".s is null)";
                                 default -> " where " + probe + ".g >= 0 and " + build + ".d < 4";
                             };
                             String group = scenario % 2 == 0 ? "r.g, p.s" : "r.id, p.g, r.s";
+                            // A RIGHT join keeps the ordinary plan when its build table holds more
+                            // rows than the preserved one, or when the WHERE clause filters the
+                            // preserved input, the probe, which reduces the rows that it hashes.
+                            final boolean isFused = (j != 2 || pRows <= rRows) && (j != 4 || rRows <= pRows)
+                                    && ((j != 2 && j != 4) || (scenario % 6 != 3 && scenario % 6 != 5));
                             for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                                 String from = JOINS[j].replace("r.id=p.id", key) + on + where;
-                                assertDifferential("select " + AGGREGATES + from, context, true);
-                                assertDifferential("select " + group + ", " + AGGREGATES + from + " order by " + group, context, true);
+                                if (rnd.nextInt(MATRIX_SAMPLE_SHARE) == 0) {
+                                    assertDifferential("select " + AGGREGATES + from, context, isFused);
+                                }
+                                if (rnd.nextInt(MATRIX_SAMPLE_SHARE) == 0) {
+                                    assertDifferential("select " + group + ", " + AGGREGATES + from + " order by " + group, context, isFused);
+                                }
                             }
                         }
                     }
@@ -191,9 +198,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 // The SYMBOL key s has a column top on both sides, so null keys above the tops match.
                 for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
                     for (String join : JOINS) {
-                        for (boolean keyed : new boolean[]{false, true}) {
-                            String sql = "select " + (keyed ? columns + ", " : "") + AGGREGATES + join.replace("r.id=p.id", key)
-                                    + (keyed ? " order by " + columns : "");
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String sql = "select " + (isKeyed ? columns + ", " : "") + AGGREGATES + join.replace("r.id=p.id", key)
+                                    + (isKeyed ? " order by " + columns : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 fused(factory);
                                 assertAgainstBaseline(sql, factory, context);
@@ -225,11 +232,15 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                     execute("alter table " + table + " alter column f type double");
                     execute("alter table " + table + " alter column i type long");
                 }
+                // The WHERE clause filters both inputs, the preserved one of a RIGHT join included,
+                // which reduces the rows that its ordinary plan hashes, so a RIGHT join keeps the
+                // ordinary plan.
                 for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
                     for (String join : JOINS) {
                         String from = join.replace("r.id=p.id", key) + where;
-                        assertDifferential("select " + AGGREGATES + from, context, true);
-                        assertDifferential("select " + columns + ", " + AGGREGATES + from + " order by " + columns, context, true);
+                        boolean isFused = !join.contains(" right join ");
+                        assertDifferential("select " + AGGREGATES + from, context, isFused);
+                        assertDifferential("select " + columns + ", " + AGGREGATES + from + " order by " + columns, context, isFused);
                     }
                 }
             }
@@ -267,11 +278,13 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 for (int jit : new int[]{0, 2}) {
                     context.setJitMode(jit);
-                    for (int j = 0; j < 3; j++) {
-                        for (boolean keyed : new boolean[]{false, true}) {
-                            String sql = "select " + (keyed ? "r.s,p.s, " : "") + AGGREGATES + JOINS[j]
+                    // The filter and the interval on r leave out JOINS[2], a RIGHT join that preserves
+                    // r, which keeps the ordinary plan, as the filter reduces the rows that it hashes.
+                    for (int j = 0; j < 2; j++) {
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String sql = "select " + (isKeyed ? "r.s,p.s, " : "") + AGGREGATES + JOINS[j]
                                     + " where r.d>0 and r.t>='2020-01-01' and r.t<'2020-01-04'"
-                                    + (keyed ? " order by r.s,p.s" : "");
+                                    + (isKeyed ? " order by r.s,p.s" : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                                 String explain = plan(factory, context);
@@ -339,7 +352,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         // although the key sinks stage it.
         for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY,
                 ColumnType.ARRAY, ColumnType.RECORD, ColumnType.INTERVAL, ColumnType.LONG128}) {
-            Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByCandidate.supportsValueType(type));
+            Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByCandidate.isSupportedValueType(type));
         }
         // Fixed-size types the row heap copies, each at its own width.
         for (int type : new int[]{ColumnType.IPv4, ColumnType.UUID, ColumnType.LONG256,
@@ -348,7 +361,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 ColumnType.getDecimalType(2, 1), ColumnType.getDecimalType(4, 1),
                 ColumnType.getDecimalType(9, 2), ColumnType.getDecimalType(18, 2),
                 ColumnType.getDecimalType(38, 2), ColumnType.getDecimalType(50, 2)}) {
-            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByCandidate.supportsValueType(type));
+            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByCandidate.isSupportedValueType(type));
         }
     }
 
@@ -364,12 +377,19 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
                 for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                     for (String join : JOINS) {
-                        for (boolean keyed : new boolean[]{false, true}) {
+                        for (boolean isKeyed : new boolean[]{false, true}) {
                             bindVariableService.setDouble(0, 2);
                             bindVariableService.setStr(1, "old");
-                            String sql = "select " + (keyed ? "r.s, p.s, " : "")
+                            String sql = "select " + (isKeyed ? "r.s, p.s, " : "")
                                     + "count(*) n, sum(r.d*$1) d" + join.replace("r.id=p.id", key) + " where p.s=$2 or p.s is null"
-                                    + (keyed ? " order by r.s,p.s" : "");
+                                    + (isKeyed ? " order by r.s,p.s" : "");
+                            if (join.equals(JOINS[4])) {
+                                // JOINS[4] is a RIGHT join that preserves p, whose WHERE clause reduces
+                                // the rows that the ordinary plan hashes, so it keeps the ordinary plan,
+                                // and the changes below concern the fused plans only.
+                                assertDifferential(sql, context, false);
+                                continue;
+                            }
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 fused(factory);
                                 assertAgainstBaseline(sql, factory, context);
@@ -380,10 +400,10 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                                 bindVariableService.setStr(1, "new");
                                 assertAgainstBaseline(sql, factory, context);
                                 execute("truncate table p");
-                                if (join.equals(JOINS[3]) || join.equals(JOINS[4])) {
-                                    // These joins build r, and compiled while r had no more rows than p,
-                                    // so they size the key table by the rows of r. An empty p no longer
-                                    // bounds them, and an execution asks for a recompile instead.
+                                if (join.equals(JOINS[3])) {
+                                    // This join builds r, and compiled while r had no more rows than p,
+                                    // so it sizes the key table by the rows of r. An empty p no longer
+                                    // bounds it, and an execution asks for a recompile instead.
                                     Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
                                     Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                     Assert.assertNull(context.getMemoryTracker());
@@ -401,9 +421,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 }
                 for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                     for (String table : new String[]{"r", "p"}) {
-                        for (boolean keyed : new boolean[]{false, true}) {
-                            String sql = "select " + (keyed ? "r.id, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", key)
-                                    + (keyed ? " order by r.id" : "");
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String sql = "select " + (isKeyed ? "r.id, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", key)
+                                    + (isKeyed ? " order by r.id" : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                                 assertAgainstBaseline(sql, factory, context);
@@ -421,9 +441,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 // recompiled query stages the reconciled VARCHAR key until the key is SYMBOL
                 // again and the build translates it once per distinct key.
                 for (String table : new String[]{"r", "p"}) {
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        String sql = "select " + (keyed ? "p.s, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", "r.k=p.k")
-                                + (keyed ? " order by p.s" : "");
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        String sql = "select " + (isKeyed ? "p.s, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", "r.k=p.k")
+                                + (isKeyed ? " order by p.s" : "");
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                             assertAgainstBaseline(sql, factory, context);
@@ -502,17 +522,24 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             execute("insert into r select ('k'||((x-1)%7))::symbol, ((x-1)%7)::int, x*0.25, "
                     + "timestamp_sequence('2020-01-01', 3_600_000_000) from long_sequence(96)");
             drainWalQueue();
+            // JOINS[4] is a RIGHT join that would build r, which holds more rows than p, so it keeps
+            // the ordinary plan, and only the other joins keep their factories across the changes.
             ObjList<String> queries = new ObjList<>();
+            ObjList<String> ordinaryQueries = new ObjList<>();
             for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                 for (String join : JOINS) {
                     String from = join.replace("r.id=p.id", key);
-                    queries.add("select count(*) n, sum(r.d) rd, sum(p.d) pd, count(r.k) rk, count(p.k) pk" + from);
-                    queries.add("select p.s, r.k, count(*) n, sum(r.d) rd, sum(p.d) pd" + from + " order by p.s, r.k");
+                    ObjList<String> sink = join.equals(JOINS[4]) ? ordinaryQueries : queries;
+                    sink.add("select count(*) n, sum(r.d) rd, sum(p.d) pd, count(r.k) rk, count(p.k) pk" + from);
+                    sink.add("select p.s, r.k, count(*) n, sum(r.d) rd, sum(p.d) pd" + from + " order by p.s, r.k");
                 }
             }
             ObjList<RecordCursorFactory> factories = new ObjList<>();
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 8);
+                for (int i = 0; i < ordinaryQueries.size(); i++) {
+                    assertDifferential(ordinaryQueries.getQuick(i), context, false);
+                }
                 for (int i = 0; i < queries.size(); i++) {
                     factories.add(engine.select(queries.getQuick(i), context));
                     fused(factories.getLast());
@@ -582,11 +609,11 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         }
     }
 
-    static void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {
+    static void assertDifferential(String sql, SqlExecutionContextImpl context, boolean isEnabled) throws Exception {
         context.setParallelHashJoinGroupByEnabled(true);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             String actualPlan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + actualPlan, enabled, actualPlan.contains("Hash Join Group By"));
+            Assert.assertEquals(sql + "\n" + actualPlan, isEnabled, actualPlan.contains("Hash Join Group By"));
             assertAgainstBaseline(sql, factory, context);
         }
     }
@@ -616,6 +643,12 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         Assert.assertNull(context.getMemoryTracker());
     }
 
+    static HashJoinGroupByBuildChoiceRecordCursorFactory choice(RecordCursorFactory factory) {
+        final HashJoinGroupByBuildChoiceRecordCursorFactory choice = findChoice(factory);
+        Assert.assertNotNull("expected a build choice", choice);
+        return choice;
+    }
+
     static SqlExecutionContextImpl context(CairoEngine engine, int workers) {
         SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, workers)
                 .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
@@ -624,12 +657,33 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         return context;
     }
 
+    @Nullable
+    static HashJoinGroupByBuildChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
+        // QueryProgress and projections wrap the fused plan.
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
+                return choice;
+            }
+        }
+        return null;
+    }
+
     static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
         while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
             factory = factory.getBaseFactory();
         }
         Assert.assertNotNull(factory);
         return (AsyncHashJoinGroupByRecordCursorFactory) factory;
+    }
+
+    static String ordinary(CairoEngine engine, String sql, SqlExecutionContextImpl context) throws Exception {
+        context.setParallelHashJoinGroupByEnabled(false);
+        try (RecordCursorFactory baseline = engine.select(sql, context)) {
+            Assert.assertFalse(sql, plan(baseline, context).contains("Hash Join Group By"));
+            return result(baseline, context);
+        } finally {
+            context.setParallelHashJoinGroupByEnabled(true);
+        }
     }
 
     static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
@@ -660,9 +714,10 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 + "(x*0.5)::float, case when x%2=0 then null else x*0.25 end, ('s'||(x+" + offset + "))::symbol from long_sequence(4)");
     }
 
-    private void insertRandomRows(String table, int rows, int domain, int scenario, Rnd rnd) throws Exception {
+    // Returns the number of rows that it inserted.
+    private int insertRandomRows(String table, int rows, int domain, int scenario, Rnd dataRnd) throws Exception {
         if (rows == 0) {
-            return;
+            return 0;
         }
         StringBuilder sql = new StringBuilder("insert into ").append(table).append(" values ");
         for (int i = 0; i < rows; i++) {
@@ -671,15 +726,16 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             }
             sql.append('(');
             String key = "null";
-            if (rnd.nextInt(7) != 0) {
-                key = Integer.toString(scenario % 3 == 0 && rnd.nextBoolean() ? 0 : rnd.nextInt(domain) - domain / 2);
+            if (dataRnd.nextInt(7) != 0) {
+                key = Integer.toString(scenario % 3 == 0 && dataRnd.nextBoolean() ? 0 : dataRnd.nextInt(domain) - domain / 2);
             }
             sql.append(key);
-            sql.append(',').append(rnd.nextInt(scenario % 2 == 0 ? 3 : 80)).append(',');
-            sql.append(rnd.nextInt(5) == 0 ? "null" : Double.toString((rnd.nextInt(65) - 32) * 0.25));
-            sql.append(',').append(rnd.nextInt(5) == 0 ? "null" : "'s" + rnd.nextInt(4) + "'");
+            sql.append(',').append(dataRnd.nextInt(scenario % 2 == 0 ? 3 : 80)).append(',');
+            sql.append(dataRnd.nextInt(5) == 0 ? "null" : Double.toString((dataRnd.nextInt(65) - 32) * 0.25));
+            sql.append(',').append(dataRnd.nextInt(5) == 0 ? "null" : "'s" + dataRnd.nextInt(4) + "'");
             sql.append(',').append(key.equals("null") ? "null" : "'" + key + "'").append(')');
         }
         execute(sql.toString());
+        return rows;
     }
 }

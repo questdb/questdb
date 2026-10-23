@@ -71,13 +71,25 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * probe's columns never reach it, so a STRING or VARCHAR reference joins the set of an input the
  * join type makes the probe - the master of a LEFT OUTER join, the slave of a RIGHT OUTER one.
  * An INNER join picks its build by size, which the generator cannot predict, so neither of its
- * inputs takes the wider set. The rest of the queries
- * reach the features the fused planner has to turn down, each of which keeps the ordinary plan
+ * inputs takes the wider set. The row heap restricts only the build columns that the joined record
+ * reads: aggregate arguments, grouping keys and post-join filters. The build's own filters - its
+ * scan's WHERE filter, which an INNER join's single-side WHERE predicate becomes, and an outer
+ * join's ON predicate over the build alone - run over the build's page frames before the heap
+ * copies a row, so they may read a build column of any type. Such an ON predicate keeps the
+ * ordinary plan when the build table holds more rows than the probe table and the predicate
+ * either reads a variable-size column of the build and does more than compare columns, constants
+ * and bind variables, or passes a STRING, VARCHAR, BINARY or ARRAY value that it computes from a
+ * build column to anything but a comparison. A RIGHT join takes the fused plan only when its build
+ * table, the one before the join, holds no more rows than the preserved one after it, and the
+ * preserved input has no filter of its own: a projection's filter, or a single-side WHERE
+ * predicate that the optimiser pushes into its scan. The generator does not steer around this
+ * rule, and QueryRunner compares the results either way.
+ * The rest of the queries reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
  * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
- * of an outer join, columns of other types, and aggregates outside the fused
- * allowlist. A planner that accepts one of them by mistake returns different rows than the
- * ordinary plan, and the fused axis reports it.
+ * of an outer join, columns of other types where the joined record reads them, and aggregates
+ * outside the fused allowlist. A planner that accepts one of them by mistake returns different
+ * rows than the ordinary plan, and the fused axis reports it.
  * <p>
  * Two exact counts close every projection: {@code count()} counts the joined pairs of the group,
  * and {@code count(x.k)} counts the null-extended side's key, so a match that turns into a
@@ -94,7 +106,9 @@ public final class HashJoinGroupByClause {
     // count() arguments whose count class the fused plan accepts: CountInt, CountLong, CountFloat,
     // CountDouble, CountSymbol, CountIPv4, CountUuid, CountLong256, CountStr and CountVarchar,
     // each for its own argument type only. A STRING or VARCHAR column reaches this only on the
-    // probe side, because the fusable set of a build input leaves the two out.
+    // probe side: the joined record reads a count() argument, and the build's row heap copies
+    // fixed-size columns only, so the fusable set of a build input leaves the two out. Only the
+    // build's own filters may read a build column of either type.
     private static final String[] COUNT_ARGUMENT_DDLS = {
             "INT", "LONG", "FLOAT", "DOUBLE", "SYMBOL", "IPv4", "UUID", "LONG256", "STRING", "VARCHAR"
     };
@@ -108,7 +122,7 @@ public final class HashJoinGroupByClause {
     private static final String[] FILLS = {"FILL(NULL)", "FILL(PREV)", null, "FILL(NONE)"};
     private static final String[] FLOATING_DDLS = {"FLOAT", "DOUBLE"};
     // Fixed-size column types the build's row heap copies, so either input may carry them:
-    // HashJoinGroupByCandidate.supportsValueType(), minus the DECIMAL widths, whose DDL carries a
+    // HashJoinGroupByCandidate.isSupportedValueType(), minus the DECIMAL widths, whose DDL carries a
     // precision and a scale and which isFusable() matches by kind instead. The fuzz tables carry
     // no GEOHASH column, so that part of the payload set has no fuzz coverage.
     private static final String[] FUSABLE_DDLS = {
@@ -207,9 +221,13 @@ public final class HashJoinGroupByClause {
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
         }
         if (rnd.nextInt(4) == 0) {
-            // An ON predicate over the build keeps the fused plan; one over the preserved side
-            // of an outer join does not, so an outer join puts it on the build three times in
-            // four. An INNER join moves it into the WHERE clause either way.
+            // An ON predicate over the build keeps the fused plan, unless the build table holds
+            // more rows than the probe table and the predicate either reads a variable-size
+            // column of the build and does more than compare columns, constants and bind
+            // variables, or passes a STRING, VARCHAR, BINARY or ARRAY value that it computes from
+            // a build column to anything but a comparison. One over the preserved side of an
+            // outer join never does, so an outer join puts it on the build three times in four.
+            // An INNER join moves it into the WHERE clause either way.
             final boolean isOnBuild = rnd.nextInt(4) != 0;
             final boolean isLeft = isRightJoin ? isOnBuild : isLeftJoin ? !isOnBuild : rnd.nextBoolean();
             sql.put(" AND (").put(predicate(rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx)).put(')');
@@ -259,10 +277,11 @@ public final class HashJoinGroupByClause {
         // table master gets a SAMPLE BY.
         if (l.isTable && rnd.nextInt(7) == 0) {
             // The optimiser rewrites SAMPLE BY aligned to calendar into a GROUP BY, which fuses
-            // unless it fills. A RIGHT JOIN null-extends l.ts; the NULL-timestamp group comes
-            // out ahead of the filled grid.
+            // unless it fills. A RIGHT JOIN null-extends l.ts, and a filled SAMPLE BY fails on a
+            // NULL designated timestamp ("SAMPLE BY designated timestamp cannot be NULL"), so
+            // only INNER and LEFT joins get a FILL.
             sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)]);
-            if (rnd.nextInt(3) == 0) {
+            if (!isRightJoin && rnd.nextInt(3) == 0) {
                 appendFill(sql, rnd, aggCount);
             }
             // ALIGN TO FIRST OBSERVATION skips the rewrite and needs l.ts in order, which a
@@ -407,7 +426,7 @@ public final class HashJoinGroupByClause {
         }
     }
 
-    private static boolean contains(String[] values, String value) {
+    private static boolean hasValue(String[] values, String value) {
         for (String v : values) {
             if (v.equals(value)) {
                 return true;
@@ -434,14 +453,14 @@ public final class HashJoinGroupByClause {
             return true;
         }
         final String ddl = column.getType().getDdl();
-        return contains(FUSABLE_DDLS, ddl) || (isProbe && contains(PROBE_ONLY_DDLS, ddl));
+        return hasValue(FUSABLE_DDLS, ddl) || (isProbe && hasValue(PROBE_ONLY_DDLS, ddl));
     }
 
     private static FuzzColumn pickColumn(Rnd rnd, ObjList<FuzzColumn> columns, String[] ddls) {
         final ObjList<FuzzColumn> matching = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final FuzzColumn c = columns.getQuick(i);
-            if (contains(ddls, c.getType().getDdl())) {
+            if (hasValue(ddls, c.getType().getDdl())) {
                 matching.add(c);
             }
         }

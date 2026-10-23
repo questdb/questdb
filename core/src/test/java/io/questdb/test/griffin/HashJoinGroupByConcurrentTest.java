@@ -38,6 +38,9 @@ import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -59,10 +62,15 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
+    // Picks the storage format and merge path a test checks; generateRandom() logs its seeds.
+    private final Rnd rnd = TestUtils.generateRandom(LOG);
+
     @Override
     @Before
     public void setUp() {
+        // The fused path dispatches its frames and round tasks to the unordered reduce queue.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 31);
         super.setUp();
@@ -186,6 +194,70 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         assertLoneCountsByMatch(WorkerPoolMode.FIBER_HOST, true);
     }
 
+    // Every probe slot reads build payload through a reader of its own, and a Parquet build frame
+    // decodes into that reader's cache. Each execution holds the owner off its probe frames until
+    // all four workers have taken a slot to reduce one, and each probe frame finds a row in every
+    // row group of the build, so that four slots read the whole build. The probe holds a tenth of
+    // the build's rows, too few for the probe ratios to copy a native build, yet the decoded data
+    // that the slots hold once the probe is done must stay within cairo.sql.parquet.cache.memory.size,
+    // about two decoded builds here, rather than grow by a decoded build per worker.
+    @Test
+    public void testParquetBuildPayloadWithinCacheSizeWithLegacyWorkers() throws Exception {
+        assertParquetBuildPayloadDecode(false, true, false, false);
+    }
+
+    @Test
+    public void testParquetBuildPayloadWithinCacheSizeWithLegacyWorkersAndParallelBuild() throws Exception {
+        assertParquetBuildPayloadDecode(true, true, false, false);
+    }
+
+    // As above, but the build also holds 100_000 native rows, which the probe's 10_000 rows do not
+    // repay the copy of at either probe ratio, and eight workers take a slot each. The Parquet rows
+    // decode to more than a slot's share of the cache, so without the copy every slot would decode
+    // their row groups again and again within its share, and the nine shares would hold more than
+    // twice the cache between them. The build copies instead, and the slots stay within the cache.
+    @Test
+    public void testParquetBuildPayloadWithinCacheSizeForMixedBuildWithLegacyWorkers() throws Exception {
+        assertParquetBuildPayloadDecode(false, true, true, false);
+    }
+
+    @Test
+    public void testParquetBuildPayloadWithinCacheSizeForMixedBuildWithLegacyWorkersAndParallelBuild() throws Exception {
+        assertParquetBuildPayloadDecode(true, true, true, false);
+    }
+
+    // As above, but both tables key their rows by 36-char texts. lpad() with a '0' fill returns a
+    // STRING, so the key is a STRING, and would decode to an 8-byte offset and 76 bytes of length
+    // and UTF-16 chars a row, about 92 bytes a Parquet row with the DOUBLE payload.
+    // A reader never decodes the key, which the key table holds, so the Parquet rows decode to their
+    // 8-byte payload alone, which a slot's share of the cache, 50 bytes a Parquet row, holds. The build
+    // keeps row ids, as the ratios ask, and each of the nine slots decodes the payload of every row
+    // group once, within the cache between them.
+    @Test
+    public void testParquetBuildPayloadWithinCacheSizeForStringKeyedMixedBuildWithLegacyWorkers() throws Exception {
+        assertParquetBuildPayloadDecode(false, true, true, true);
+    }
+
+    @Test
+    public void testParquetBuildPayloadWithinCacheSizeForStringKeyedMixedBuildWithLegacyWorkersAndParallelBuild() throws Exception {
+        assertParquetBuildPayloadDecode(true, true, true, true);
+    }
+
+    // As above, but the payload copy's bound is one byte short of the build's payload, so the
+    // slots read the Parquet build where it lives. Each slot's reader then caches at most its
+    // share of the decode cache, a quarter of it here, which holds half a decoded build: the
+    // readers decode row groups again as their matches move between them, the results still match
+    // the ordinary plan, and the five slots hold at most five quarters of the cache between them.
+    @Test
+    public void testParquetBuildPayloadWithinReaderSharesWithLegacyWorkers() throws Exception {
+        assertParquetBuildPayloadDecode(false, false, false, false);
+    }
+
+    @Test
+    public void testParquetBuildPayloadWithinReaderSharesWithLegacyWorkersAndParallelBuild() throws Exception {
+        assertParquetBuildPayloadDecode(true, false, false, false);
+    }
+
     // The probe's key dictionary is about seventy times the build's, so each execution fills the
     // SYMBOL key translation cache from the build's few texts before it publishes a probe task,
     // and the workers only read the cache. Each run asserts that the cache was filled this way, so
@@ -278,76 +350,76 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                         isCountedInRounds[key * filters.length + filter] = isParallelBuild && (filters[filter].contains("p.d") || keys[key].contains("vk"));
                     }
                 }
-                for (int format = 0; format < 2; format++) {
-                    if (format > 0) {
-                        for (String table : new String[]{"r", "p"}) {
-                            db.execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'", ignored);
+                // A test checks one storage format, picked at random, so that repeated runs check both.
+                final int format = rnd.nextInt(2);
+                if (format > 0) {
+                    for (String table : new String[]{"r", "p"}) {
+                        db.execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'", ignored);
+                    }
+                }
+                String[] expected = new String[queries.length];
+                for (int q = 0; q < queries.length; q++) {
+                    try (SqlExecutionContextImpl context = context(db, 4)) {
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        try (RecordCursorFactory baseline = db.select(queries[q], context)) {
+                            expected[q] = result(baseline, context);
                         }
                     }
-                    String[] expected = new String[queries.length];
-                    for (int q = 0; q < queries.length; q++) {
+                }
+                // Every query holds a build with its key rows counted at the same time. A cursor
+                // builds on its first read, so each owner stops inside that read, at its first
+                // breaker check that finds the counts, until every query got there. Reuse the
+                // same factories after cancellation; unrelated queries must remain successful.
+                CyclicBarrier acquired = new CyclicBarrier(queries.length);
+                AtomicReference<Throwable> failure = new AtomicReference<>();
+                Thread[] owners = new Thread[queries.length];
+                for (int q = 0; q < queries.length; q++) {
+                    final int query = q;
+                    owners[q] = new Thread(() -> {
+                        AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(db);
                         try (SqlExecutionContextImpl context = context(db, 4)) {
-                            context.setParallelHashJoinGroupByEnabled(false);
-                            try (RecordCursorFactory baseline = db.select(queries[q], context)) {
-                                expected[q] = result(baseline, context);
-                            }
-                        }
-                    }
-                    // Every query holds a build with its key rows counted at the same time. A cursor
-                    // builds on its first read, so each owner stops inside that read, at its first
-                    // breaker check that finds the counts, until every query got there. Reuse the
-                    // same factories after cancellation; unrelated queries must remain successful.
-                    CyclicBarrier acquired = new CyclicBarrier(queries.length);
-                    AtomicReference<Throwable> failure = new AtomicReference<>();
-                    Thread[] owners = new Thread[queries.length];
-                    for (int q = 0; q < queries.length; q++) {
-                        final int query = q;
-                        owners[q] = new Thread(() -> {
-                            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(db);
-                            try (SqlExecutionContextImpl context = context(db, 4)) {
-                                context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
-                                try (RecordCursorFactory factory = db.select(queries[query], context)) {
-                                    AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
-                                    for (int run = 0; run < 4; run++) {
-                                        boolean cancel = query % 3 == 0 && run == 1;
-                                        // A cancelled run trips right after the meeting, so it gives
-                                        // up a live, counted build while the others probe.
-                                        context.with(HashJoinBuildCircuitBreaker.meetingOnceBuilt(db, fused.getAtom()::isCountedByKey, acquired, cancel));
-                                        try (RecordCursor cursor = factory.getCursor(context)) {
-                                            // The open cursor has built and counted nothing yet.
-                                            Assert.assertNull(queries[query], fused.getAtom().getFrozenBuild());
-                                            Assert.assertFalse(queries[query], fused.getAtom().isCountedByKey());
-                                            StringSink sink = new StringSink();
-                                            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-                                            Assert.assertFalse("cancelled query completed", cancel);
-                                            Assert.assertEquals(queries[query], isParallelBuild, fused.getAtom().isBuiltInRounds());
-                                            Assert.assertTrue(queries[query], fused.getAtom().isCountedByKey());
-                                            Assert.assertEquals(queries[query], isParallelBuild && !isCountedInRounds[query], fused.getAtom().hasBuildFrameRegions());
-                                            Assert.assertEquals(queries[query], isCountedInRounds[query], fused.getAtom().isCountedInRounds());
-                                            Assert.assertEquals(queries[query], expected[query], sink.toString());
-                                            cursor.toTop();
-                                            Assert.assertTrue(cursor.hasNext());
-                                        } catch (CairoException ex) {
-                                            Assert.assertTrue(ex.getMessage(), cancel && ex.isCancellation());
-                                        }
-                                        Assert.assertFalse(fused.getAtom().isCountedByKey());
-                                        Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                                        Assert.assertNull(context.getMemoryTracker());
+                            context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
+                            try (RecordCursorFactory factory = db.select(queries[query], context)) {
+                                AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                                for (int run = 0; run < 4; run++) {
+                                    boolean isCancelled = query % 3 == 0 && run == 1;
+                                    // A cancelled run trips right after the meeting, so it gives
+                                    // up a live, counted build while the others probe.
+                                    context.with(HashJoinBuildCircuitBreaker.meetingOnceBuilt(db, fused.getAtom()::isCountedByKey, acquired, isCancelled));
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        // The open cursor has built and counted nothing yet.
+                                        Assert.assertNull(queries[query], fused.getAtom().getFrozenBuild());
+                                        Assert.assertFalse(queries[query], fused.getAtom().isCountedByKey());
+                                        StringSink sink = new StringSink();
+                                        CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+                                        Assert.assertFalse("cancelled query completed", isCancelled);
+                                        Assert.assertEquals(queries[query], isParallelBuild, fused.getAtom().isBuiltInRounds());
+                                        Assert.assertTrue(queries[query], fused.getAtom().isCountedByKey());
+                                        Assert.assertEquals(queries[query], isParallelBuild && !isCountedInRounds[query], fused.getAtom().hasBuildFrameRegions());
+                                        Assert.assertEquals(queries[query], isCountedInRounds[query], fused.getAtom().isCountedInRounds());
+                                        Assert.assertEquals(queries[query], expected[query], sink.toString());
+                                        cursor.toTop();
+                                        Assert.assertTrue(cursor.hasNext());
+                                    } catch (CairoException ex) {
+                                        Assert.assertTrue(ex.getMessage(), isCancelled && ex.isCancellation());
                                     }
+                                    Assert.assertFalse(fused.getAtom().isCountedByKey());
+                                    Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                    Assert.assertNull(context.getMemoryTracker());
                                 }
-                            } catch (Throwable th) {
-                                failure.compareAndSet(null, th);
-                                acquired.reset();
-                            } finally {
-                                Path.clearThreadLocals();
                             }
-                        }, "fused-count-" + q);
-                        owners[q].start();
-                    }
-                    TestUtils.joinThreads(owners);
-                    if (failure.get() != null) {
-                        throw new AssertionError("mode=" + mode + ", parallelBuild=" + isParallelBuild + ", format=" + format, failure.get());
-                    }
+                        } catch (Throwable th) {
+                            failure.compareAndSet(null, th);
+                            acquired.reset();
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    }, "fused-count-" + q);
+                    owners[q].start();
+                }
+                TestUtils.joinThreads(owners);
+                if (failure.get() != null) {
+                    throw new AssertionError("mode=" + mode + ", parallelBuild=" + isParallelBuild + ", format=" + format, failure.get());
                 }
             }, configuration, LOG);
         });
@@ -390,79 +462,79 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                         queries[key * intKeyQueries.length + q] = intKeyQueries[q].replace("r.id=p.id", keys[key]);
                     }
                 }
-                for (int format = 0; format < 3; format++) {
-                    if (format > 0) {
-                        for (String table : new String[]{"r", "p"}) {
-                            db.execute("alter table " + table + " convert partition to parquet where "
-                                    + (format == 1 ? "t < '2020-01-02'" : "t >= '2020-01-02'"), ignored);
+                // A test checks one storage format and one merge path, picked at random, so that
+                // repeated runs check all six pairs. Each format converts on top of the one before.
+                final int format = rnd.nextInt(3);
+                for (int step = 1; step <= format; step++) {
+                    for (String table : new String[]{"r", "p"}) {
+                        db.execute("alter table " + table + " convert partition to parquet where "
+                                + (step == 1 ? "t < '2020-01-02'" : "t >= '2020-01-02'"), ignored);
+                    }
+                }
+                final int threshold = rnd.nextBoolean() ? Integer.MAX_VALUE : 1;
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                String[] expected = new String[queries.length];
+                for (int q = 0; q < queries.length; q++) {
+                    try (SqlExecutionContextImpl context = context(db, 4)) {
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        try (RecordCursorFactory baseline = db.select(queries[q], context)) {
+                            expected[q] = result(baseline, context);
                         }
                     }
-                    for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
-                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
-                        String[] expected = new String[queries.length];
-                        for (int q = 0; q < queries.length; q++) {
-                            try (SqlExecutionContextImpl context = context(db, 4)) {
-                                context.setParallelHashJoinGroupByEnabled(false);
-                                try (RecordCursorFactory baseline = db.select(queries[q], context)) {
-                                    expected[q] = result(baseline, context);
+                }
+                // Every query holds a live frozen build at the same time. A cursor builds
+                // on its first read, so each owner stops inside that read, at its first
+                // breaker check that finds the build, until every query got there. Reuse the
+                // same factories after cancellation; unrelated queries must remain successful.
+                CyclicBarrier acquired = new CyclicBarrier(queries.length);
+                AtomicReference<Throwable> failure = new AtomicReference<>();
+                Thread[] owners = new Thread[queries.length];
+                for (int q = 0; q < queries.length; q++) {
+                    final int query = q;
+                    owners[q] = new Thread(() -> {
+                        AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(db);
+                        try (SqlExecutionContextImpl context = context(db, 4)) {
+                            context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
+                            try (RecordCursorFactory factory = db.select(queries[query], context)) {
+                                AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                                for (int run = 0; run < 4; run++) {
+                                    boolean isCancelled = query % 3 == 0 && run == 1;
+                                    // A cancelled run trips right after the meeting, so it
+                                    // gives up a live build while the others probe.
+                                    context.with(HashJoinBuildCircuitBreaker.meetingOnceBuilt(
+                                            db, () -> fused.getAtom().getFrozenBuild() != null, acquired, isCancelled));
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        // The open cursor has built nothing yet.
+                                        Assert.assertNull(queries[query], fused.getAtom().getFrozenBuild());
+                                        StringSink sink = new StringSink();
+                                        CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+                                        Assert.assertFalse("cancelled query completed", isCancelled);
+                                        Assert.assertEquals(queries[query], isParallelBuild, fused.getAtom().isBuiltInRounds());
+                                        Assert.assertEquals(queries[query], expected[query], sink.toString());
+                                        Assert.assertEquals(query % 3 < 2 && threshold == 1, fused.getAtom().isSharded());
+                                        cursor.toTop();
+                                        Assert.assertTrue(cursor.hasNext());
+                                        // Leave output partially consumed on close.
+                                    } catch (CairoException ex) {
+                                        Assert.assertTrue(ex.getMessage(), isCancelled && ex.isCancellation());
+                                    }
+                                    Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                    Assert.assertNull(context.getMemoryTracker());
                                 }
                             }
+                        } catch (Throwable th) {
+                            failure.compareAndSet(null, th);
+                            acquired.reset();
+                        } finally {
+                            Path.clearThreadLocals();
                         }
-                        // Every query holds a live frozen build at the same time. A cursor builds
-                        // on its first read, so each owner stops inside that read, at its first
-                        // breaker check that finds the build, until every query got there. Reuse the
-                        // same factories after cancellation; unrelated queries must remain successful.
-                        CyclicBarrier acquired = new CyclicBarrier(queries.length);
-                        AtomicReference<Throwable> failure = new AtomicReference<>();
-                        Thread[] owners = new Thread[queries.length];
-                        for (int q = 0; q < queries.length; q++) {
-                            final int query = q;
-                            owners[q] = new Thread(() -> {
-                                AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(db);
-                                try (SqlExecutionContextImpl context = context(db, 4)) {
-                                    context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
-                                    try (RecordCursorFactory factory = db.select(queries[query], context)) {
-                                        AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
-                                        for (int run = 0; run < 4; run++) {
-                                            boolean cancel = query % 3 == 0 && run == 1;
-                                            // A cancelled run trips right after the meeting, so it
-                                            // gives up a live build while the others probe.
-                                            context.with(HashJoinBuildCircuitBreaker.meetingOnceBuilt(
-                                                    db, () -> fused.getAtom().getFrozenBuild() != null, acquired, cancel));
-                                            try (RecordCursor cursor = factory.getCursor(context)) {
-                                                // The open cursor has built nothing yet.
-                                                Assert.assertNull(queries[query], fused.getAtom().getFrozenBuild());
-                                                StringSink sink = new StringSink();
-                                                CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-                                                Assert.assertFalse("cancelled query completed", cancel);
-                                                Assert.assertEquals(queries[query], isParallelBuild, fused.getAtom().isBuiltInRounds());
-                                                Assert.assertEquals(queries[query], expected[query], sink.toString());
-                                                Assert.assertEquals(query % 3 < 2 && threshold == 1, fused.getAtom().isSharded());
-                                                cursor.toTop();
-                                                Assert.assertTrue(cursor.hasNext());
-                                                // Leave output partially consumed on close.
-                                            } catch (CairoException ex) {
-                                                Assert.assertTrue(ex.getMessage(), cancel && ex.isCancellation());
-                                            }
-                                            Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                                            Assert.assertNull(context.getMemoryTracker());
-                                        }
-                                    }
-                                } catch (Throwable th) {
-                                    failure.compareAndSet(null, th);
-                                    acquired.reset();
-                                } finally {
-                                    Path.clearThreadLocals();
-                                }
-                            }, "fused-query-" + q);
-                            owners[q].start();
-                        }
-                        TestUtils.joinThreads(owners);
-                        if (failure.get() != null) {
-                            throw new AssertionError("mode=" + mode + ", parallelBuild=" + isParallelBuild + ", format=" + format
-                                    + ", threshold=" + threshold, failure.get());
-                        }
-                    }
+                    }, "fused-query-" + q);
+                    owners[q].start();
+                }
+                TestUtils.joinThreads(owners);
+                if (failure.get() != null) {
+                    throw new AssertionError("mode=" + mode + ", parallelBuild=" + isParallelBuild + ", format=" + format
+                            + ", threshold=" + threshold, failure.get());
                 }
             }, configuration, LOG);
         });
@@ -655,6 +727,119 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         }
     }
 
+    private void assertParquetBuildPayloadDecode(boolean isParallelBuild, boolean isCopyFitting, boolean isMixed, boolean isStringKeyed) throws Exception {
+        // pb holds 100_000 rows in two days of Parquet row groups of 2_000 rows, 50 row groups, and
+        // more rows in its native last partition: one, or 100_000 for a mixed build. A reader decodes
+        // the DOUBLE payload alone, 8 bytes a row, and not the key, so for an INT key the decode cache
+        // holds about two decoded builds. For the 36-char text key, a STRING, since lpad() with a '0'
+        // fill returns one, it holds 200 bytes a Parquet row, so that a quarter of it holds 50, which
+        // the payload fits and the key, about 84 bytes a row, would not.
+        final long nativeRows = isMixed ? 100_000 : 1;
+        final long buildRows = 100_000 + nativeRows;
+        final long decodedBuildSize = 100_000 * Double.BYTES;
+        final long cacheSize = isStringKeyed ? 100_000 * 200 : 2 * decodedBuildSize;
+        final int workerCount = isMixed ? 8 : 4;
+        final String buildKey = isStringKeyed ? "lpad(x::VARCHAR, 36, '0')" : "x::INT";
+        final String nativeBuildKey = isStringKeyed ? "lpad((100_000 + x)::VARCHAR, 36, '0')" : "(100_000 + x)::INT";
+        final String probeKey = isStringKeyed ? "lpad(((x * 7_919) % 100_000 + 1)::VARCHAR, 36, '0')" : "((x * 7_919) % 100_000 + 1)::INT";
+        // Without the copy, each of the slots, one per worker and the owner's, caches the Parquet
+        // row groups it decodes within its share of the cache, but no less than a quarter of it.
+        final int slotCount = workerCount + 1;
+        final long readerShare = Math.max(cacheSize / slotCount, cacheSize / 4);
+        // A copy that fits runs for a build of Parquet rows alone, whose one native row the probe
+        // repays. The probe does not repay the copy of a mixed build's 100_000 native rows, so that
+        // build copies only when a share holds less than a decoded build, which the readers would
+        // decode again and again.
+        final boolean isCopied = isCopyFitting && (!isMixed || readerShare < decodedBuildSize);
+        // Without the copy, each slot decodes at most its share, or the whole build when that fits it.
+        final long decodedBound = isCopied ? cacheSize : slotCount * Math.min(readerShare, decodedBuildSize);
+        // For an INT key, a share holds less than a decoded build, so without the copy the readers
+        // decode row groups again. For the STRING key, a share holds a decoded build.
+        Assert.assertEquals(!isStringKeyed, readerShare < decodedBuildSize);
+        // Every worker must hold a probe frame at once, and the gated owner publishes no frame past
+        // a full queue, so the queue needs a frame per worker.
+        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, workerCount);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheSize);
+        // The build has fewer rows than the default bound, so it runs on the owner unless forced.
+        if (isParallelBuild) {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+        }
+        if (!isCopyFitting) {
+            // A copied DOUBLE takes 8 bytes a row.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, buildRows * Double.BYTES - 1);
+        }
+        final FactoryProvider previousFactoryProvider = factoryProvider;
+        factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
+        try {
+            assertMemoryLeak(() -> {
+                TestWorkerPool pool = new TestWorkerPool(workerCount, WorkerPoolMode.LEGACY);
+                TestUtils.execute(pool, (db, compiler, ignored) -> {
+                    db.execute(
+                            "CREATE TABLE pb AS (SELECT " + buildKey + " id, x * 0.5 w, timestamp_sequence('2020-01-01', 1_728_000) t "
+                                    + "FROM long_sequence(100_000)) TIMESTAMP(t) PARTITION BY DAY",
+                            ignored
+                    );
+                    db.execute(
+                            "INSERT INTO pb SELECT " + nativeBuildKey + ", x * 0.5, timestamp_sequence('2020-01-03', 800_000) FROM long_sequence(" + nativeRows + ")",
+                            ignored
+                    );
+                    db.execute("ALTER TABLE pb CONVERT PARTITION TO PARQUET WHERE t < '2020-01-03'", ignored);
+                    // pq probes with 10_000 rows, a tenth of the build's Parquet rows, too few for the
+                    // default probe ratios to copy a native build. Its keys step through pb's Parquet
+                    // rows 7_919 at a time, so that any 1_000 consecutive probe rows find a row in each
+                    // of pb's row groups.
+                    db.execute("CREATE TABLE pq AS (SELECT " + probeKey + " id, x::DOUBLE v FROM long_sequence(10_000))", ignored);
+                    // The LEFT join builds pb.
+                    final String query = "SELECT count(), sum(pb.w), sum(pq.v) FROM pq LEFT JOIN pb ON pq.id = pb.id";
+                    try (SqlExecutionContextImpl context = context(db, workerCount)) {
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        final String expected;
+                        try (RecordCursorFactory baseline = db.select(query, context)) {
+                            expected = result(baseline, context);
+                        }
+                        context.setParallelHashJoinGroupByEnabled(true);
+                        try (RecordCursorFactory factory = db.select(query, context)) {
+                            final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                            // The second run reuses the factory, and its slots' readers.
+                            for (int run = 0; run < 2; run++) {
+                                // Ten probe frames of 1_000 rows each.
+                                context.changePageFrameSizes(1_000, 1_000);
+                                final AllWorkersProbeLatch acquired = new AllWorkersProbeLatch(workerCount);
+                                atom.getPerWorkerLocks().setTestAcquireLatch(acquired);
+                                final long decodedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                                try (RecordCursor cursor = factory.getCursor(context)) {
+                                    final StringSink sink = new StringSink();
+                                    CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+                                    Assert.assertEquals(query, expected, sink.toString());
+                                    Assert.assertEquals("not every worker took a slot for a probe frame", 0, acquired.getCount());
+                                    // The open cursor still holds what its slots decoded. The cache
+                                    // budgets the decoded values; the decoder's bookkeeping of each
+                                    // cached row group, about 3% here, comes on top, and so may
+                                    // the row group a reader's record is bound to.
+                                    final long decoded = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER) - decodedBefore;
+                                    Assert.assertTrue(
+                                            "decoded " + decoded + " bytes, bound " + decodedBound + ", cache size " + cacheSize,
+                                            decoded <= decodedBound + decodedBound / 8
+                                    );
+                                    Assert.assertEquals(query, isParallelBuild, atom.isBuiltInRounds());
+                                    Assert.assertEquals(query, isCopied, atom.isPayloadCopied());
+                                    Assert.assertEquals(query, buildRows, atom.getFrozenBuild().getRowCount());
+                                } finally {
+                                    atom.getPerWorkerLocks().setTestAcquireLatch(null);
+                                }
+                                Assert.assertEquals(0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertEquals(decodedBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER));
+                            }
+                        }
+                    }
+                }, configuration, LOG);
+            });
+        } finally {
+            factoryProvider = previousFactoryProvider;
+        }
+    }
+
     private void assertSmallBuildDictionary(WorkerPoolMode mode, boolean isParallelBuild) throws Exception {
         if (isParallelBuild) {
             HashJoinBuildMode.PARALLEL.applyProperties(node1.getConfigurationOverrides());
@@ -732,6 +917,47 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                 }
             }, configuration, LOG);
         });
+    }
+
+    /**
+     * The latch that {@link SlotGatedWorkStealingStrategy} holds the owner on until every pool worker
+     * has taken a slot to reduce a probe frame of the fused operator. A worker that takes one waits
+     * there for the others before it reads its frame, so that the first probe frames run on as many
+     * slots as the pool has workers. The rounds of a parallel build and of a payload copy run
+     * ungated: their tasks do not wait, and neither does the owner while it dispatches them from
+     * inside the atom.
+     */
+    private static final class AllWorkersProbeLatch extends CountDownLatch {
+        private static final String ATOM_CLASS_NAME = AsyncHashJoinGroupByAtom.class.getName();
+        private static final String FACTORY_CLASS_NAME = AsyncHashJoinGroupByRecordCursorFactory.class.getName();
+        private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+        private final CyclicBarrier probing;
+        private volatile boolean hasMet;
+
+        private AllWorkersProbeLatch(int workerCount) {
+            super(1);
+            probing = new CyclicBarrier(workerCount, () -> hasMet = true);
+        }
+
+        @Override
+        public boolean await(long timeout, TimeUnit unit) throws InterruptedException {
+            return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(ATOM_CLASS_NAME)))
+                    || super.await(timeout, unit);
+        }
+
+        @Override
+        public void countDown() {
+            if (!hasMet && Thread.currentThread() instanceof Worker && STACK_WALKER.walk(frames -> frames.anyMatch(frame ->
+                    frame.getClassName().equals(FACTORY_CLASS_NAME)
+                            && (frame.getMethodName().equals("aggregate") || frame.getMethodName().equals("filterAndAggregate"))))) {
+                try {
+                    probing.await(30, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new AssertionError("the workers did not all take a slot for a probe frame", e);
+                }
+                super.countDown();
+            }
+        }
     }
 
     /**

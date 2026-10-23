@@ -76,7 +76,7 @@ public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory 
     public RowCursor getCursor(int keyIndex, PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(symbolKeys.getQuick(keyIndex), pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(symbolKeys.getQuick(keyIndex), pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1);
     }
 
     @Override

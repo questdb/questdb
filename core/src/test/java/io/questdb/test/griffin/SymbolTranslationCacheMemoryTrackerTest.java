@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -60,10 +61,12 @@ import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
@@ -109,7 +112,9 @@ import java.util.concurrent.CountDownLatch;
  *   <li>the time-series and HORIZON joins read a one-row slave, so their maps hold at most two
  *   keys;</li>
  *   <li>the hash joins translate every build-side symbol to VALUE_NOT_FOUND, so their join key
- *   map holds one key, and the build side fits the first 512 KiB page of the slave chain.</li>
+ *   map holds one key, and the build side fits the first 512 KiB page of the slave chain;</li>
+ *   <li>the HORIZON joins without an aggregate keep every master row, and their sync cursor holds
+ *   one batch of master rows in tracked lists, so the sync test caps the batch at 1,000 rows.</li>
  * </ul>
  * For each query, the helper first drains the cursor with translation caching disabled and
  * expects no breach, which shows that nothing but the cache growth can cross the 1 MiB limit.
@@ -166,7 +171,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         AsyncHorizonJoinRecordCursorFactory.class,
                         AsyncHorizonJoinNotKeyedRecordCursorFactory.class,
                         AsyncMultiHorizonJoinRecordCursorFactory.class,
-                        AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class
+                        AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class,
+                        AsyncHorizonJoinProjectionRecordCursorFactory.class
                 );
             }
         });
@@ -178,10 +184,12 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         // it after the test. Queries without a latch run under the plain adaptive strategy.
         factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
         // The test configuration splits the master table into 4 page frames of 10,000 rows, one per
-        // worker. This minimum frame size keeps the table in the single frame that the class javadoc
-        // asks for. TestUtils.execute() creates the context, which reads the minimum frame size,
-        // after this call.
+        // worker. These minimum frame sizes keep the table in the single frame that the class javadoc
+        // asks for. TestUtils.execute() creates the context, which reads the first one, after this
+        // call. The HORIZON JOIN projections size the master frames themselves when the query
+        // compiles, from the second one.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -196,7 +204,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                                 AsyncHorizonJoinRecordCursorFactory.class,
                                 AsyncHorizonJoinNotKeyedRecordCursorFactory.class,
                                 AsyncMultiHorizonJoinRecordCursorFactory.class,
-                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class
+                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class,
+                                AsyncHorizonJoinProjectionRecordCursorFactory.class
                         );
                     },
                     configuration,
@@ -308,6 +317,11 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         // generator reads the context, so the test switches the context itself. The next
         // setUp() restores the flag from the configuration.
         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+        // The sync projection cursor matches the master rows in batches of this many rows, and
+        // holds the row ids, the timestamps and the slave row ids of a batch in tracked lists.
+        // The test configuration allows 100,000 rows, so a single batch would hold all 40,000
+        // master rows and its lists alone would cross the limit.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         assertMemoryLeak(() -> {
             createTimeSeriesTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -318,7 +332,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         HorizonJoinRecordCursorFactory.class,
                         HorizonJoinNotKeyedRecordCursorFactory.class,
                         MultiHorizonJoinRecordCursorFactory.class,
-                        MultiHorizonJoinNotKeyedRecordCursorFactory.class
+                        MultiHorizonJoinNotKeyedRecordCursorFactory.class,
+                        HorizonJoinProjectionRecordCursorFactory.class
                 );
             }
         });
@@ -614,7 +629,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             Class<? extends RecordCursorFactory> keyedFactory,
             Class<? extends RecordCursorFactory> notKeyedFactory,
             Class<? extends RecordCursorFactory> multiKeyedFactory,
-            Class<? extends RecordCursorFactory> multiNotKeyedFactory
+            Class<? extends RecordCursorFactory> multiNotKeyedFactory,
+            Class<? extends RecordCursorFactory> projectionFactory
     ) throws Exception {
         // The horizon offset is the only GROUP BY key, so the keyed data maps hold a single key.
         assertCachesChargeTracker(
@@ -661,6 +677,31 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         RANGE FROM 0s TO 0s STEP 1s AS h
                         """,
                 multiNotKeyedFactory,
+                isWorkerReducing
+        );
+        // Without an aggregate, the join keeps every master row, and one projection factory serves
+        // both the single-slave and the multi-slave shape.
+        assertCachesChargeTracker(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """,
+                projectionFactory,
+                isWorkerReducing
+        );
+        assertCachesChargeTracker(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price, s2.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        HORIZON JOIN s s2 ON (m.k1 = s2.k1 AND m.k2 = s2.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """,
+                projectionFactory,
                 isWorkerReducing
         );
     }
@@ -728,6 +769,53 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         ) {
             Assert.assertNotNull("no page frame in the master table", cursor.next());
             Assert.assertNull("the master table must fit a single page frame", cursor.next());
+        }
+        // The HORIZON JOIN projections size the master frames from the small frame budget and the
+        // slots per master row, so the scan above does not cover them.
+        assertSingleProjectionFrame(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """
+        );
+        assertSingleProjectionFrame(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT m.k1, s.price, s2.price FROM m
+                        HORIZON JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)
+                        HORIZON JOIN s s2 ON (m.k1 = s2.k1 AND m.k2 = s2.k2)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """
+        );
+    }
+
+    private static void assertSingleProjectionFrame(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String query
+    ) throws Exception {
+        // With caching disabled the drain fits the per-query limit, see assertCachesChargeTracker().
+        setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 0);
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 0);
+        try (
+                RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            TestUtils.drainCursor(cursor);
+            // The cursor builds the frame list on its first hasNext() call, and close() clears it.
+            final Field field = AsyncHorizonJoinProjectionRecordCursorFactory.class.getDeclaredField("frameSequence");
+            field.setAccessible(true);
+            final PageFrameSequence<?> frameSequence = (PageFrameSequence<?>) field.get(
+                    findFactory(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class, query)
+            );
+            Assert.assertEquals("the master table must fit a single page frame: " + query, 1, frameSequence.getFrameCount());
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, null);
+            setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, null);
         }
     }
 

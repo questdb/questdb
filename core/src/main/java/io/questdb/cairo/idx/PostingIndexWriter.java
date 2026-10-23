@@ -397,6 +397,38 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
+    public void abandon() {
+        // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different writer
+        // instance, so this writer's own pending/sealed state - however consistent it looks locally - describes bytes
+        try {
+            if (keyMem.isOpen()) {
+                keyMem.close(false);
+            }
+        } finally {
+            try {
+                Misc.free(sealValueMem);
+                Misc.free(stagingValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                maxValue = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                pendingTxnAtSeal = -1;
+                releasePendingPurges();
+                chain.resetState();
+            }
+        }
+    }
+
+    @Override
     public void add(int key, long value) {
         checkNotPoisoned();
         if (key < 0) {
@@ -1383,7 +1415,18 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
+        of(path, name, columnNameTxn, false, allowFreshIfMissing);
+    }
+
     public void of(Path path, CharSequence name, long columnNameTxn, boolean isInit) {
+        of(path, name, columnNameTxn, isInit, false);
+    }
+
+    private void of(Path path, CharSequence name, long columnNameTxn, boolean isInit, boolean allowFreshIfMissing) {
         // close() releases resources but does NOT flush pending add() calls,
         // so the caller must have already committed or sealed. On the
         // TableWriter path this is guaranteed by commit() in switchPartition
@@ -1406,7 +1449,9 @@ public class PostingIndexWriter implements IndexWriter {
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
             } else {
-                if (!ff.exists(keyFile)) {
+                // allowFreshIfMissing skips this exists() pre-check rather than falling back to a fresh, empty index:
+                // the caller has independently established this column had no data before the writer session now.
+                if (!allowFreshIfMissing && !ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 
@@ -1731,6 +1776,25 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
         this.coveredColumnAuxAddrSizes.clear();
+    }
+
+    /**
+     * Drops this writer's mappings of its covered sidecar files, before ANOTHER writer instance appends to those same
+     * files - the O3 composite executor and the seal sweep both open their own {@link PostingIndexWriter} on a
+     * partition the TableWriter's live indexer may hold as well.
+     */
+    public void releaseSidecarWriteMappings() {
+        closeSidecarMems();
+    }
+
+    /**
+     * True when {@link #rollbackConditionally(long)} at {@code row} would evict entries, i.e.
+     */
+    public boolean hasIndexedRowsAtOrAbove(long row) {
+        if (row < 0 || (genCount == 0 && !hasPendingData)) {
+            return false;
+        }
+        return row == 0 || getMaxValue() >= row;
     }
 
     @Override
@@ -4300,22 +4364,37 @@ public class PostingIndexWriter implements IndexWriter {
                 ? TableUtils.iFile(p, colName, colNameTxn)
                 : TableUtils.dFile(p, colName, colNameTxn);
         long fd = ff.openRO(fileName);
-        if (fd >= 0) {
-            try {
-                long fileSize = ff.length(fd);
-                if (fileSize > 0) {
-                    long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                    if (mapped == FilesFacade.MAP_FAILED) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not mmap covered column [file=").put(fileName)
-                                .put(", size=").put(fileSize).put(']');
-                    }
-                    addrs[idx] = mapped;
-                    sizes[idx] = fileSize;
-                }
-            } finally {
-                ff.close(fd); // mmap keeps data accessible after FD close
+        if (fd < 0) {
+            final int errno = ff.errno();
+            // A covered column whose top spans the whole partition has no file here, and every row reads
+            // as NULL from the top. Any other open failure must fail the write: leaving the mapping at 0
+            // would publish NULL covered values for rows the column holds.
+            if (!ff.exists(fileName)) {
+                return;
             }
+            // Reset the lazy read maps, or ensureCoveredColumnReadMaps() would early-return on arrays
+            // with this slot at 0 and the next covered read on this writer would resolve to NULL.
+            unmapCoveredColumnReads();
+            throw CairoException.critical(errno).put("could not open covered column [file=").put(fileName).put(']');
+        }
+        try {
+            long fileSize = ff.length(fd);
+            if (fileSize > 0) {
+                long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                if (mapped == FilesFacade.MAP_FAILED) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not mmap covered column [file=").put(fileName)
+                            .put(", size=").put(fileSize).put(']');
+                }
+                addrs[idx] = mapped;
+                sizes[idx] = fileSize;
+            }
+        } catch (Throwable th) {
+            // same reset as for the failed open above
+            unmapCoveredColumnReads();
+            throw th;
+        } finally {
+            ff.close(fd); // mmap keeps data accessible after FD close
         }
     }
 

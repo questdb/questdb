@@ -25,19 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.TextPlanSink;
-import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 /**
  * Covers the JIT-compiled probe filter of the fused hash join GROUP BY: which shapes reach
@@ -46,10 +44,11 @@ import org.junit.Test;
  */
 public class HashJoinGroupByJitFilterTest extends AbstractCairoTest {
     private static final String INTERPRETED = "Async Hash Join Group By";
+    // A RIGHT join keeps the ordinary plan for a filter on its preserved input, the probe, which
+    // reduces the rows that the ordinary plan hashes, so no RIGHT join takes a probe filter.
     private static final String[] JOINS = {
             " FROM r JOIN p ON r.plant_id = p.plant_id",
-            " FROM r LEFT JOIN p ON r.plant_id = p.plant_id",
-            " FROM p RIGHT JOIN r ON r.plant_id = p.plant_id"
+            " FROM r LEFT JOIN p ON r.plant_id = p.plant_id"
     };
     private static final String JIT = "Async JIT Hash Join Group By";
     private static final String KEYED_SELECT = "SELECT p.country, count(*) pairs, sum(r.energy_kwh) energy";
@@ -110,8 +109,8 @@ public class HashJoinGroupByJitFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
-                for (boolean sharded : new boolean[]{false, true}) {
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                for (boolean isSharded : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
                     for (String join : JOINS) {
                         assertDifferential(KEYED_SELECT + join + " WHERE r.energy_kwh > 50 ORDER BY country", context, JIT);
                         assertDifferential(SCALAR_SELECT + join + " WHERE r.energy_kwh > 50", context, JIT);
@@ -209,28 +208,6 @@ public class HashJoinGroupByJitFilterTest extends AbstractCairoTest {
                         + JOINS[1] + " WHERE r.energy_kwh > 50 ORDER BY country", context, JIT);
             }
         });
-    }
-
-    private static AsyncHashJoinGroupByRecordCursorFactory fused(RecordCursorFactory factory) {
-        while (factory != null && !(factory instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
-            factory = factory.getBaseFactory();
-        }
-        Assert.assertNotNull(factory);
-        return (AsyncHashJoinGroupByRecordCursorFactory) factory;
-    }
-
-    private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
-        TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, context);
-        return sink.getSink().toString();
-    }
-
-    private static String result(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(context)) {
-            StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
-            return sink.toString();
-        }
     }
 
     // Compares the fused results against the ordinary plan's, then pins the plan type name,

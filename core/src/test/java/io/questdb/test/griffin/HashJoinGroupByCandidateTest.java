@@ -38,6 +38,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -52,6 +53,7 @@ import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
@@ -89,13 +91,13 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                         // Narrower numeric arguments that reach a DOUBLE, SHORT or INT parameter without a cast.
                         "count(i::short)", "stddev_pop(i)", "var_samp(l)", "ksum(i::byte)", "sum(i::byte)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
-                        Assert.assertTrue(expression, HashJoinGroupByCandidate.supportsAggregate(function));
+                        Assert.assertTrue(expression, HashJoinGroupByCandidate.isSupportedAggregate(function));
                     }
                 }
                 for (String expression : new String[]{"first(d)", "last(d)", "count_distinct(i)", "sum(rnd_double())", "mode(d)",
                         "arg_min(d, l)", "corr(d, rnd_double())", "stddev_pop(l::timestamp)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
-                        Assert.assertFalse(expression, HashJoinGroupByCandidate.supportsAggregate(function));
+                        Assert.assertFalse(expression, HashJoinGroupByCandidate.isSupportedAggregate(function));
                     }
                 }
             }
@@ -118,7 +120,35 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 Assert.assertNotNull(candidate.getBuildOnFilter());
                 Assert.assertTrue(candidate.isInputSwapped());
                 Assert.assertEquals(0, candidate.getRequiredBuildColumns().size());
+                // The build scan's WHERE filter runs on the build's frames as well, so its columns are
+                // no payload either: p builds, the second of two empty inputs, and copies only the
+                // aggregate's installed_kwp, column 2.
+                candidate = candidate(compiler,
+                        "select r.plant_id, sum(p.installed_kwp) from r join p on r.plant_id=p.plant_id where p.long_key > 0");
+                Assert.assertNotNull(candidate);
+                Assert.assertEquals("p", candidate.getBuildModel().getTableName().toString());
+                Assert.assertEquals("[2]", candidate.getRequiredBuildColumns().toString());
+                // Neither build filter copies its columns, so a filter over a variable-size column,
+                // which the row heap cannot copy, qualifies.
+                execute("alter table p add column name varchar");
+                execute("alter table p add column tag string");
+                candidate = candidate(compiler,
+                        "select r.plant_id, sum(p.installed_kwp) from r join p on r.plant_id=p.plant_id where p.name ~ 'x' and p.tag = 't'");
+                Assert.assertNotNull(candidate);
+                Assert.assertEquals("p", candidate.getBuildModel().getTableName().toString());
+                Assert.assertEquals("[2]", candidate.getRequiredBuildColumns().toString());
+                candidate = candidate(compiler,
+                        "select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and p.name ~ 'x' and p.tag = 't'");
+                Assert.assertNotNull(candidate);
+                Assert.assertNotNull(candidate.getBuildOnFilter());
+                Assert.assertEquals(0, candidate.getRequiredBuildColumns().size());
             }
+            // The joined record reads a variable-size build column as a payload: as an aggregate
+            // argument, a grouping key, a post-join filter, or an ON condition that reads the probe too.
+            assertCandidate("select r.plant_id, count(p.name) from r left join p on r.plant_id=p.plant_id and p.name ~ 'x'", false);
+            assertCandidate("select p.tag, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and p.tag = 't'", false);
+            assertCandidate("select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id where p.name ~ 'x'", false);
+            assertCandidate("select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and length(p.name) > r.plant_id", false);
             assertCandidate("select p.country, sum(r.energy_kwh) from p right join r on r.plant_id=p.plant_id and r.energy_kwh > 0", false);
             assertCandidate("select p.country, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and (p.installed_kwp > 0 or r.energy_kwh > 0)", false);
             assertCandidate("select p.country, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id where p.installed_kwp > 0 or r.energy_kwh > 0", false);
@@ -139,11 +169,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     return false;
                 }
             })) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsAggregate(aggregate));
+                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedAggregate(aggregate));
             }
             try (Function aggregate = new SumDoubleGroupByFunction(DoubleColumn.newInstance(0)) {
             }) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsAggregate(aggregate));
+                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedAggregate(aggregate));
             }
         });
     }
@@ -318,11 +348,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             for (String sql : new String[]{"r", "select energy_kwh, plant_id from r", "r where energy_kwh > 0", "r where reading_ts >= '2020-01-01'"}) {
                 try (RecordCursorFactory factory = select(sql)) {
                     // QueryProgress is the public compiler wrapper; it owns the tested factory.
-                    Assert.assertTrue(sql, HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
+                    Assert.assertTrue(sql, HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
                 }
             }
             try (RecordCursorFactory factory = select("select * from long_sequence(5)")) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
+                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
             }
         });
     }
@@ -334,7 +364,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             execute("insert into r values (1, '2020-01-01', 10, 100, 1, 'a')");
             try (RecordCursorFactory factory = select("select energy_kwh from r")) {
                 for (int pass = 0; pass < 2; pass++) {
-                    Assert.assertTrue(HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
+                    Assert.assertTrue(HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(10.0, cursor.getRecord().getDouble(0), 0);
@@ -557,6 +587,115 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         });
     }
 
+    // A PG client that leaves a parameter type unspecified, as pgjdbc's setTimestamp() does, leaves
+    // the bind variable undefined until a compile infers its type.
+    @Test
+    public void testUndefinedBindVariablesInInputWhereClauses() throws Exception {
+        assertMemoryLeak(() -> {
+            // rn has more rows than pn, so an INNER join builds pn. The designated timestamp is in
+            // nanoseconds: interval extraction gives a bind variable that type, while a comparison
+            // that FunctionParser resolves would give it microseconds.
+            execute("CREATE TABLE rn (plant_id INT, reading_ts TIMESTAMP_NS, energy_kwh DOUBLE) TIMESTAMP(reading_ts) PARTITION BY DAY");
+            execute("CREATE TABLE pn (plant_id INT, country SYMBOL, installed_kwp DOUBLE)");
+            execute("""
+                    INSERT INTO rn SELECT (x % 4)::INT, ('2020-01-01'::TIMESTAMP + x * 3_600_000_000L)::TIMESTAMP_NS, x
+                    FROM long_sequence(48)""");
+            execute("INSERT INTO pn SELECT (x % 4)::INT, 'C' || (x % 2), x FROM long_sequence(4)");
+            final String select = "SELECT pn.country, sum(rn.energy_kwh) e, count(*) n FROM ";
+            final String on = " ON rn.plant_id = pn.plant_id";
+            final String interval = " WHERE rn.reading_ts >= $1 AND rn.reading_ts < $2";
+            // [sql, the types that both plans infer, whether the analysis accepts it, whether the fused
+            // plan runs, values bound as text]
+            final String[][] queries = {
+                    // The analysis leaves an input's own WHERE clause unparsed, and the compile of the
+                    // input infers the types, as the ordinary compile does: the fused plan compiles its
+                    // inputs in the ordinary plan's order, the input first in join order first.
+                    {select + "rn JOIN pn" + on + interval + " AND pn.country = $3 ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS STRING", "true", "true", "2020-01-01T05", "2020-01-02T03", "C1"},
+                    {select + "rn LEFT JOIN pn" + on + interval + " ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "rn JOIN pn" + on + " WHERE rn.reading_ts IN $1 ORDER BY 1",
+                            "STRING", "true", "true", "2020-01-02"},
+                    // The analysis leaves these unparsed clauses' checks to isSupportedFramedInput(),
+                    // which keeps the ordinary plan for the scan filter that the workers would run:
+                    // a cast to SYMBOL does not support parallelism, and rnd_double() is not stable
+                    // within an execution. The rnd_double() conjunct is true on every row.
+                    {select + "rn JOIN pn" + on + interval + " AND rn.plant_id::SYMBOL <> 'z' ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "rn JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
+                    // These build the first input in join order, so the fused plan compiles the build
+                    // before the probe. A RIGHT join preserves rn. With no WHERE clause on rn, the
+                    // analysis accepts it and leaves the bind variable in pn's own WHERE clause to the
+                    // compile of pn. When rn's own WHERE clause reduces the rows that the ordinary
+                    // plan hashes, the analysis rejects the RIGHT join before it reads a clause.
+                    {select + "pn JOIN rn" + on + interval + " ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn RIGHT JOIN rn" + on
+                            + " ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T02"},
+                    {select + "pn RIGHT JOIN rn" + on + interval + " ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
+                    // The fused compile drops the build it compiled first when either input's scan
+                    // filter does not qualify. In the second query the build, pn, keeps a JIT-compiled
+                    // scan filter, so assertMemoryLeak() fails unless the fused compile frees the build
+                    // that rn's scan filter makes it drop.
+                    {select + "pn JOIN rn" + on + interval + " AND rn.plant_id::SYMBOL <> 'z' ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "pn JOIN rn" + on + interval + " AND rn.plant_id::SYMBOL <> 'z' AND pn.installed_kwp > 1.5 ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "pn JOIN rn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
+                    // A bind variable in both inputs takes the type that the compile of the first input
+                    // in join order infers: a microsecond one from pn's comparison, and a string one
+                    // from length(), which the comparison in rn then reads as a number.
+                    {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn JOIN rn" + on
+                            + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "true", "true", "2020-01-01T05"},
+                    {select + "(SELECT * FROM pn WHERE dateadd('h', plant_id, '2020-01-01'::TIMESTAMP) < $1) pn RIGHT JOIN rn" + on
+                            + " WHERE rn.reading_ts >= $1 ORDER BY 1", "TIMESTAMP", "false", "false", "2020-01-01T05"},
+                    {select + "(SELECT * FROM pn WHERE length($1) > 0) pn JOIN rn" + on + " WHERE rn.energy_kwh > $1 ORDER BY 1",
+                            "STRING", "true", "true", "20"},
+                    // The fused plan parses an aggregate, a post-join filter and an ON condition in an
+                    // order of its own.
+                    {"SELECT pn.country, sum(rn.energy_kwh * $1) FROM rn JOIN pn" + on + " WHERE rn.reading_ts >= $2 ORDER BY 1",
+                            "DOUBLE TIMESTAMP_NS", "false", "false", "2", "2020-01-02T03"},
+                    {"SELECT pn.country, sum(rn.energy_kwh * $1) FROM pn JOIN rn" + on + " WHERE rn.reading_ts >= $2 ORDER BY 1",
+                            "DOUBLE TIMESTAMP_NS", "false", "false", "2", "2020-01-02T03"},
+                    {select + "rn JOIN pn" + on + " WHERE rn.energy_kwh > pn.installed_kwp + $1 ORDER BY 1",
+                            "DOUBLE", "false", "false", "20"},
+                    // A LEFT join keeps its WHERE clause on pn above the join, a post-join filter that
+                    // reads pn alone. The analysis stops deferring bind variables once it leaves rn's
+                    // own WHERE clause, so it rejects $2 rather than leaving it unparsed. The RIGHT
+                    // join keeps the same post-join filter, but rn's own WHERE clause reduces the rows
+                    // that the ordinary plan hashes, so the analysis rejects it before it reads a
+                    // clause.
+                    {select + "rn LEFT JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "false", "false", "2020-01-01T05", "2"},
+                    {select + "pn RIGHT JOIN rn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "false", "false", "2020-01-01T05", "2"},
+                    {select + "rn LEFT JOIN pn" + on + " AND pn.installed_kwp > $1 ORDER BY 1",
+                            "DOUBLE", "false", "false", "2"},
+                    {"SELECT pn.country, sum(rn.energy_kwh + $1) FROM rn JOIN pn" + on + " WHERE rn.energy_kwh > $1 ORDER BY 1",
+                            "DOUBLE", "false", "false", "20"}
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String[] query : queries) {
+                    bindVariableService.clear();
+                    Assert.assertEquals(query[0], Boolean.parseBoolean(query[2]), candidate(compiler, query[0]) != null);
+                    // The analysis defines no type either way.
+                    Assert.assertEquals(query[0], 0, bindVariableService.getIndexedVariableCount());
+                }
+            }
+            try (SqlExecutionContextImpl context = HashJoinGroupByQualificationTest.context(engine, 4)) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                for (String[] query : queries) {
+                    final String ordinary = undefinedBindOutcome(query, context, false, false);
+                    Assert.assertEquals(query[0], "types: " + query[1], ordinary.substring(0, ordinary.indexOf('\n')));
+                    Assert.assertEquals(query[0], ordinary, undefinedBindOutcome(query, context, true, Boolean.parseBoolean(query[3])));
+                }
+            }
+        });
+    }
+
     @Test
     public void testUnsupportedKeyTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -572,9 +711,169 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         });
     }
 
-    private void assertCandidate(String sql, boolean expected) throws Exception {
+    @Test
+    public void testVariableSizeBuildOnFilterFollowsTableSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("ALTER TABLE p ADD COLUMN name VARCHAR");
+            execute("ALTER TABLE p ADD COLUMN tag STRING");
+            execute("ALTER TABLE p ADD COLUMN bin BINARY");
+            execute("ALTER TABLE p ADD COLUMN arr DOUBLE[]");
+            execute("ALTER TABLE p ADD COLUMN bin2 BINARY");
+            execute("ALTER TABLE p ADD COLUMN arr2 DOUBLE[]");
+            execute("ALTER TABLE p ADD COLUMN ts TIMESTAMP");
+            // p, the build of both outer joins, holds two rows and r, the probe, one.
+            execute("INSERT INTO p (plant_id, country, installed_kwp, name, tag) VALUES (1, 'x', 5, 'x', 't'), (2, 'y', 7, 'y', 's')");
+            execute("INSERT INTO r (plant_id, reading_ts, energy_kwh) VALUES (1, '2020-01-01', 10)");
+            bindVariableService.setStr(0, "x");
+            final String[] froms = {
+                    "SELECT r.plant_id, sum(r.energy_kwh) FROM r LEFT JOIN p ON r.plant_id = p.plant_id AND ",
+                    "SELECT r.plant_id, sum(r.energy_kwh) FROM p RIGHT JOIN r ON r.plant_id = p.plant_id AND "
+            };
+            // ON conditions on the build alone that read a column the row heap cannot copy, by
+            // itself or inside a function, and do more than compare columns, constants and bind
+            // variables. One expensive operand of AND or OR, on either side, makes the whole
+            // condition expensive, and so does a function call on either side of a comparison,
+            // as in lower(p.country) = p.name. A STRING, VARCHAR, BINARY or ARRAY value that a
+            // function or a cast computes from a fixed-size or SYMBOL column makes a condition
+            // expensive when something other than a comparison reads it: a regular expression,
+            // LIKE, IN or a function call, at any depth, an argument of a function with more
+            // than two of them included.
+            final String[] expensiveConditions = {
+                    "lower(p.country) ~ 'x'",
+                    "p.country::VARCHAR ~ 'x'",
+                    "p.country::VARCHAR ~ $1",
+                    "p.installed_kwp::VARCHAR ~ '5'",
+                    "lower(p.country) LIKE '%x%'",
+                    "lower(p.country) IN ('x', 'y')",
+                    "length(lower(p.country)) > 0",
+                    "concat('a', 'b', p.country) ~ 'x'",
+                    "coalesce(length(lower(p.country)), 0, 1) > 0",
+                    "CASE WHEN p.installed_kwp > 0 THEN length(lower(p.country)) ELSE 0 END > 1",
+                    "p.installed_kwp > 0 AND lower(p.country) ~ 'x'",
+                    "(p.installed_kwp > 0 OR p.country::VARCHAR LIKE 'x%')",
+                    "NOT lower(p.country) ~ 'x'",
+                    "lower(p.country) = p.name",
+                    "p.name ~ 'x'",
+                    "NOT p.name ~ 'x'",
+                    "p.name LIKE 'x%'",
+                    "p.tag IN ('t', 's')",
+                    "p.tag::VARCHAR = 't'",
+                    "array_sum(p.arr) > 0.5",
+                    "length(p.name) > 0",
+                    "p.name = 'x' AND p.name ~ 'y'",
+                    "p.name ~ 'x' AND p.name = 'y'",
+                    "(p.name = 'x' OR p.name ~ 'y')",
+                    "p.name = upper('x')",
+                    "(p.name ~ 'x') = true"
+            };
+            // ON conditions that combine with AND, OR and NOT only comparisons of columns,
+            // constants and bind variables, ARRAY and BINARY columns included. IS NULL and IS NOT
+            // NULL parse as a comparison with a NULL constant.
+            final String[] cheapConditions = {
+                    "p.name = 'x'",
+                    "p.tag = 't'",
+                    "p.name IS NULL",
+                    "p.bin IS NOT NULL",
+                    "p.name <> 'x'",
+                    "p.name <= 'x'",
+                    "p.name = $1",
+                    "p.name = p.tag",
+                    "p.installed_kwp > 0 AND p.tag = 't'",
+                    "NOT (p.name < 'm' OR p.name >= 'x')",
+                    "p.arr = p.arr2",
+                    "p.arr != p.arr2",
+                    "p.bin = p.bin2",
+                    "(p.bin <> p.bin2 OR p.installed_kwp > 0)"
+            };
+            // ON conditions that read fixed-size and SYMBOL columns, and pass a variable-size
+            // value that they compute from them, if any, only to comparisons, with a constant, a
+            // bind variable or another such value. Any function or operator may take a fixed-size
+            // value that they compute, as in abs(p.installed_kwp + 1) > 0, an argument of a
+            // function with more than two of them included. A SYMBOL operator matches the pattern
+            // against the symbol table's values once, not against each row's text.
+            final String[] fixedSizeConditions = {
+                    "p.installed_kwp > 0",
+                    "p.installed_kwp + 1 > 0",
+                    "abs(p.installed_kwp + 1) > 0",
+                    "p.installed_kwp + 1 + 2 > 0",
+                    "coalesce(p.installed_kwp + 1, 0, 1) > 0",
+                    "p.country ~ 'x'",
+                    "p.country LIKE 'x%'",
+                    "lower(p.country) = 'x'",
+                    "lower(p.country) = $1",
+                    "lower(p.country) = upper(p.country)",
+                    "coalesce(p.country, 'z') = 'x'",
+                    "p.country::VARCHAR = 'x'",
+                    "p.installed_kwp::STRING <> '5'",
+                    "to_str(p.ts, 'yyyy') = '2020'",
+                    "concat(p.country, '_') = 'x_'",
+                    "CASE WHEN p.installed_kwp > 0 THEN 'a' ELSE 'b' END = 'a'",
+                    "p.installed_kwp > 0 AND lower(p.country) = 'x'",
+                    "NOT (lower(p.country) = 'x' OR p.country::VARCHAR < 'm')"
+            };
+            for (String from : froms) {
+                // The fused plan would run the condition on each build row, and the ordinary plan
+                // runs it only on the pairs whose keys match, so a build table with more rows than
+                // the probe table keeps the ordinary plan for an expensive condition. Any other
+                // condition costs about as much as the hash insert it spares, so it stays a
+                // candidate of the LEFT join. The RIGHT join, whose build table holds more rows
+                // than the preserved one, is no candidate whatever its condition.
+                final boolean isRight = from == froms[1];
+                for (String condition : expensiveConditions) {
+                    assertCandidate(from + condition, false);
+                }
+                for (String condition : cheapConditions) {
+                    assertCandidate(from + condition, !isRight);
+                }
+                for (String condition : fixedSizeConditions) {
+                    assertCandidate(from + condition, !isRight);
+                }
+            }
+            // Such a candidate of the LEFT join does not presize its key table, and the check of
+            // its condition reads none of the condition's columns as a payload.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String condition : fixedSizeConditions) {
+                    final HashJoinGroupByCandidate candidate = candidate(compiler, froms[0] + condition);
+                    Assert.assertNotNull(condition, candidate);
+                    Assert.assertNotNull(condition, candidate.getBuildOnFilter());
+                    Assert.assertFalse(condition, candidate.isKeyCapacityPresized());
+                    Assert.assertEquals(condition, 0, candidate.getRequiredBuildColumns().size());
+                }
+            }
+            // The build scan's own WHERE clause runs on each build row in both plans, and an INNER
+            // join has no ON condition on the build: the optimizer moves the conjunct into the WHERE
+            // clause of p, which the INNER join probes, as the smaller r builds. The RIGHT join
+            // stays no candidate while its build table holds more rows than the preserved one.
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM r LEFT JOIN (SELECT * FROM p WHERE name ~ 'x') p "
+                    + "ON r.plant_id = p.plant_id", true);
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM (SELECT * FROM p WHERE name ~ 'x') p "
+                    + "RIGHT JOIN r ON r.plant_id = p.plant_id", false);
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM r JOIN p ON r.plant_id = p.plant_id AND p.name ~ 'x'", true);
+            // With as many rows in the probe table as in the build table, each expensive condition
+            // is a candidate, which presizes its key table and reads none of its columns as a
+            // payload.
+            execute("INSERT INTO r (plant_id, reading_ts, energy_kwh) VALUES (2, '2020-01-02', 20)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String from : froms) {
+                    for (String condition : expensiveConditions) {
+                        final HashJoinGroupByCandidate candidate = candidate(compiler, from + condition);
+                        Assert.assertNotNull(condition, candidate);
+                        Assert.assertNotNull(condition, candidate.getBuildOnFilter());
+                        Assert.assertTrue(condition, candidate.isKeyCapacityPresized());
+                        Assert.assertEquals(condition, 0, candidate.getRequiredBuildColumns().size());
+                    }
+                }
+            }
+            // With as many rows in both tables, the RIGHT join over a filtered build is a candidate too.
+            assertCandidate("SELECT r.plant_id, sum(r.energy_kwh) FROM (SELECT * FROM p WHERE name ~ 'x') p "
+                    + "RIGHT JOIN r ON r.plant_id = p.plant_id", true);
+        });
+    }
+
+    private void assertCandidate(String sql, boolean isCandidateExpected) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            Assert.assertEquals(sql, expected, candidate(compiler, sql) != null);
+            Assert.assertEquals(sql, isCandidateExpected, candidate(compiler, sql) != null);
         }
         // All supported and rejected SQL still compile through the existing execution path.
         try (RecordCursorFactory ignored = select(sql)) {
@@ -698,7 +997,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
     }
 
-    private void assertPlanContains(String sql, String expected, boolean fused) throws Exception {
+    private void assertPlanContains(String sql, String expected, boolean isFused) throws Exception {
         try (RecordCursorFactory factory = select("explain " + sql);
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             StringSink plan = new StringSink();
@@ -706,7 +1005,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 plan.put(cursor.getRecord().getStrA(0)).put('\n');
             }
             Assert.assertTrue(plan.toString(), plan.toString().contains(expected));
-            Assert.assertEquals(plan.toString(), fused, plan.toString().contains("Hash Join Group By"));
+            Assert.assertEquals(plan.toString(), isFused, plan.toString().contains("Hash Join Group By"));
         }
     }
 
@@ -847,5 +1146,31 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     private void createTables() throws Exception {
         execute("create table r (plant_id int, reading_ts timestamp, energy_kwh double, irradiance_wm2 double, long_key long, sym_key symbol) timestamp(reading_ts) partition by month");
         execute("create table p (plant_id int, country symbol, installed_kwp double, long_key long, sym_key symbol)");
+    }
+
+    // Compiles [sql, types, candidate, fused, values...] with every bind variable undefined, as PG
+    // Parse leaves an unspecified parameter, binds the values as text, as PG Bind does for one, and
+    // returns the inferred types and the rows, read twice.
+    private String undefinedBindOutcome(String[] query, SqlExecutionContextImpl context, boolean isEnabled, boolean isFused) throws Exception {
+        bindVariableService.clear();
+        context.setParallelHashJoinGroupByEnabled(isEnabled);
+        try (RecordCursorFactory factory = engine.select(query[0], context)) {
+            final String plan = HashJoinGroupByQualificationTest.plan(factory, context);
+            Assert.assertEquals(plan, isFused, plan.contains("Hash Join Group By"));
+            final StringSink outcome = new StringSink();
+            outcome.put("types:");
+            for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
+                final Function variable = bindVariableService.getFunction(i);
+                outcome.put(' ').put(variable == null ? "null" : ColumnType.nameOf(variable.getType()));
+            }
+            for (int i = 4; i < query.length; i++) {
+                bindVariableService.setStr(i - 4, query[i]);
+            }
+            outcome.put('\n').put(HashJoinGroupByQualificationTest.result(factory, context));
+            outcome.put(HashJoinGroupByQualificationTest.result(factory, context));
+            return outcome.toString();
+        } finally {
+            context.setParallelHashJoinGroupByEnabled(true);
+        }
     }
 }

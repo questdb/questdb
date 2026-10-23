@@ -95,7 +95,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
 
     @Override
     public double getDouble(Record rec) {
-        // setEmpty() and setNull() store LONG_NULL, which is not a valid histogram index
+// setEmpty() and setNull() store LONG_NULL, which is not a valid histogram index
         final long index = rec.getLong(valueIndex);
         if (index < 0 || index >= histograms.size()) {
             return Double.NaN;

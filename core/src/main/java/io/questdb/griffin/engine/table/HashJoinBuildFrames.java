@@ -50,6 +50,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -82,20 +83,30 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * per execution, and every reader's fixed-size and SYMBOL getters read through it, returning the
  * nulls a page frame record returns for a column the frame lacks. A Parquet frame, and a getter
  * without such a path, reads through the reader's own page frame memory pool and record over the
- * shared, read-only address cache. A Parquet frame decodes into that pool, so matches that
- * alternate between Parquet row groups decode them again; the fused plan accepts that cost.
+ * shared, read-only address cache. That pool decodes the payload columns of a Parquet frame alone:
+ * no reader reads another column of the build scan, such as a key, which the key table holds, or a
+ * column that only the build's own filters read. Every reader of the execution decodes and caches
+ * the row groups that its own matches land on, so the readers share the configured Parquet decode
+ * cache budget, see {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, int)},
+ * and a reader whose matches alternate between more row groups than its share holds decodes them
+ * again. To spare the readers that cost, the owner copies a payload that fits the copy whenever
+ * the build's Parquet frames decode past a reader's share, see
+ * {@link #isReaderCacheExceeded(long)}, for a probe whose matches can land on as many of those
+ * frames as the copy decodes, and otherwise when the probe repays the copy; see
+ * {@code AsyncHashJoinGroupByAtom.maybeCopyPayload()}. A payload that the copy cannot hold keeps
+ * that cost.
  * <p>
  * Reading a column where it lives costs a cache line per payload column per match, which a probe
  * that matches every build row many times pays over and over. For such a build the owner calls
  * {@link #copyPayload(FrozenHashJoinBuild, SqlExecutionCircuitBreaker)} before the probes run: one
  * forward pass over the build rows copies their payload columns, row after row in build order,
  * into a block of fixed-size rows, and every reader then reads the copied row that the match's
- * ordinal names. The pass reads each frame once, so it decodes each Parquet row group once as
- * well. A parallel build keeps each hash partition's rows in one region of the heap, or each
- * frame's rows grouped by hash bucket, so its rows are not in build order; its copy runs one task
- * per frame instead, each copying the rows its frame kept through a copy reader of its thread, see
- * {@link #beginCopy}. Only fixed-size payload
- * columns copy; a build with any other payload column keeps reading where the columns live.
+ * ordinal names. The pass reads each frame once, so it decodes the payload columns of each Parquet
+ * row group once as well. A parallel build keeps each hash partition's rows in one region of the
+ * heap, or each frame's rows grouped by hash bucket, so its rows are not in build order; its copy
+ * runs one task per frame instead, each copying the rows its frame kept through a copy reader of
+ * its thread, see {@link #beginCopy}. Only fixed-size payload columns copy; a build with any other
+ * payload column keeps reading where the columns live.
  */
 public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCloseable {
     // The copy pass checks the breaker once per this many rows; a power of two.
@@ -108,15 +119,23 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     private final int copyRowSize;
     // One reader per thread of a copy, kept across executions; see beginCopy().
     private final ObjList<Reader> copyReaders = new ObjList<>();
+    // Bytes a row that a reader decodes a Parquet frame to: the size of every payload column, which
+    // the planner admits as fixed-size alone; see isReaderCacheExceeded().
+    private final int decodedRowSize;
     private final LongList frameRowCounts = new LongList();
     // Page address of payload column c of native frame f at f * payloadColumns.length + c; zero for a
     // column the frame lacks, and for every column of a Parquet frame, which the readers decode.
     private final LongList payloadAddresses = new LongList();
+    // The build scan columns of the payload, the only columns of a Parquet frame that a reader's pool
+    // decodes; every pool reads it, and none changes it.
+    private final IntHashSet payloadColumnSet = new IntHashSet();
     // Build scan column of each payload column, in payload order.
     private final int[] payloadColumns;
     private final boolean[] payloadSymbols;
     // Column type tag of each payload column, in payload order.
     private final int[] payloadTypes;
+    // The most probe readers that one execution reads through, which share the Parquet decode cache budget.
+    private final int readerCount;
     // The copied payload of this execution, or zero while readers read the columns where they live.
     // The owner writes it before the probes are dispatched, which publishes it to their workers.
     private long copyAddress;
@@ -129,22 +148,51 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     private long pendingCopySize;
     private long rowCount;
 
+    /**
+     * Frames of a build that stages no key, read through one probe reader per execution.
+     */
     public HashJoinBuildFrames(CairoConfiguration configuration, IntList payloadColumns, RecordMetadata buildMetadata) {
+        this(configuration, payloadColumns, buildMetadata, 1);
+    }
+
+    /**
+     * Frames whose probe readers, at most {@code readerCount} of them per execution, share the
+     * configured Parquet decode cache budget. A reader caches the Parquet row groups it decodes for
+     * the whole execution, and the matches of every reader land on any row group, so a full budget
+     * per reader would let an execution hold the decoded build once per reader. Each reader takes an
+     * even share of the budget instead, but no less than a quarter of it, the budget of a page frame
+     * cursor that walks its frames in order: the readers of an execution hold at most
+     * max(budget, readerCount * budget / 4) between them, and a reader whose matches land on more
+     * row groups than its share holds decodes them again, see {@link #isReaderCacheExceeded(long)}.
+     * The copy readers walk the build's frames in order, and keep the configured budget.
+     */
+    public HashJoinBuildFrames(
+            CairoConfiguration configuration,
+            IntList payloadColumns,
+            RecordMetadata buildMetadata,
+            int readerCount
+    ) {
+        assert readerCount > 0;
         this.configuration = configuration;
+        this.readerCount = readerCount;
         final int n = payloadColumns.size();
         this.payloadColumns = new int[n];
         this.payloadSymbols = new boolean[n];
         this.payloadTypes = new int[n];
         final int[] offsets = new int[n];
         boolean isCopyable = n > 0;
+        int decodedRowSize = 0;
         int offset = 0;
         int rowAlignment = 1;
         for (int i = 0; i < n; i++) {
             final int column = payloadColumns.getQuick(i);
-            final int type = ColumnType.tagOf(buildMetadata.getColumnType(column));
+            final int columnType = buildMetadata.getColumnType(column);
+            final int type = ColumnType.tagOf(columnType);
             this.payloadColumns[i] = column;
             this.payloadSymbols[i] = type == ColumnType.SYMBOL;
             this.payloadTypes[i] = type;
+            payloadColumnSet.add(column);
+            decodedRowSize += Math.max(ColumnType.sizeOf(columnType), 0);
             final int size = getCopySize(type);
             if (size < 0) {
                 isCopyable = false;
@@ -159,6 +207,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
         this.copyOffsets = isCopyable ? offsets : new int[0];
         this.copyRowSize = isCopyable ? (offset + rowAlignment - 1) & -rowAlignment : 0;
+        this.decodedRowSize = decodedRowSize;
     }
 
     /**
@@ -178,8 +227,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      * charged to the execution's memory tracker; {@link #clear()} releases it, which the caller's
      * failure path runs.
      */
-    public void beginCopy(FrozenHashJoinBuild build, int readerCount, SqlExecutionCircuitBreaker circuitBreaker) {
-        assert copyRowSize > 0 && copyAddress == 0 && pendingCopyAddress == 0 && frameCursor != null && readerCount > 0;
+    public void beginCopy(FrozenHashJoinBuild build, int copyReaderCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert copyRowSize > 0 && copyAddress == 0 && pendingCopyAddress == 0 && frameCursor != null && copyReaderCount > 0;
         final long rowCount = build.getRowCount();
         assert rowCount > 0;
         if (rowCount > (Long.MAX_VALUE - copyRowSize) / copyRowSize) {
@@ -187,12 +236,15 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
         final long size = rowCount * copyRowSize;
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-        while (copyReaders.size() < readerCount) {
-            copyReaders.add(new Reader());
+        while (copyReaders.size() < copyReaderCount) {
+            // A copy reader walks its frames in order, and the MONOTONIC hint caps its cache at four
+            // row groups and a quarter of its budget, so it keeps the configured budget rather than
+            // a probe reader's share.
+            copyReaders.add(new Reader(configuration.getSqlParquetCacheMemorySize()));
         }
         pendingCopyAddress = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
         pendingCopySize = size;
-        for (int i = 0; i < readerCount; i++) {
+        for (int i = 0; i < copyReaderCount; i++) {
             // A copying thread reads its rows in build order, so a Parquet row group decodes once.
             copyReaders.getQuick(i).reopen(ParquetDecodeHint.MONOTONIC);
         }
@@ -287,6 +339,16 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     }
 
     /**
+     * Bytes of the Parquet decode cache that each probe reader of an execution caches decoded row
+     * groups in: an even share of the configured budget among the readers, but no less than a
+     * quarter of it; see {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, int)}.
+     */
+    public long getReaderCacheSize() {
+        final long cacheSize = configuration.getSqlParquetCacheMemorySize();
+        return Math.max(cacheSize / readerCount, cacheSize / 4);
+    }
+
+    /**
      * Rows of every frame, before any row filter.
      */
     public long getRowCount() {
@@ -298,6 +360,34 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      */
     public SymbolTableSource getSymbolTableSource() {
         return frameCursor;
+    }
+
+    /**
+     * True when a frame that {@link #loadFrames()} walked for the open execution is a Parquet
+     * frame. Each probe reader decodes the Parquet row groups that its matches land on into its own
+     * share of the decode cache, while a payload copy decodes each row group once.
+     */
+    public boolean hasParquetFrames() {
+        return addressCache.hasParquetFrames();
+    }
+
+    /**
+     * True when Parquet frames of this many rows in all decode to more than a probe reader's share
+     * of the decode cache, {@link #getReaderCacheSize()}. A reader decodes the payload columns of a
+     * frame for all its rows, and keeps the frames it decoded until they fill its share, after which
+     * it evicts the least recently used one, so a reader whose matches keep moving between more
+     * frames than its share holds decodes them again and again.
+     * <p>
+     * A reader decodes no other column of the build scan: neither a join key, which the key table
+     * holds, nor a column that only the build's own filters read, its scan's WHERE filter and an
+     * outer join's ON condition on the build alone, which the build decodes once per frame through
+     * pools of its own. The planner admits only fixed-size payload columns, so a frame decodes to the
+     * payload's size a row, which the share's budget counts. A payload column that a type change
+     * turned from a var-size type into a fixed-size one after its partition became Parquet decodes
+     * from the stored text instead, which this count misses.
+     */
+    public boolean isReaderCacheExceeded(long parquetFrameRows) {
+        return parquetFrameRows > getReaderCacheSize() / Math.max(decodedRowSize, 1);
     }
 
     /**
@@ -328,7 +418,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
 
     @Override
     public HashJoinPayloadSource.Reader newReader() {
-        return new Reader();
+        return new Reader(getReaderCacheSize());
     }
 
     /**
@@ -483,8 +573,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         private int recordFrameIndex = -1;
         private long row;
 
-        private Reader() {
-            pool = new PageFrameMemoryPool(configuration);
+        private Reader(long cacheSize) {
+            pool = new PageFrameMemoryPool(configuration, cacheSize);
             final int n = payloadTypes.length;
             long256A = new Long256Impl[n];
             long256B = new Long256Impl[n];
@@ -927,14 +1017,15 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
 
         // Rebinds the reader to the current execution without taking symbol tables: the copy pass
-        // copies a SYMBOL's key and never resolves it.
+        // copies a SYMBOL's key and never resolves it. The reader reads payload columns alone, so its
+        // pool decodes no other column of a Parquet frame.
         private void reopen(ParquetDecodeHint hint) {
             copyRow = 0;
             frameIndex = -1;
             recordFrameIndex = -1;
             isDirect = false;
             pool.setMemoryTracker(memoryTracker);
-            pool.of(addressCache, hint);
+            pool.of(addressCache, hint, payloadColumnSet);
             record.of(frameCursor);
         }
 

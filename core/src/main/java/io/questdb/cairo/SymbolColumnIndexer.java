@@ -122,9 +122,23 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             long partitionTimestamp,
             long partitionNameTxn
     ) {
+        configureFollowerAndWriter(path, name, columnNameTxn, columnMem, columnTop, partitionTimestamp, partitionNameTxn, false);
+    }
+
+    @Override
+    public void configureFollowerAndWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            MemoryMA columnMem,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            boolean allowFreshIfMissing
+    ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn, allowFreshIfMissing);
             this.ff = columnMem.getFilesFacade();
             // we don't own the fd, it comes from column mem
             this.fd = columnMem.getFd();
@@ -185,6 +199,10 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow) {
+        // A commit with no net new rows (loRow == hiRow, e.g.
+        if (hiRow <= loRow) {
+            return;
+        }
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
@@ -258,6 +276,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     public void releaseIndexWriter() {
         Misc.free(writer);
+    }
+
+    @Override
+    public void releaseIndexWriterNoTruncate() {
+        writer.abandon();
     }
 
     @Override

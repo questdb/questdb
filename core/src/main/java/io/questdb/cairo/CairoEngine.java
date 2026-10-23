@@ -190,6 +190,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
+import java.util.function.LongConsumer;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -204,6 +205,9 @@ public class CairoEngine implements Closeable, WriterSource {
     // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
     private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
+    // Bounds the partition compaction requests waiting on PartitionCompactionScanJob; a requester finding it full
+    // retries on its own schedule.
+    private static final int PARTITION_COMPACTION_REQUEST_QUEUE_CAPACITY = 256;
     private static final FiberLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new FiberLocal<>(ObjList::new);
     private static final FiberLocal<StringSink> tlInvalidationReasonSink = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<MatViewRefreshTask> tlMatViewRefreshTask = new FiberLocal<>(MatViewRefreshTask::new);
@@ -248,6 +252,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
+    private final PartitionCompactionRequestQueue partitionCompactionRequestQueue = new PartitionCompactionRequestQueue(PARTITION_COMPACTION_REQUEST_QUEUE_CAPACITY);
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
@@ -394,7 +399,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.dependentViewGraph = createDependentViewGraph();
             this.viewGraph = createViewGraph();
-            this.frameFactory = new FrameFactory(configuration);
+            this.frameFactory = new FrameFactory(configuration, messageBus);
             this.dataID = DataID.open(configuration);
 
             if (completeInit) {
@@ -1232,6 +1237,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b6 = viewWalWriterPool.releaseAll();
         boolean b7 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
+        partitionCompactionRequestQueue.clear();
         partitionOverwriteControl.clear();
         frameFactory.clear();
         copyExportContext.clear();
@@ -2239,6 +2245,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return (int) tableIdGenerator.getNextId();
     }
 
+    public PartitionCompactionRequestQueue getPartitionCompactionRequestQueue() {
+        return partitionCompactionRequestQueue;
+    }
+
     public PartitionOverwriteControl getPartitionOverwriteControl() {
         return partitionOverwriteControl;
     }
@@ -2657,9 +2667,27 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
+    public long getWriterId(TableToken tableToken) {
+        return writerPool.getWriterId(tableToken);
+    }
+
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
         verifyTableToken(tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
+    }
+
+    public TableWriter getWriterOrPublishCommand(
+            TableToken tableToken,
+            @NotNull AsyncWriterCommand asyncWriterCommand,
+            @NotNull LongConsumer publishedWriterIdSink
+    ) {
+        verifyTableToken(tableToken);
+        return writerPool.getWriterOrPublishCommand(
+                tableToken,
+                asyncWriterCommand.getCommandName(),
+                asyncWriterCommand,
+                publishedWriterIdSink
+        );
     }
 
     public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
@@ -3525,7 +3553,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void resetFrameFactory() {
         frameFactory.close();
-        frameFactory = new FrameFactory(configuration);
+        frameFactory = new FrameFactory(configuration, messageBus);
     }
 
     @TestOnly
@@ -4033,7 +4061,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
-                tableToken.getTableId()
+                tableToken.getTableId(),
+                configuration.getCommitMode()
         );
     }
 
@@ -4055,7 +4084,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
-                tableToken.getTableId()
+                tableToken.getTableId(),
+                configuration.getCommitMode()
         );
     }
 

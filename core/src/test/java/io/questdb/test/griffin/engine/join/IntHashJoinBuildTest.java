@@ -661,7 +661,6 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
             RowIdPayloadSource payloads = new RowIdPayloadSource();
             for (boolean hasPayload : new boolean[]{false, true}) {
                 final long rowSize = hasPayload ? 16 : 8;
-                Assert.assertEquals(rowSize, FrozenHashJoinBuild.getRowSize(hasPayload));
                 try (IntHashJoinBuild build = new IntHashJoinBuild(hasPayload, 2, 8)) {
                     build.open(null, NOOP);
                     build.reserve(3, -1);

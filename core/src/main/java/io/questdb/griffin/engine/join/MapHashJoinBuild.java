@@ -177,7 +177,7 @@ public final class MapHashJoinBuild implements Closeable {
             int initialKeyCapacity,
             long initialMapHeapSize,
             long initialRowCapacity,
-            boolean reusable
+            boolean isReusable
     ) {
         final int keyColumnCount = keyTypes.getColumnCount();
         if (keyColumnCount < 1) {
@@ -214,8 +214,8 @@ public final class MapHashJoinBuild implements Closeable {
             close();
             throw th;
         }
-        reusableFrozen = reusable ? new Frozen() : null;
-        reusablePartitionedFrozen = reusable ? new PartitionedFrozen() : null;
+        reusableFrozen = isReusable ? new Frozen() : null;
+        reusablePartitionedFrozen = isReusable ? new PartitionedFrozen() : null;
     }
 
     /**

@@ -348,7 +348,7 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
-    public void setParallelHashJoinGroupByEnabled(boolean enabled) {
+    public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
     }
 
     @Override
