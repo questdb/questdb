@@ -725,6 +725,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testCloseQueuesReadyPostingSealPurgeWhenSpillFileWriteWouldFail() throws Exception {
+        Assume.assumeFalse(mergeAppendEnabled);
         // A pure append no longer rotates .pv on every commit (#7516); compact on every
         // generation so the O3 commits rotate the seal, and its purge, as this test assumes.
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
@@ -2253,7 +2254,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testDeferredPostingSealPurgePublishesReadyEntryAndRetainsFutureEntryWithBacklog() throws Exception {
-        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
         Assume.assumeFalse(mergeAppendEnabled);
 
         assertMemoryLeak(() -> {
@@ -5205,6 +5206,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testParquetLastTransitionPublishesReadyPostingSealPurgesWithBacklog() throws Exception {
+        // A merge-append table never holds its native last partition open in columns[], so the
+        // parquet-last transition that publishes these purges does not run.
+        Assume.assumeFalse(mergeAppendEnabled);
         assertMemoryLeak(() -> {
             final String tableName = "posting_parquet_transition";
             final long partitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
@@ -5261,6 +5265,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testO3PostingSealPurgeContinuesAfterPurgeLogWriteFailure() throws Exception {
+        Assume.assumeFalse(mergeAppendEnabled);
         // A pure append no longer rotates .pv on every commit (#7516); compact on every
         // generation so the O3 commits rotate the seal, and its purge, as this test assumes.
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
@@ -5317,6 +5322,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     @Test
     public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
         Assume.assumeFalse(mergeAppendEnabled);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -11631,7 +11637,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
-                                    Frame forward scan on: t_multisplit
+                                    Frame forward scan on: t_manysplit
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -12102,7 +12108,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
-                                    Frame forward scan on: t_manysplit
+                                    Frame forward scan on: t_multisplit
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -12466,6 +12472,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     @Test
     public void testWalO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
         Assume.assumeFalse(mergeAppendEnabled);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
