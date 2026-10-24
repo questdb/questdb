@@ -137,7 +137,8 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     /**
-     * True when the last purge left a version because a save point still names it ({@link #isVersionHeldByEpoch}).
+     * True when the last purge left a version or a geometry generation because a save point still names it
+     * ({@link #isVersionHeldByEpoch}, {@link #isGeometryGenerationHeldByEpoch}).
      */
     public boolean isLastPurgeHeldByEpoch() {
         return isLastPurgeHeldByEpoch;
@@ -348,6 +349,17 @@ public class ColumnPurgeOperator implements Closeable {
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
+    /**
+     * True when a save point's _txn names the retired geometry generation: a tracker pin lies in
+     * [firstWriterTxn, updateTxn), the txns whose _txn points at it. Like isVersionHeldByEpoch, checked in
+     * every mode: a recovery that falls back to that save point reads this file.
+     */
+    private boolean isGeometryGenerationHeldByEpoch(long firstWriterTxn, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(firstWriterTxn, task.getUpdateTxn());
+    }
+
     private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
@@ -455,11 +467,19 @@ public class ColumnPurgeOperator implements Closeable {
                             continue;
                         }
                         // When a backup checkpoint is in progress its copied _txn may still name this generation.
-                        if (engine.getCheckpointStatus().isInProgress()
+                        // The save point is checked in every mode, STARTUP_ONLY included, as in the column branch:
+                        // it is not a reader, and a recovery that falls back to it restores a _txn naming this file.
+                        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean isFirstRecordVerified = firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY;
+                        final boolean isHeldByEpoch = !checkpointInProgress && isFirstRecordVerified
+                                && isGeometryGenerationHeldByEpoch(firstWriterTxn, task);
+                        if (checkpointInProgress
+                                || isHeldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY
-                                && firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY
+                                && isFirstRecordVerified
                                 && hasReadersOnGeometryGeneration(firstWriterTxn, task.getUpdateTxn()))) {
                             allDone = false;
+                            isLastPurgeHeldByEpoch |= isHeldByEpoch;
                             LOG.debug().$("cannot purge, geometry generation is in use [path=").$(path).I$();
                             continue;
                         }
