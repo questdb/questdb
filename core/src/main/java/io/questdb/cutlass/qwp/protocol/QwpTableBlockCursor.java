@@ -52,6 +52,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * }</pre>
  */
 public class QwpTableBlockCursor implements Mutable {
+    private static final int SCHEMA_CACHE_INITIAL_BYTES = 64;
 
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
@@ -62,7 +63,7 @@ public class QwpTableBlockCursor implements Mutable {
     // row per message). Survives clear(): it is a cache, not block state. A
     // byte-identical section with the same column count is the same schema,
     // because the section is exactly columnCount self-delimiting definitions.
-    private byte[] cachedSchemaBytes = new byte[64];
+    private byte[] cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
     private int cachedSchemaColumnCount = -1;
     private int cachedSchemaLen;
     private QwpSchema cachedSchema;
@@ -425,7 +426,8 @@ public class QwpTableBlockCursor implements Mutable {
     }
 
     long getRetainedCacheBytes() {
-        long bytes = 0;
+        // The cached schema section; the parsed QwpSchema it backs is of the same order.
+        long bytes = cachedSchema != null ? cachedSchemaBytes.length : 0;
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
             if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
@@ -442,6 +444,13 @@ public class QwpTableBlockCursor implements Mutable {
 
     void releaseCachedResources() {
         clear();
+        // A failed parse may have just cached a wide schema: let it go with the rest.
+        cachedSchema = null;
+        cachedSchemaColumnCount = -1;
+        cachedSchemaLen = 0;
+        if (cachedSchemaBytes.length > SCHEMA_CACHE_INITIAL_BYTES) {
+            cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
+        }
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
             if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
