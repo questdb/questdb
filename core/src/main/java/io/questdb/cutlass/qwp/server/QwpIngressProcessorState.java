@@ -262,6 +262,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
+    // Commit batch: consecutive plain (non-deferred) frames from one receive pass
+    // whose rows are appended but committed together, as one WAL txn, when the
+    // pass drains or the batch fills. Their sequences are withheld from the
+    // cumulative-ack watermark until that commit. See the upgrade processor's
+    // handleBinaryMessage. Reset by clear(), which rolls the rows back.
+    private long commitBatchBytes;
+    private int commitBatchFrames;
+    private long firstCommitBatchSequence = -1;
+    private long lastCommitBatchSequence = -1;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
@@ -344,6 +353,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // the deferred group is gone, its frames were never acked, and the
         // client replays them from its acked watermark.
         uncommittedDeferredRows = false;
+        resetCommitBatch();
     }
 
     /**
@@ -417,6 +427,73 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
         }
         return durableProgressSnapshot;
+    }
+
+    /**
+     * Adds a frame whose rows are appended but not yet committed to the commit
+     * batch; its sequence stays out of the ack watermark until the batch commits.
+     */
+    public void addToCommitBatch(long seq, int frameBytes) {
+        if (commitBatchFrames == 0) {
+            firstCommitBatchSequence = seq;
+        }
+        lastCommitBatchSequence = seq;
+        commitBatchFrames++;
+        commitBatchBytes += frameBytes;
+    }
+
+    public long getCommitBatchBytes() {
+        return commitBatchBytes;
+    }
+
+    public int getCommitBatchFrames() {
+        return commitBatchFrames;
+    }
+
+    public long getFirstCommitBatchSequence() {
+        return firstCommitBatchSequence;
+    }
+
+    public long getLastCommitBatchSequence() {
+        return lastCommitBatchSequence;
+    }
+
+    public boolean isCommitBatchPending() {
+        return commitBatchFrames > 0;
+    }
+
+    /**
+     * Forgets the commit batch: its rows were committed by a commit that covered
+     * them, or rolled back. The caller owns the watermark consequences.
+     */
+    public void resetCommitBatch() {
+        commitBatchFrames = 0;
+        commitBatchBytes = 0;
+        firstCommitBatchSequence = -1;
+        lastCommitBatchSequence = -1;
+    }
+
+    /**
+     * Restores every writer to the savepoint {@link #setCommitBatchSavepoints()}
+     * marked before the current frame, keeping the commit batch's rows and
+     * dropping only this frame's. False when that is impossible (distressed
+     * writers); the batch's rows are then lost and must not be acknowledged.
+     */
+    public boolean rollbackToCommitBatchSavepoints() {
+        return tudCache.rollbackToSavepoints();
+    }
+
+    public void setCommitBatchSavepoints() {
+        tudCache.setSavepoints();
+    }
+
+    /**
+     * Clears this frame's error so a following {@link #commit()} reports its own.
+     * Used only to commit the batch the frame failed after.
+     */
+    public void clearErrorForBatchSalvage() {
+        error.clear();
+        currentStatus = Status.OK;
     }
 
     public void commit() {

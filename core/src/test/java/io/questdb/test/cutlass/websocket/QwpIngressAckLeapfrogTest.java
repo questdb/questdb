@@ -289,6 +289,116 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Plain frames already in the receive buffer share one WAL commit, and the
+     * single ack after it covers all of them.
+     */
+    @Test
+    public void testPipelinedFramesShareOneCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tab"));
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(400L, 4_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(500L, 5_000_000L))
+            );
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals(5, reader.size());
+            }
+            Assert.assertEquals("five frames in one receive pass must commit as one WAL txn",
+                    1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tab")) - txnBefore);
+            Assert.assertEquals(4, maxCumulativeOkAck(sent));
+            Assert.assertEquals("one ack after the batch commit", 1, countOkAcks(sent));
+        });
+    }
+
+    /**
+     * A frame that fails inside a commit batch costs only its own rows: the
+     * frames before it are committed and acked before its error goes out, as
+     * they would be committed one by one. The client's poison detector strikes
+     * the frame a NACK names and replays from its acked watermark, so losing the
+     * earlier frames here would replay good frames behind a NACK for a later one.
+     */
+    @Test
+    public void testFailedFrameInCommitBatchKeepsEarlierFramesCommittedAndAcked() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            // seq=0,1 valid, seq=2 schema mismatch, seq=3 valid but behind the gap.
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowVarcharMessage("x", 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(400L, 4_000_000L))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            int ackIndex = indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1);
+            int errorIndex = -1;
+            for (int i = 0, n = sent.size(); i < n && errorIndex < 0; i++) {
+                byte[] f = sent.getQuick(i);
+                if (isBinaryFrame(f) && f[2] != QwpConstants.STATUS_OK && readLeLong(f, 3) == 2) {
+                    errorIndex = i;
+                }
+            }
+            Assert.assertTrue("the frames before the failed one must be acked", ackIndex >= 0);
+            Assert.assertTrue("the failed frame must be NACKed by its own sequence", errorIndex >= 0);
+            Assert.assertTrue("the ack must precede the error", ackIndex < errorIndex);
+            Assert.assertEquals("no ack may cover the failed frame or the tail behind it", 1, maxCumulativeOkAck(sent));
+        });
+    }
+
+    /**
+     * A deferred frame starts a client transaction: the commit batch before it
+     * must commit on its own, never inside the client's group.
+     */
+    @Test
+    public void testDeferredFrameCommitsPendingBatchFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage(300L, 3_000_000L)))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            Assert.assertEquals("the open deferred frame must stay unacked", 1, maxCumulativeOkAck(sent));
+        });
+    }
+
+    private static int countOkAcks(ObjList<byte[]> frames) {
+        int count = 0;
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] == QwpConstants.STATUS_OK) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static byte[] concat(byte[]... arrays) {
         int len = 0;
         for (byte[] a : arrays) {
@@ -995,6 +1105,35 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             buf[offset++] = (byte) (value >>> (i * 8));
         }
         return offset;
+    }
+
+    private ObjList<byte[]> ingestInOnePass(
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            byte[]... frames
+    ) throws Exception {
+        byte[] wire = concat(frames);
+        assert wire.length <= RECV_BUFFER_SIZE;
+        PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+        long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+        try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+            QwpIngressProcessorState state = new QwpIngressProcessorState(
+                    RECV_BUFFER_SIZE,
+                    httpConfig.getSendBufferSize(),
+                    engine,
+                    httpConfig.getLineHttpProcessorConfiguration()
+            );
+            state.of(-1, AllowAllSecurityContext.INSTANCE);
+            getLV().set(context, state);
+            // Every frame arrives in one receive pass, as from a client with many in flight.
+            drive(processor, context, nf, wire.length);
+        } finally {
+            Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+        return rawSocket.sentFrames;
     }
 
     private ObjList<byte[]> ingestOnFreshConnection(

@@ -207,6 +207,51 @@ public class QwpTudCache implements QuietCloseable {
      * failure, leaving the remaining tables uncommitted. Suitable for callers
      * that propagate the error to the client (e.g. HTTP/WebSocket).
      */
+    /**
+     * Restores every cached writer to the savepoint {@link #setSavepoints()} took:
+     * a writer touched since keeps only the rows before it, a writer created since
+     * rolls back its whole transaction. Returns false if the cache is distressed or
+     * a restore failed -- the uncommitted rows are then unrecoverable.
+     */
+    public boolean rollbackToSavepoints() {
+        if (isDistressed) {
+            return false;
+        }
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.getQuick(i));
+            if (tud.isDropped()) {
+                continue;
+            }
+            try {
+                if (tud.getWriter() instanceof WalWriter walWriter) {
+                    walWriter.rollbackToSavepoint();
+                } else {
+                    tud.rollback();
+                }
+            } catch (Throwable th) {
+                LOG.error().$("could not roll back to savepoint [table=").$(keys.getQuick(i)).$(", e=").$(th).I$();
+                isDistressed = true;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Marks a savepoint at the current end of every cached writer's open
+     * transaction, at a message boundary. See {@link #rollbackToSavepoints()}.
+     */
+    public void setSavepoints() {
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.getQuick(i));
+            if (!tud.isDropped() && tud.getWriter() instanceof WalWriter walWriter) {
+                walWriter.setSavepoint();
+            }
+        }
+    }
+
     public void commitAll() throws Throwable {
         commitAll(null);
     }
