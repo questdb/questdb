@@ -982,6 +982,16 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSortedSymbolIndexCached() throws Exception {
+        assertSortedSymbolIndex(true);
+    }
+
+    @Test
+    public void testSortedSymbolIndexNoCache() throws Exception {
+        assertSortedSymbolIndex(false);
+    }
+
     private void assertLimitQueries(String result, String query, String timestampColumn, boolean descending) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
@@ -1030,6 +1040,66 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  rnd_float(0)*100 temp from long_sequence(1000));")
                 .timestamp("ts")
                 .returns(expected);
+    }
+
+    private void assertSortedSymbolIndex(boolean isCached) throws Exception {
+        assertMemoryLeak(() -> {
+            for (int direction = ORDER_ASC; direction <= ORDER_DESC; direction++) {
+                execute("CREATE TABLE sorted_symbols (s SYMBOL " + (isCached ? "CACHE" : "NOCACHE")
+                        + " INDEX, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO sorted_symbols VALUES
+                        ('aa', 1, 0), ('', 2, 1), (NULL, 3, 2), ('a', 4, 3),
+                        ('é', 5, 4), ('中', 6, 5), ('\uE000', 7, 6), ('😀', 8, 7), ('a', 9, 8),
+                        ('outside', 10, '1970-01-02')
+                        """);
+                boolean isAscending = direction == ORDER_ASC;
+                String prefix = """
+                        s\tid
+                        \t3
+                        \t2
+                        a\t4
+                        a\t9
+                        aa\t1
+                        """;
+                String suffix = """
+                        é\t5
+                        中\t6
+                        😀\t8
+                        \uE000\t7
+                        """;
+                String descendingPrefix = """
+                        s\tid
+                        \uE000\t7
+                        😀\t8
+                        中\t6
+                        é\t5
+                        """;
+                String descendingSuffix = """
+                        aa\t1
+                        a\t4
+                        a\t9
+                        \t2
+                        """;
+                assertQuery("SELECT s, id FROM sorted_symbols WHERE ts IN '1970-01-01' ORDER BY s "
+                        + (isAscending ? "ASC" : "DESC") + ", ts ASC")
+                        .noLeakCheck()
+                        .withPlanContaining(
+                                "Encode sort light",
+                                "keys: [s" + (isAscending ? "" : " desc") + ", ts]",
+                                "PageFrame",
+                                "Row forward scan",
+                                "Interval forward scan on: sorted_symbols"
+                        )
+                        .mutateWith("INSERT INTO sorted_symbols VALUES ('ab', 11, 10), ('', 12, 11)")
+                        .returns(
+                                isAscending ? prefix + suffix : descendingPrefix + descendingSuffix + "\t3\n",
+                                isAscending ? prefix.replace("\t2\n", "\t2\n\t12\n") + "ab\t11\n" + suffix
+                                        : descendingPrefix + "ab\t11\n" + descendingSuffix + "\t12\n\t3\n"
+                        );
+                execute("DROP TABLE sorted_symbols");
+            }
+        });
     }
 
     private void runQueries(String... queries) throws Exception {

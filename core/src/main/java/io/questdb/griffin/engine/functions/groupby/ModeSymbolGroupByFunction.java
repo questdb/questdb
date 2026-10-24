@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongLongHashMap;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,6 +52,8 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     private final SymbolFunction arg;
     private final GroupByLongLongHashMap mapA;
     private final GroupByLongLongHashMap mapB;
+    // A view of its own, for the reason FirstSymbolGroupByFunction keeps one.
+    private SymbolTable symbolTable;
     private int valueIndex;
 
     public ModeSymbolGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull SymbolFunction arg) {
@@ -65,6 +68,12 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     public void clear() {
         mapA.resetPtr();
         mapB.resetPtr();
+    }
+
+    @Override
+    public void close() {
+        UnaryFunction.super.close();
+        symbolTable = Misc.freeIfCloseable(symbolTable);
     }
 
     @Override
@@ -133,12 +142,12 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return arg.valueOf(getInt(rec));
+        return valueOf(getInt(rec));
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return arg.valueBOf(getInt(rec));
+        return valueBOf(getInt(rec));
     }
 
     @Override
@@ -149,6 +158,10 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         arg.init(symbolTableSource, executionContext);
+        symbolTable = Misc.freeIfCloseable(symbolTable);
+        if (arg.isSymbolTableStatic()) {
+            symbolTable = arg.newSymbolTable();
+        }
     }
 
     @Override
@@ -234,11 +247,11 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
 
     @Override
     public CharSequence valueBOf(int key) {
-        return arg.valueBOf(key);
+        return symbolTable != null ? symbolTable.valueBOf(key) : arg.valueBOf(key);
     }
 
     @Override
     public CharSequence valueOf(int key) {
-        return arg.valueOf(key);
+        return symbolTable != null ? symbolTable.valueOf(key) : arg.valueOf(key);
     }
 }

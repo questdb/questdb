@@ -31,17 +31,27 @@ import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpAuthenticator;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.RejectProcessorFactory;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -203,6 +213,139 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
     }
 
     @Test
+    public void testEscapeJsonStrExhaustionAndExactFit() throws Exception {
+        assertMemoryLeak(() -> {
+            assertNativeHttpOverflow("abcdef", "preabcde");
+            assertNativeHttpOverflow("ab\u0000", "preab\\u0");
+            assertNativeHttpOverflow("abcd\u0000", "preabcd\\");
+            try (DirectUtf16Sink nativeInput = new DirectUtf16Sink(64); HttpConnectionContext http = newHttp(8)) {
+                nativeInput.put("abcde");
+                DirectString direct = new DirectString().of(nativeInput.ptr(), nativeInput.length());
+                HttpChunkedResponse response = http.getChunkedResponse();
+                HttpRawSocket raw = http.getRawResponseSocket();
+                long address = raw.getBufferAddress();
+                response.putAscii("pre");
+                response.bookmark();
+                Assert.assertSame(response, response.escapeJsonStr(direct));
+                Assert.assertEquals(0, raw.getBufferSize());
+                assertNativeEquals(new Utf8String("preabcde"), address, 8);
+                Assert.assertThrows(NoSpaceLeftInResponseBufferException.class, () -> response.putQuote());
+                Assert.assertSame(response, response.escapeJsonStr(direct, 4, 2));
+                Assert.assertSame(response, response.escapeJsonStr(direct, 0, 0));
+                Assert.assertSame(response, response.escapeJsonStr(null, 0, 0));
+                Assert.assertSame(response, response.escapeJsonStr(null, 3, 1));
+                Assert.assertThrows(NullPointerException.class, () -> response.escapeJsonStr(null, 0, 1));
+                Assert.assertThrows(NullPointerException.class, () -> response.escapeJsonStr(null, 0, 4));
+                Assert.assertEquals(0, raw.getBufferSize());
+                assertNativeEquals(new Utf8String("preabcde"), address, 8);
+                Assert.assertTrue(response.resetToBookmark());
+                assertNativeEquals(new Utf8String("pre"), address, 3);
+                response.escapeJsonStr(direct, 2, 5);
+                assertNativeEquals(new Utf8String("precde"), address, 6);
+            }
+        });
+    }
+
+    @Test
+    public void testEscapeJsonStrFourCharWords() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectUtf16Sink input = new DirectUtf16Sink(32);
+                 DirectUtf8Sink expected = new DirectUtf8Sink(32);
+                 HttpConnectionContext http = newHttp(64)) {
+                DirectString direct = new DirectString();
+                HttpChunkedResponse response = http.getChunkedResponse();
+                HttpRawSocket raw = http.getRawResponseSocket();
+                long address = raw.getBufferAddress();
+                response.bookmark();
+                for (int lane = 0; lane < 4; lane++) {
+                    for (int value = 0; value <= Character.MAX_VALUE; value++) {
+                        input.clear();
+                        for (int i = 0; i < 4; i++) {
+                            input.put(i == lane ? (char) value : (char) ('a' + i));
+                        }
+                        direct.of(input.ptr(), input.length());
+                        expected.clear();
+                        expected.escapeJsonStr(input);
+                        Assert.assertFalse(response.resetToBookmark());
+                        response.escapeJsonStr(direct);
+                        assertNativeEquals(expected, address, 64 - raw.getBufferSize());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEscapeJsonStrRanges() throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<String> cases = new ObjList<>();
+            cases.add("");
+            cases.add("ASCII prefix ~\u007f");
+            cases.add("a\"b\\c");
+            cases.add("prefix-\u00e9\u4e2d\ud83d\ude00-tail");
+            cases.add("prefix-\ud800x\udc00-tail");
+            StringBuilder controls = new StringBuilder();
+            for (char c = 0; c < 32; c++) {
+                controls.append(c);
+            }
+            cases.add(controls.toString());
+            try (DirectUtf8Sink expected = new DirectUtf8Sink(32);
+                 DirectUtf16Sink nativeInput = new DirectUtf16Sink(64);
+                 HttpConnectionContext http = newHttp(256)) {
+                HttpChunkedResponse response = http.getChunkedResponse();
+                HttpRawSocket raw = http.getRawResponseSocket();
+                long address = raw.getBufferAddress();
+                response.bookmark();
+                for (int c = 0; c < cases.size(); c++) {
+                    String input = cases.getQuick(c);
+                    nativeInput.clear();
+                    nativeInput.put(input);
+                    DirectString direct = new DirectString().of(nativeInput.ptr(), input.length());
+                    for (int lo = 0; lo <= input.length(); lo++) {
+                        for (int hi = lo; hi <= input.length(); hi++) {
+                            for (int prefixType = 0; prefixType < 2; prefixType++) {
+                                String prefix = prefixType == 0 ? "pre:" : "\u00e9:";
+                                expected.clear();
+                                expected.put(prefix).escapeJsonStr(input, lo, hi);
+                                Assert.assertFalse(response.resetToBookmark());
+                                response.put(prefix);
+                                Assert.assertSame(response, response.escapeJsonStr(direct, lo, hi));
+                                assertNativeEquals(expected, address, 256 - raw.getBufferSize());
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEscapeJsonStrSubclassUsesCharAt() throws Exception {
+        assertMemoryLeak(() -> {
+            String input = "ab\"\\\u0000\u00e9\ud83d\ude00";
+            DirectString direct = new DirectString() {
+                @Override
+                public char charAt(int index) {
+                    return input.charAt(index);
+                }
+
+                @Override
+                public long lo() {
+                    throw new AssertionError("subclass pointer must not replace charAt()");
+                }
+            }.of(0, input.length());
+            try (DirectUtf8Sink expected = new DirectUtf8Sink(64); HttpConnectionContext http = newHttp(128)) {
+                HttpChunkedResponse response = http.getChunkedResponse();
+                HttpRawSocket raw = http.getRawResponseSocket();
+                long address = raw.getBufferAddress();
+                expected.escapeJsonStr(input);
+                response.escapeJsonStr(direct);
+                assertNativeEquals(expected, address, 128 - raw.getBufferSize());
+            }
+        });
+    }
+
+    @Test
     public void testResetDisarmsBreakerForPlainHttpKeepAlive() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -231,6 +374,50 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
             // the injected factory threw
         }
         Assert.assertEquals("the constructor must close the socket it took", 1, socketFactory.closeCount);
+    }
+
+    private static void assertNativeEquals(Utf8Sequence expected, long address, int size) {
+        Assert.assertEquals(expected.size(), size);
+        for (int i = 0; i < size; i++) {
+            Assert.assertEquals("byte " + i, expected.byteAt(i), Unsafe.getByte(address + i));
+        }
+    }
+
+    private static void assertNativeHttpOverflow(String input, String partial) {
+        try (DirectUtf16Sink nativeInput = new DirectUtf16Sink(64); HttpConnectionContext http = newHttp(8)) {
+            nativeInput.put(input);
+            DirectString direct = new DirectString().of(nativeInput.ptr(), input.length());
+            HttpChunkedResponse response = http.getChunkedResponse();
+            HttpRawSocket raw = http.getRawResponseSocket();
+            long address = raw.getBufferAddress();
+            response.putAscii("pre");
+            response.bookmark();
+            NoSpaceLeftInResponseBufferException exception = Assert.assertThrows(
+                    NoSpaceLeftInResponseBufferException.class,
+                    () -> response.escapeJsonStr(direct)
+            );
+            Assert.assertEquals(1, exception.getBytesRequired());
+            Assert.assertEquals(0, raw.getBufferSize());
+            assertNativeEquals(new Utf8String(partial), address, 8 - raw.getBufferSize());
+            Assert.assertTrue(response.resetToBookmark());
+            assertNativeEquals(new Utf8String("pre"), address, 8 - raw.getBufferSize());
+            response.escapeJsonStr("ok");
+            assertNativeEquals(new Utf8String("preok"), address, 8 - raw.getBufferSize());
+        }
+    }
+
+    private static HttpConnectionContext newHttp(int capacity) {
+        return new HttpConnectionContext(new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public int getSendBufferSize() {
+                return capacity;
+            }
+
+            @Override
+            public boolean preAllocateBuffers() {
+                return true;
+            }
+        }, PlainSocketFactory.INSTANCE);
     }
 
     /**

@@ -863,6 +863,17 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean isAsciiJsonUtf16(long word) {
+        if ((word & 0xff80ff80ff80ff80L) != 0) {
+            return false;
+        }
+        // ASCII lanes cannot borrow unless a forbidden character is present.
+        final long controls = word - 0x0020002000200020L;
+        final long quotes = (word ^ 0x0022002200220022L) - 0x0001000100010001L;
+        final long backslashes = (word ^ 0x005c005c005c005cL) - 0x0001000100010001L;
+        return ((controls | quotes | backslashes) & 0x8000800080008000L) == 0;
+    }
+
     public static int lastIndexOfAscii(@NotNull Utf8Sequence seq, char asciiTerm) {
         for (int i = seq.size() - 1; i > -1; i--) {
             if (seq.byteAt(i) == asciiTerm) {

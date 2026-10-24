@@ -55,12 +55,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     @TestOnly
     public static final AtomicLong testSymbolKeyScans = new AtomicLong();
 
-    public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
-        final int key = arg.getInt(rec);
-        if (key != SymbolTable.VALUE_IS_NULL) {
-            return symbolKeys.binarySearchUniqueList(key) > -1;
-        }
-        return false;
+    public static boolean symbolMatches(Function arg, Record rec, SymbolKeySet symbolKeys) {
+        return symbolKeys.contains(arg.getInt(rec));
     }
 
     @Override
@@ -103,7 +99,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         throw SqlException.$(patternPosition, "not implemented: dynamic pattern would be very slow to execute");
     }
 
-    private static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
+    private static void extractSymbolKeys(SymbolFunction symbolFun, SymbolKeySet symbolKeys, Matcher matcher) {
         final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
         assert symbolTable != null;
         symbolKeys.clear();
@@ -117,12 +113,13 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 }
             }
         }
+        symbolKeys.build();
     }
 
     private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final Matcher matcher;
         private final SymbolFunction symbolFun;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private boolean initialized;
         private int lastSymbolCount = -1;
         private StaticSymbolTable lastSymbolTable;
@@ -158,7 +155,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -197,8 +194,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof MatchStaticSymbolTableConstPatternFunction target) {
-                target.symbolKeys.clear();
-                target.symbolKeys.addAll(symbolKeys);
+                target.symbolKeys.copyFrom(symbolKeys);
                 target.initialized = initialized;
                 target.isStateInherited = true;
             }
@@ -215,7 +211,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final Function pattern;
         private final int patternPosition;
         private final SymbolFunction symbolFun;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private boolean initialized;
         private int lastSymbolCount = -1;
         private StaticSymbolTable lastSymbolTable;
@@ -250,7 +246,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -312,8 +308,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof MatchStaticSymbolTableRuntimeConstPatternFunction target) {
-                target.symbolKeys.clear();
-                target.symbolKeys.addAll(symbolKeys);
+                target.symbolKeys.copyFrom(symbolKeys);
                 target.initialized = initialized;
                 target.isStateInherited = true;
             }

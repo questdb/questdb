@@ -165,6 +165,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.Misc;
+import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
@@ -265,6 +266,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
+    private final SymbolMapCachePool symbolMapCachePool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
@@ -379,7 +381,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
             this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
             this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
-            this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
+            this.symbolMapCachePool = new SymbolMapCachePool(new NativeMemoryBudget(configuration.getSymbolCacheMaxSize()));
+            this.readerPool = new ReaderPool(configuration, scoreboardPool, symbolMapCachePool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
@@ -1237,6 +1240,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b6 = viewWalWriterPool.releaseAll();
         boolean b7 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
+        symbolMapCachePool.clear();
         partitionCompactionRequestQueue.clear();
         partitionOverwriteControl.clear();
         frameFactory.clear();
@@ -1282,6 +1286,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(liveViewStateStore);
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
+        Misc.free(symbolMapCachePool);
         Misc.free(readerPool);
         Misc.free(sequencerMetadataPool);
         Misc.free(tableMetadataPool);
@@ -2400,6 +2405,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public SqlCompilerPool getSqlCompilerPool() {
         return sqlCompilerPool;
+    }
+
+    @TestOnly
+    public SymbolMapCachePool getSymbolMapCachePool() {
+        return symbolMapCachePool;
     }
 
     public TableFlagResolver getTableFlagResolver() {

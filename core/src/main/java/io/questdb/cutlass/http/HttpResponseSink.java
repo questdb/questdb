@@ -46,6 +46,7 @@ import io.questdb.std.bytes.Bytes;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -688,6 +689,31 @@ public class HttpResponseSink implements Closeable, Mutable {
     private class ResponseSinkImpl implements Utf8Sink {
 
         private int[] ryuE10;
+
+        @Override
+        public Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+            if (hi - (long) lo < 4 || cs.getClass() != DirectString.class
+                    || lo < 0 || hi > cs.length() || hi - (long) lo > buffer.getWriteNAvailable()) {
+                return Utf8Sink.super.escapeJsonStr(cs, lo, hi);
+            }
+            long source = ((DirectString) cs).lo() + ((long) lo << 1);
+            long destination = buffer._wptr;
+            assert destination != 0;
+            int i = lo;
+            while (i <= hi - 4) {
+                final long word = Unsafe.getLong(source);
+                if (!Utf8s.isAsciiJsonUtf16(word)) {
+                    break;
+                }
+                final long packed = (word | (word >>> 8)) & 0x0000ffff0000ffffL;
+                Unsafe.putInt(destination, (int) (packed | (packed >>> 16)));
+                source += Long.BYTES;
+                destination += Integer.BYTES;
+                i += 4;
+            }
+            buffer._wptr = destination;
+            return Utf8Sink.super.escapeJsonStr(cs, i, hi);
+        }
 
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {

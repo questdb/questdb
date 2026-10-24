@@ -224,6 +224,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(300000, configuration.getCairoConfiguration().getIdleCheckInterval());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getInactiveReaderMaxOpenPartitions());
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveReaderTTL());
+        Assert.assertEquals(268_435_456, configuration.getCairoConfiguration().getSymbolCacheMaxSize());
         Assert.assertEquals(600_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getMaxSwapFileCount());
@@ -3603,6 +3604,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20_000, configuration.getIdleCheckInterval());
         Assert.assertEquals(42, configuration.getInactiveReaderMaxOpenPartitions());
         Assert.assertEquals(600_000, configuration.getInactiveReaderTTL());
+        Assert.assertEquals(67_108_864, configuration.getSymbolCacheMaxSize());
         Assert.assertEquals(400_000, configuration.getInactiveWriterTTL());
         Assert.assertEquals(1024, configuration.getIndexValueBlockSize());
         Assert.assertEquals(23, configuration.getMaxSwapFileCount());

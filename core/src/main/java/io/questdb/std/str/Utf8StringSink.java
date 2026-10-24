@@ -77,6 +77,31 @@ public class Utf8StringSink implements MutableUtf8Sink {
         this.ascii = ascii;
     }
 
+    @Override
+    public Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+        if (hi - (long) lo < 4 || pos < 0 || cs.getClass() != DirectString.class
+                || lo < 0 || hi > cs.length() || hi - (long) lo > buffer.length - pos) {
+            return MutableUtf8Sink.super.escapeJsonStr(cs, lo, hi);
+        }
+        final byte[] bytes = buffer;
+        long source = ((DirectString) cs).lo() + ((long) lo << 1);
+        int p = pos;
+        int i = lo;
+        while (i <= hi - 4) {
+            final long word = Unsafe.getLong(source);
+            if (!Utf8s.isAsciiJsonUtf16(word)) {
+                break;
+            }
+            final long packed = (word | (word >>> 8)) & 0x0000ffff0000ffffL;
+            Unsafe.getUnsafe().putInt(bytes, Unsafe.BYTE_OFFSET + p, (int) (packed | (packed >>> 16)));
+            source += Long.BYTES;
+            p += Integer.BYTES;
+            i += 4;
+        }
+        pos = p;
+        return MutableUtf8Sink.super.escapeJsonStr(cs, i, hi);
+    }
+
     @TestOnly
     public long getCapacity() {
         return buffer.length;

@@ -149,7 +149,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
 
-    private static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
+    private static void extractSymbolKeys(SymbolFunction symbolFun, SymbolKeySet symbolKeys, Matcher matcher) {
         final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
         assert symbolTable != null;
         symbolKeys.clear();
@@ -170,7 +170,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
     private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction, SymbolKeySetProvider {
         private final boolean caseInsensitive;
         private final Function pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private String lastPattern = null;
         private int lastSymbolCount = -1;
@@ -193,7 +193,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -250,6 +250,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                         || symbolCount != lastSymbolCount
                         || symbolTableGeneration != lastSymbolTableGeneration) {
                     extractSymbolKeys(value, symbolKeys, matcher);
+                    symbolKeys.build();
                     lastSymbolCount = symbolCount;
                     lastSymbolTable = symbolTable;
                     lastSymbolTableGeneration = symbolTableGeneration;
@@ -272,8 +273,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof BindLikeStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
@@ -297,7 +297,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -319,7 +319,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -337,6 +337,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     symbolKeys.add(i);
                 }
             }
+            symbolKeys.build();
         }
 
         @Override
@@ -347,8 +348,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstContainsStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
@@ -369,7 +369,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -391,7 +391,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -409,6 +409,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     symbolKeys.add(i);
                 }
             }
+            symbolKeys.build();
         }
 
         @Override
@@ -419,8 +420,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstEndsWithStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
@@ -440,7 +440,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstIContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -462,7 +462,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -480,6 +480,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     symbolKeys.add(i);
                 }
             }
+            symbolKeys.build();
         }
 
         @Override
@@ -490,8 +491,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstIContainsStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
@@ -512,7 +512,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -534,7 +534,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -552,6 +552,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     symbolKeys.add(i);
                 }
             }
+            symbolKeys.build();
         }
 
         @Override
@@ -562,8 +563,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstIEndsWithStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
@@ -583,7 +583,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -605,7 +605,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -623,6 +623,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     symbolKeys.add(i);
                 }
             }
+            symbolKeys.build();
         }
 
         @Override
@@ -633,8 +634,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstIStartsWithStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
@@ -654,7 +654,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstLikeStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final Matcher matcher;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -676,7 +676,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -687,6 +687,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             }
             this.stateShared = false;
             extractSymbolKeys(value, symbolKeys, matcher);
+            symbolKeys.build();
         }
 
         @Override
@@ -697,8 +698,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstLikeStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
@@ -722,7 +722,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
-        private final IntList symbolKeys = new IntList();
+        private final SymbolKeySet symbolKeys = new SymbolKeySet();
         private final SymbolFunction value;
         private boolean isStateInherited = false;
         private boolean stateShared = false;
@@ -744,7 +744,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public IntList getMatchedSymbolKeys() {
-            return symbolKeys;
+            return symbolKeys.getKeys();
         }
 
         @Override
@@ -762,6 +762,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     symbolKeys.add(i);
                 }
             }
+            symbolKeys.build();
         }
 
         @Override
@@ -772,8 +773,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void offerStateTo(Function that) {
             if (that instanceof ConstStartsWithStaticSymbolTableFunction thatP) {
-                thatP.symbolKeys.clear();
-                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.symbolKeys.copyFrom(this.symbolKeys);
                 thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);

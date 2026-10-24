@@ -356,6 +356,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_START = 0;
         private final PageFrameAddressCache frameAddressCache;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
+        private final ObjList<SymbolTable> symbolTables = new ObjList<>();
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
         private long currentRow;
@@ -411,6 +412,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public void close() {
             Misc.free(frameMemoryPool);
             Misc.free(frameAddressCache);
+            Misc.freeObjListIfCloseable(symbolTables);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }
@@ -436,7 +438,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return frameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);
+            final SymbolTable symbolTable = symbolTables.getQuiet(columnIndex);
+            return symbolTable != null ? symbolTable : frameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -782,6 +785,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.memoryTracker = sqlExecutionContext.getMemoryTracker();
+            Misc.freeObjListIfCloseable(symbolTables);
+            final RecordMetadata outMetadata = SampleByFirstLastRecordCursorFactory.this.getMetadata();
+            for (int i = 0, n = queryToFrameColumnMapping.length; i < n; i++) {
+                symbolTables.extendAndSet(
+                        i,
+                        ColumnType.isSymbol(outMetadata.getColumnType(i)) ? frameCursor.newSymbolTable(queryToFrameColumnMapping[i]) : null
+                );
+            }
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
@@ -872,6 +883,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             @Override
             public CharSequence getSymA(int col) {
                 return currentRecord.getSymA(col);
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+                return currentRecord.getSymB(col);
             }
 
             @Override
@@ -969,8 +985,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                 @Override
                 public CharSequence getSymA(int col) {
-                    int symbolId = (int) crossFrameRow.getQuick(col);
-                    return frameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return symbolTables.getQuick(col).valueOf((int) crossFrameRow.getQuick(col));
+                }
+
+                @Override
+                public CharSequence getSymB(int col) {
+                    return symbolTables.getQuick(col).valueBOf((int) crossFrameRow.getQuick(col));
                 }
 
                 @Override
@@ -1154,14 +1174,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                 @Override
                 public CharSequence getSymA(int col) {
-                    int symbolId;
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        symbolId = Unsafe.getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
-                    } else {
-                        symbolId = SymbolTable.VALUE_IS_NULL;
-                    }
-                    return frameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return symbolTables.getQuick(col).valueOf(getInt(col));
+                }
+
+                @Override
+                public CharSequence getSymB(int col) {
+                    return symbolTables.getQuick(col).valueBOf(getInt(col));
                 }
 
                 @Override

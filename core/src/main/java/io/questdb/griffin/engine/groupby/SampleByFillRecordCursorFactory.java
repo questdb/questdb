@@ -47,12 +47,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -1097,16 +1095,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 int srcCol = symbolTableColIndices.getQuick(slot);
                 if (srcCol >= 0) {
-                    // Unwrap MapSymbolColumn-style wrappers to drop the
-                    // per-cell wrapper hop on the hot read path.
-                    SymbolTable st = baseCursor.getSymbolTable(srcCol);
-                    if (st instanceof SymbolFunction sf) {
-                        StaticSymbolTable inner = sf.getStaticSymbolTable();
-                        if (inner != null) {
-                            st = inner;
-                        }
-                    }
-                    symbolCache.setQuick(col, st);
+                    symbolCache.setQuick(col, baseCursor.getSymbolTable(srcCol));
                 }
             }
             toTop();
