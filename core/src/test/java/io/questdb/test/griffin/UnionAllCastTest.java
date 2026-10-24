@@ -2422,6 +2422,21 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetOperationOverTextArrayFailsWithUnsupportedColumnType() throws Exception {
+        // a set operation that compares rows copies them into a map key, and no record sink copies
+        // text[]; each is refused at the position of its right-hand query
+        assertMemoryLeak(() -> {
+            for (String operation : new String[]{"UNION", "EXCEPT", "INTERSECT", "EXCEPT ALL", "INTERSECT ALL"}) {
+                assertExceptionNoLeakCheck(
+                        "SELECT '{a}'::text[] x " + operation + " SELECT '{b}'::text[]",
+                        24 + operation.length(),
+                        "unsupported column type in set operation [column=x, type=text[]]"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testShortBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -3047,6 +3062,75 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "CREATE TABLE y AS (SELECT to_long128(1, 0) a, 2 b FROM long_sequence(1))",
                 12
         );
+    }
+
+    @Test
+    public void testUnionTextArrayAgainstStringFailsWithUnsupportedCast() throws Exception {
+        // the union type of text[] and most types is STRING, which has no cast from text[]; the
+        // text[] branch is refused at its own position
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "SELECT '{a}'::text[] x, 1 y UNION ALL SELECT 'b', 2L",
+                    0,
+                    "unsupported cast [column=x, from=text[], to=STRING]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT 'b' x, 1 y UNION ALL SELECT '{a}'::text[], 2L",
+                    28,
+                    "unsupported cast [column=cast, from=text[], to=STRING]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT current_schemas(false) x UNION ALL SELECT 'b'",
+                    0,
+                    "unsupported cast [column=x, from=text[], to=STRING]"
+            );
+        });
+    }
+
+    @Test
+    public void testUnionTextArrayAgainstTextArrayFailsWithUnsupportedCast() throws Exception {
+        // a cast in another column sends every column through a cast, and no column function reads
+        // text[], so the text[] column is refused even against text[] or NULL
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "SELECT '{a}'::text[] x, 1 y UNION ALL SELECT '{b}'::text[], 2L",
+                    0,
+                    "unsupported cast [column=x, from=text[], to=text[]]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT NULL x, 1 y UNION ALL SELECT '{a}'::text[], 2L",
+                    29,
+                    "unsupported cast [column=cast, from=text[], to=text[]]"
+            );
+        });
+        // with no cast, UNION ALL passes text[] through
+        assertQuery("SELECT '{a}'::text[] x, 1 y UNION ALL SELECT '{b}'::text[], 2")
+                .noRandomAccess()
+                .expectSize()
+                .returns(
+                        """
+                                x\ty
+                                {a}\t1
+                                {b}\t2
+                                """
+                );
+    }
+
+    @Test
+    public void testUnionTextArrayAgainstVarcharFailsWithUnsupportedCast() throws Exception {
+        // the union type of text[] and VARCHAR or an array is VARCHAR, which has no cast from text[]
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "SELECT '{a}'::text[] x, 1 y UNION ALL SELECT 'b'::VARCHAR, 2L",
+                    0,
+                    "unsupported cast [column=x, from=text[], to=VARCHAR]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT '{a}'::text[] x, 1 y UNION ALL SELECT ARRAY[1.0], 2L",
+                    0,
+                    "unsupported cast [column=x, from=text[], to=VARCHAR]"
+            );
+        });
     }
 
     @Test

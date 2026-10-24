@@ -449,6 +449,19 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Whether a sink copies a column of this type: the types {@link #sinkOpcode} gives an arm, so
+     * a caller can refuse the others (text[], for one) with a positioned SQL error before it asks
+     * for a sink.
+     */
+    public static boolean isCopyableType(int type) {
+        if (PhysicalDescriptor.accessorOf(type) != null) {
+            return true;
+        }
+        final short tag = ColumnType.tagOf(type);
+        return tag == ColumnType.RECORD || tag == ColumnType.NULL;
+    }
+
+    /**
      * Widens a TIMESTAMP (micros) key to TIMESTAMP_NS (nanos) for the generated sinks and
      * {@link LoopingRecordSink}. The nanos timestamp driver keeps NULL as NULL: multiplying it
      * overflows to 0, the epoch, so a NULL key would miss the NULL keys of the other side and

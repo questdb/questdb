@@ -2065,6 +2065,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 .put(" at UNION: implement the cast or refuse the pair in the UNION matrix");
     }
 
+    /**
+     * The error for a column of a set operation that compares rows (UNION, EXCEPT, INTERSECT) whose
+     * type no record sink copies into the row key, such as text[].
+     */
+    private static SqlException unsupportedSetKeyType(IQueryModel model, RecordMetadata metadata, int columnIndex) {
+        return SqlException.$(model.getUnionModel().getModelPosition(), "unsupported column type in set operation [column=")
+                .put(metadata.getColumnName(columnIndex))
+                .put(", type=").put(ColumnType.nameOf(metadata.getColumnType(columnIndex)))
+                .put(']');
+    }
+
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         // slave.supportsFilterStealing() means slave is nothing but a filter.
@@ -3811,8 +3822,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     yield new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
                 }
-                // the union matrix picks STRING for LONG128 against most types; no cast converts it
-                case BINARY, LONG128 ->
+                // the union matrix picks STRING for LONG128 and text[] against most types; no cast
+                // converts them
+                case BINARY, LONG128, ARRAY_STRING ->
                         throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
                 default -> throw unreachableCast(fromType, toType);
             };
@@ -3908,7 +3920,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     yield new CastDoubleArrayToVarcharFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
                 }
-                case BINARY ->
+                // the union matrix picks VARCHAR for text[] against VARCHAR or an array; no cast
+                // converts it
+                case BINARY, ARRAY_STRING ->
                         throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
                 // the union matrix picks VARCHAR for DECIMAL, LONG128 or INTERVAL against an array,
                 // and for LONG128 or INTERVAL against VARCHAR; no cast converts them
@@ -3970,7 +3984,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
             };
             case INTERVAL -> IntervalColumn.newInstance(i, toType);
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+            // text[] against text[] or NULL; no column function reads a text[] column
+            case ARRAY_STRING ->
+                    throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER,
                  VARCHAR_SLICE, NULL, UNKNOWN -> throw unreachableCast(fromType, toType);
         };
     }
@@ -5918,8 +5935,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isSymbol(columnType)) {
                 keyTypes.add(STRING);
                 writeSymbolAsString.set(i);
-            } else {
+            } else if (RecordSinkFactory.isCopyableType(columnType)) {
                 keyTypes.add(columnType);
+            } else {
+                throw unsupportedSetKeyType(model, unionMetadata, i);
             }
         }
 
@@ -13390,8 +13409,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isSymbol(columnType)) {
                 keyTypes.add(STRING);
                 writeSymbolAsString.set(i);
-            } else {
+            } else if (RecordSinkFactory.isCopyableType(columnType)) {
                 keyTypes.add(columnType);
+            } else {
+                throw unsupportedSetKeyType(model, unionMetadata, i);
             }
         }
 

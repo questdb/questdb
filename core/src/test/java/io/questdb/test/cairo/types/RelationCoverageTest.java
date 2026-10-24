@@ -26,6 +26,7 @@
 package io.questdb.test.cairo.types;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.RelationRules;
@@ -186,8 +187,8 @@ public class RelationCoverageTest extends AbstractCairoTest {
         // cell that yields no cast function, or that reaches the internal "no UNION cast" error or
         // an assertion, is a gap: the branch would lose its cast and its later columns would shift.
         // Every cell the matrix produces is asked directly, so a cell that returns nothing counts
-        // as well as one that throws, and types no table stores (INTERVAL, VARCHAR_SLICE) take
-        // part, since a query can still produce them.
+        // as well as one that throws, and types no table stores (INTERVAL, VARCHAR_SLICE, and the
+        // pseudo type text[]) take part, since a query can still produce them.
         final Method generateCastFunction = SqlCodeGenerator.class.getDeclaredMethod(
                 "generateCastFunction",
                 SqlExecutionContext.class,
@@ -203,11 +204,14 @@ public class RelationCoverageTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 final SqlCodeGenerator codeGenerator = (SqlCodeGenerator) codeGeneratorField.get(compiler);
+                final ObjList<TypeConformanceTypes.Entry> types = new ObjList<>();
+                types.addAll(TypeConformanceTypes.ALL);
+                types.add(new TypeConformanceTypes.Entry("text[]", ColumnType.ARRAY_STRING, "text[]", ColumnTypeTag.ARRAY_STRING, null, null, null, new ObjList<>()));
                 final TreeSet<String> gaps = new TreeSet<>();
-                for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
-                    final TypeConformanceTypes.Entry a = TypeConformanceTypes.ALL.getQuick(i);
+                for (int i = 0, n = types.size(); i < n; i++) {
+                    final TypeConformanceTypes.Entry a = types.getQuick(i);
                     for (int j = 0; j < n; j++) {
-                        final TypeConformanceTypes.Entry b = TypeConformanceTypes.ALL.getQuick(j);
+                        final TypeConformanceTypes.Entry b = types.getQuick(j);
                         final int unionType;
                         try {
                             unionType = SqlCodeGenerator.getUnionCastType(a.columnType, b.columnType);
