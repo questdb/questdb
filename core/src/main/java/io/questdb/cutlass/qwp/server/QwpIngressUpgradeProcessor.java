@@ -119,7 +119,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // message it was ~45% of the ingress fiber. Frames above the size bound
     // already amortize their commit and are committed alone.
     private static final long COMMIT_BATCH_MAX_BYTES = 1024 * 1024;
-    private static final int COMMIT_BATCH_MAX_FRAMES = ACK_BATCH_SIZE;
+    // 256, not ACK_BATCH_SIZE: each batch costs one commit and one ack send, and
+    // at 64 those were still 11% of the ingress fiber. The byte bound still caps
+    // the rows a batch holds uncommitted.
+    private static final int COMMIT_BATCH_MAX_FRAMES = 256;
     private static final int COMMIT_BATCH_MAX_FRAME_BYTES = 16 * 1024;
     // Per-dispatch BYTE budget for the post-CLOSE drain in resumeRecv. The recv-
     // count guard also bounds syscalls, but its byte cost scales with the configured
