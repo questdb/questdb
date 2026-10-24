@@ -203,7 +203,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     return super.close(fd);
                 }
             };
-            try (Path path = new Path()) {
+            try (Path path = new Path(); DurableEpochManifest.TxnSectionCache cache = new DurableEpochManifest.TxnSectionCache()) {
                 final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
                 final long previousLimit = Unsafe.getRssMemLimit();
                 final long beforeMemory = Unsafe.getMemUsed();
@@ -215,9 +215,17 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     }
                     for (int i = 0; i < 8; i++) {
                         // This partition is absent: true under a fault must be conservative retention.
-                        Assert.assertEquals(!fault.equals("none"), DurableEpochManifest.namesPartition(
+                        Assert.assertEquals(!fault.equals("none"), cache.namesPartition(
                                 probe, path, rootLen, token.getTableId(), 0, -1));
                         Assert.assertEquals(rootLen, path.size());
+                        Assert.assertTrue("manifest handles retained=" + open.size(), open.isEmpty());
+                        // Until clear(), a lookup reuses what the first one read or decided, and opens nothing.
+                        final int acquired = acquisitions.get();
+                        Assert.assertEquals(!fault.equals("none"), cache.namesPartition(
+                                probe, path, rootLen, token.getTableId(), 0, -1));
+                        Assert.assertEquals(acquired, acquisitions.get());
+                        Assert.assertEquals(rootLen, path.size());
+                        cache.clear();
                         Assert.assertEquals(beforeMemory, Unsafe.getMemUsed());
                         Assert.assertTrue("manifest handles retained=" + open.size(), open.isEmpty());
                         Assert.assertEquals(beforeFds, io.questdb.std.Files.getOpenFileCount());

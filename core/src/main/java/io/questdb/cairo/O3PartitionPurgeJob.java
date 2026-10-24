@@ -59,6 +59,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final DirectLongList partitionList;
     private final TxReader txnReader;
+    private final DurableEpochManifest.TxnSectionCache txnSectionCache;
 
     public O3PartitionPurgeJob(CairoEngine engine) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
@@ -71,6 +72,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     MemoryTag.NATIVE_O3
             );
             this.txnReader = new TxReader(configuration.getFilesFacade());
+            this.txnSectionCache = new DurableEpochManifest.TxnSectionCache();
         } catch (Throwable th) {
             close();
             throw th;
@@ -91,6 +93,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (halted.compareAndSet(false, true)) {
             Misc.free(partitionList);
             Misc.free(txnReader);
+            Misc.free(txnSectionCache);
         }
     }
 
@@ -255,6 +258,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             LOG.error().$safe(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
+            txnSectionCache.clear();
             Misc.free(txnScoreboard);
         }
         LOG.info().$("processed [table=").$(tableToken).I$();
@@ -310,7 +314,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     // The drop's txn is not known here, so readers are checked up to the last txn. A save point pin is not: the
     // older one is always below the last txn, which would keep the version for ever. Past a pin the version is
-    // free once no save point on disk lists it, the only way recovery can bring it back.
+    // free once no save point on disk lists it, the only way recovery can bring it back. The task reads each save
+    // point's _txn copy once. A save point written meanwhile copies a later _txn, which cannot list a version this
+    // task may delete: a partition created or attached later takes a name txn at or above the snapshot's txn.
     private boolean isDroppedVersionFree(
             TableToken tableToken,
             FilesFacade ff,
@@ -326,7 +332,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             return true;
         }
         return (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0
-                && !DurableEpochManifest.namesPartition(ff, path.trimTo(tableRootLen), tableRootLen, tableToken.getTableId(), partitionTimestamp, nameTxn - 1);
+                && !txnSectionCache.namesPartition(ff, path.trimTo(tableRootLen), tableRootLen, tableToken.getTableId(), partitionTimestamp, nameTxn - 1);
     }
 
     private boolean isEpochRangeAvailable(TableToken tableToken, long fromTxn, long toTxn) {

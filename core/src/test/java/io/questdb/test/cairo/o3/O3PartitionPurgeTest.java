@@ -27,6 +27,7 @@ package io.questdb.test.cairo.o3;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
@@ -137,6 +138,68 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testAdaptiveDropReadsEachSavePointOncePerPurgeTask() throws Exception {
+        // A DROP of K partitions queues about K purge tasks, and each one checks all K dropped versions against the
+        // save points. A task reads each save point's _txn copy at most once, so it opens at most two files per
+        // generation (header, then section), whatever K is.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        final AtomicInteger manifestOpens = new AtomicInteger();
+        final FilesFacade countingFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                    manifestOpens.incrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(countingFf, () -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2020-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(300)");
+            drainWalQueue();
+            // A second save point that names the same partitions.
+            execute("INSERT INTO t VALUES ('2020-10-26T01:00:00.000000Z', 0)");
+            drainWalQueue();
+            purgeJob.drain(0);
+            final TableToken tt = engine.verifyTableName("t");
+            final ObjList<String> dropped = new ObjList<>();
+            try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.list(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+                s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("2020-") && n.compareTo("2020-04-10") < 0).forEach(dropped::add);
+            }
+            Assert.assertEquals(100, dropped.size());
+
+            execute("ALTER TABLE t DROP PARTITION WHERE ts < '2020-04-10'");
+            drainWalQueue();
+            final StringSink failures = new StringSink();
+            int tasks = 0;
+            int maxOpens = 0;
+            manifestOpens.set(0);
+            while (purgeJob.run()) {
+                tasks++;
+                maxOpens = Math.max(maxOpens, manifestOpens.getAndSet(0));
+            }
+            Assert.assertTrue("purge tasks after the DROP: " + tasks, tasks > 1);
+            Assert.assertTrue("no task read a save point", maxOpens > 0);
+            Assert.assertTrue("manifest opens in one task: " + maxOpens, maxOpens <= 4);
+            checkOnDisk(failures, "the older save point names them", tt, dropped, true);
+
+            // Neither save point on disk names the dropped versions now.
+            execute("INSERT INTO t VALUES ('2020-10-26T02:00:00.000000Z', 0)");
+            drainWalQueue();
+            maxOpens = 0;
+            manifestOpens.set(0);
+            while (purgeJob.run()) {
+                maxOpens = Math.max(maxOpens, manifestOpens.getAndSet(0));
+            }
+            Assert.assertTrue("manifest opens in one task: " + maxOpens, maxOpens <= 4);
+            checkOnDisk(failures, "no save point names them", tt, dropped, false);
+            Assert.assertEquals("", failures.toString());
+            assertQuery("SELECT count() FROM t").noLeakCheck().expectSize().noRandomAccess().returns("count\n202\n");
         });
     }
 

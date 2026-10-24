@@ -22,9 +22,11 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
@@ -102,29 +104,6 @@ public final class DurableEpochManifest {
             return other == null ? new Candidate[]{current} : new Candidate[]{current, other};
         } finally {
             Unsafe.free(scratch, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
-            tablePath.trimTo(rootLen);
-        }
-    }
-
-    /**
-     * Whether a save point of either generation lists the partition version, so that recovery can restore it. A
-     * generation whose {@code _txn} copy cannot be read or fails its checksum counts as listing it.
-     */
-    public static boolean namesPartition(FilesFacade ff, Path tablePath, int rootLen, int tableId, long partitionTimestamp, long partitionNameTxn) {
-        final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int generation = 0; generation < 2; generation++) {
-                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
-                if (readHeader(ff, tablePath, tableId, generation, header) == HEADER_VALID
-                        && txnSectionListsPartition(ff, tablePath, header, partitionTimestamp, partitionNameTxn)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (CairoException e) {
-            return true;
-        } finally {
-            Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
             tablePath.trimTo(rootLen);
         }
     }
@@ -882,6 +861,36 @@ public final class DurableEpochManifest {
         return isHeaderValid(scratch, generation, tableId) ? HEADER_VALID : HEADER_DAMAGED;
     }
 
+    // Reads the _txn section of the generation at `path`, whose valid header is at `header`, into memory the caller
+    // frees (NATIVE_DEFAULT, the size the header records). Returns 0 when the section cannot be opened or read, is
+    // short, or fails its checksum.
+    private static long readTxnSection(FilesFacade ff, Path path, long header) {
+        final long size = Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE);
+        if (size <= 0) {
+            return 0;
+        }
+        final long fd = ff.openRO(path.$());
+        if (fd < 0) {
+            return 0;
+        }
+        long buf = 0;
+        try {
+            buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            if (ff.read(fd, buf, size, FILE_SIZE) != size
+                    || Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE + Long.BYTES) != TableUtils.calculateCvAreaChecksum(buf, size)) {
+                return 0;
+            }
+            final long copy = buf;
+            buf = 0;
+            return copy;
+        } finally {
+            if (buf != 0) {
+                Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
+            }
+            ff.close(fd);
+        }
+    }
+
     private static void restoreSection(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -917,7 +926,6 @@ public final class DurableEpochManifest {
         }
     }
 
-    // Reads the _txn copy of the generation at `path`, whose valid header is at `header`.
     // syncfs through the table's _txn: filesystem-wide on Linux, a device barrier elsewhere.
     private static void syncfsTable(CairoConfiguration configuration, Path tablePath, int rootLen) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -931,29 +939,6 @@ public final class DurableEpochManifest {
         } finally {
             ff.close(fd);
             tablePath.trimTo(rootLen);
-        }
-    }
-
-    private static boolean txnSectionListsPartition(FilesFacade ff, Path path, long header, long partitionTimestamp, long partitionNameTxn) {
-        final long size = Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE);
-        if (size <= 0) {
-            return true;
-        }
-        final long fd = ff.openRO(path.$());
-        if (fd < 0) {
-            return true;
-        }
-        try {
-            final long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-            try {
-                return ff.read(fd, buf, size, FILE_SIZE) != size
-                        || Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE + Long.BYTES) != TableUtils.calculateCvAreaChecksum(buf, size)
-                        || TxReader.imageListsPartition(buf, size, partitionTimestamp, partitionNameTxn);
-            } finally {
-                Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
-            }
-        } finally {
-            ff.close(fd);
         }
     }
 
@@ -1070,6 +1055,84 @@ public final class DurableEpochManifest {
             this.epochSeqTxn = epochSeqTxn;
             this.epochTxn = epochTxn;
             this.generation = generation;
+        }
+    }
+
+    /**
+     * Holds the {@code _txn} section of each generation, read at most once until {@link #clear()}. It owns the
+     * copies' native memory. It is for one table and one thread at a time.
+     */
+    public static final class TxnSectionCache implements Mutable, QuietCloseable {
+        private static final int STATE_LISTS_EVERYTHING = 1;
+        private static final int STATE_LISTS_NOTHING = 2;
+        private static final int STATE_LOADED = 3;
+        private static final int STATE_NOT_LOADED = 0;
+        private final long[] addresses = new long[2];
+        private final long[] sizes = new long[2];
+        private final int[] states = new int[2];
+
+        @Override
+        public void clear() {
+            for (int generation = 0; generation < 2; generation++) {
+                if (addresses[generation] != 0) {
+                    Unsafe.free(addresses[generation], sizes[generation], MemoryTag.NATIVE_DEFAULT);
+                    addresses[generation] = 0;
+                    sizes[generation] = 0;
+                }
+                states[generation] = STATE_NOT_LOADED;
+            }
+        }
+
+        @Override
+        public void close() {
+            clear();
+        }
+
+        /**
+         * Whether a save point of either generation lists the partition version, so that recovery can restore it.
+         * A generation whose header is not valid lists nothing. One whose {@code _txn} copy cannot be read or fails
+         * its checksum, or whose load throws, counts as listing it until {@link #clear()}. Leaves the path at the
+         * table root.
+         */
+        public boolean namesPartition(FilesFacade ff, Path tablePath, int rootLen, int tableId, long partitionTimestamp, long partitionNameTxn) {
+            try {
+                for (int generation = 0; generation < 2; generation++) {
+                    if (states[generation] == STATE_NOT_LOADED) {
+                        load(ff, tablePath, rootLen, tableId, generation);
+                    }
+                    final int state = states[generation];
+                    if (state == STATE_LISTS_EVERYTHING
+                            || (state == STATE_LOADED && TxReader.imageListsPartition(addresses[generation], sizes[generation], partitionTimestamp, partitionNameTxn))) {
+                        return true;
+                    }
+                }
+                return false;
+            } catch (CairoException e) {
+                return true;
+            } finally {
+                tablePath.trimTo(rootLen);
+            }
+        }
+
+        private void load(FilesFacade ff, Path tablePath, int rootLen, int tableId, int generation) {
+            // A throw from here on leaves the generation listing everything.
+            states[generation] = STATE_LISTS_EVERYTHING;
+            final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try {
+                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+                if (readHeader(ff, tablePath, tableId, generation, header) != HEADER_VALID) {
+                    states[generation] = STATE_LISTS_NOTHING;
+                    return;
+                }
+                final long address = readTxnSection(ff, tablePath, header);
+                if (address != 0) {
+                    addresses[generation] = address;
+                    sizes[generation] = Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE);
+                    states[generation] = STATE_LOADED;
+                }
+            } finally {
+                Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
         }
     }
 }
