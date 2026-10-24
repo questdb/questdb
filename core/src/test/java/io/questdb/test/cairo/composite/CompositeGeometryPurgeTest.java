@@ -185,8 +185,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
     /**
      * What the kept generation is for: the newest save point is damaged, recovery falls back to the older one, and
      * that save point's {@code _txn} names the generation the rotation retired. The startup purge before the
-     * fallback used to delete it, so the day failed every read with "could not open ... _geometry.0" and the WAL
-     * replay that follows the fallback suspended the table.
+     * fallback keeps it, so the day reads and the WAL replay that follows the fallback does not suspend the table.
      */
     @Test
     public void testAFallbackToTheOlderSavePointReadsTheDayTheStartupPurgeKept() throws Exception {
@@ -797,6 +796,15 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                         generationZero.exists()
                 );
                 Assert.assertEquals("the completed note stayed outstanding", 0, job.getOutstandingPurgeTasks());
+                // The row the startup pass wrote back is marked completed, so the next start does not replay it.
+                assertQuery("SELECT count() FROM '" + job.getLogTableName() + "' WHERE completed = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                0
+                                """);
             }
             assertDayResolvesItsPieces(tt);
             assertQuery("SELECT count() FROM x WHERE ts IN '2020-02-03'")

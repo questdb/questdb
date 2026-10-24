@@ -351,7 +351,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     /**
      * True when a save point's _txn names the retired geometry generation: a tracker pin lies in
-     * [firstWriterTxn, updateTxn), the txns whose _txn points at it. Like isVersionHeldByEpoch, checked in
+     * [firstWriterTxn, updateTxn), the txns whose _txn points at it. Like {@link #isVersionHeldByEpoch}, checked in
      * every mode: a recovery that falls back to that save point reads this file.
      */
     private boolean isGeometryGenerationHeldByEpoch(long firstWriterTxn, ColumnPurgeTask task) {
@@ -469,11 +469,11 @@ public class ColumnPurgeOperator implements Closeable {
                         // When a backup checkpoint is in progress its copied _txn may still name this generation.
                         // The save point is checked in every mode, STARTUP_ONLY included, as in the column branch:
                         // it is not a reader, and a recovery that falls back to it restores a _txn naming this file.
-                        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean isCheckpointInProgress = engine.getCheckpointStatus().isInProgress();
                         final boolean isFirstRecordVerified = firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY;
-                        final boolean isHeldByEpoch = !checkpointInProgress && isFirstRecordVerified
+                        final boolean isHeldByEpoch = !isCheckpointInProgress && isFirstRecordVerified
                                 && isGeometryGenerationHeldByEpoch(firstWriterTxn, task);
-                        if (checkpointInProgress
+                        if (isCheckpointInProgress
                                 || isHeldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY
                                 && isFirstRecordVerified
