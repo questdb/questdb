@@ -1214,19 +1214,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
-            for (String t : tables()) {
-                createBaseTable(t, " DEDUP UPSERT KEYS(ts)");
-                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 2));
-                addColumns(t);
-                final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (" + UPSERT_COLUMNS + ") VALUES ");
-                for (int v = 3; v <= 16; v++) {
-                    sql.append(v > 3 ? ", " : "").append(v == 10 ? lazyShortNullRow10() : storedRow(v, 2));
-                }
-                execute(sql.toString());
-                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
-            }
-            drainWalQueue();
-            convertToParquet();
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 16, -1, -1, this::literalOf, this::lazyShortNullCiOf);
             for (String t : tables()) {
                 execute("ALTER TABLE " + t + " ALTER COLUMN ci TYPE SHORT");
             }
@@ -1264,19 +1252,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             final String row9 = rowOf(9, tsOf(8), literalOf(9), "9", "'9'", "#s", "9.5m");
-            for (String t : tables()) {
-                createBaseTable(t, "");
-                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 2));
-                addColumns(t);
-                final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (" + UPSERT_COLUMNS + ") VALUES ");
-                for (int v = 3; v <= 16; v++) {
-                    sql.append(v > 3 ? ", " : "").append(v == 9 ? row9 : v == 10 ? lazyShortNullRow10() : storedRow(v, 2));
-                }
-                execute(sql.toString());
-                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
-            }
-            drainWalQueue();
-            convertToParquet();
+            createShapeTables("", 2, 16, 9, 9, this::literalOf, this::lazyShortNullCiOf);
             for (String t : tables()) {
                 execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts, v)");
                 execute("ALTER TABLE " + t + " ALTER COLUMN ci TYPE SHORT");
@@ -1340,7 +1316,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
-            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1, -1, v -> v >= 5 && v <= 8 ? extremeLiteral(v - 5) : literalOf(v));
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1, -1, v -> v >= 5 && v <= 8 ? extremeLiteral(v - 5) : literalOf(v), Integer::toString);
             final String[] rows = new String[5];
             for (int v = 5; v <= 8; v++) {
                 rows[v - 5] = rowOf(v, tsOf(v), extremeLiteral(v - 5), Integer.toString(v), "'" + v + "'", "#s", v % 10 + ".5m");
@@ -2933,17 +2909,18 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     // rows 1..rowCount, the columns added after `top` rows, 2024-01-01 converted to parquet; rows
     // tiedLo..tiedHi (-1: none) take the timestamp of row tiedLo - 1
     private void createShapeTables(String dedup, int top, int rowCount, int tiedLo, int tiedHi) throws Exception {
-        createShapeTables(dedup, top, rowCount, tiedLo, tiedHi, this::literalOf);
+        createShapeTables(dedup, top, rowCount, tiedLo, tiedHi, this::literalOf, Integer::toString);
     }
 
-    // the tables of createShapeTables() with c1..c3 of row v holding literalOfRow(v)
+    // the tables of createShapeTables() with c1..c3 of row v holding literalOfRow(v) and ci ciOfRow(v)
     private void createShapeTables(
             String dedup,
             int top,
             int rowCount,
             int tiedLo,
             int tiedHi,
-            IntFunction<String> literalOfRow
+            IntFunction<String> literalOfRow,
+            IntFunction<String> ciOfRow
     ) throws Exception {
         for (String t : tables()) {
             createBaseTable(t, dedup);
@@ -2962,7 +2939,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 final String literal = literalOfRow.apply(v);
                 sql.append('(').append(v).append(", '").append(tsOf(v >= tiedLo && v <= tiedHi ? tiedLo - 1 : v)).append("', ")
                         .append(literal).append(", ").append(literal).append(", ").append(literal)
-                        .append(", ").append(v).append(", '").append(v).append("', #s, ").append(v % 10).append(".5m)");
+                        .append(", ").append(ciOfRow.apply(v)).append(", '").append(v).append("', #s, ").append(v % 10).append(".5m)");
             }
             execute(sql.toString());
             execute("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES (99, '2024-01-02T00:00:00.000000Z', "
@@ -3140,7 +3117,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    // the VALUES tuple of row 10 of testDedupUpsertIdenticalAroundLazyShortNullRewritesRowGroups(): ci is NULL
+    // ci of row v of the tables of the lazy SHORT NULL tests: NULL in row 10, see lazyShortNullRow10()
+    private String lazyShortNullCiOf(int v) {
+        return v == 10 ? "NULL" : Integer.toString(v);
+    }
+
+    // the VALUES tuple of row 10 of createShapeTables() with ci of lazyShortNullCiOf(): ci is NULL
     private String lazyShortNullRow10() {
         return rowOf(10, tsOf(10), literalOf(10), "NULL", "'10'", "#s", "0.5m");
     }
