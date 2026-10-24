@@ -182,15 +182,15 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
 
     /**
      * Creates nat and pq with 36 rows at 2h spacing over 3 daily partitions, then
-     * adds {@code extra} of the given type. With extraPartition, both tables also get
+     * adds {@code extra} of the given type. With hasExtraPartition, both tables also get
      * a row at 2024-01-04, so 2024-01-03 (last at ADD COLUMN time, _cv top equal to
      * its row count) becomes non-last and convertible.
      */
-    private static void createTwins(String extraType, boolean extraPartition) throws Exception {
+    private static void createTwins(String extraType, boolean hasExtraPartition) throws Exception {
         executeBoth("CREATE TABLE %s (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         executeBoth("INSERT INTO %s SELECT x::INT, '2024-01-01'::TIMESTAMP + (x - 1) * 7_200_000_000L FROM long_sequence(36)");
         executeBoth("ALTER TABLE %s ADD COLUMN extra " + extraType);
-        if (extraPartition) {
+        if (hasExtraPartition) {
             executeBoth("INSERT INTO %s (id, ts) VALUES (99, '2024-01-04T01:00')");
         }
     }

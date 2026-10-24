@@ -441,9 +441,11 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     lastPartitionTs
             );
             final String tsColumnName = reader.getMetadata().getColumnName(reader.getMetadata().getTimestampIndex());
-            final StringSink sink = new StringSink();
-            TestUtils.printSql(engine, sqlExecutionContext, "SELECT count() FROM " + tableName + " WHERE \"" + tsColumnName + "\" >= '2022-02-26'", sink);
-            TestUtils.assertEquals("count\n2\n", sink);
+            assertQuery("SELECT count() FROM " + tableName + " WHERE \"" + tsColumnName + "\" >= '2022-02-26'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         }
     }
 

@@ -872,7 +872,7 @@ public class FuzzTransactionGenerator {
         void pick(Rnd rnd, FuzzTransaction transaction, long minTs, long maxTs) {
             final long lo;
             final long hi;
-            boolean dropRows = false;
+            boolean isDroppingRows = false;
             switch (rnd.nextInt(10)) {
                 case 0, 1, 2, 3 -> {
                     pickWide(transaction, minTs, maxTs);
@@ -890,15 +890,15 @@ public class FuzzTransactionGenerator {
                 case 7 -> {
                     lo = floorDay(minTs) - rnd.nextInt(2) * day;
                     hi = floorDay(maxTs) + (1 + rnd.nextInt(2)) * day;
-                    dropRows = rnd.nextBoolean();
+                    isDroppingRows = rnd.nextBoolean();
                 }
                 case 8 -> {
                     lo = snapLo(rnd, minTs);
                     hi = snapHi(rnd, maxTs);
-                    dropRows = true;
+                    isDroppingRows = true;
                 }
                 default -> {
-                    dropRows = true;
+                    isDroppingRows = true;
                     final long anchor = timestamps.size() > 0 ? timestamps.getQuick(rnd.nextInt(timestamps.size())) : minTs;
                     if (rnd.nextInt(3) == 0) {
                         // next to the row, not on it
@@ -910,7 +910,7 @@ public class FuzzTransactionGenerator {
                     }
                 }
             }
-            if (dropRows) {
+            if (isDroppingRows) {
                 transaction.operationList.clear();
             }
             transaction.setReplaceRange(lo, hi);

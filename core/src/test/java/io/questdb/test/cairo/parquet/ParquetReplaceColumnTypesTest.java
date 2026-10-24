@@ -370,9 +370,9 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     /**
      * Creates src with 400 rows of random values in every column type, NULLs included, and
      * nat (native) and pq with its first 36 rows at 2h spacing over 3 days. pq's first two
-     * days are converted to parquet. With indexed, sym has a bitmap index on both.
+     * days are converted to parquet. With isIndexed, sym has a bitmap index on both.
      */
-    private void createTwins(boolean indexed) throws Exception {
+    private void createTwins(boolean isIndexed) throws Exception {
         execute("""
                 CREATE TABLE src AS (
                     SELECT
@@ -416,7 +416,7 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
         drainWalQueue();
         execute("CREATE TABLE pq AS (SELECT * FROM nat) TIMESTAMP(ts) PARTITION BY DAY WAL");
         drainWalQueue();
-        if (indexed) {
+        if (isIndexed) {
             execute("ALTER TABLE nat ALTER COLUMN sym ADD INDEX");
             execute("ALTER TABLE pq ALTER COLUMN sym ADD INDEX");
             drainWalQueue();

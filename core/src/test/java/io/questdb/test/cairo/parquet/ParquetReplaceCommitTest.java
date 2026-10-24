@@ -966,8 +966,8 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
             final long txnBefore = partitionNameTxn("pq", 0);
             long unusedBefore = 0;
             int inPlaceDrops = 0;
-            boolean rewritten = false;
-            for (int g = 0; g < rowGroups - 1 && !rewritten; g++) {
+            boolean isRewritten = false;
+            for (int g = 0; g < rowGroups - 1 && !isRewritten; g++) {
                 // exactly row group g of the original layout, no rows
                 final long lo = DAY1 + (long) g * LARGE_ROW_GROUP_SIZE * LARGE_STEP;
                 final long hi = lo + (LARGE_ROW_GROUP_SIZE - 1) * LARGE_STEP;
@@ -981,10 +981,10 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                     inPlaceDrops++;
                 } else {
                     Assert.assertEquals(0, unused);
-                    rewritten = true;
+                    isRewritten = true;
                 }
             }
-            Assert.assertTrue("the dead-bytes gate must rewrite eventually", rewritten);
+            Assert.assertTrue("the dead-bytes gate must rewrite eventually", isRewritten);
             Assert.assertTrue("at least two DROPs must run in place first, got " + inPlaceDrops, inPlaceDrops >= 2);
             assertCleanAgainstFreshConversion();
         });
@@ -1223,19 +1223,19 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
      * row group merges non-NULL var-size O3 values into it: {@code s} is "rs" + its
      * position and {@code bin} is the two bytes {0x10 + position, 0xab}.
      */
-    private static void appendRows(TableToken token, boolean putExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
+    private static void appendRows(TableToken token, boolean hasExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
         final long[] timestamps = new long[rowTs.length];
         for (int i = 0; i < rowTs.length; i++) {
             timestamps[i] = MicrosTimestampDriver.floor(rowTs[i]);
         }
-        appendRows(token, putExtra, MicrosTimestampDriver.floor(rangeLo), MicrosTimestampDriver.floor(rangeHi), timestamps);
+        appendRows(token, hasExtra, MicrosTimestampDriver.floor(rangeLo), MicrosTimestampDriver.floor(rangeHi), timestamps);
     }
 
     /**
      * As {@link #appendRows(TableToken, boolean, String, String, String...)}, with the
      * row timestamps and the inclusive replace range in micros.
      */
-    private static void appendRows(TableToken token, boolean putExtra, long rangeLo, long rangeHi, long[] rowTs) throws Exception {
+    private static void appendRows(TableToken token, boolean hasExtra, long rangeLo, long rangeHi, long[] rowTs) throws Exception {
         final long binAddr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
         try (WalWriter ww = engine.getWalWriter(token)) {
             for (int i = 0; i < rowTs.length; i++) {
@@ -1248,7 +1248,7 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                 Unsafe.putByte(binAddr, (byte) (0x10 + i));
                 Unsafe.putByte(binAddr + 1, (byte) 0xab);
                 row.putBin(6, binAddr, 2);
-                if (putExtra) {
+                if (hasExtra) {
                     row.putInt(7, 2000 + i);
                 }
                 row.append();
@@ -1380,12 +1380,12 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     /**
-     * Commits the same replace range to nat and pq. With putExtra, each new row also
+     * Commits the same replace range to nat and pq. With hasExtra, each new row also
      * sets the {@code extra} INT column (index 7) to 2000 + its position.
      */
-    private static void replaceBoth(boolean putExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
-        appendRows(engine.verifyTableName("nat"), putExtra, rangeLo, rangeHi, rowTs);
-        appendRows(engine.verifyTableName("pq"), putExtra, rangeLo, rangeHi, rowTs);
+    private static void replaceBoth(boolean hasExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
+        appendRows(engine.verifyTableName("nat"), hasExtra, rangeLo, rangeHi, rowTs);
+        appendRows(engine.verifyTableName("pq"), hasExtra, rangeLo, rangeHi, rowTs);
         drainWalQueue();
     }
 
@@ -1451,9 +1451,9 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
      * commit. The seed comes from {@link TestUtils#generateRandom}, so a failure
      * reproduces from the seeds it logs.
      */
-    private void assertRandomReplaceCommits(boolean formatParquet) throws Exception {
+    private void assertRandomReplaceCommits(boolean isFormatParquet) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        createTwins(formatParquet);
+        createTwins(isFormatParquet);
         final long hour = Micros.HOUR_MICROS;
         final long minute = Micros.MINUTE_MICROS;
         long appendTs = MicrosTimestampDriver.floor("2024-01-03T23:00:00.000000Z");
@@ -1524,24 +1524,24 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
 
     /**
      * Creates nat (native) and pq with 3 daily partitions of 12 rows at 2h spacing.
-     * With formatParquet, pq is a FORMAT PARQUET table (every partition parquet,
+     * With isFormatParquet, pq is a FORMAT PARQUET table (every partition parquet,
      * including the last). Otherwise pq's first two days are converted to parquet
      * and the last stays native.
      */
-    private void createTwins(boolean formatParquet) throws Exception {
-        createTwins(formatParquet, false, false);
+    private void createTwins(boolean isFormatParquet) throws Exception {
+        createTwins(isFormatParquet, false, false);
     }
 
     /**
-     * As {@link #createTwins(boolean)}; with addColumnBeforeConvert, both tables get an
+     * As {@link #createTwins(boolean)}; with isColumnAddedBeforeConvert, both tables get an
      * {@code extra INT} column after the inserts and before any parquet conversion.
-     * With dedup, both tables are {@code DEDUP UPSERT KEYS(ts, id)}.
+     * With isDedup, both tables are {@code DEDUP UPSERT KEYS(ts, id)}.
      */
-    private void createTwins(boolean formatParquet, boolean addColumnBeforeConvert, boolean dedup) throws Exception {
+    private void createTwins(boolean isFormatParquet, boolean isColumnAddedBeforeConvert, boolean isDedup) throws Exception {
         final String ddl = "CREATE TABLE %s (id INT, ts TIMESTAMP, v VARCHAR, sym SYMBOL, d DOUBLE, s STRING, bin BINARY) TIMESTAMP(ts) PARTITION BY DAY%s WAL%s";
-        final String dedupClause = dedup ? " DEDUP UPSERT KEYS(ts, id)" : "";
+        final String dedupClause = isDedup ? " DEDUP UPSERT KEYS(ts, id)" : "";
         execute(String.format(ddl, "nat", "", dedupClause));
-        execute(String.format(ddl, "pq", formatParquet ? " FORMAT PARQUET" : "", dedupClause));
+        execute(String.format(ddl, "pq", isFormatParquet ? " FORMAT PARQUET" : "", dedupClause));
         // rnd_bin() draws from the per-test seeded random, so pq copies nat's rows
         // rather than re-running the generator. Every 4th s and some bin are NULL.
         execute("""
@@ -1559,12 +1559,12 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         drainWalQueue();
         execute("INSERT INTO pq SELECT * FROM nat");
         drainWalQueue();
-        if (addColumnBeforeConvert) {
+        if (isColumnAddedBeforeConvert) {
             execute("ALTER TABLE nat ADD COLUMN extra INT");
             execute("ALTER TABLE pq ADD COLUMN extra INT");
             drainWalQueue();
         }
-        if (!formatParquet) {
+        if (!isFormatParquet) {
             execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
             drainWalQueue();
         }
@@ -1572,6 +1572,6 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .noRandomAccess()
-                .returns(formatParquet ? "count\n3\n" : "count\n2\n");
+                .returns(isFormatParquet ? "count\n3\n" : "count\n2\n");
     }
 }

@@ -790,7 +790,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             // Rollback of an uncommitted in-place O3 on a non-WAL writer must leave the
             // committed rows untouched.
             try (TableWriter writer = getWriter("pq")) {
-                final TableWriter.Row row = writer.newRow(1704085800000000L);
+                final TableWriter.Row row = writer.newRow(1_704_085_800_000_000L);
                 row.putInt(0, 9999);
                 row.putSym(2, "s2");
                 row.putLong(3, 9999);
@@ -808,11 +808,11 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPinned(String indexClause, boolean midScan) throws Exception {
-        assertPinned(indexClause, midScan, ParquetInPlaceIndexPinnedReaderTest::applyO3Insert);
+    private void assertPinned(String indexClause, boolean isMidScan) throws Exception {
+        assertPinned(indexClause, isMidScan, ParquetInPlaceIndexPinnedReaderTest::applyO3Insert);
     }
 
-    private void assertPinned(String indexClause, boolean midScan, TableCommit commit) throws Exception {
+    private void assertPinned(String indexClause, boolean isMidScan, TableCommit commit) throws Exception {
         assertMemoryLeak(() -> {
             createTwins(indexClause);
             final long nameTxnBefore = partitionNameTxn("pq", 0);
@@ -834,7 +834,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
                     cursors[i] = factories[i].getCursor(sqlExecutionContext);
                     sinks[i] = new StringSink();
                     CursorPrinter.println(factories[i].getMetadata(), sinks[i]);
-                    if (midScan) {
+                    if (isMidScan) {
                         // Read one row: the index cursor over the first (parquet)
                         // partition is open and positioned before the O3 lands.
                         Assert.assertTrue(cursors[i].hasNext());
@@ -1140,8 +1140,8 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
      * nat and pq with a single indexed sym column (no sym2), 36 rows at 2h spacing
      * starting 2024-01-01, as WAL or non-WAL tables. pq's first two days are parquet.
      */
-    private void createSimpleTwins(String indexClause, boolean wal, String nat, String pq) throws Exception {
-        final String ddl = "CREATE TABLE %s (id INT, ts TIMESTAMP, sym SYMBOL %s, v LONG) TIMESTAMP(ts) PARTITION BY DAY" + (wal ? " WAL" : " BYPASS WAL");
+    private void createSimpleTwins(String indexClause, boolean isWal, String nat, String pq) throws Exception {
+        final String ddl = "CREATE TABLE %s (id INT, ts TIMESTAMP, sym SYMBOL %s, v LONG) TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL");
         execute(String.format(ddl, nat, indexClause));
         execute(String.format(ddl, pq, indexClause));
         final String ins = "INSERT INTO %s SELECT x::INT, '2024-01-01'::TIMESTAMP + (x - 1) * 7_200_000_000L, 's' || (x %% 3), x FROM long_sequence(36)";

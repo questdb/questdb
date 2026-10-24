@@ -453,6 +453,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
+    private boolean isParquetIndexPurgePending;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
@@ -502,7 +503,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
-    private boolean parquetIndexPurgePending;
     // Index versions an in-place parquet O3 superseded (versionRebuiltParquetIndexes).
     // Separate from purgingOperator: getPurgingOperator() clears that one, and an
     // UPDATE or DDL holding entries in it can commit through commit() -> housekeep().
@@ -6420,9 +6420,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void clearParquetIndexPurges() {
-        if (parquetIndexPurgePending) {
+        if (isParquetIndexPurgePending) {
             parquetIndexPurgingOperator.clear();
-            parquetIndexPurgePending = false;
+            isParquetIndexPurgePending = false;
         }
     }
 
@@ -15060,7 +15060,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * old version's txn range.
      */
     private void purgeSupersededParquetIndexes() {
-        if (!parquetIndexPurgePending) {
+        if (!isParquetIndexPurgePending) {
             return;
         }
         try {
@@ -18626,7 +18626,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionTimestamp,
                         partitionNameTxn
                 );
-                parquetIndexPurgePending = true;
+                isParquetIndexPurgePending = true;
             }
         }
     }

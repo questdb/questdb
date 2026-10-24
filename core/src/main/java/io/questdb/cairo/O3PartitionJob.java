@@ -4354,11 +4354,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Copies a row group from the source parquet file, appending null column
-     * chunks for columns that exist in the current table schema but are missing
-     * from the parquet file (ADD COLUMN case).
-     */
-    /**
      * Writes the rewrite's deferred leading row groups [0, pendingCopyRowGroups) to the
      * new file, in order. Only raw chunk copies: deferral is off when a copy must be
      * materialized, which would reuse the decode buffers a running merge holds.
@@ -4432,6 +4427,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         tableWriter.addPhysicallyWrittenRows(decoder.metadata().getRowGroupSize(rowGroupIndex));
     }
 
+    /**
+     * Copies a row group from the source parquet file, appending null column
+     * chunks for columns that exist in the current table schema but are missing
+     * from the parquet file (ADD COLUMN case).
+     */
     private static void copyRowGroupWithNullColumns(
             PartitionUpdater partitionUpdater,
             int rowGroupIndex,

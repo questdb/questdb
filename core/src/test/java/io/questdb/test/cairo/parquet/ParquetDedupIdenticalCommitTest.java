@@ -464,12 +464,12 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         return count;
     }
 
-    private void assertChangedCommitMerges(String select, boolean expectRewrite, String probe, String expected) throws Exception {
+    private void assertChangedCommitMerges(String select, boolean isRewriteExpected, String probe, String expected) throws Exception {
         final long txnBefore = partitionNameTxn();
         final long sizeBefore = parquetFileSize();
         insertBoth(select);
         assertTwinsEqual();
-        if (expectRewrite) {
+        if (isRewriteExpected) {
             Assert.assertNotEquals(txnBefore, partitionNameTxn());
         } else {
             Assert.assertEquals(txnBefore, partitionNameTxn());
@@ -479,7 +479,7 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         assertQuery(probe).noLeakCheck().returns(expected);
     }
 
-    private void assertIdenticalCommitIsNoop(String select, boolean rewriteMode) throws Exception {
+    private void assertIdenticalCommitIsNoop(String select, boolean isRewriteMode) throws Exception {
         final long txnBefore = partitionNameTxn();
         final long sizeBefore = parquetFileSize();
         final long unusedBefore = parquetUnusedBytes();
@@ -492,7 +492,7 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         Assert.assertEquals("unused bytes", unusedBefore, parquetUnusedBytes());
         Assert.assertEquals("row groups", rowGroupsBefore, parquetRowGroupCount());
         Assert.assertEquals("partition dirs", dirsBefore, partitionDirCount());
-        if (rewriteMode) {
+        if (isRewriteMode) {
             Assert.assertEquals(0, unusedBefore);
         }
     }

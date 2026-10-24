@@ -917,10 +917,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             // The reference table stays native whatever format the table under test has: a
             // parquet replace or dedup bug that hit both tables would cancel out in the compare.
-            final boolean createAsParquet = fuzzer.isCreateWalAsParquet();
+            final boolean isCreateWalAsParquet = fuzzer.isCreateWalAsParquet();
             fuzzer.setCreateWalAsParquet(false);
             fuzzer.createInitialTableWal(tableNameWalNoDedup);
-            fuzzer.setCreateWalAsParquet(createAsParquet);
+            fuzzer.setCreateWalAsParquet(isCreateWalAsParquet);
             fuzzer.createInitialTableWal(tableNameDedup);
 
             // Add long256 type to have to be a chance of a dedup key
@@ -938,7 +938,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 drainWalQueue();
                 maybeConvertToParquet(tableNameDedup, true);
             }
-            final boolean isParquet = createAsParquet || convertToParquet;
+            final boolean isParquet = isCreateWalAsParquet || convertToParquet;
             if (isParquet) {
                 setRndParquetRewriteGate(rnd);
             }

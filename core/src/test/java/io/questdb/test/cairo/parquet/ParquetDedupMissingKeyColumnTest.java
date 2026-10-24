@@ -267,11 +267,11 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private void createTwins(int rows, boolean secondPartition) throws Exception {
+    private void createTwins(int rows, boolean hasSecondPartition) throws Exception {
         for (String t : new String[]{"nat", "pq"}) {
             execute("CREATE TABLE " + t + " (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
             execute("INSERT INTO " + t + " SELECT x::INT, '2024-01-01'::TIMESTAMP + (x - 1) * 7_200_000_000L FROM long_sequence(" + rows + ")");
-            if (secondPartition) {
+            if (hasSecondPartition) {
                 execute("INSERT INTO " + t + " VALUES (500, '2024-01-02T01:00')");
             }
         }
@@ -290,13 +290,13 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
             int rows,
             String kType,
             String o3Ts,
-            boolean secondPartitionBeforeAdd,
-            boolean secondPartitionAfterAdd
+            boolean hasSecondPartitionBeforeAdd,
+            boolean hasSecondPartitionAfterAdd
     ) throws Exception {
-        createTwins(rows, secondPartitionBeforeAdd);
+        createTwins(rows, hasSecondPartitionBeforeAdd);
         convert();
         addKey(kType);
-        if (secondPartitionAfterAdd) {
+        if (hasSecondPartitionAfterAdd) {
             for (String t : new String[]{"nat", "pq"}) {
                 execute("INSERT INTO " + t + "(id, ts) VALUES (600, '2024-01-02T01:00')");
             }

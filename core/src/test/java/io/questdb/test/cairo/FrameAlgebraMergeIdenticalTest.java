@@ -245,8 +245,8 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
         return array;
     }
 
-    private static void assertArray(int type, boolean expected, DirectArray existingValue, DirectArray o3Value) {
-        assertVar(type, expected, (aux, data, isExisting, row) -> {
+    private static void assertArray(int type, boolean isExpectedIdentical, DirectArray existingValue, DirectArray o3Value) {
+        assertVar(type, isExpectedIdentical, (aux, data, isExisting, row) -> {
             if (isExisting && row != 3) {
                 try (DirectArray kept = array2d(1, 2, row)) {
                     ArrayTypeDriver.appendValue(aux, data, kept);
@@ -262,8 +262,8 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertBinary(boolean expected, byte[] existingValue, byte[] o3Value) {
-        assertVar(ColumnType.BINARY, expected, (aux, data, isExisting, row) -> {
+    private static void assertBinary(boolean isExpectedIdentical, byte[] existingValue, byte[] o3Value) {
+        assertVar(ColumnType.BINARY, isExpectedIdentical, (aux, data, isExisting, row) -> {
             final byte[] value = isExisting && row != 3 ? new byte[]{(byte) row} : (isExisting ? existingValue : o3Value);
             if (value == null) {
                 aux.putLong(data.putNullBin());
@@ -285,7 +285,7 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
 
     // Existing row 3 holds existingValue and O3 row 1, which replaces it, holds o3Value. O3
     // row 0 replaces existing row 1 with an equal value.
-    private static void assertFixed(int type, boolean expected, long existingValue, long o3Value) {
+    private static void assertFixed(int type, boolean isExpectedIdentical, long existingValue, long o3Value) {
         final int size = ColumnType.sizeOf(type);
         try (
                 MemoryCARW existing = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -296,12 +296,12 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
             }
             putLong(o3, size, 2);
             putLong(o3, size, o3Value);
-            Assert.assertEquals(ColumnType.nameOf(type), expected, isIdentical(type, existing, null, o3, null));
+            Assert.assertEquals(ColumnType.nameOf(type), isExpectedIdentical, isIdentical(type, existing, null, o3, null));
         }
     }
 
-    private static void assertString(boolean expected, String existingValue, String o3Value) {
-        assertVar(ColumnType.STRING, expected, (aux, data, isExisting, row) -> {
+    private static void assertString(boolean isExpectedIdentical, String existingValue, String o3Value) {
+        assertVar(ColumnType.STRING, isExpectedIdentical, (aux, data, isExisting, row) -> {
             final String value = isExisting && row != 3 ? "kept" + row : (isExisting ? existingValue : o3Value);
             if (value == null) {
                 StringTypeDriver.INSTANCE.appendNull(aux, data);
@@ -316,7 +316,7 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
      * rows (row 0 equal to existing row 1, row 1 from the case) of a var-size column, and
      * checks the result. STRING and BINARY aux vectors start with a 0 offset.
      */
-    private static void assertVar(int type, boolean expected, VarValueWriter writer) {
+    private static void assertVar(int type, boolean isExpectedIdentical, VarValueWriter writer) {
         final short tag = ColumnType.tagOf(type);
         final boolean hasLeadingOffset = tag == ColumnType.STRING || tag == ColumnType.BINARY;
         try (
@@ -335,12 +335,12 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
             // O3 row 0 equals existing row 1: write it as a kept row 1
             writer.write(o3Aux, o3Data, true, 1);
             writer.write(o3Aux, o3Data, false, 3);
-            Assert.assertEquals(ColumnType.nameOf(type), expected, isIdentical(type, existingData, existingAux, o3Data, o3Aux));
+            Assert.assertEquals(ColumnType.nameOf(type), isExpectedIdentical, isIdentical(type, existingData, existingAux, o3Data, o3Aux));
         }
     }
 
-    private static void assertVarchar(boolean expected, String existingValue, String o3Value) {
-        assertVar(ColumnType.VARCHAR, expected, (aux, data, isExisting, row) -> {
+    private static void assertVarchar(boolean isExpectedIdentical, String existingValue, String o3Value) {
+        assertVar(ColumnType.VARCHAR, isExpectedIdentical, (aux, data, isExisting, row) -> {
             final String value = isExisting && row != 3 ? "kept row " + row : (isExisting ? existingValue : o3Value);
             VarcharTypeDriver.appendValue(aux, data, value == null ? null : new Utf8String(value));
         });

@@ -212,11 +212,11 @@ public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
                     expected.add(r);
                 } else {
                     // replaced: gone unless the commit brought the same value back
-                    boolean readded = false;
+                    boolean isReadded = false;
                     for (int j = 0, n = newRows.size(); j < n; j++) {
-                        readded |= newRows.getQuick(j).equals(r);
+                        isReadded |= newRows.getQuick(j).equals(r);
                     }
-                    if (!readded) {
+                    if (!isReadded) {
                         assertQuery("SELECT val, ts FROM x WHERE val = " + (101 + i))
                                 .noLeakCheck()
                                 .timestamp("ts")
