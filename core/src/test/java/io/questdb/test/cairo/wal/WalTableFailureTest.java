@@ -26,14 +26,21 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
@@ -45,6 +52,9 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpLexer;
+import io.questdb.cutlass.line.udp.LineUdpParserImpl;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -56,10 +66,13 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -73,6 +86,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.RandomAccessFile;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -85,6 +101,8 @@ import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
+    private static final String SAVED_LAG_INSERT = "INSERT INTO %s SELECT timestamp_sequence('2022-02-25T01:00', 1_000_000L), x, 'k' || (x %% 7), 'r' || x FROM long_sequence(1_000)";
+    private boolean isWalApplyStarted;
 
     @Override
     @Before
@@ -277,6 +295,24 @@ public class WalTableFailureTest extends AbstractCairoTest {
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF
                             1\tab\t2022-02-25T00:00:00.000000Z\tef
                             """);
+        });
+    }
+
+    @Test
+    public void testConvertActivePartitionOfSuspendedTableWithSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            final String committed = "('2022-02-24', 1_000_000, 'c', 'c1'), ('2022-02-25', 2_000_000, 'c', 'c2')";
+            final TableToken token = saveWalLag(committed);
+            // a suspended table denies WAL writes, so the ALTER runs on the pooled writer, which holds the lag
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            execute("ALTER TABLE x SUSPEND WAL");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
+            execute("ALTER TABLE x RESUME WAL");
+            // the first pass must apply the rest: a later pass opens a fresh writer, which hides a failed one
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+            tickWalQueue(1);
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows(committed);
         });
     }
 
@@ -722,87 +758,53 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testForceDropPartitionFailsAndRolledBack() throws Exception {
+    public void testFailToRollUncommittedToNewWalSegmentWhenFlushesFail() throws Exception {
+        // The disk fails the copy and then every flush of the new segment's files: the roll still closes them all.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        failToCopyDataToFile("sym.d", true);
+    }
+
+    @Test
+    public void testForceDropActivePartitionWithSavedLag() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
-
-            execute("insert into " + tableToken.getTableName() + " " +
-                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
-                    "from long_sequence(10 * 4)");
-
+            final TableToken token = saveWalLag("('2022-02-24', 1_000_000, 'c', 'c1'), ('2022-02-25', 2_000_000, 'c', 'c2')");
+            // FORCE DROP bypasses the WAL and runs on the pooled writer, which holds the saved lag
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2022-02-25'");
             drainWalQueue();
-
-            assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName() +
-                    " where ts not in '2022-03-04' and ts not in '2022-03-02'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("""
-                            count\tmin\tmax
-                            33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z
-                            """);
-            // Evict reader to simulate reader that is not able to read partition
-            engine.releaseInactive();
-
-            // Remove one but last partition from the disk
-            Path tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-04");
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            Assert.assertTrue(ff.rmdir(tempPath));
-
-            try {
-                // This should execute immediately, drop partition before the last one
-                execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist:");
-                TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
-            }
-
-            try {
-                assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName())
-                        .noLeakCheck()
-                        .expectSize()
-                        .noRandomAccess()
-                        .returns("""
-                                count\tmin\tmax
-                                20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z
-                                """);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-03-04' does not exist in table");
-            }
-
-            // Previous command to delete 2022-03-05 is not executed because writer rolled back correctly
-            execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
-            tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-05");
-            Assert.assertTrue(ff.exists(tempPath.$()));
-
-            // Force delete partition that is not on disk to unblock reading
-            execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
-
-            assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName())
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("""
-                            count\tmin\tmax
-                            33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z
-                            """);
-
-            // Check writer is healthy and can insert records to the last partition
-            execute("insert into " + tableToken.getTableName() + " " +
-                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-03-05', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
-                    "from long_sequence(10 * 4)");
-            drainWalQueue();
-            assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName() + " where ts not in '2022-03-04'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("""
-                            count\tmin\tmax
-                            73\t2022-02-24T00:00:00.000000Z\t2022-03-14T18:00:00.000000Z
-                            """);
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            // the committed day-2 row is dropped on purpose; the lag transaction and the out-of-order row
+            // were not committed when the partition was dropped, so they must all be there
+            assertSavedLagRows("('2022-02-24', 1_000_000, 'c', 'c1')");
         });
+    }
+
+    @Test
+    public void testForceDropLagPartitionOfEmptyTableWithSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            // the table has no committed rows: the lag sits in the 0-row partition it created
+            final TableToken token = saveWalLag(null);
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2022-02-25'");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows(null);
+        });
+    }
+
+    @Test
+    public void testForceDropPartitionFailsAndRolledBack() throws Exception {
+        assertMemoryLeak(this::assertForceDropPartitionFailsAndRolledBack);
+    }
+
+    @Test
+    public void testForceDropPartitionFailsAndRolledBackWithoutFsWideSyncfs() throws Exception {
+        // The macOS and Windows save point on every platform: syncfs flushes one file, so the save point flushes the
+        // files of every attached partition. The failed drop still reports its own error.
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                return false;
+            }
+        }, this::assertForceDropPartitionFailsAndRolledBack);
     }
 
     @Test
@@ -844,6 +846,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
+        // Force-drop removes the partition dir synchronously "at the end of the alter" under nosync; under
+        // adaptive the physical cleanup is deferred, so the immediate assertFalse(dir exists) needs nosync.
+        // The test covers drop mechanics, not durability.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         // Merge-append folds the O3 split into pieces in the same directory instead of a new one,
         // so the split-directory name this test deletes to simulate a missing partition never exists.
@@ -1388,6 +1394,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testSuspendWal() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
@@ -1401,16 +1408,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " suspend wal");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\t0\t0\t-1\t\n");
 
             execute("update " + tableToken.getTableName() + " set x = 1111;");
             drainWalQueue();
@@ -1426,16 +1433,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\t0\t0\t-1\t\n");
 
             drainWalQueue();
             assertQuery(tableToken.getTableName())
@@ -1744,7 +1751,18 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTableResumeAfterFailedLagConsumingCommit() throws Exception {
+        testWalTableResumeAfterFailedLagConsumingCommit0(false);
+    }
+
+    @Test
+    public void testWalTableResumeAfterFailedLagConsumingCommitNegativeLagChecksum() throws Exception {
+        testWalTableResumeAfterFailedLagConsumingCommit0(true);
+    }
+
+    @Test
     public void testWalTableResumeContinuesAfterEject() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
@@ -1818,8 +1836,37 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\t0\t0\t-1\t\n");
+        });
+    }
+
+    @Test
+    public void testWalTableRollbackDropsSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            // seqTxn 1 the committed row, seqTxn 2 the lag, seqTxn 3 the out-of-order row
+            final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')");
+            try (TableWriter writer = getWriter(token)) {
+                Assert.assertEquals("the pooled writer does not hold the lag", 2, writer.getAppliedSeqTxn());
+                // a commit that consumes the lag rewrites its bytes in place; model a failed one: zero the lag
+                // rows of column v, leave the writer in a transaction and roll it back
+                final File[] partitionDirs = new File(engine.getConfiguration().getDbRoot().toString(), token.getDirName())
+                        .listFiles((dir, name) -> name.startsWith("2022-02-25"));
+                Assert.assertNotNull(partitionDirs);
+                Arrays.sort(partitionDirs);
+                try (RandomAccessFile file = new RandomAccessFile(new File(partitionDirs[partitionDirs.length - 1], "v.d"), "rw")) {
+                    file.seek(Long.BYTES);
+                    file.write(new byte[1_000 * Long.BYTES]);
+                }
+                // A WAL table refuses TableWriter rows, so an uncommitted column version change, as an UPDATE
+                // leaves one, puts the writer in the transaction
+                writer.upsertColumnVersion(parseFloorPartialTimestamp("2022-02-25"), writer.getColumnIndex("v"), 0);
+                Assert.assertTrue("the writer is not in a transaction to roll back", writer.inTransaction());
+                writer.rollback();
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')");
         });
     }
 
@@ -1947,6 +1994,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, NONE.text());
         if (Os.isWindows()) {
             testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
@@ -1961,6 +2009,41 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTableUdpRollbackDropsSavedLag() throws Exception {
+        assertMemoryLeak(() -> {
+            // outside ADAPTIVE the old UDP receiver appends to a WAL table's writer directly
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')");
+            // a fresh writer drops the saved lag in memory only and appends at the committed rows, over the
+            // lag's bytes; the receiver closes without a commit, so the pool's rollback reloads the lag from _txn
+            engine.releaseAllWriters();
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                final byte[] lines = """
+                        x v=7i 1645830000000000000
+                        x v=8i 1645830060000000000
+                        x v=9i 1645830120000000000
+                        """.getBytes(Files.UTF_8);
+                final long mem = Unsafe.malloc(lines.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < lines.length; i++) {
+                        Unsafe.putByte(mem + i, lines[i]);
+                    }
+                    lexer.parse(mem, mem + lines.length);
+                } finally {
+                    Unsafe.free(mem, lines.length, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')");
+        });
+    }
+
+    @Test
     public void testWalUpdateFailedCompilationSuspendsTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1111";
@@ -1968,11 +2051,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         spinLockTimeout = 1;
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
-            private int attempt = 0;
-
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 2) {
+                // Fails _meta opens only once runCheckTableSuspended starts the WAL apply, so the
+                // UPDATE fails when the apply job compiles it. The number of earlier opens depends on
+                // the commit mode: table creation opens _meta more often under adaptive commit mode
+                // (epoch baseline copy and checksum) than under nosync, and compiling the UPDATE
+                // opens a reader to reject parquet partitions.
+                if (isWalApplyStarted && Utf8s.containsAscii(name, "_meta")) {
                     if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))) {
                         return -1;
                     }
@@ -2006,6 +2092,113 @@ public class WalTableFailureTest extends AbstractCairoTest {
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expected);
         }
+    }
+
+    // The table and the reference hold the same rows: the committed ones (null for none), the lag
+    // transaction's 1,000 and the out-of-order row.
+    private static void assertSavedLagRows(String committedValues) throws Exception {
+        execute("CREATE TABLE x_expected (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        if (committedValues != null) {
+            execute("INSERT INTO x_expected VALUES " + committedValues);
+        }
+        execute(String.format(SAVED_LAG_INSERT, "x_expected"));
+        execute("INSERT INTO x_expected VALUES ('2022-02-25T00:30', -1, 'neg', 'neg')");
+        assertSqlCursors("SELECT count(), sum(v) FROM x_expected", "SELECT count(), sum(v) FROM x");
+        assertSqlCursors("x_expected", "x");
+    }
+
+    private void assertForceDropPartitionFailsAndRolledBack() throws Exception {
+        TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+        execute("insert into " + tableToken.getTableName() + " " +
+                "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                "from long_sequence(10 * 4)");
+
+        drainWalQueue();
+
+        assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName() +
+                " where ts not in '2022-03-04' and ts not in '2022-03-02'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        count\tmin\tmax
+                        33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z
+                        """);
+        // Evict reader to simulate reader that is not able to read partition
+        engine.releaseInactive();
+
+        // Remove one but last partition from the disk
+        Path tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-04");
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        Assert.assertTrue(ff.rmdir(tempPath));
+
+        try {
+            // This should execute immediately, drop partition before the last one
+            execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist:");
+            TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
+        }
+
+        try {
+            assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmin\tmax
+                            20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z
+                            """);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-03-04' does not exist in table");
+        }
+
+        // Previous command to delete 2022-03-05 is not executed because writer rolled back correctly
+        final CairoConfiguration config = engine.getConfiguration();
+        if (config.getCommitMode() == CommitMode.ADAPTIVE && !config.getFilesFacade().isSyncfsFileSystemWide()) {
+            // A save point that flushes the files of every attached partition, as on macOS and Windows, stops at the
+            // missing one: the drop is committed, but the statement fails and names that partition.
+            try {
+                execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not enumerate adaptive directory for fsync");
+                TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
+            }
+        } else {
+            execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
+        }
+        tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-05");
+        Assert.assertTrue(ff.exists(tempPath.$()));
+
+        // Force delete partition that is not on disk to unblock reading
+        execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
+
+        assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName())
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        count\tmin\tmax
+                        33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z
+                        """);
+
+        // Check writer is healthy and can insert records to the last partition
+        execute("insert into " + tableToken.getTableName() + " " +
+                "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-03-05', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                "from long_sequence(10 * 4)");
+        drainWalQueue();
+        assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName() + " where ts not in '2022-03-04'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        count\tmin\tmax
+                        73\t2022-02-24T00:00:00.000000Z\t2022-03-14T18:00:00.000000Z
+                        """);
     }
 
     private void assertWalApplyMetrics(int suspendedTables, int seqTxn, int writerTxn) {
@@ -2083,21 +2276,42 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
+        failToCopyDataToFile(failToRollFile, false);
+    }
+
+    private void failToCopyDataToFile(String failToRollFile, boolean failNewSegmentFlushes) throws Exception {
+        final LongHashSet newSegmentFds = new LongHashSet();
+        final AtomicBoolean copyFailed = new AtomicBoolean();
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
 
             @Override
             public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
                 if (destFd == fd) {
+                    copyFailed.set(true);
                     return -1;
                 }
                 return super.copyData(srcFd, destFd, offsetSrc, length);
             }
 
             @Override
+            public void fsyncAndClose(long fd) {
+                if (failNewSegmentFlushes && copyFailed.get() && newSegmentFds.contains(fd)) {
+                    // as the real facade does, the fd is closed before the failure is thrown
+                    close(fd);
+                    throw CairoException.critical(5).put("could not fsync [fd=").put(fd).put(']');
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
             public long openRW(LPSZ name, int opts) {
-                if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
-                    fd = super.openRW(name, opts);
-                    return fd;
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + "1" + Files.SEPARATOR)) {
+                    final long newSegmentFd = super.openRW(name, opts);
+                    newSegmentFds.add(newSegmentFd);
+                    if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
+                        fd = newSegmentFd;
+                    }
+                    return newSegmentFd;
                 }
                 return super.openRW(name, opts);
             }
@@ -2131,7 +2345,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         insertMethod.commit();
                     } catch (CairoException e) {
                         // todo: check all assertContains() usages
-                        TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                failNewSegmentFlushes ? "could not fsync" : "failed to copy column file to new segment"
+                        );
                     }
                 }
             }
@@ -2187,6 +2404,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             // minimize time spent opening metadata that cannot be opened
             spinLockTimeout = 100;
+            isWalApplyStarted = true;
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
@@ -2201,6 +2419,64 @@ public class WalTableFailureTest extends AbstractCairoTest {
                             """);
 
         });
+    }
+
+    // The lag transaction holds the table's lag limit of rows (maxUncommittedRows=50 times the lag
+    // multiplier, 20) and the out-of-order row sorts below them, so one apply pass with a zero time quota
+    // applies the lag transaction on its own, keeps its rows in WAL lag and saves the lag in _txn. The
+    // out-of-order row goes through a second WAL, so no later transaction shares the lag transaction's WAL
+    // segment; the WAL purge that runs after the lag is saved must not take that segment.
+    private static TableToken saveWalLag(String committedValues) throws Exception {
+        return saveWalLag(committedValues, false);
+    }
+
+    private static TableToken saveWalLag(String committedValues, boolean negativeLagChecksum) throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        // Only a one-txn block keeps lag. With cairo.wal.apply.block.size on, the block row limit dwarfs the
+        // 1,000-row txn, so the out-of-order txn would join it in one block and commit it in full.
+        setProperty(PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, 1);
+        execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s SYMBOL, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
+        final TableToken token = engine.verifyTableName("x");
+        if (committedValues != null) {
+            execute("INSERT INTO x VALUES " + committedValues);
+            drainWalQueue();
+        }
+        if (negativeLagChecksum) {
+            // A table with many commits: the empty-lag checksum of every txn from 73,046 to 145,130 is negative.
+            engine.releaseInactive();
+            try (TxWriter txWriter = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                txWriter.ofRW(Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$());
+                txWriter.setCommitMode(CommitMode.NOSYNC);
+                final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+                for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
+                    final int symbolCount = txWriter.getSymbolValueCount(i);
+                    symbolCounts.add(() -> symbolCount);
+                }
+                while (TableUtils.calculateTxnLagChecksum(txWriter.getTxn(), 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0) >= 0) {
+                    txWriter.commit(symbolCounts);
+                }
+            }
+        }
+        execute(String.format(SAVED_LAG_INSERT, "x"));
+        try (WalWriter ignore = engine.getWalWriter(token)) {
+            execute("INSERT INTO x VALUES ('2022-02-25T00:30', -1, 'neg', 'neg')");
+        }
+        tickWalQueue(1);
+        Assert.assertEquals("_txn does not hold the saved WAL lag", 1_000, savedLagRows(token));
+        engine.releaseAllWalWriters();
+        drainPurgeJob();
+        return token;
+    }
+
+    private static int savedLagRows(TableToken token) {
+        try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade()); Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+            return txReader.getLagRowCount();
+        }
     }
 
     private void testFailToLinkSymbolFile(String fileName) throws Exception {
@@ -2255,6 +2531,28 @@ public class WalTableFailureTest extends AbstractCairoTest {
         });
     }
 
+    private static void testWalTableResumeAfterFailedLagConsumingCommit0(boolean negativeLagChecksum) throws Exception {
+        final MsyncFailureAfterWalReadFacade ff = new MsyncFailureAfterWalReadFacade();
+        assertMemoryLeak(ff, () -> {
+            // commit00 msyncs the column files before it writes _txn in SYNC mode only
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            // seqTxn 1 the committed row, seqTxn 2 the lag, seqTxn 3 the out-of-order row
+            final TableToken token = saveWalLag("('2022-02-25', 1_000_000, 'c', 'c1')", negativeLagChecksum);
+
+            // the consuming commit appends the merged rows in place over the lag, then its msync fails
+            ff.arm(token);
+            drainWalQueue();
+            Assert.assertTrue("msync did not fail", ff.hasFailed);
+            Assert.assertTrue("the failed commit did not suspend the table", engine.getTableSequencerAPI().isSuspended(token));
+            Assert.assertEquals("the failed commit wrote _txn", 1_000, savedLagRows(token));
+
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSavedLagRows("('2022-02-25', 1_000_000, 'c', 'c1')");
+        });
+    }
+
     private void testWalTableSuspendResumeStatusTable(String startState, String tableName, int errorCode, String expectedTag) throws Exception {
         final FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
@@ -2299,9 +2597,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
                             tableToken.getTableName() + "\ttrue\t1\t0\t4\t" + expectedTag +
-                            "\t" + errorMessage + "\t0\n");
+                            "\t" + errorMessage + "\t0\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " resume wal");
             execute("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
@@ -2317,10 +2615,67 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\t0\t0\t-1\t\n");
 
             execute("drop table " + tableToken.getTableName());
         });
+    }
+
+    // Fails the first msync after the apply job closes a WAL column file it read, which in SYNC mode
+    // falls in commit00 after the data write and before the _txn write.
+    private static class MsyncFailureAfterWalReadFacade extends TestFilesFacadeImpl {
+        private final LongHashSet walColumnFds = new LongHashSet();
+        private volatile boolean hasFailed;
+        private volatile boolean isArmed;
+        private volatile boolean isMsyncFailureArmed;
+        private String walDirMarker;
+
+        @Override
+        public boolean close(long fd) {
+            final boolean isWalColumn;
+            synchronized (walColumnFds) {
+                isWalColumn = walColumnFds.remove(fd) > -1;
+            }
+            if (isWalColumn && isArmed) {
+                isArmed = false;
+                isMsyncFailureArmed = true;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (isMsyncFailureArmed) {
+                isMsyncFailureArmed = false;
+                hasFailed = true;
+                throw CairoException.critical(5).put("could not msync");
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return trackWalColumn(name, super.openRO(name));
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            return trackWalColumn(name, super.openRONoCache(name));
+        }
+
+        void arm(TableToken token) {
+            walDirMarker = token.getDirName() + SEPARATOR + WAL_NAME_BASE;
+            isArmed = true;
+        }
+
+        private long trackWalColumn(LPSZ name, long fd) {
+            if (fd > -1 && walDirMarker != null && Utf8s.containsAscii(name, walDirMarker) && Utf8s.endsWithAscii(name, ".d")) {
+                synchronized (walColumnFds) {
+                    walColumnFds.add(fd);
+                }
+            }
+            return fd;
+        }
     }
 }

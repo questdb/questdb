@@ -265,6 +265,14 @@ public class FuzzRunner {
             Rnd rnd = new Rnd();
             int failuresObserved = 0;
             for (int i = 0; i < transactionSize; i++) {
+                if (writer == null) {
+                    // A prior transaction's IO-failure recovery could not re-acquire the writer: a re-armed
+                    // one-shot fault fired during that recovery's getWriter(), and the catch below handles
+                    // only the drop/recreate case, so writer is null. Re-acquire it here, once the one-shot
+                    // fault has cleared, so no operation dereferences a null writer. A persistent failure
+                    // throws from here.
+                    writer = TestUtils.getWriter(engine, tableName);
+                }
                 if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
@@ -375,47 +383,53 @@ public class FuzzRunner {
     }
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        // Acquisition and use are inside the try so a mid-loop Error/Exception (e.g. a fault-injected crash
+        // propagating synchronously out of writer.commit() under W=0) still returns every checked-out
+        // WalWriter to the pool via the finally below, instead of leaking it (a leaked writer later fails a
+        // pool's releaseAll() with "table left behind on pool shutdown").
         ObjList<WalWriter> writers = new ObjList<>();
-        for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
-        }
-
-        Rnd tempRnd = new Rnd();
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
-            writer.goActive();
-            FuzzTransaction transaction = transactions.getQuick(i);
-            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                // WAL tables support replace range commits
-                // we apply them by using special commit rather than excluding Ts ranges from the commit
-                operation.apply(tempRnd, engine, writer, -1, null);
+        try {
+            for (int i = 0; i < walWriterCount; i++) {
+                writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
             }
 
-            if (transaction.reopenTable) {
-                // Table is dropped, reopen all writers.
-                for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
-                    writers.getQuick(writerIndex).close();
-                    writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            Rnd tempRnd = new Rnd();
+            for (int i = 0, n = transactions.size(); i < n; i++) {
+                WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+                writer.goActive();
+                FuzzTransaction transaction = transactions.getQuick(i);
+                for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                    // WAL tables support replace range commits
+                    // we apply them by using special commit rather than excluding Ts ranges from the commit
+                    operation.apply(tempRnd, engine, writer, -1, null);
                 }
-            } else {
-                if (transaction.rollback) {
-                    writer.rollback();
+
+                if (transaction.reopenTable) {
+                    // Table is dropped, reopen all writers.
+                    for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
+                        writers.getQuick(writerIndex).close();
+                        writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                    }
                 } else {
-                    if (transaction.hasReplaceRange()) {
-                        writer.commitWithParams(
-                                transaction.getReplaceLoTs(),
-                                transaction.getReplaceHiTs(),
-                                WAL_DEDUP_MODE_REPLACE_RANGE
-                        );
+                    if (transaction.rollback) {
+                        writer.rollback();
                     } else {
-                        writer.commit();
+                        if (transaction.hasReplaceRange()) {
+                            writer.commitWithParams(
+                                    transaction.getReplaceLoTs(),
+                                    transaction.getReplaceHiTs(),
+                                    WAL_DEDUP_MODE_REPLACE_RANGE
+                            );
+                        } else {
+                            writer.commit();
+                        }
                     }
                 }
             }
+        } finally {
+            Misc.freeObjList(writers);
         }
-
-        Misc.freeObjList(writers);
     }
 
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
@@ -856,11 +870,14 @@ public class FuzzRunner {
     }
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+        // No memory usage check: it reads process-wide memory counters, and the shared pool's purge jobs run
+        // alongside these queries, so their scratch buffers would count as the cursor's
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit 1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
@@ -874,6 +891,7 @@ public class FuzzRunner {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit -1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
