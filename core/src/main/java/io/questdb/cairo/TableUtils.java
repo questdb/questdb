@@ -311,6 +311,9 @@ public final class TableUtils {
         // 4 KiB segment of a small file this ran once per ~100 one-row WAL txns over a txn log
         // that was tens of MB, and ingest fell ~60% over the first few million rows.
         long allocated = ff.length(fd);
+        if (allocated < 0) {
+            throw CairoException.critical(ff.errno()).put("could not read file size [fd=").put(fd).put(']');
+        }
         if (allocated < size && !ff.allocate(fd, allocated, alignedSize(size))) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
@@ -321,6 +324,9 @@ public final class TableUtils {
      */
     public static void allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long size) {
         long allocated = ff.length(fd);
+        if (allocated < 0) {
+            throw CairoException.critical(ff.errno()).put("could not read file size [fd=").put(fd).put(']');
+        }
         if (allocated < size && !ff.allocate(fd, allocated, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }

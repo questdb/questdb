@@ -6293,4 +6293,58 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             watermarks.put(dirName, seqTxn);
         }
     }
+
+    @Test
+    public void testOwnCommitAdvancesStructureCheckGate() throws Exception {
+        // A connection's own data commit is one sequencer txn with no structure
+        // change in it. The gate in applyPendingStructureChanges must move over
+        // it, otherwise every message re-runs goActive() for a txn this very
+        // connection wrote.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE gate_t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY)) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                );
+                // The miss above does not run the structure check; this hit does and arms the gate.
+                Assert.assertSame(tud, cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                ));
+                long gate = tud.getLastStructureCheckSeqTxn();
+                Assert.assertTrue(gate >= 0);
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = tud.getWriter().newRow(1_000_000L * (i + 1));
+                    row.putLong(1, i);
+                    row.append();
+                    try {
+                        cache.commitAll();
+                    } catch (Throwable t) {
+                        throw new RuntimeException(t);
+                    }
+                    // Asserted BEFORE the next lookup: the commit itself must have
+                    // moved the gate, so the lookup has nothing to replay.
+                    Assert.assertEquals(gate + 1, tud.getLastSeqTxn());
+                    Assert.assertEquals("gate must sit on the connection's own commit (iteration " + i + ")",
+                            tud.getLastSeqTxn(), tud.getLastStructureCheckSeqTxn());
+                    gate = tud.getLastStructureCheckSeqTxn();
+                    Assert.assertSame(tud, cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                    ));
+                }
+                // A structure change by someone else is still picked up by the next lookup.
+                execute("ALTER TABLE gate_t ADD COLUMN w DOUBLE");
+                drainWalQueue();
+                WalTableUpdateDetails again = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                );
+                Assert.assertSame(tud, again);
+                Assert.assertTrue(again.getWriter().getMetadata().getColumnIndex("w") >= 0);
+                Assert.assertEquals(engine.getTableSequencerAPI().getTxnTracker(tud.getTableToken()).getSeqTxn(),
+                        again.getLastStructureCheckSeqTxn());
+            }
+        });
+    }
 }

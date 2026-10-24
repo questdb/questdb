@@ -238,6 +238,7 @@ public class QwpTudCache implements QuietCloseable {
             try {
                 if (!tud.isDropped()) {
                     tud.commit(false);
+                    advanceStructureCheckGate(tud);
                     reportCommittedTxn(tud, consumer);
                 }
             } catch (CommitFailedException e) {
@@ -317,6 +318,7 @@ public class QwpTudCache implements QuietCloseable {
                     // may have left work that is committed but unreported.
                     if (hadBufferedRows) {
                         tud.commitIfMaxUncommittedRowsCountReached();
+                        advanceStructureCheckGate(tud);
                     }
                     reportCommittedTxn(tud, consumer);
                 }
@@ -369,6 +371,7 @@ public class QwpTudCache implements QuietCloseable {
             try {
                 if (!tud.isDropped()) {
                     tud.commit(false);
+                    advanceStructureCheckGate(tud);
                 }
             } catch (CommitFailedException e) {
                 if (e.isTableDropped()) {
@@ -722,6 +725,22 @@ public class QwpTudCache implements QuietCloseable {
      * in depth for a future caller that does not distress the cache, not a recovery that
      * runs today.
      */
+    /**
+     * A data commit of our own is one sequencer txn with no structure change in
+     * it. applyPendingStructureChanges() gates on the sequencer's seqTxn, so
+     * without this every message on a connection re-ran goActive() -- the
+     * sequencer read lock, the metadata change log lookup and two token lookups
+     * -- for a txn this connection wrote itself (6% of the ingress fiber at one
+     * row per message). Only the exact single-step case is taken: any interleaved
+     * txn by another writer may be structural and keeps the full check.
+     */
+    private static void advanceStructureCheckGate(WalTableUpdateDetails tud) {
+        final long seqTxn = tud.getLastSeqTxn();
+        if (seqTxn > 0 && seqTxn == tud.getLastStructureCheckSeqTxn() + 1) {
+            tud.setLastStructureCheckSeqTxn(seqTxn);
+        }
+    }
+
     private static void reportCommittedTxn(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) {
         if (consumer == null || tud.isDropped()) {
             return;
