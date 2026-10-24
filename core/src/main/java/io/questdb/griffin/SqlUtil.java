@@ -284,12 +284,24 @@ public class SqlUtil {
     }
 
     /**
-     * Collects into {@code depMap} the objects the parsed SELECT of a view names, and the tables it
-     * selects every column of with a wildcard. Every table and view the SELECT reads, and every
-     * object a table-name function in it names, becomes a key of the map. A table a wildcard selects
-     * directly, such as {@code x} in {@code SELECT * FROM x} or in {@code SELECT t.* FROM x t}, also
-     * gets the column {@code *}: the view selects every column the table has, including one it gains
-     * after the view is created.
+     * Collects into {@code depMap} the objects the parsed SELECT of a view names, and the tables the
+     * view selects every column of. Every table and view the SELECT reads, and every object a
+     * table-name function in it names, becomes a key of the map. A table the view selects every
+     * column of also gets the column {@code *}: the view selects every column the table has,
+     * including one it gains after the view is created. That is a table a wildcard in the SELECT
+     * list of the view selects from, such as {@code x} in {@code SELECT * FROM x} or in
+     * {@code SELECT t.* FROM x t}, or one the wildcard selects from through a sub-query, a CTE or a
+     * view whose own wildcard selects every column of it, such as {@code x} in
+     * {@code SELECT * FROM (SELECT * FROM x)}.
+     * <p>
+     * A wildcard under a SELECT list that names the columns it keeps records no {@code *}: the view
+     * selects only the columns that list names, such as {@code a} in
+     * {@code SELECT a FROM (SELECT * FROM x)}. Reading a table through the view takes no permission
+     * on the columns the map lists for it, so a {@code *} there would let a reader that overrides a
+     * variable the view declares {@code OVERRIDABLE} read a column of the table the view does not.
+     * Such a view that still reads every column, such as {@code SELECT a FROM (SELECT DISTINCT * FROM x)},
+     * records the columns the table has, so reading a column the table gains later through it takes
+     * SELECT on that column, until ALTER VIEW or CREATE OR REPLACE VIEW records the view again.
      * <p>
      * This records no other column. The parsed model has not resolved its column references, so it
      * cannot tell which table {@code t.a}, or {@code a} in a join, reads. The columns the view reads
@@ -304,60 +316,8 @@ public class SqlUtil {
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
-        IQueryModel m = model;
-        do {
-            collectWildcardReferences(engine, m, depMap);
-
-            // sub-queries and table-name functions in the clauses
-            final ObjList<QueryColumn> columns = m.getColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn column = columns.getQuick(i);
-                if (column != null) {
-                    collectExpressionReferences(engine, column.getAst(), depMap);
-                }
-            }
-            collectExpressionReferences(engine, m.getWhereClause(), depMap);
-            collectExpressionReferences(engine, m.getJoinCriteria(), depMap);
-            final ObjList<ExpressionNode> groupBy = m.getGroupBy();
-            for (int i = 0, n = groupBy.size(); i < n; i++) {
-                collectExpressionReferences(engine, groupBy.getQuick(i), depMap);
-            }
-            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
-            for (int i = 0, n = orderBy.size(); i < n; i++) {
-                collectExpressionReferences(engine, orderBy.getQuick(i), depMap);
-            }
-
-            // Tables directly referenced, a SHOW statement's object included, and the tables that
-            // table-name functions in the FROM clause name
-            final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null) {
-                if (tableNameExpr.type == ExpressionNode.LITERAL) {
-                    addTableDependency(depMap, unquote(tableNameExpr.token));
-                } else {
-                    collectTableNameFunctionReference(engine, tableNameExpr, depMap);
-                }
-            }
-
-            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
-            if (viewNameExpr != null) {
-                addTableDependency(depMap, unquote(viewNameExpr.token));
-            }
-
-            final ObjList<IQueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final IQueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel != m) {
-                    collectTableAndColumnReferences(engine, joinModel, depMap);
-                }
-            }
-
-            final IQueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                collectTableAndColumnReferences(engine, unionModel, depMap);
-            }
-
-            m = m.getNestedModel();
-        } while (m != null);
+        collectObjectReferences(engine, model, depMap);
+        collectWildcardReferences(engine, model, depMap);
     }
 
     /**
@@ -2180,7 +2140,7 @@ public class SqlUtil {
             return;
         }
         if (expr.queryModel != null) {
-            collectTableAndColumnReferences(engine, expr.queryModel, depMap);
+            collectObjectReferences(engine, expr.queryModel, depMap);
         }
         collectTableNameFunctionReference(engine, expr, depMap);
         for (int i = 0, n = expr.args.size(); i < n; i++) {
@@ -2188,6 +2148,67 @@ public class SqlUtil {
         }
         collectExpressionReferences(engine, expr.lhs, depMap);
         collectExpressionReferences(engine, expr.rhs, depMap);
+    }
+
+    // Collects the objects a parsed model names: the tables and views it reads, the ones the sub-queries
+    // in it read, a SHOW statement's object, and the objects the table-name functions in it name.
+    private static void collectObjectReferences(
+            @NotNull CairoEngine engine,
+            @NotNull IQueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        IQueryModel m = model;
+        do {
+            // sub-queries and table-name functions in the clauses
+            final ObjList<QueryColumn> columns = m.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (column != null) {
+                    collectExpressionReferences(engine, column.getAst(), depMap);
+                }
+            }
+            collectExpressionReferences(engine, m.getWhereClause(), depMap);
+            collectExpressionReferences(engine, m.getJoinCriteria(), depMap);
+            final ObjList<ExpressionNode> groupBy = m.getGroupBy();
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                collectExpressionReferences(engine, groupBy.getQuick(i), depMap);
+            }
+            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                collectExpressionReferences(engine, orderBy.getQuick(i), depMap);
+            }
+
+            // Tables directly referenced, a SHOW statement's object included, and the tables that
+            // table-name functions in the FROM clause name
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null) {
+                if (tableNameExpr.type == ExpressionNode.LITERAL) {
+                    addTableDependency(depMap, unquote(tableNameExpr.token));
+                } else {
+                    collectTableNameFunctionReference(engine, tableNameExpr, depMap);
+                }
+            }
+
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                addTableDependency(depMap, unquote(viewNameExpr.token));
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    collectObjectReferences(engine, joinModel, depMap);
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectObjectReferences(engine, unionModel, depMap);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
     }
 
     // Collects the columns the source of an optimised model reads: the scan of its table, or what its
@@ -2340,39 +2361,50 @@ public class SqlUtil {
         }
     }
 
-    // A wildcard selects every column of the tables in the FROM clause of its SELECT, and a qualified
-    // one, such as t.*, every column of the table it names. The parser keeps the SELECT list in a
-    // model of its own, whose nested model holds the FROM clause: the table or sub-query read first,
-    // and the models joined to it.
+    // Adds "*" for the tables a parsed SELECT selects every column of, when the view selects every column
+    // that SELECT does: the SELECT of the view, every branch of a set operation it is made of, which the
+    // operation reads whole, and a sub-query, a CTE or a view a wildcard of such a SELECT selects from. A
+    // wildcard selects every column of the tables in the FROM clause of its SELECT, and a qualified one,
+    // such as t.*, every column of the one it names. The parser keeps the SELECT list in a model of its
+    // own, whose nested model holds the FROM clause: the table or sub-query read first, and the models
+    // joined to it. The walk follows wildcards only, so a wildcard records nothing under a SELECT list
+    // that names the columns it keeps, in a sub-query of an expression, or under a PIVOT, whose source
+    // is a FROM clause with no SELECT list.
     private static void collectWildcardReferences(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode ast = column != null ? column.getAst() : null;
-            if (ast == null || !ast.isWildcard()) {
-                continue;
-            }
-            final int dot = Chars.indexOfLastUnquoted(ast.token, '.');
-            final IQueryModel fromModel = model.getNestedModel() != null ? model.getNestedModel() : model;
-            final ObjList<IQueryModel> sources = fromModel.getJoinModels();
-            for (int j = 0, m = sources.size(); j < m; j++) {
-                final IQueryModel source = sources.getQuick(j);
-                // the columns of a sub-query, a CTE or a view are the ones its own SELECT selects,
-                // and a table-valued function has no table to select from
-                final ExpressionNode tableNameExpr = source.getTableNameExpr();
-                if (source.getNestedModel() != null || tableNameExpr == null || tableNameExpr.type != ExpressionNode.LITERAL) {
+        for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
+            final ObjList<QueryColumn> columns = branch.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                final ExpressionNode ast = column != null ? column.getAst() : null;
+                if (ast == null || !ast.isWildcard()) {
                     continue;
                 }
-                if (dot > -1 && !isModelAlias(source, ast.token, dot)) {
-                    continue;
-                }
-                final CharSequence tableName = unquote(tableNameExpr.token);
-                if (engine.getTableTokenIfExists(tableName) != null) {
-                    addDependency(depMap, tableName, "*");
+                final int dot = Chars.indexOfLastUnquoted(ast.token, '.');
+                final IQueryModel fromModel = branch.getNestedModel() != null ? branch.getNestedModel() : branch;
+                final ObjList<IQueryModel> sources = fromModel.getJoinModels();
+                for (int j = 0, m = sources.size(); j < m; j++) {
+                    final IQueryModel source = sources.getQuick(j);
+                    if (dot > -1 && !isModelAlias(source, ast.token, dot)) {
+                        continue;
+                    }
+                    final IQueryModel sourceModel = source.getNestedModel();
+                    if (sourceModel != null) {
+                        // the columns of a sub-query, a CTE or a view are the ones its own SELECT selects
+                        collectWildcardReferences(engine, sourceModel, depMap);
+                        continue;
+                    }
+                    // a table-valued function has no table to select from
+                    final ExpressionNode tableNameExpr = source.getTableNameExpr();
+                    if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                        final CharSequence tableName = unquote(tableNameExpr.token);
+                        if (engine.getTableTokenIfExists(tableName) != null) {
+                            addDependency(depMap, tableName, "*");
+                        }
+                    }
                 }
             }
         }
