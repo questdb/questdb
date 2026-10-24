@@ -1085,12 +1085,76 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
     }
 
+    // Adds BYTE w, a column without a NULL value, whose top then spans every stored row, and appends rows with values
+    // in w to the day that starts at dayLo. Then resends every row of the day up to a random appended row unchanged,
+    // which ends the tops of w and b, together with the last row of the day with another commit value, as a client
+    // that resends a window with an update at its end. The merge writes 0 over the NULLs of w and b in the row
+    // groups of the stored rows, as native materializes the tops, and may leave the row groups of the appended rows
+    // as stored. The window covers every stored row of the day, so that no row group under an ended top stays out of
+    // the merge. The table must match its twin, also once w changes type to INT, which reads a NULL left in w as NULL.
+    private void replayDayThenChange(Rnd rnd, String tableName, String twinTableName, long dayLo) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " add column w byte", sqlExecutionContext);
+        }
+        drainWalQueue();
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final TableToken twinToken = engine.verifyTableName(twinTableName);
+        final String dayFilter = "ts >= " + dayLo + " and ts < " + (dayLo + Micros.DAY_MICROS);
+        long dayMin = Numbers.LONG_NULL;
+        long dayMax = Numbers.LONG_NULL;
+        try (
+                RecordCursorFactory factory = select("select min(ts), max(ts) from " + tableName + " where " + dayFilter);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            if (cursor.hasNext()) {
+                dayMin = cursor.getRecord().getTimestamp(0);
+                dayMax = cursor.getRecord().getTimestamp(1);
+            }
+        }
+        final long room = dayLo + Micros.DAY_MICROS - 1 - dayMax;
+        if (dayMin == Numbers.LONG_NULL || room < 1) {
+            return;
+        }
+        final int appendCount = (int) Math.min(1 + rnd.nextInt(64), room);
+        final long step = Math.max(1, room / (appendCount + 1));
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("insert into " + t + " (ts, commit, s, b, w) select (" + dayMax + " + x * " + step + ")::timestamp"
+                    + ", x::int, null, (x % 100)::byte, (x % 100)::byte from long_sequence(" + appendCount + ")");
+        }
+        drainWalQueue();
+        final long changedTs = dayMax + appendCount * step;
+        // the last row of the window: the last stored row or an appended row before the last one
+        final long windowHi = dayMax + rnd.nextInt(appendCount) * step;
+        LOG.info().$("replaying a day with a change [table=").$(tableName)
+                .$(", lo=").$ts(dayMin).$(", hi=").$ts(windowHi).$(", changed=").$ts(changedTs).I$();
+        final long dayRowCount = readLong("select count() from " + tableName + " where " + dayFilter);
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("insert into " + t + " select * from ("
+                    + "select ts, commit, s, b, w from " + t + " where ts >= " + dayMin + " and ts <= " + windowHi
+                    + " union all select ts, case when commit = 1 then 2 else 1 end commit, s, b, w from " + t
+                    + " where ts = " + changedTs + ")");
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        Assert.assertEquals(dayRowCount, readLong("select count() from " + tableName + " where " + dayFilter));
+        assertSqlCursors(twinTableName, tableName);
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " alter column w type int", sqlExecutionContext);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        assertSqlCursors(twinTableName, tableName);
+    }
+
     // Switches the table and its native twin to UPSERT and resends stored rows unchanged, as an at-least-once
     // client does after a reconnect: first rows of a random interval, which every partition keeps as it is, then
     // the rows of a day up to its last row together with a new row 1us after it, which appends to the partition of
     // that day. The rows of the first batch hold NULL in s and b, as their column tops read. When the table has a
     // Parquet partition before the last one, the interval starts at a row of such a partition, and the append goes
-    // into it: an identical replay leaves the Parquet file as it is and the append keeps the top of b.
+    // into it: an identical replay leaves the Parquet file as it is and the append keeps the top of b. Last, it
+    // resends the rows of that day with a change, see replayDayThenChange().
     private void replayStoredRows(Rnd rnd, String tableName, String twinTableName, boolean isParquetReplayExpected) throws SqlException {
         for (String t : new String[]{tableName, twinTableName}) {
             execute("alter table " + t + " dedup upsert keys(ts)", sqlExecutionContext);
@@ -1160,6 +1224,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
         }
+
+        replayDayThenChange(rnd, tableName, twinTableName, dayLo);
     }
 
     private void runDedupWithRandomShiftWithColumnTop(boolean isParquetForced) throws Exception {

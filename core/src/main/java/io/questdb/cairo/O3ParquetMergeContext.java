@@ -74,6 +74,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private LongList rowGroupBounds;
     private LongList srcPtrs;
     private LongList topRows;
+    // The merge actions [unchangedMergeActionLo, unchangedMergeActionHi) of the partition whose MERGEs the merge loop
+    // leaves as stored, see setUnchangedMergeActions()
+    private int unchangedMergeActionHi;
+    private int unchangedMergeActionLo;
 
     public O3ParquetMergeContext() {
         super(MemoryTag.NATIVE_O3);
@@ -105,6 +109,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rowGroupBounds.clear();
         srcPtrs.clear();
         topRows.clear();
+        unchangedMergeActionLo = 0;
+        unchangedMergeActionHi = 0;
     }
 
     @Override
@@ -245,6 +251,12 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         return isPreparedMergeKeyColumnsOnly;
     }
 
+    // Whether the merge loop leaves the row groups of the MERGE at the given action index as stored, see
+    // setUnchangedMergeActions()
+    public boolean isUnchangedMergeAction(int actionIndex) {
+        return actionIndex >= unchangedMergeActionLo && actionIndex < unchangedMergeActionHi;
+    }
+
     /**
      * Keeps the row group merge that the first stage, or both stages, prepared for the merge action
      * at the given index, instead of freeing it: the merge loop completes it when it reaches the
@@ -290,5 +302,15 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public void setMergeActiveColCount(int mergeActiveColCount) {
         this.mergeActiveColCount = mergeActiveColCount;
+    }
+
+    /**
+     * Sets the merge actions {@code [actionLo, actionHi)} whose MERGEs the UPSERT identity check found to reproduce
+     * their row groups as stored, see {@code O3PartitionJob.isUpsertIdenticalUpToPartitionMax()}: the merge loop
+     * leaves those row groups as they are. {@link #clear()} empties the range.
+     */
+    public void setUnchangedMergeActions(int actionLo, int actionHi) {
+        unchangedMergeActionLo = actionLo;
+        unchangedMergeActionHi = actionHi;
     }
 }

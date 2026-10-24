@@ -60,8 +60,8 @@ import java.util.concurrent.TimeUnit;
  * DEDUP UPSERT O3 commits into a parquet partition of 1M rows in row groups of 100_000. With a BOOLEAN column
  * ({@code hasNoSentinelColumn}), an UPSERT commit first checks whether it replays stored rows unchanged: a replay
  * then leaves the partition as it is, or appends past its end. Other commits pay for the check before they merge,
- * apart from what it decoded of the first row group they merge, which the merge takes over. Without such a column
- * the check does not run.
+ * apart from what it decoded of the first row group they merge, which the merge takes over; the merge leaves the row
+ * groups of the rows they resend unchanged as they are. Without such a column the check does not run.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
@@ -111,6 +111,14 @@ public class ParquetDedupUpsertO3CommitBenchmark {
     @Benchmark
     public void replayThenAppend() throws SqlException {
         commit(storedRow(partitionRows / 2) + ", " + newRow(appendTimestamp++));
+    }
+
+    @Benchmark
+    public void replayThenValueUpdate() throws SqlException {
+        // a resent row of the middle of the partition, unchanged, and a new value for a stored key in a later row
+        // group: the merge leaves the row group of the resent row as it is
+        commit(storedRow(partitionRows / 2) + ", (" + (++updateValue) + ", 0.5, " + flagOf(0) + ", "
+                + timestampOf(partitionRows * 3L / 4) + "::TIMESTAMP)");
     }
 
     @Setup(Level.Trial)

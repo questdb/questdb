@@ -2447,9 +2447,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // gives the same rows, and native turns such a commit into a noop or an
                 // append, which keeps every column top. Only the columns without a NULL
                 // value (BOOLEAN, BYTE, SHORT) read a kept top differently from a zeroed
-                // one, so the check runs for tables that have such a column. When the check
-                // stops at the first MERGE, it keeps what it prepared of that merge, which
-                // the merge loop then completes instead of decoding the row group again.
+                // one, so the check runs for tables that have such a column. When a later
+                // MERGE changes the partition, the merge loop leaves the row groups of the
+                // identical MERGEs before it as they are, unless they hold a NULL of such a
+                // column, and completes what the check prepared of the MERGE where it stops
+                // instead of decoding the row group again, when it merges nothing before it.
                 // A rewrite that copies row groups through ParquetRowGroupMaterializer
                 // decodes them into the buffers of the columns past the keys, so the check
                 // keeps those columns only when it does not.
@@ -2510,6 +2512,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     for (int i = 0; i < actionCount; i++) {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         final boolean isMerge = action.type == O3ParquetMergeStrategy.ActionType.MERGE;
+                        // whether the UPSERT identity check found that the merge reproduces the row groups as
+                        // stored, see isUpsertIdenticalUpToPartitionMax()
+                        final boolean isUnchangedMerge = isMerge && ctx.isUnchangedMergeAction(i);
                         try {
                             // Whether the action writes rows: a COPY_O3 does, a MERGE does unless in
                             // SKIP mode the dedup drops all of its O3 rows, see isSkipMode.
@@ -2539,7 +2544,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
                                         .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndexHi))
                                         .I$();
-                                if (i == ctx.getPreparedMergeActionIndex()) {
+                                if (isUnchangedMerge) {
+                                    // every O3 row of the merge replaces a stored row
+                                    mergeDuplicates = action.getO3RowCount();
+                                } else if (i == ctx.getPreparedMergeActionIndex()) {
                                     // the UPSERT identity check prepared the merge, see isUpsertIdenticalUpToPartitionMax()
                                     mergeDuplicates = ctx.getPreparedMergeDuplicateCount();
                                     isMergeKeyColumnsOnly = ctx.isPreparedMergeKeyColumnsOnly();
@@ -2571,7 +2579,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     tableWriter.addDedupRowsRemoved(mergeDuplicates);
                                 }
                                 duplicateCount += mergeDuplicates;
-                                isWrite = !isSkipMode || mergeDuplicates < action.getO3RowCount();
+                                isWrite = !isUnchangedMerge && (!isSkipMode || mergeDuplicates < action.getO3RowCount());
                             }
 
                             if (isWrite && !isOutputOpen) {
@@ -2657,7 +2665,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         outputRowOffset += rgSize + action.getO3RowCount() - mergeDuplicates;
                                     } else {
                                         LOG.info()
-                                                .$("parquet row group unchanged, dedup dropped all o3 rows [table=").$(tableWriter.getTableToken())
+                                                .$(isUnchangedMerge
+                                                        ? "parquet row group unchanged, o3 rows identical to stored rows [table="
+                                                        : "parquet row group unchanged, dedup dropped all o3 rows [table=")
+                                                .$(tableWriter.getTableToken())
                                                 .$(", partition=").$ts(partitionTimestamp)
                                                 .$(", rg=").$(action.rowGroupIndex)
                                                 .$(", rgHi=").$(action.rowGroupIndexHi)
@@ -2749,7 +2760,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 }
                             }
                         } finally {
-                            if (isMerge) {
+                            // an unchanged merge prepared nothing, the merge that the identity check kept for a
+                            // later action stays
+                            if (isMerge && !isUnchangedMerge) {
                                 ctx.freeRowGroupMerge();
                             }
                         }
@@ -4832,13 +4845,37 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
-    // Whether the table has a live BOOLEAN, BYTE or SHORT column. These types have no NULL value, a column top in a
-    // parquet file reads NULL where the materialized top reads 0/false. CHAR 0 is NULL
+    // Whether the table has a live column of a type without NULL, see isNoSentinelType()
     private static boolean hasNoSentinelColumn(TableRecordMetadata tableWriterMetadata) {
         for (int i = 0, n = tableWriterMetadata.getColumnCount(); i < n; i++) {
-            final int columnType = tableWriterMetadata.getColumnType(i);
-            if (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE || columnType == ColumnType.SHORT) {
+            if (isNoSentinelType(tableWriterMetadata.getColumnType(i))) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    // Whether a live column of a type without NULL, see isNoSentinelType(), that the parquet file holds has a NULL in
+    // a row group of [rowGroupLo, rowGroupHi], or a chunk there without a null count. Its NULLs are the rows of a
+    // column top, or the NULLs of a column that a lazy ALTER COLUMN TYPE turned into such a type. A merge of the row
+    // group writes 0/false over them, unless they stay a column top. A column absent from the file needs no test:
+    // the merge and the copy of a row group both write 0/false for its ended top
+    private static boolean hasNoSentinelNull(
+            ParquetMetaFileReader parquetMeta,
+            TableRecordMetadata tableWriterMetadata,
+            IntList tableToParquetIdx,
+            int rowGroupLo,
+            int rowGroupHi
+    ) {
+        for (int i = 0, n = tableWriterMetadata.getColumnCount(); i < n; i++) {
+            final int parquetIdx = tableToParquetIdx.getQuick(i);
+            if (parquetIdx < 0 || !isNoSentinelType(tableWriterMetadata.getColumnType(i))) {
+                continue;
+            }
+            for (int rg = rowGroupLo; rg <= rowGroupHi; rg++) {
+                if (!parquetMeta.hasChunkNullCount(rg, parquetIdx) || parquetMeta.getChunkNullCount(rg, parquetIdx) > 0) {
+                    return true;
+                }
             }
         }
         return false;
@@ -4936,6 +4973,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
+    // Whether the type has no NULL value: BOOLEAN, BYTE and SHORT. A column top in a parquet file reads NULL where the
+    // materialized top reads 0/false. CHAR 0 is NULL
+    private static boolean isNoSentinelType(int columnType) {
+        return columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE || columnType == ColumnType.SHORT;
+    }
+
     // Whether the first stage of a row group merge prepares the column. That is every column, except when the first
     // stage prepares the designated timestamp and the dedup key columns only: the columns the dedup compares to
     // decide whether the merge changes the row group at all.
@@ -4957,13 +5000,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * the O3 rows that replace the stored rows. A COPY_O3 up to the max holds new rows, the commit then changes
      * the partition.
      * <p>
-     * When the check stops at the first MERGE, the merge loop merges that action before any other, so the check
-     * keeps what it prepared of the merge, see {@link O3ParquetMergeContext#keepRowGroupMerge}: the keys and
-     * the merge index, which live in buffers of their own, and the other columns when it decoded them and
-     * {@code isCopyMaterializing} is false. When it is true, the rewrite copies the row groups before the action
-     * through ParquetRowGroupMaterializer, which decodes into the buffers of the other columns. After an
-     * identical MERGE the check frees what it prepared: the merge loop merges the identical MERGE first, in the
-     * same buffers.
+     * An identical MERGE reproduces its row groups as stored, except for the NULLs of a BOOLEAN, BYTE or SHORT
+     * column, which its merge writes as 0/false unless they stay a column top. So the merge loop leaves the row
+     * groups of an identical MERGE as they are, see {@link O3ParquetMergeContext#setUnchangedMergeActions}, unless
+     * they hold such a NULL, see {@link #hasNoSentinelNull}, or the MERGE also takes O3 rows past the max. The NULLs
+     * of such a column are a leading run of rows, the top, so the check leaves unchanged the identical MERGEs after
+     * the last one that the merge loop merges.
+     * <p>
+     * When the merge loop merges no action before the one where the check stops, the check keeps what it prepared
+     * of that merge, see {@link O3ParquetMergeContext#keepRowGroupMerge}: the keys and the merge index, which live
+     * in buffers of their own, and the other columns when it decoded them and {@code isCopyMaterializing} is false.
+     * When it is true, the rewrite copies the row groups before the action through ParquetRowGroupMaterializer,
+     * which decodes into the buffers of the other columns. After an identical MERGE the check frees what it
+     * prepared: when the merge loop merges that MERGE, it does so first, in the same buffers.
      *
      * @param isCopyMaterializing whether the rewrite copies row groups through ParquetRowGroupMaterializer
      */
@@ -4986,9 +5035,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LongList srcPtrs,
             O3ParquetMergeContext ctx
     ) {
-        // whether no MERGE precedes the action
-        boolean isFirstMerge = true;
-        for (int i = 0; i < actionCount; i++) {
+        // the first action of the identical MERGEs that the merge loop leaves unchanged
+        int unchangedActionLo = 0;
+        // whether the merge loop merges an action before this one
+        boolean isMergedBefore = false;
+        int i = 0;
+        for (; i < actionCount; i++) {
             final O3ParquetMergeStrategy.MergeAction action = actions.getQuick(i);
             if (action.type == O3ParquetMergeStrategy.ActionType.COPY_ROW_GROUP_SLICE) {
                 continue;
@@ -4998,6 +5050,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 break;
             }
             if (action.type == O3ParquetMergeStrategy.ActionType.COPY_O3) {
+                ctx.setUnchangedMergeActions(unchangedActionLo, i);
                 return false;
             }
             long rgRowCount = 0;
@@ -5032,10 +5085,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
                 tableWriter.addUpsertIdentityCheckDecodedColumns(parquetColumns.size() / 2);
                 if (duplicateCount != Math.min(action.o3Hi, o3HiUpToPartitionMax) - action.o3Lo + 1) {
-                    if (isFirstMerge) {
+                    if (!isMergedBefore) {
                         ctx.keepRowGroupMerge(i, duplicateCount, true);
                         isMergeKept = true;
                     }
+                    ctx.setUnchangedMergeActions(unchangedActionLo, i);
                     return false;
                 }
                 mergeRowGroupPrepareOtherColumns(
@@ -5076,10 +5130,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeIndexAddr,
                             rgSize
                     )) {
-                        if (isFirstMerge && !isCopyMaterializing) {
+                        if (!isMergedBefore && !isCopyMaterializing) {
                             ctx.keepRowGroupMerge(i, duplicateCount, false);
                             isMergeKept = true;
                         }
+                        ctx.setUnchangedMergeActions(unchangedActionLo, i);
                         return false;
                     }
                 }
@@ -5088,8 +5143,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ctx.freeRowGroupMerge();
                 }
             }
-            isFirstMerge = false;
+            if (action.o3Hi > o3HiUpToPartitionMax
+                    || hasNoSentinelNull(decoder.metadata(), tableWriterMetadata, tableToParquetIdx, action.rowGroupIndex, action.rowGroupIndexHi)) {
+                // the merge loop merges this MERGE
+                unchangedActionLo = i + 1;
+                isMergedBefore = true;
+            }
         }
+        ctx.setUnchangedMergeActions(unchangedActionLo, i);
         return true;
     }
 

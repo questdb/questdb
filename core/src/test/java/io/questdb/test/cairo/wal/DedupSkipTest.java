@@ -1502,8 +1502,11 @@ public class DedupSkipTest extends AbstractCairoTest {
         // UPSERT commits change stored rows of the second row group. The identity check of the Parquet partition
         // dedups the row group and leaves the merge to the merge loop: the first commit changes a row and adds a
         // row after the partition, the check finds the change; the second changes a row and adds a new key to the
-        // row group, the check finds the new key. The dedup counter counts each replaced row once, as it does for
-        // the native twin "n", and both tables end up with the same rows
+        // row group, the check finds the new key. The third resends the row of the first commit unchanged, into the
+        // rows of the second row group that the earlier commits wrote, with no NULL in b, and changes a row of the
+        // third row group: the merge leaves the replayed row group as it is. The dedup counter counts each
+        // replaced row once, the replayed one included, as it does for the native twin "n", and both tables end up
+        // with the same rows
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             createParquetPartitionTable("t");
@@ -1528,18 +1531,24 @@ public class DedupSkipTest extends AbstractCairoTest {
                     """
                             ('2024-01-01T06:00:00.000000Z', 'b', 2007, 7::BYTE),
                             ('2024-01-01T06:30:00.000000Z', 'y', 2030, 30::BYTE)
+                            """,
+                    """
+                            ('2024-01-01T05:00:00.000000Z', 'b', 2006, 6::BYTE),
+                            ('2024-01-01T09:00:00.000000Z', 'c', 2010, 10::BYTE)
                             """
             };
-            for (String rows : commits) {
+            // the rows that the dedup of each commit replaces
+            final int[] replacedRowCounts = {1, 1, 2};
+            for (int i = 0; i < commits.length; i++) {
                 final long dedupRowCount = getDedupRowCount("t");
                 final long twinDedupRowCount = getDedupRowCount("n");
                 for (String tableName : new String[]{"t", "n"}) {
-                    execute("INSERT INTO " + tableName + " VALUES " + rows);
+                    execute("INSERT INTO " + tableName + " VALUES " + commits[i]);
                 }
                 drainWalQueue();
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
-                Assert.assertEquals(dedupRowCount + 1, getDedupRowCount("t"));
-                Assert.assertEquals(twinDedupRowCount + 1, getDedupRowCount("n"));
+                Assert.assertEquals(dedupRowCount + replacedRowCounts[i], getDedupRowCount("t"));
+                Assert.assertEquals(twinDedupRowCount + replacedRowCounts[i], getDedupRowCount("n"));
                 assertSqlCursors("n", "t");
             }
             assertQuery("SELECT ts, sym, v, b FROM t WHERE v > 2000")
@@ -1550,6 +1559,7 @@ public class DedupSkipTest extends AbstractCairoTest {
                             2024-01-01T05:00:00.000000Z\tb\t2006\t6
                             2024-01-01T06:00:00.000000Z\tb\t2007\t7
                             2024-01-01T06:30:00.000000Z\ty\t2030\t30
+                            2024-01-01T09:00:00.000000Z\tc\t2010\t10
                             2024-01-01T23:00:00.000000Z\tx\t2023\t23
                             """);
         });
