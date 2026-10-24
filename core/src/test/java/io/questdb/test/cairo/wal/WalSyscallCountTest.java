@@ -697,10 +697,11 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             return super.allocate(fd, size);
         }
 
+        // Calls Files directly: TestFilesFacadeImpl turns the ranged call into a whole-file allocate().
         @Override
-        public boolean allocateRange(long fd, long offset, long size) {
+        public boolean allocate(long fd, long allocatedSize, long size) {
             count("allocateRange");
-            return super.allocateRange(fd, offset, size);
+            return io.questdb.std.Files.allocate(fd, allocatedSize, size);
         }
 
         @Override

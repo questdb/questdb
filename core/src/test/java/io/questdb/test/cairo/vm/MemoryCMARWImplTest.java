@@ -431,10 +431,11 @@ public class MemoryCMARWImplTest {
             return super.allocate(fd, size);
         }
 
+        // Calls Files directly: TestFilesFacadeImpl turns the ranged call into a whole-file allocate().
         @Override
-        public boolean allocateRange(long fd, long offset, long size) {
-            log.put("range ").put(offset).put(' ').put(size).put('\n');
-            return super.allocateRange(fd, offset, size);
+        public boolean allocate(long fd, long allocatedSize, long size) {
+            log.put("range ").put(allocatedSize).put(' ').put(size).put('\n');
+            return Files.allocate(fd, allocatedSize, size);
         }
     }
 }

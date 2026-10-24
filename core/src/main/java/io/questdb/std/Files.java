@@ -113,14 +113,6 @@ public final class Files {
         return allocateRange(toOsFd(fd), allocatedSize, size);
     }
 
-    /**
-     * Like {@link #allocate(long, long)}, but reserves disk space only for {@code [offset, size)}.
-     * The caller vouches that the file already has disk space for {@code [0, offset)}.
-     */
-    public static boolean allocateRange(long fd, long offset, long size) {
-        return allocateRange(toOsFd(fd), offset, size);
-    }
-
     public static long append(long fd, long address, long len) {
         return append(toOsFd(fd), address, len);
     }

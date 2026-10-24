@@ -566,7 +566,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         if (fileSize < newSize) {
             final long targetSize = exact ? newSize : TableUtils.alignedSize(newSize);
             final long allocatedLo = Math.min(allocatedSize, fileSize);
-            if (!(allocatedLo > 0 ? ff.allocateRange(fd, allocatedLo, targetSize) : ff.allocate(fd, targetSize))) {
+            if (!(allocatedLo > 0 ? ff.allocate(fd, allocatedLo, targetSize) : ff.allocate(fd, targetSize))) {
                 throw CairoException.critical(ff.errno()).put("No space left [size=").put(targetSize).put(", fd=").put(fd).put(']');
             }
             allocatedSize = targetSize;

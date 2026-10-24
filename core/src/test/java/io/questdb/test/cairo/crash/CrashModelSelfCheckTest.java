@@ -781,7 +781,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             expectRefused(failures, "append", () -> ff.append(ma.fd, buf, SIZE));
             expectRefused(failures, "truncate", () -> ff.truncate(ma.fd, 0));
             expectRefused(failures, "allocate", () -> ff.allocate(ma.fd, 2 * SIZE));
-            expectRefused(failures, "allocateRange", () -> ff.allocateRange(ma.fd, 0, 2 * SIZE));
+            expectRefused(failures, "allocateRange", () -> ff.allocate(ma.fd, 0, 2 * SIZE));
             expectRefused(failures, "msync", () -> ff.msync(ma.addr, SIZE, false));
             expectRefused(failures, "msync-async", () -> ff.msync(ma.addr, SIZE, true));
             expectRefused(failures, "syncFileRange", () -> ff.syncFileRange(ma.fd, 0, SIZE, Files.SYNC_FILE_RANGE_WRITE));

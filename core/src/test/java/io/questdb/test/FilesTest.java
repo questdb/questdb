@@ -231,12 +231,12 @@ public class FilesTest {
                     Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE));
                     Assert.assertEquals(Files.PAGE_SIZE, Files.length(path.$()));
 
-                    Assert.assertTrue(Files.allocateRange(fd, Files.PAGE_SIZE, 3 * Files.PAGE_SIZE));
+                    Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE, 3 * Files.PAGE_SIZE));
                     Assert.assertEquals(3 * Files.PAGE_SIZE, Files.length(path.$()));
                     if (Os.isLinux() || Os.isFreeBSD()) {
                         // posix_fallocate: a range that ends inside the file neither shrinks it nor fails.
                         // macOS and Windows delegate to allocate(), which sets the length to size, as at base.
-                        Assert.assertTrue(Files.allocateRange(fd, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE));
+                        Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE));
                         Assert.assertEquals(3 * Files.PAGE_SIZE, Files.length(path.$()));
                     }
 

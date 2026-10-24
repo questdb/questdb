@@ -70,11 +70,11 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
-    public boolean allocateRange(long fd, long offset, long size) {
+    public boolean allocate(long fd, long allocatedSize, long size) {
         if (checkForFailure()) {
             return false;
         }
-        return ff.allocateRange(fd, offset, size);
+        return ff.allocate(fd, allocatedSize, size);
     }
 
     @Override

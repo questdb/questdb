@@ -904,11 +904,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return ok;
     }
 
+    /**
+     * Makes the ranged native call that {@link TestFilesFacadeImpl#allocate(long, long, long)} turns into a whole-file
+     * allocation, so the model sees the call the product makes.
+     */
     @Override
-    public boolean allocateRange(long fd, long offset, long size) {
+    public boolean allocate(long fd, long allocatedSize, long size) {
         assertNotStale(fd, "allocateRange");
         final long lengthBefore = trackedLength(fd);
-        final boolean ok = super.allocateRange(fd, offset, size);
+        final boolean ok = io.questdb.std.Files.allocate(fd, allocatedSize, size);
         shrinkAfterAllocate(fd, lengthBefore);
         return ok;
     }
