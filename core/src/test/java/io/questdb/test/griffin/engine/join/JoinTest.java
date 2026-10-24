@@ -6601,13 +6601,15 @@ public class JoinTest extends AbstractCairoTest {
                         ORDER BY c.k
                         """.formatted(predicate))
                         .noLeakCheck()
+                        // the join to b evaluates a.x = 4 on its key b.x, so no filter after it nests the joins
                         .withPlanContaining(
-                                "                        Hash\n"
-                                        + "                            Async JIT Filter workers: 1\n"
-                                        + "                              filter: x=4\n"
-                                        + "                                PageFrame\n"
-                                        + "                                    Row forward scan\n"
-                                        + "                                    Frame forward scan on: d"
+                                "condition: b.x=a.x\n          filter: ",
+                                "                    Hash\n"
+                                        + "                        Async JIT Filter workers: 1\n"
+                                        + "                          filter: x=4\n"
+                                        + "                            PageFrame\n"
+                                        + "                                Row forward scan\n"
+                                        + "                                Frame forward scan on: d"
                         )
                         .returns(expectedValue);
             }
@@ -18311,10 +18313,10 @@ public class JoinTest extends AbstractCairoTest {
         // reorderTables moves a4.k = a0.k onto a0, and runFromModelFirst places a0, a4, a3, a1 and a2 in
         // that order. a2 gets a2.s = a1.v and a2.s = a3.s, which differ in type, keeps a2.s = a3.s and
         // derives a1.v = a3.s onto a1. a1 already joins a3 on a1.s = a3.S, the same column of a3 with
-        // another type, so a1 turns a1.v = a3.s into a filter above its join. a3.S in upper case keeps
-        // mergeContexts, which compares column names case-sensitively, from merging the two keys on a3.s
-        // first. The route (S2, S1, 2) has s != v, and without the filter it would join book (S2, 2) for
-        // trade 2.
+        // another type, so a1 turns a1.v = a3.s into a filter of its join, which reads a3.s from a1.s, the
+        // key that the join equates with it. a3.S in upper case keeps mergeContexts, which compares column
+        // names case-sensitively, from merging the two keys on a3.s first. The route (S2, S1, 2) has
+        // s != v, and without the filter it would join book (S2, 2) for trade 2.
         assertMemoryLeak(() -> {
             createTablesForTimeSeriesJoinKeyClashWithNullRows();
             final String joins = """
@@ -18334,7 +18336,8 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .timestamp("ts")
-                    .withPlanContaining("Filter filter: a3.s=a1.v", "condition: a1.s=a3.S and a1.l=a3.l", "condition: a2.s=a3.s")
+                    .withPlanContaining("filter: a1.s=a1.v", "condition: a1.s=a3.S and a1.l=a3.l", "condition: a2.s=a3.s")
+                    .withPlanNotContaining("Filter filter")
                     .returns(expected);
             // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
             assertQuery("SELECT x.k, x.ts, x.s, x.v, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a1.v " + joins + "ORDER BY ts) x LT JOIN quotes q")

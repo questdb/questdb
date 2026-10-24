@@ -1801,6 +1801,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    // True when a hash join key of the type matches a key only of the same value, so that any function of
+    // the key gives the same result on either side of the join. FLOAT and DOUBLE fail it: the hash join
+    // compares their bits, and the move of a condition between the sides would rely on that. A SYMBOL key
+    // passes, the join matches the string, and so does every function of a SYMBOL value.
+    private static boolean hasIdenticalEqualValues(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BINARY, ColumnType.ARRAY -> false;
+            default -> true;
+        };
+    }
+
     // SymbolTranslatingRecord maps each master key column to one slave symbol table, so a master
     // SYMBOL column that is matched against two slave columns cannot use symbol ids. HORIZON key
     // copiers write each column once, so a slave SYMBOL column matched against a master SYMBOL and
@@ -1951,6 +1962,71 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    // True when the expression names a column; one that names none, such as now() > $1, keeps its place after
+    // the join, which evaluates a runtime constant once per execution
+    private static boolean readsColumn(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+        if (readsColumn(node.lhs) || readsColumn(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsColumn(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Rewrites each master column that the expression reads into the slave key column that slaveKeyColumns
+    // gives for it, and returns true when the expression then reads slave columns only. It returns false for
+    // a master column without such a key column, a name that resolves to no column, and a node of another
+    // kind, such as a sub-query, an array access or the unit of extract(hour from ts), which may leave the
+    // expression partly rewritten. Constants and bind variables read no column.
+    private static boolean rewriteMasterKeysOntoSlave(ExpressionNode node, RecordMetadata joinMetadata, IntList slaveKeyColumns) {
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT, ExpressionNode.BIND_VARIABLE -> true;
+            case ExpressionNode.LITERAL -> {
+                final int columnIndex = SqlUtil.getColumnIndexQuiet(joinMetadata, node.token);
+                if (columnIndex < 0) {
+                    // the filter after the join keeps the name and fails on it, as it did before
+                    yield false;
+                }
+                // slaveKeyColumns has an entry per master column, and the slave columns follow the master's
+                if (columnIndex >= slaveKeyColumns.size()) {
+                    yield true;
+                }
+                final int slaveColumnIndex = slaveKeyColumns.getQuick(columnIndex);
+                if (slaveColumnIndex < 0) {
+                    yield false;
+                }
+                // JoinRecordMetadata names each column alias.column, a pair that it resolves to that column only
+                final CharSequence slaveColumnName = joinMetadata.getColumnName(slaveColumnIndex);
+                assert SqlUtil.getColumnIndexQuiet(joinMetadata, slaveColumnName) == slaveColumnIndex;
+                node.token = slaveColumnName;
+                yield true;
+            }
+            // BETWEEN is a SET_OPERATION of three arguments
+            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION -> {
+                if (node.paramCount < 3) {
+                    yield (node.lhs == null || rewriteMasterKeysOntoSlave(node.lhs, joinMetadata, slaveKeyColumns))
+                            && (node.rhs == null || rewriteMasterKeysOntoSlave(node.rhs, joinMetadata, slaveKeyColumns));
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    if (!rewriteMasterKeysOntoSlave(node.args.getQuick(i), joinMetadata, slaveKeyColumns)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+            default -> false;
+        };
     }
 
     // Gives a nested loop LEFT join the RIGHT and FULL joins with join keys that the query writes after it and
@@ -6928,6 +7004,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<Function> perWorkerWindowHiFuncs = null;
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
+                // the INNER hash join of this slave and its slave key columns, see moveSlaveConditionsIntoHashJoin()
+                HashJoinLightRecordCursorFactory innerHashJoin = null;
+                IntList slaveKeyColumns = null;
                 try {
                     // Skip synthetic horizon offset model - it's handled as part of HORIZON JOIN
                     if (isHorizonOffsetModel(slaveModel)) {
@@ -8019,6 +8098,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (keyFilteredJoin != null) {
                                     setJoinKeyFilter(keyFilteredJoin, master);
                                 }
+                                if (joinType == IQueryModel.JOIN_INNER
+                                        && slaveModel.getPostJoinWhereClause() != null
+                                        && master instanceof HashJoinLightRecordCursorFactory hashJoin) {
+                                    // read the key columns now: the filter after the join can hold a sub-query,
+                                    // whose compilation reuses listColumnFilterA and listColumnFilterB
+                                    innerHashJoin = hashJoin;
+                                    slaveKeyColumns = collectSlaveKeyColumns(masterMetadata, slaveMetadata);
+                                }
                                 if (joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER) {
                                     // a LEFT join written before this join may run after it, see OuterJoinNullCheck
                                     if (!(master instanceof OuterJoinRecordSource outerJoin)) {
@@ -8057,6 +8144,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
+                if (innerHashJoin != null) {
+                    assert filterExpr != null && master == innerHashJoin;
+                    filterExpr = moveSlaveConditionsIntoHashJoin(innerHashJoin, filterExpr, slaveKeyColumns, executionContext);
+                }
                 if (filterExpr != null) {
                     final RecordMetadata postJoinFilterMetadata = master.getMetadata();
                     // Compile the post-join filter ONCE, then branch on its runtime-constant-ness.
@@ -14400,6 +14491,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // For each master column of the hash join that processJoinContext() has just resolved, the index in the join
+    // metadata of a slave key column that the join equates it with, or -1. A key column pair of two types, or of
+    // a type that hasIdenticalEqualValues() rejects, gives -1. The slave columns follow the master's in the join
+    // metadata. Every slave column that the join equates with a master column holds its value, so a master
+    // column of two key pairs can take either.
+    private IntList collectSlaveKeyColumns(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
+        final int masterColumnCount = masterMetadata.getColumnCount();
+        final IntList slaveKeyColumns = new IntList(masterColumnCount);
+        slaveKeyColumns.setAll(masterColumnCount, -1);
+        for (int k = 0, n = listColumnFilterA.getColumnCount(); k < n; k++) {
+            final int masterColumnIndex = listColumnFilterB.getColumnIndexFactored(k);
+            final int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(k);
+            final int columnType = masterMetadata.getColumnType(masterColumnIndex);
+            if (columnType == slaveMetadata.getColumnType(slaveColumnIndex) && hasIdenticalEqualValues(columnType)) {
+                slaveKeyColumns.setQuick(masterColumnIndex, masterColumnCount + slaveColumnIndex);
+            }
+        }
+        return slaveKeyColumns;
+    }
+
+    private ExpressionNode conjoin(@Nullable ExpressionNode lhs, ExpressionNode rhs) {
+        if (lhs == null) {
+            return rhs;
+        }
+        final OperatorExpression andOp = OperatorExpression.chooseRegistry(
+                configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+        final ExpressionNode node = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, rhs.position);
+        node.paramCount = 2;
+        node.lhs = lhs;
+        node.rhs = rhs;
+        return node;
+    }
+
     /**
      * Returns {@code true} when {@code node} is a positive {@code LIKE}/{@code ILIKE}/{@code ~} predicate
      * ({@code paramCount == 2}) whose left operand is a literal naming an indexed static-symbol column.
@@ -14908,6 +15032,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return limit != Numbers.LONG_NULL && limit < 0;
     }
 
+    // True when the condition has the same value however often it runs for one row: it reads no random value,
+    // nor one that changes during the execution, such as systimestamp(). rnd_interval() reports isRandom()
+    // only, so stability alone does not rule out a random value.
+    private boolean isStableJoinCondition(
+            ExpressionNode condition,
+            RecordMetadata joinMetadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final Function function = compileJoinFilter(deepClone(expressionNodePool, condition), joinMetadata, executionContext);
+        try {
+            return function.isStableWithinExecution() && !function.isRandom();
+        } finally {
+            Misc.free(function);
+        }
+    }
+
     // Stable partition of the join key positions: first occurrences of each slave column, then repeats.
     private void moveRepeatedSlaveKeysLast() {
         final int n = listColumnFilterA.getColumnCount();
@@ -14938,6 +15078,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             listColumnFilterB.setQuick(i, masterKeys.getQuick(position));
             keyTypes.set(i, types.getQuick(position));
         }
+    }
+
+    // An INNER hash join that hashes its master reads its slave row by row, so a condition after the join that
+    // reads slave columns only has one value per slave row, which decides every row of the join that the slave
+    // row makes. A master key column holds the value of the slave key column that the join equates it with, so
+    // a condition that reads such master columns as well reads them from the slave instead, when the two
+    // columns have one type whose equal values are the same, see collectSlaveKeyColumns(). Moves each conjunct of
+    // the filter after the join that reads no other master column, and has one value per row however often it
+    // runs, into the join, see HashJoinLightRecordCursorFactory.setSlaveFilter(). A conjunct that reads no
+    // column stays, as the filter after the join evaluates a runtime constant once per execution. Returns the
+    // rest of the filter, or null when no conjunct stays.
+    private @Nullable ExpressionNode moveSlaveConditionsIntoHashJoin(
+            HashJoinLightRecordCursorFactory hashJoin,
+            ExpressionNode filterExpr,
+            IntList slaveKeyColumns,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final RecordMetadata joinMetadata = hashJoin.getMetadata();
+        final ObjList<ExpressionNode> conjuncts = new ObjList<>();
+        collectAndConjuncts(filterExpr, conjuncts);
+        ExpressionNode slaveFilterExpr = null;
+        ExpressionNode keptFilterExpr = null;
+        for (int i = 0, n = conjuncts.size(); i < n; i++) {
+            final ExpressionNode conjunct = conjuncts.getQuick(i);
+            final ExpressionNode rewritten = deepClone(expressionNodePool, conjunct);
+            if (readsColumn(conjunct)
+                    && rewriteMasterKeysOntoSlave(rewritten, joinMetadata, slaveKeyColumns)
+                    && isStableJoinCondition(rewritten, joinMetadata, executionContext)) {
+                slaveFilterExpr = conjoin(slaveFilterExpr, rewritten);
+            } else {
+                keptFilterExpr = conjoin(keptFilterExpr, conjunct);
+            }
+        }
+        if (slaveFilterExpr == null) {
+            return filterExpr;
+        }
+        hashJoin.setSlaveFilter(compileJoinFilter(slaveFilterExpr, joinMetadata, executionContext));
+        return keptFilterExpr;
     }
 
     private void normaliseLatestByKeyOr(ExpressionNode root, RecordMetadata metadata, int keyIndex) {

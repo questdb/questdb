@@ -1,0 +1,105 @@
+# WHERE conditions after an INNER join that read the joined table and the key column of the other one. QuestDB
+# evaluates them inside the hash join, on the joined table's key column, and the rows must not change. m has
+# fewer rows than s, so "FROM m JOIN s" hashes m and reads s row by row, and "FROM s JOIN m" hashes m as its
+# slave.
+# The expected rows come from DuckDB. QuestDB differs from it in these places:
+# - = in an ON clause matches NULL to NULL in QuestDB: DuckDB runs it as IS NOT DISTINCT FROM.
+# - NULL >= NULL is true in QuestDB: DuckDB runs s.v >= m.k as s.v > m.k OR s.v IS NOT DISTINCT FROM m.k.
+
+statement ok
+DROP TABLE IF EXISTS m
+
+statement ok
+DROP TABLE IF EXISTS s
+
+statement ok
+CREATE TABLE m (id INT, k INT, y INT, sk SYMBOL)
+
+statement ok
+CREATE TABLE s (id INT, k INT, v INT, sk SYMBOL)
+
+statement ok
+INSERT INTO m VALUES (1, 1, 10, 'a'), (2, 1, 20, 'b'), (3, 1, 30, 'a'), (4, 2, 40, 'c'), (5, NULL, 50, 'c')
+
+statement ok
+INSERT INTO s VALUES (10, 1, 0, 'a'), (11, 1, 5, 'b'), (12, 2, 1, 'c'), (13, 2, 3, 'a'), (14, NULL, 7, 'b'), (15, NULL, NULL, 'c'), (16, 3, 9, 'd'), (17, 3, 2, 'a')
+
+# a comparison with the key of m; the NULL keys match, and the comparison with NULL drops them
+query II rowsort
+SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v > m.k
+----
+1	11
+2	11
+3	11
+4	13
+
+# the join hashes m, its slave, and evaluates the comparison for each row of the join
+query II rowsort
+SELECT s.id, m.id FROM s JOIN m ON m.k = s.k WHERE m.y > s.k * 10
+----
+10	2
+10	3
+11	2
+11	3
+12	4
+13	4
+
+query II rowsort
+SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v BETWEEN m.k AND m.k + 3
+----
+4	13
+
+query II rowsort
+SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE CASE WHEN s.v > m.k THEN s.v < 5 ELSE s.v = 0 END
+----
+1	10
+2	10
+3	10
+4	13
+
+# two conjuncts read the key of m and two read m.y, which is no key
+query II rowsort
+SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v > m.k AND s.v < m.k + 8 AND s.v * 10 > m.y AND s.v + m.y < 40
+----
+1	11
+2	11
+3	11
+
+# a SYMBOL key
+query II rowsort
+SELECT m.id, s.id FROM m JOIN s ON s.sk = m.sk WHERE length(m.sk) + s.v > 3
+----
+1	13
+2	11
+2	14
+3	13
+
+# each join evaluates the conditions on its own key
+query III rowsort
+SELECT m.id, s.id, t.id FROM m JOIN s ON s.k = m.k JOIN s t ON t.k = s.k WHERE s.v > m.k AND t.v < s.k + 2
+----
+1	11	10
+2	11	10
+3	11	10
+4	13	12
+4	13	13
+
+# s.v IS NULL keeps the NULL keys that match s row 15
+query II rowsort
+SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v > m.k OR s.v IS NULL
+----
+1	11
+2	11
+3	11
+4	13
+5	15
+
+# m row 5 counts s row 15, whose NULL v is >= the NULL key
+query II rowsort
+SELECT m.id, count(*) FROM m JOIN s ON s.k = m.k WHERE s.v >= m.k GROUP BY m.id
+----
+1	1
+2	1
+3	1
+4	1
+5	1

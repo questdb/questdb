@@ -4135,13 +4135,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s1 string)");
             execute("create table b ( i int, s2 string)");
 
+            // b.i < a.i reads the master key a.i, which the join equates with b.i, so the join evaluates it on
+            // b.i; a.s1 = b.s2 reads a master column that is no key and stays after the join
             assertQuery("select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (b.i<a.i and a.s1=b.s2)
+                                Filter filter: a.s1=b.s2
                                     Hash Join Light
                                       condition: b.i=a.i
+                                      filter: b.i<b.i
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: a

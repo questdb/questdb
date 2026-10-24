@@ -33,6 +33,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,15 +48,20 @@ import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final int columnSplit;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private HashJoinRecordCursor cursor;
     private boolean masterDetermined = false;
+    // a condition on slave columns that every row of the join meets, see setSlaveFilter()
+    private @Nullable Function slaveFilter;
+    private @Nullable JoinSymbolTableSource slaveFilterSymbolTableSource;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
@@ -73,6 +79,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.columnSplit = columnSplit;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
@@ -139,6 +146,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         return false;
     }
 
+    // Takes a condition that reads slave columns only and that every row of the join meets, such as a
+    // condition after the join that SqlCodeGenerator rewrote onto the slave's join keys. When the cursor
+    // hashes the master, it reads each slave row once, so one evaluation decides every row of the join
+    // that the slave row makes. Otherwise, the cursor evaluates it for each row of the join, as a
+    // filter after the join would.
+    public void setSlaveFilter(@NotNull Function slaveFilter) {
+        assert this.slaveFilter == null;
+        this.slaveFilter = slaveFilter;
+        this.slaveFilterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return masterFactory.supportsUpdateRowId(tableToken);
@@ -150,6 +168,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         sink.attr("condition").val(joinContext);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
+        }
+        if (slaveFilter != null) {
+            sink.attr("filter").val(slaveFilter);
         }
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);
@@ -186,9 +207,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         this.cursor = null;
         final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
         this.symbolTranslatingRecord = null;
+        final Function slaveFilter = this.slaveFilter;
+        this.slaveFilter = null;
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        failure = Misc.freeBestEffort(failure, slaveFilter);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -233,6 +257,10 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapOfSlaveRecords();
+            if (slaveFilter != null) {
+                calculateSizeFiltered(circuitBreaker, counter, slaveFilter);
+                return;
+            }
             while (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveChainCursor.next();
                 counter.inc();
@@ -294,6 +322,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
+            if (slaveFilter != null) {
+                return hasNextFiltered(slaveFilter);
+            }
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
@@ -355,6 +386,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 joinKeyMap.clear();
                 slaveChain.clear();
             }
+            if (slaveFilter != null) {
+                slaveFilter.toTop();
+            }
         }
 
         private void buildMapOfSlaveRecords() {
@@ -366,7 +400,96 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext, boolean swapped) {
+        // Counts as hasNextFiltered() reads. A cursor that does not swap evaluates the filter for each entry of a
+        // hash chain, so it checks the circuit breaker for each entry, as counting the rows of a filter after the
+        // join would.
+        private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, Counter counter, Function slaveFilter) {
+            if (slaveChainCursor != null) {
+                while (slaveChainCursor.hasNext()) {
+                    final long rowId = slaveChainCursor.next();
+                    // a swapped cursor checked the slave row before it started on the chain
+                    if (swapped) {
+                        counter.inc();
+                    } else {
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                        slaveCursor.recordAt(slaveRecord, rowId);
+                        if (slaveFilter.getBool(record)) {
+                            counter.inc();
+                        }
+                    }
+                }
+            }
+            if (isMapEmpty) {
+                return;
+            }
+
+            while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                MapKey key = joinKeyMap.withKey();
+                key.put(masterRecord, masterCursorSink);
+                MapValue value = key.findValue();
+                if (value != null) {
+                    if (swapped) {
+                        if (slaveFilter.getBool(record)) {
+                            counter.add(value.getInt(1));
+                        }
+                    } else {
+                        slaveChainCursor = slaveChain.getCursor(value.getInt(0));
+                        while (slaveChainCursor.hasNext()) {
+                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                            slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                            if (slaveFilter.getBool(record)) {
+                                counter.inc();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The slave filter reads slave columns only. A swapped cursor reads the slave row by row, so one
+        // evaluation decides the whole hash chain of a slave row, and the cursor evaluates the filter only for
+        // the slave rows whose key the master has. Otherwise, it evaluates the filter for each slave row of
+        // the hash chain of a master row.
+        private boolean hasNextFiltered(Function slaveFilter) {
+            if (slaveChainCursor != null) {
+                while (slaveChainCursor.hasNext()) {
+                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                    // a swapped cursor checked the slave row before it started on the chain
+                    if (swapped || slaveFilter.getBool(record)) {
+                        return true;
+                    }
+                }
+            }
+            // no master row matches a key of an empty table, so the master goes unread
+            if (isMapEmpty) {
+                return false;
+            }
+
+            while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                MapKey key = joinKeyMap.withKey();
+                key.put(masterRecord, masterCursorSink);
+                MapValue value = key.findValue();
+                if (value != null && (!swapped || slaveFilter.getBool(record))) {
+                    slaveChainCursor = slaveChain.getCursor(value.getInt(0));
+                    while (slaveChainCursor.hasNext()) {
+                        slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                        if (swapped || slaveFilter.getBool(record)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        private void of(
+                RecordCursor masterCursor,
+                RecordCursor slaveCursor,
+                SqlExecutionContext executionContext,
+                boolean swapped
+        ) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
@@ -407,7 +530,18 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isMapBuilt = true;
                 isMapEmpty = true;
             }
-            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            if (slaveFilter != null) {
+                assert slaveFilterSymbolTableSource != null;
+                // the filter reads the columns of the join's slave, which a swapped cursor hashes as its master
+                if (swapped) {
+                    slaveFilterSymbolTableSource.of(slaveCursor, masterCursor);
+                } else {
+                    slaveFilterSymbolTableSource.of(masterCursor, slaveCursor);
+                }
+                slaveFilter.init(slaveFilterSymbolTableSource, executionContext);
+            }
+            // Adopt the cursors last so an initSources() or init() breach above leaves them unset for the
+            // getCursor() catch.
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
         }

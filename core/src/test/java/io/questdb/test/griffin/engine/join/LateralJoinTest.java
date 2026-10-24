@@ -2566,15 +2566,15 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // testLateralCorrelatedRightJoinSubQueryWhereKey() with s.id > o.x, which drops unmatched row 22
     // of the NULL o.x, as a comparison with NULL is false. The rewrite removes the outer-ref join and
-    // keeps the comparison, on the key a.x that the join carries, in WHERE after the join.
+    // keeps the comparison on o.x, after the lateral join. The RIGHT join makes that join a full-fat
+    // hash join, which hashes the body, so the comparison runs for each row of the join.
     @Test
     public void testLateralCorrelatedRightJoinSubQueryWhereKeyAndComparison() throws Exception {
         assertMemoryLeak(() -> {
             createNullOuterKeyTables();
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x AND s.id > o.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("Filter filter: (s.__qdb_outer_ref__1_x=a.x and a.x<s.id)", "Hash Right Outer Join Light")
+                    .withPlanContaining("Filter filter: o.x<l.sid", "Hash Join", "Filter filter: s.__qdb_outer_ref__1_x=a.x", "Hash Right Outer Join Light")
                     .returns("""
                             id\taid\tsid
                             1\t10\t21
@@ -2606,7 +2606,6 @@ public class LateralJoinTest extends AbstractCairoTest {
             createKeyAndComparisonTables();
             assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x AND s.id > o.x) l ORDER BY 1, 2, 3, 4")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\taid\tsid\tcid
                             1\t0\t21\t100
@@ -2656,7 +2655,6 @@ public class LateralJoinTest extends AbstractCairoTest {
             createKeyAndComparisonTables();
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x AND s.id > o.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\taid\tsid
                             1\t0\t21
@@ -2689,7 +2687,6 @@ public class LateralJoinTest extends AbstractCairoTest {
             createKeyAndComparisonTables();
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x AND a.id > o.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\taid\tsid
                             1\t10\t21
@@ -5034,15 +5031,16 @@ public class LateralJoinTest extends AbstractCairoTest {
         );
     }
 
-    // The rewriter equates o.x to a.x and moves a.id = o.x + 9, which is no plain column equality,
-    // into the filter of a.
+    // The rewriter equates o.x to a.x and keeps a.id = o.x + 9, which is no plain column equality, as a
+    // condition of the lateral join, which the hash join evaluates on the key of the body that equals o.x.
     @Test
     public void testLateralWhereKeyAndComputedEquality() throws Exception {
         assertMemoryLeak(() -> {
             createKeyAndComparisonTables();
             assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.x = o.x AND a.id = o.x + 9) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .withPlanContaining("filter: id=x+9")
+                    .withPlanContaining("Hash Join Light", "filter: l.aid=l.__qdb_outer_ref__0_x+9")
+                    .withPlanNotContaining("Filter filter")
                     .returns("""
                             id\taid
                             1\t10
@@ -5050,16 +5048,17 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The rewriter removes the outer-ref join, which a GROUP BY over o would feed, and runs a.id > o.x
-    // as the filter of a, on a.x, which WHERE equates to o.x.
+    // The rewriter removes the outer-ref join, which a GROUP BY over o would feed, and keeps a.id > o.x as
+    // a condition of the lateral join. The hash join evaluates it on the key of the body, which equals o.x,
+    // once per row of a when it hashes o, and the scan of a stays unfiltered.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparison() throws Exception {
         assertMemoryLeak(() -> {
             createKeyAndComparisonTables();
             assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.x = o.x AND a.id > o.x) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .withPlanContaining("Async JIT Filter", "filter: x<id", "Frame forward scan on: a")
-                    .withPlanNotContaining("Group By", "__qdb_outer_ref__0_x=a.x")
+                    .withPlanContaining("Hash Join Light", "filter: l.__qdb_outer_ref__0_x<l.aid", "Frame forward scan on: a")
+                    .withPlanNotContaining("Group By", "Filter filter", "Async JIT Filter")
                     .returns("""
                             id\taid
                             1\t10
@@ -5146,11 +5145,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // a.id > o.x on the inner table of an INNER join; per outer row, b rows 21 and 23 match a rows 10
-    // and 0 for o.x = 1, and only row 23 has an id above 21.
+    // and 0 for o.x = 1, and only row 23 has an id above 21. The join in the body makes the lateral join
+    // a full-fat hash join, which hashes the body, so the comparison stays after it, on o.x, and the
+    // cursor does not know its size.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparisonInnerJoinSlave() throws Exception {
         assertKeyAndComparison(
-                true,
+                false,
                 "SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (SELECT a.id aid, b.id bid FROM a JOIN b ON a.x = b.k WHERE a.x = o.x AND b.id > o.x + 20) l ORDER BY 1, 2, 3",
                 """
                         id\taid\tbid
@@ -5176,11 +5177,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // b.id > o.x on the slave of a LEFT join: for o.x = 1, b rows 21 and 23 match a rows 10 and 0;
-    // the NULL o.x leaves a row 12, which matches no b row, and b.id > NULL drops it.
+    // the NULL o.x leaves a row 12, which matches no b row, and b.id > NULL drops it. As in
+    // testLateralWhereKeyAndCorrelatedComparisonInnerJoinSlave(), the comparison stays after the full-fat
+    // lateral join.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparisonLaterLeftJoinSlave() throws Exception {
         assertKeyAndComparison(
-                true,
+                false,
                 "SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (SELECT a.id aid, b.id bid FROM a LEFT JOIN b ON a.x = b.k WHERE a.x = o.x AND b.id > o.x) l ORDER BY 1, 2, 3",
                 """
                         id\taid\tbid
@@ -5227,7 +5230,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         );
     }
 
-    // The comparison runs as the filter of a with JIT off as well.
+    // With JIT off, the hash join evaluates the comparison on the key of the body as well, see
+    // testLateralWhereKeyAndCorrelatedComparison(): no scan filter holds it.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparisonJitDisabled() throws Exception {
         assertMemoryLeak(() -> {
@@ -5237,7 +5241,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                 assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.x = o.x AND a.id > o.x) l ORDER BY 1, 2")
                         .noLeakCheck()
-                        .withPlanContaining("Async Filter", "filter: x<id")
+                        .withPlanContaining("Hash Join Light", "filter: l.__qdb_outer_ref__0_x<l.aid")
+                        .withPlanNotContaining("Filter filter", "Async Filter")
                         .returns("""
                                 id\taid
                                 1\t10
@@ -5253,8 +5258,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     // a microsecond to the first and a nanosecond to the second. Per outer row, o.ts + 1 is 2us for
     // o row 1 and 6us for o row 2, so a.y < o.ts + 1 keeps a row 10 (y 1.5us), and a.y > o.ts + 1
     // and a.y BETWEEN o.ts + 1 AND o.ts + 10 keep a row 11 (y 7us). On a.ts + 1, 1.001us and
-    // 5.001us, each would change. The rewriter keeps the outer-ref join, so the comparison reads the
-    // TIMESTAMP outer column.
+    // 5.001us, each would change. The comparison stays after the lateral join, on the TIMESTAMP outer
+    // column: the hash join moves a condition onto the key of the body only when both keys have one
+    // type.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparisonRetypedKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -5268,22 +5274,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
             assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\taid
                             1\t10
                             """);
             assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.ts = o.ts AND a.y BETWEEN o.ts + 1 AND o.ts + 10) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\taid
                             2\t11
                             """);
             assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.ts = o.ts AND a.y > o.ts + 1) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_ts+1<a.y", "Async Group By")
+                    .withPlanContaining("Filter filter: o.ts+1<l.y", "Hash Join Light")
                     .returns("""
                             id\taid
                             2\t11
@@ -5357,6 +5360,37 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // a has more rows than o, so the hash join of the lateral join hashes o and evaluates the comparison once
+    // per row of a whose x some row of o has: a rows 10, 11 and 12, not once per row of the join, seven. o rows
+    // 1, 2 and 3 share x = 1, which a rows 10 and 11 pass (10us and 11us > 1us); a row 12 fails 1us > 2us.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonOncePerInnerRow() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT, ts TIMESTAMP)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 1), (3, 1), (4, 2)");
+            execute("""
+                    INSERT INTO a VALUES
+                    (10, 1, 10::TIMESTAMP), (11, 1, 11::TIMESTAMP), (12, 2, 1::TIMESTAMP),
+                    (13, 3, 13::TIMESTAMP), (14, 3, 14::TIMESTAMP), (15, 3, 15::TIMESTAMP)
+                    """);
+            final String sql = "SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.x = o.x AND test_timestamp_counter(a.ts) > o.x::TIMESTAMP) l";
+            TestTimestampCounterFactory.COUNTER.set(0);
+            long rows = 0;
+            try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+            }
+            Assert.assertEquals(6, rows);
+            Assert.assertEquals(3, TestTimestampCounterFactory.COUNTER.get());
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Hash Join Light", "filter: l.__qdb_outer_ref__0_x::timestamp<test_timestamp_counter");
+        });
+    }
+
     // Per outer row, ORDER BY a.id LIMIT 1 picks a row 10, not row 0, for o.x = 1, as a.id > o.x
     // drops row 0 first.
     @Test
@@ -5386,11 +5420,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // b.id > o.x on the slave of a RIGHT join to a table: the rows that the join NULL-extends have a
-    // NULL a.x, which WHERE a.x = o.x keeps for the NULL o.x only, and b.id > NULL drops them.
+    // NULL a.x, which WHERE a.x = o.x keeps for the NULL o.x only, and b.id > NULL drops them. As in
+    // testLateralWhereKeyAndCorrelatedComparisonInnerJoinSlave(), the comparison stays after the full-fat
+    // lateral join.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparisonRightJoinTableSlave() throws Exception {
         assertKeyAndComparison(
-                true,
+                false,
                 "SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (SELECT a.id aid, b.id bid FROM a RIGHT JOIN b ON a.x = b.k WHERE a.x = o.x AND b.id > o.x) l ORDER BY 1, 2, 3",
                 """
                         id\taid\tbid
