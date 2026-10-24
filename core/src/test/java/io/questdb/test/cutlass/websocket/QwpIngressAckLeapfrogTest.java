@@ -717,7 +717,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 getLV().set(context, state);
 
                 // Both frames in one pass, so the data frame's ack is still
-                // pending (ACK_BATCH_SIZE is 8) when the poll is refused.
+                // pending (fewer frames than ACK_BATCH_SIZE) when the poll is refused.
                 drive(processor, context, nf, wire.length);
 
                 int ackIndex = indexOfBinaryFrame(rawSocket.sentFrames, QwpConstants.STATUS_OK, 0);
