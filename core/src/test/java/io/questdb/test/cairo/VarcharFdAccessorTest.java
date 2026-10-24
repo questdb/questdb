@@ -71,6 +71,47 @@ public class VarcharFdAccessorTest extends AbstractTest {
     }
 
     @Test
+    public void testReadsEachAuxEntryOnce() throws Exception {
+        // getDataVectorSizeAtFromFd reads the row's aux entry once (3 reads) and, for a split row
+        // after the first, the previous row's entry once more for the torn-write guard (3 reads).
+        final int[] readCount = {0};
+        final var ff = new TestFilesFacadeImpl() {
+            @Override
+            public long readIntAsUnsignedLong(long fd, long offset) {
+                readCount[0]++;
+                return super.readIntAsUnsignedLong(fd, offset);
+            }
+        };
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath())) {
+                try (MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, auxPath.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                     MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String(SPLIT));
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String(SPLIT));
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String("ab"));
+                }
+                long auxFd = ff.openRO(auxPath.$());
+                try {
+                    readCount[0] = 0;
+                    Assert.assertEquals(SPLIT.length(), VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFd, 0));
+                    Assert.assertEquals(3, readCount[0]);
+
+                    readCount[0] = 0;
+                    Assert.assertEquals(2L * SPLIT.length(), VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFd, 1));
+                    Assert.assertEquals(6, readCount[0]);
+
+                    // an inlined row skips the torn-write guard
+                    readCount[0] = 0;
+                    Assert.assertEquals(2L * SPLIT.length(), VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFd, 2));
+                    Assert.assertEquals(3, readCount[0]);
+                } finally {
+                    ff.close(auxFd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTornZeroOffsetThrows() throws Exception {
         final var ff = TestFilesFacadeImpl.INSTANCE;
         TestUtils.assertMemoryLeak(() -> {
