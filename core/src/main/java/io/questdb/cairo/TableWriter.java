@@ -12769,62 +12769,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             throw e;
                         }
 
-                        columnCounter.set(compressColumnCount(metadata));
-                        Path pathToPartition = Path.getThreadLocal(path);
-                        setPathForNativePartition(
-                                pathToPartition,
-                                timestampType,
-                                partitionBy,
-                                txWriter.getPartitionTimestampByTimestamp(o3TimestampMin),
-                                srcNameTxn
-                        );
-                        final int plen = pathToPartition.size();
+                        // Each live column the loop below publishes owns one count of the column counter:
+                        // its copy task counts it down, or its own error handler does when publishing it
+                        // fails. Dropped columns own none, so the counter and the published tally both
+                        // cover live columns only.
+                        final int liveColumnCount = compressColumnCount(metadata);
+                        columnCounter.set(liveColumnCount);
                         int columnsPublished = 0;
-                        long minTimestamp = isCommitReplaceMode() ? txWriter.getMinTimestamp() : o3TimestampMin;
-                        // Under merge-append this in-place append is a plan of one APPEND, run through the
-                        // writer's own column mappings. Its covering posting indexes are published as one
-                        // appended generation each, never rebuilt whole. See the DEFERRED sink flag.
-                        final boolean deferCoveredIndexing = configuration.isO3PartitionMergeAppendEnabled() && hasCoveringPostingIndex();
-                        for (int i = 0; i < columnCount; i++) {
-                            final int columnType = metadata.getColumnType(i);
-                            if (columnType < 0) {
-                                continue;
-                            }
-                            final int colOffset = TableWriter.getPrimaryColumnIndex(i);
-                            final boolean notTheTimestamp = i != timestampIndex;
-                            final CharSequence columnName = metadata.getColumnName(i);
-                            int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
-                            if (indexBlockCapacity > -1 && deferCoveredIndexing && isCoveringPostingColumn(i)) {
-                                // The column task must not index a covering posting column: its covered
-                                // values are written by other tasks running at the same time. -1 reads as
-                                // "not indexed"; the seal sweep indexes the rows once every task joins.
-                                indexBlockCapacity = -1;
-                                deferredCoveringSinkAddr = partitionUpdateSinkAddr;
-                            }
-                            final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
-                            final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
-                            final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
-                            final MemoryMA mem1 = columns.getQuick(colOffset);
-                            final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-                            final long srcDataTop = getColumnTop(i);
-                            final long srcOooFixAddr;
-                            final long srcOooVarAddr;
-                            final MemoryMA dstFixMem;
-                            final MemoryMA dstVarMem;
-                            if (!ColumnType.isVarSize(columnType)) {
-                                srcOooFixAddr = notTheTimestamp ? oooMem1.addressOf(0) : sortedTimestampsAddr;
-                                srcOooVarAddr = 0;
-                                dstFixMem = mem1;
-                                dstVarMem = null;
-                            } else {
-                                srcOooFixAddr = oooMem2.addressOf(0);
-                                srcOooVarAddr = oooMem1.addressOf(0);
-                                dstFixMem = mem2;
-                                dstVarMem = mem1;
-                            }
+                        try {
+                            Path pathToPartition = Path.getThreadLocal(path);
+                            setPathForNativePartition(
+                                    pathToPartition,
+                                    timestampType,
+                                    partitionBy,
+                                    txWriter.getPartitionTimestampByTimestamp(o3TimestampMin),
+                                    srcNameTxn
+                            );
+                            final int plen = pathToPartition.size();
+                            long minTimestamp = isCommitReplaceMode() ? txWriter.getMinTimestamp() : o3TimestampMin;
+                            // Under merge-append this in-place append is a plan of one APPEND, run through the
+                            // writer's own column mappings. Its covering posting indexes are published as one
+                            // appended generation each, never rebuilt whole. See the DEFERRED sink flag.
+                            final boolean deferCoveredIndexing = configuration.isO3PartitionMergeAppendEnabled() && hasCoveringPostingIndex();
+                            for (int i = 0; i < columnCount; i++) {
+                                final int columnType = metadata.getColumnType(i);
+                                if (columnType < 0) {
+                                    continue;
+                                }
+                                final int colOffset = TableWriter.getPrimaryColumnIndex(i);
+                                final boolean notTheTimestamp = i != timestampIndex;
+                                final CharSequence columnName = metadata.getColumnName(i);
+                                int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                                if (indexBlockCapacity > -1 && deferCoveredIndexing && isCoveringPostingColumn(i)) {
+                                    // The column task must not index a covering posting column: its covered
+                                    // values are written by other tasks running at the same time. -1 reads as
+                                    // "not indexed"; the seal sweep indexes the rows once every task joins.
+                                    indexBlockCapacity = -1;
+                                    deferredCoveringSinkAddr = partitionUpdateSinkAddr;
+                                }
+                                final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
+                                final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
+                                final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
+                                final MemoryMA mem1 = columns.getQuick(colOffset);
+                                final MemoryMA mem2 = columns.getQuick(colOffset + 1);
+                                final long srcDataTop = getColumnTop(i);
+                                final long srcOooFixAddr;
+                                final long srcOooVarAddr;
+                                final MemoryMA dstFixMem;
+                                final MemoryMA dstVarMem;
+                                if (!ColumnType.isVarSize(columnType)) {
+                                    srcOooFixAddr = notTheTimestamp ? oooMem1.addressOf(0) : sortedTimestampsAddr;
+                                    srcOooVarAddr = 0;
+                                    dstFixMem = mem1;
+                                    dstVarMem = null;
+                                } else {
+                                    srcOooFixAddr = oooMem2.addressOf(0);
+                                    srcOooVarAddr = oooMem1.addressOf(0);
+                                    dstFixMem = mem2;
+                                    dstVarMem = mem1;
+                                }
+                                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
 
-                            columnsPublished++;
-                            try {
+                                // From here on the column counts itself down, whether or not the append succeeds.
+                                columnsPublished++;
                                 O3OpenColumnJob.appendLastPartition(
                                         pathToPartition,
                                         plen,
@@ -12848,17 +12855,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         0,
                                         this,
                                         indexWriter,
-                                        getColumnNameTxn(partitionTimestamp, i),
+                                        columnNameTxn,
                                         partitionUpdateSinkAddr
                                 );
-                            } catch (Throwable e) {
-                                if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
-                                    o3ClockDownPartitionUpdateCount();
-                                    o3CountDownDoneLatch();
-                                }
-                                throw e;
                             }
+                        } catch (Throwable e) {
+                            // A failure before the first column is published leaves the error count at zero, and
+                            // then the wait below would run this commit's queued tasks instead of discarding them.
+                            o3BumpErrorCount(CairoException.isCairoOomError(e));
+                            O3CopyJob.closeUnpublishedColumns(columnCounter, liveColumnCount - columnsPublished, 0, 0, 0, 0, 0, this);
+                            throw e;
                         }
+                        assert columnsPublished == liveColumnCount;
 
                         addPhysicallyWrittenRows(srcOooBatchRowSize);
                     } else {
