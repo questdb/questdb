@@ -42,6 +42,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -1279,8 +1280,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         final TxnExtendFailingFacade ff = new TxnExtendFailingFacade("pt");
         final StringSink o3Rows = new StringSink();
         o3Rows.put(columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x"));
-        // one row in each of 300 new partitions: the partition table outgrows the _txn file
-        for (int i = 0; i < 300; i++) {
+        // one row in each of 150 new partitions: the partition table, about 5 KB, outgrows the first 4 KB of the
+        // _txn file, see TxnExtendFailingFacade. The last comparison with the twin reads every partition of both
+        // tables at once, and 300 partitions of 21 columns would open more files than the JVM allows on macOS
+        for (int i = 0; i < 150; i++) {
             o3Rows.put(", ").put(columnTopShapeRow(1_000 + i, LocalDate.of(2024, 1, 3).plusDays(i) + "T00:00:00.000000Z", "z"));
         }
         assertMemoryLeak(ff, () -> {
@@ -5421,8 +5424,17 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     /**
      * Fails, once when armed, the extension of the _txn file of one table by its writer.
+     * <p>
+     * The tests size their commits for Linux x86-64. Its 4 KB page holds the _txn file of a new table, and a
+     * commit that adds 300 partitions writes a _txn record of about 10 KB: the writer extends its mapping of the
+     * file, finds the file shorter than the new mapping and allocates disk space, which fails. The page size is
+     * 16 KB on macOS arm64 and the allocation granularity 64 KB on Windows, so there the record fits in the
+     * first page of the mapping, and the file of a new table is a page long. This facade makes every platform
+     * behave as Linux: the _txn writers map their files in steps of 4 KB, and while armed the _txn file of the
+     * table reads as empty, so that the next extension of the mapping allocates disk space.
      */
     private static class TxnExtendFailingFacade extends TestFilesFacadeImpl {
+        private static final long TXN_WRITER_PAGE_SIZE = 4 * 1024;
         final AtomicBoolean isArmed = new AtomicBoolean();
         private final String tableDirPrefix;
         private volatile long txnFd = -1;
@@ -5440,6 +5452,17 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getPageSize() {
+            final long pageSize = super.getPageSize();
+            return pageSize > TXN_WRITER_PAGE_SIZE && isTxnWriterCalling() ? TXN_WRITER_PAGE_SIZE : pageSize;
+        }
+
+        @Override
+        public long length(long fd) {
+            return fd == txnFd && isArmed.get() ? 0 : super.length(fd);
+        }
+
+        @Override
         public long openRW(LPSZ name, int opts) {
             final long fd = super.openRW(name, opts);
             if (
@@ -5449,6 +5472,14 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 txnFd = fd;
             }
             return fd;
+        }
+
+        // Whether a _txn writer asks for the page size, which it does only to open its file. The other callers keep
+        // the page size of the platform: the configuration hands it to memory that maps pages at offsets of it
+        private static boolean isTxnWriterCalling() {
+            return StackWalker.getInstance().walk(
+                    frames -> frames.anyMatch(frame -> TxWriter.class.getName().equals(frame.getClassName()))
+            );
         }
     }
 
