@@ -2458,6 +2458,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                             pos = bufferEnd;
                             return;
                         }
+                        if (state.isCommitBatchPending()) {
+                            // The fatal CLOSE flushes acks first: the frames before
+                            // this one must be committed by then.
+                            commitPendingBatch(context, state);
+                        }
                         sendFatalClose(context, state,
                                 WebSocketCloseCode.MESSAGE_TOO_BIG,
                                 "frame payload exceeds maximum size");
@@ -2495,9 +2500,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // throws (e.g. ACK backpressure), the committed frame won't be replayed.
                 pos += consumed;
 
-                if (opcode != WebSocketOpcode.BINARY && state.isCommitBatchPending()) {
-                    // Control frames (CLOSE above all: its final acks precede the
-                    // echo) see every earlier data frame committed.
+                if ((opcode != WebSocketOpcode.BINARY || !frameParser.isFin()) && state.isCommitBatchPending()) {
+                    // Anything but a complete data frame -- a control frame (a
+                    // CLOSE's final acks precede the echo), or a fragment refused
+                    // with a fatal CLOSE that flushes acks -- sees every earlier
+                    // data frame committed.
                     commitPendingBatch(context, state);
                 }
                 handleWebSocketFrame(context, state, opcode, frameParser.isFin(), payloadPtr, payloadLen);
@@ -2537,6 +2544,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             flushPendingAck(context, state, hasProcessedFrame && !hasPolledDurableProgress);
         } catch (ServerDisconnectException e) {
+            if (state.isCommitBatchPending()) {
+                // Disconnecting without a CLOSE (a malformed frame): no ack can
+                // reach the client, so committing would only turn its replay
+                // into duplicates. The disconnect rolls the rows back; pin the
+                // watermark below them meanwhile.
+                LOG.info().$("WebSocket commit batch abandoned by a disconnect [fd=").$(context.getFd())
+                        .$(", firstSeq=").$(state.getFirstCommitBatchSequence()).I$();
+                state.markSequenceUnresolved(state.getFirstCommitBatchSequence());
+                state.resetCommitBatch();
+            }
             // Every teardown this method can reach -- handleWebSocketFrame's
             // CLOSE arm and the entry expiry poll both go through
             // gracefulCloseAndDisconnect -- drains inbound bytes into THIS

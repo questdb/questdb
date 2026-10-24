@@ -46,6 +46,7 @@ import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocket;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -540,6 +541,71 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
+     * A fatal CLOSE for an oversized frame flushes the acks of the frames before
+     * it; those frames must have been committed first, as one commit per frame
+     * would have done.
+     */
+    @Test
+    public void testOversizedFrameCommitsAndAcksTheBatchBeforeClosing() throws Exception {
+        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        assertBatchCommittedBeforeFatalClose(oversizedFrameHeader(httpConfig.getRecvBufferSize() + 1L));
+    }
+
+    /**
+     * Same for a fragmented BINARY frame, which is refused with a fatal CLOSE.
+     */
+    @Test
+    public void testFragmentedFrameCommitsAndAcksTheBatchBeforeClosing() throws Exception {
+        assertBatchCommittedBeforeFatalClose(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L), false));
+    }
+
+    private void assertBatchCommittedBeforeFatalClose(byte[] badFrame) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            final ObjList<byte[]> sent = new ObjList<>();
+            try {
+                ingestInOnePass(
+                        processor,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        sent,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                        badFrame
+                );
+            } catch (ServerDisconnectException ignore) {
+                // the fatal CLOSE ends with a drain and disconnect
+            }
+            int closeIndex = -1;
+            for (int i = 0, n = sent.size(); i < n && closeIndex < 0; i++) {
+                if ((sent.getQuick(i)[0] & 0x0F) == WebSocketOpcode.CLOSE) {
+                    closeIndex = i;
+                }
+            }
+            Assert.assertTrue("test setup: the bad frame must draw a fatal CLOSE", closeIndex >= 0);
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            Assert.assertEquals("the frames before the bad one must be acked ahead of the CLOSE", 1, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < closeIndex);
+        });
+    }
+
+    private static byte[] oversizedFrameHeader(long len) {
+        // BINARY, FIN, masked, 64-bit length above the configured receive buffer;
+        // the payload never needs to arrive: the header alone is refused.
+        byte[] header = new byte[2 + 8 + 4];
+        header[0] = (byte) (0x80 | WebSocketOpcode.BINARY);
+        header[1] = (byte) (0x80 | 127);
+        for (int i = 0; i < 8; i++) {
+            header[2 + i] = (byte) (len >>> (56 - 8 * i));
+        }
+        System.arraycopy(DEFAULT_MASK_KEY, 0, header, 10, 4);
+        return header;
+    }
+
+    /**
      * Plain frames already in the receive buffer share one WAL commit, and the
      * single ack after it covers all of them.
      */
@@ -664,11 +730,15 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     private static byte[] createMaskedFrame(int opcode, byte[] payload) {
+        return createMaskedFrame(opcode, payload, true);
+    }
+
+    private static byte[] createMaskedFrame(int opcode, byte[] payload, boolean isFin) {
         // all test frames are tiny; single-byte payload length is sufficient
         assert payload.length <= 125;
         byte[] frame = new byte[2 + 4 + payload.length];
         int offset = 0;
-        frame[offset++] = (byte) (0x80 | (opcode & 0x0F));
+        frame[offset++] = (byte) ((isFin ? 0x80 : 0) | (opcode & 0x0F));
         frame[offset++] = (byte) (0x80 | payload.length);
         System.arraycopy(DEFAULT_MASK_KEY, 0, frame, offset, 4);
         offset += 4;
@@ -1371,6 +1441,18 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             SecurityContext securityContext,
             byte[]... frames
     ) throws Exception {
+        final ObjList<byte[]> sent = new ObjList<>();
+        ingestInOnePass(processor, httpConfig, securityContext, sent, frames);
+        return sent;
+    }
+
+    private void ingestInOnePass(
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            SecurityContext securityContext,
+            ObjList<byte[]> sent,
+            byte[]... frames
+    ) throws Exception {
         byte[] wire = concat(frames);
         assert wire.length <= RECV_BUFFER_SIZE;
         PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
@@ -1389,10 +1471,10 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             // Every frame arrives in one receive pass, as from a client with many in flight.
             drive(processor, context, nf, wire.length);
         } finally {
+            sent.addAll(rawSocket.sentFrames);
             Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
-        return rawSocket.sentFrames;
     }
 
     private ObjList<byte[]> ingestOnFreshConnection(
