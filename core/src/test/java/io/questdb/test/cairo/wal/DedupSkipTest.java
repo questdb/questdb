@@ -1498,6 +1498,64 @@ public class DedupSkipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpsertParquetChangedCountsDedupOnce() throws Exception {
+        // UPSERT commits change stored rows of the second row group. The identity check of the Parquet partition
+        // dedups the row group and leaves the merge to the merge loop: the first commit changes a row and adds a
+        // row after the partition, the check finds the change; the second changes a row and adds a new key to the
+        // row group, the check finds the new key. The dedup counter counts each replaced row once, as it does for
+        // the native twin "n", and both tables end up with the same rows
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetPartitionTable("t");
+            execute("CREATE TABLE n (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO n
+                    SELECT '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000, CASE WHEN x <= 4 THEN 'a' WHEN x <= 8 THEN 'b' ELSE 'c' END, x
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO n VALUES ('2024-01-02T00:00:00.000000Z', 'a', 100)");
+            for (String tableName : new String[]{"t", "n"}) {
+                execute("ALTER TABLE " + tableName + " DEDUP ENABLE UPSERT KEYS(ts, sym)");
+                // a column without NULL turns the identity check on
+                execute("ALTER TABLE " + tableName + " ADD COLUMN b BYTE");
+            }
+            drainWalQueue();
+            final String[] commits = {
+                    """
+                            ('2024-01-01T05:00:00.000000Z', 'b', 2006, 6::BYTE),
+                            ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)
+                            """,
+                    """
+                            ('2024-01-01T06:00:00.000000Z', 'b', 2007, 7::BYTE),
+                            ('2024-01-01T06:30:00.000000Z', 'y', 2030, 30::BYTE)
+                            """
+            };
+            for (String rows : commits) {
+                final long dedupRowCount = getDedupRowCount("t");
+                final long twinDedupRowCount = getDedupRowCount("n");
+                for (String tableName : new String[]{"t", "n"}) {
+                    execute("INSERT INTO " + tableName + " VALUES " + rows);
+                }
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+                Assert.assertEquals(dedupRowCount + 1, getDedupRowCount("t"));
+                Assert.assertEquals(twinDedupRowCount + 1, getDedupRowCount("n"));
+                assertSqlCursors("n", "t");
+            }
+            assertQuery("SELECT ts, sym, v, b FROM t WHERE v > 2000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv\tb
+                            2024-01-01T05:00:00.000000Z\tb\t2006\t6
+                            2024-01-01T06:00:00.000000Z\tb\t2007\t7
+                            2024-01-01T06:30:00.000000Z\ty\t2030\t30
+                            2024-01-01T23:00:00.000000Z\tx\t2023\t23
+                            """);
+        });
+    }
+
+    @Test
     public void testUpsertParquetIdenticalCountsDedupOnce() throws Exception {
         // An UPSERT commit resends a stored row unchanged and adds a row after the partition. The identity check of
         // the Parquet partition dedups the row group before the merge does: the dedup counter counts the duplicate

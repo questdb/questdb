@@ -363,6 +363,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // processO3Block() collects them from the partition update sink. Once the commit lands,
     // housekeep() purges the old versions; rollback() and a failed O3 block remove the new ones.
     private final LongList parquetIndexVersionChanges = new LongList();
+    // cumulative since the writer opened; tests assert the columns that parquet O3 row group merges decode, the
+    // UPSERT identity check included, see O3PartitionJob.mergeRowGroupDecode()
+    private final LongAdder parquetMergeDecodedColumnCount = new LongAdder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -1060,6 +1063,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             (isMergeAppend ? o3MergeTouchedRows : o3RewriteTouchedRows).add(touchedRows);
             (isMergeAppend ? o3MergeCopiedRows : o3RewriteCopiedRows).add(copiedRows);
         }
+    }
+
+    public void addParquetMergeDecodedColumns(long count) {
+        parquetMergeDecodedColumnCount.add(count);
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -2982,6 +2989,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             Misc.free(parquetFileDecoder);
         }
+    }
+
+    @TestOnly
+    public long getParquetMergeDecodedColumnCount() {
+        return parquetMergeDecodedColumnCount.sum();
     }
 
     @Override

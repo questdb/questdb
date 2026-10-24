@@ -59,8 +59,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * DEDUP UPSERT O3 commits into a parquet partition of 1M rows in row groups of 100_000. With a BOOLEAN column
  * ({@code hasNoSentinelColumn}), an UPSERT commit first checks whether it replays stored rows unchanged: a replay
- * then leaves the partition as it is, or appends past its end, and other commits pay for the check before they
- * merge. Without such a column the check does not run.
+ * then leaves the partition as it is, or appends past its end. Other commits pay for the check before they merge,
+ * apart from what it decoded of the first row group they merge, which the merge takes over. Without such a column
+ * the check does not run.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)

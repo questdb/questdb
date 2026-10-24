@@ -47,6 +47,9 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     // nothing in this descriptor needs to be freed by the descriptor itself.
     private PartitionDescriptor freshPartitionDescriptor;
     private LongList gapO3Ranges;
+    // Whether the first stage of the merge that keepRowGroupMerge() kept prepared the designated timestamp and
+    // the dedup key columns only
+    private boolean isPreparedMergeKeyColumnsOnly;
     // Decode buffers of the designated timestamp and the dedup key columns of a SKIP row group merge.
     // They are apart from getRowGroupBuffers() because a parquet rewrite can copy row groups through
     // ParquetRowGroupMaterializer, which decodes into the shared buffers, between the two stages of
@@ -62,6 +65,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private long mergeIndexAddr;
     private long mergeIndexSize;
     private LongList nullBufs;
+    // The merge action whose row group merge keepRowGroupMerge() kept, -1 when there is none, and the rows that
+    // its dedup dropped
+    private int preparedMergeActionIndex = -1;
+    private long preparedMergeDuplicateCount;
     private MemoryCARW rebaseAuxMem;
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
@@ -126,7 +133,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     /**
      * Frees the native memory of a row group merge: the merge index and the source buffers that
      * the merge allocated for converted, column top and missing columns. Call it once per row group,
-     * after the merge, whichever way it ends.
+     * after the merge, whichever way it ends. A second call frees nothing.
      */
     public void freeRowGroupMerge() {
         freeNativePairs(nullBufs);
@@ -135,6 +142,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = 0;
         mergeActiveColCount = 0;
+        preparedMergeActionIndex = -1;
     }
 
     public ObjList<O3ParquetMergeStrategy.MergeAction> getActionsBuf() {
@@ -192,6 +200,14 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         return nullBufs;
     }
 
+    public int getPreparedMergeActionIndex() {
+        return preparedMergeActionIndex;
+    }
+
+    public long getPreparedMergeDuplicateCount() {
+        return preparedMergeDuplicateCount;
+    }
+
     /**
      * Reusable scratch arena for window-relative rebased var-column aux vectors.
      * The caller sizes it once per apply (a later resize moves earlier slots),
@@ -214,6 +230,27 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         srcPtrs.setPos(requiredLen);
         srcPtrs.fill(0, requiredLen, 0);
         return srcPtrs;
+    }
+
+    public boolean isPreparedMergeKeyColumnsOnly() {
+        return isPreparedMergeKeyColumnsOnly;
+    }
+
+    /**
+     * Keeps the row group merge that the first stage, or both stages, prepared for the merge action
+     * at the given index, instead of freeing it: the merge loop completes it when it reaches the
+     * action. {@link #freeRowGroupMerge()} frees it and forgets the action.
+     *
+     * @param actionIndex      the index of the merge action
+     * @param duplicateCount   the rows that the dedup of the merge dropped
+     * @param isKeyColumnsOnly whether the first stage prepared the designated timestamp and the dedup
+     *                         key columns only, and the second stage has not run
+     */
+    public void keepRowGroupMerge(int actionIndex, long duplicateCount, boolean isKeyColumnsOnly) {
+        assert mergeIndexAddr != 0;
+        preparedMergeActionIndex = actionIndex;
+        preparedMergeDuplicateCount = duplicateCount;
+        isPreparedMergeKeyColumnsOnly = isKeyColumnsOnly;
     }
 
     /**
