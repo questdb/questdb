@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
@@ -70,6 +71,22 @@ public class YearTimestampSamplerTest {
     }
 
     @Test
+    public void testOffsetMatchesFloorWithOffset() throws Exception {
+        // round() after setOffset() returns the bucket that timestamp_floor_utc() on the GROUP BY path returns for
+        // the offset (GitHub issue #7769)
+        testOffsetMatchesFloorWithOffset(MicrosTimestampDriver.INSTANCE);
+        testOffsetMatchesFloorWithOffset(NanosTimestampDriver.INSTANCE);
+    }
+
+    @Test
+    public void testPositiveOffset() throws Exception {
+        // GitHub issue #7769. A positive offset moves each bucket start after the start of its calendar year, and
+        // round() returned that bucket start also for a value before it.
+        testPositiveOffset(MicrosTimestampDriver.INSTANCE);
+        testPositiveOffset(NanosTimestampDriver.INSTANCE);
+    }
+
+    @Test
     public void testRound() throws NumericException {
         testRound(1, "2023-01-01T00:00:00.000000Z", "2023-01-01T00:00:00.000000Z");
         testRound(1, "2023-01-01T00:00:00.000001Z", "2023-01-01T00:00:00.000000Z");
@@ -100,6 +117,66 @@ public class YearTimestampSamplerTest {
     }
 
     @Test
+    public void testRoundMatchesGridWalk() throws Exception {
+        // round() returns the last bucket start that nextTimestamp() reaches at or before the value, in every state
+        // that setStart() and setOffset() leave: anchors at the start, middle and end of a year, before and after
+        // the values, with a time of day, and offsets of either sign up to the 23:59 that WITH OFFSET accepts and
+        // the 47:58 that a mat view refresh passes for WITH OFFSET in a fixed-offset time zone
+        testRoundMatchesGridWalk(MicrosTimestampDriver.INSTANCE);
+        testRoundMatchesGridWalk(NanosTimestampDriver.INSTANCE);
+    }
+
+    @Test
+    public void testRoundNearEndOfTimestampRange() throws Exception {
+        // The bucket that starts in the calendar year of the value can start after the largest timestamp, which
+        // overflows a long. round() returns the bucket before it.
+        final TimestampSampler microsSampler = MicrosTimestampDriver.INSTANCE.getTimestampSampler(1, 'y', 0);
+        microsSampler.setStart(MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2021-08-31T00:00:00.000000Z"));
+        final long expectedMicros = Micros.toMicros(294_246, 8, 31);
+        Assert.assertEquals(expectedMicros, microsSampler.round(Long.MAX_VALUE));
+        Assert.assertEquals(expectedMicros, microsSampler.round(expectedMicros + 1));
+
+        final TimestampSampler nanosSampler = NanosTimestampDriver.INSTANCE.getTimestampSampler(1, 'y', 0);
+        nanosSampler.setStart(NanosTimestampDriver.INSTANCE.parseFloorLiteral("2021-08-31T00:00:00.000000Z"));
+        final long expectedNanos = NanosTimestampDriver.INSTANCE.parseFloorLiteral("2261-08-31T00:00:00.000000Z");
+        Assert.assertEquals(expectedNanos, nanosSampler.round(Long.MAX_VALUE));
+        Assert.assertEquals(expectedNanos, nanosSampler.round(NanosTimestampDriver.INSTANCE.parseFloorLiteral("2262-01-01T10:00:00.000000Z")));
+    }
+
+    @Test
+    public void testRoundNearEndOfTimestampRangeWithNegativeOffset() throws Exception {
+        // round() shifts the value by a negative offset to find the calendar year of its bucket. Near the largest
+        // timestamp the shift overflows a long, and round() keeps the value, which belongs to the bucket of the last
+        // calendar year: 294247 for TIMESTAMP and 2262 for TIMESTAMP_NS.
+        final TimestampDriver microsDriver = MicrosTimestampDriver.INSTANCE;
+        final long oneHourMicros = microsDriver.fromMinutes(60);
+        final long almostTwoDaysMicros = microsDriver.fromMinutes(47 * 60 + 58);
+        // 294246-12-31T23:00, 294246-12-30T00:02 and, for 2 years counted from 1970, 294245-12-31T23:00
+        final long expectedOneHourMicros = 9_223_371_241_200_000_000L;
+        final long expectedAlmostTwoDaysMicros = 9_223_371_072_120_000_000L;
+        final long expectedStrideMicros = 9_223_339_705_200_000_000L;
+        Assert.assertEquals(expectedOneHourMicros, Micros.toMicros(294_247, 1, 1) - oneHourMicros);
+        Assert.assertEquals(expectedAlmostTwoDaysMicros, Micros.toMicros(294_247, 1, 1) - almostTwoDaysMicros);
+        Assert.assertEquals(expectedStrideMicros, Micros.toMicros(294_246, 1, 1) - oneHourMicros);
+
+        final TimestampSampler microsSampler = microsDriver.getTimestampSampler(1, 'y', 0);
+        microsSampler.setOffset(-oneHourMicros);
+        assertRoundOfLargestTimestamps(microsSampler, expectedOneHourMicros);
+        microsSampler.setOffset(-almostTwoDaysMicros);
+        assertRoundOfLargestTimestamps(microsSampler, expectedAlmostTwoDaysMicros);
+        final TimestampSampler microsStrideSampler = microsDriver.getTimestampSampler(2, 'y', 0);
+        microsStrideSampler.setOffset(-oneHourMicros);
+        assertRoundOfLargestTimestamps(microsStrideSampler, expectedStrideMicros);
+
+        final TimestampDriver nanosDriver = NanosTimestampDriver.INSTANCE;
+        final TimestampSampler nanosSampler = nanosDriver.getTimestampSampler(1, 'y', 0);
+        nanosSampler.setOffset(-nanosDriver.fromMinutes(60));
+        assertRoundOfLargestTimestamps(nanosSampler, nanosDriver.parseFloorLiteral("2261-12-31T23:00:00.000000Z"));
+        nanosSampler.setOffset(-nanosDriver.fromMinutes(47 * 60 + 58));
+        assertRoundOfLargestTimestamps(nanosSampler, nanosDriver.parseFloorLiteral("2261-12-30T00:02:00.000000Z"));
+    }
+
+    @Test
     public void testSingleStep() throws NumericException {
         testSampler(
                 1,
@@ -124,6 +201,23 @@ public class YearTimestampSamplerTest {
                         "2094" + FIXED_PART +
                         "2098" + FIXED_PART
         );
+    }
+
+    @Test
+    public void testStartMatchesFloorWithOffset() throws Exception {
+        // round() after setStart() returns the last bucket start at or before the value. It returned the bucket start
+        // in the calendar year of the value, which follows a value that comes earlier in its year than the anchor does
+        // in its own, and it counted multi-year strides from 1970 (GitHub issue #7769). timestamp_floor_utc() on the
+        // GROUP BY path counts the years from the anchor, as FROM sets it.
+        testStartMatchesFloorWithOffset(MicrosTimestampDriver.INSTANCE);
+        testStartMatchesFloorWithOffset(NanosTimestampDriver.INSTANCE);
+    }
+
+    @Test
+    public void testStartMidYear() throws Exception {
+        // GitHub issue #7769
+        testStartMidYear(MicrosTimestampDriver.INSTANCE);
+        testStartMidYear(NanosTimestampDriver.INSTANCE);
     }
 
     @Test
@@ -177,6 +271,36 @@ public class YearTimestampSamplerTest {
 
     private static void assertRound(TimestampDriver driver, TimestampSampler sampler, String value, String expected) throws NumericException {
         Assert.assertEquals(driver.parseFloorLiteral(expected), sampler.round(driver.parseFloorLiteral(value)));
+    }
+
+    // Walks the grid from gridPoint, a bucket start, back to lo and then forward to hi, and checks that round()
+    // returns the bucket start for values every step apart and for the instants around each bucket start.
+    private static void assertRoundMatchesGridWalk(TimestampSampler sampler, long gridPoint, long lo, long hi, long step) {
+        long bucketStart = gridPoint;
+        while (bucketStart > lo) {
+            final long previousBucketStart = sampler.previousTimestamp(bucketStart);
+            // the walk fails instead of looping forever when previousTimestamp() doesn't move back
+            Assert.assertTrue(previousBucketStart < bucketStart);
+            bucketStart = previousBucketStart;
+        }
+        long value = lo;
+        while (bucketStart < hi) {
+            final long nextBucketStart = sampler.nextTimestamp(bucketStart);
+            // the walk fails instead of looping forever when nextTimestamp() doesn't move forward
+            Assert.assertTrue(nextBucketStart > bucketStart);
+            for (; value < nextBucketStart; value += step) {
+                Assert.assertEquals(bucketStart, sampler.round(value));
+            }
+            Assert.assertEquals(bucketStart, sampler.round(nextBucketStart - 1));
+            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart));
+            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart + 1));
+            bucketStart = nextBucketStart;
+        }
+    }
+
+    private static void assertRoundOfLargestTimestamps(TimestampSampler sampler, long expected) {
+        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
+        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE - 1));
     }
 
     private static void testNegativeOffset(TimestampDriver driver) throws NumericException, SqlException {
@@ -268,6 +392,147 @@ public class YearTimestampSamplerTest {
                 driver.parseFloorLiteral("2025-01-01T00:10:00.000000Z"),
                 sampler.nextTimestamp(driver.parseFloorLiteral("2024-01-01T00:10:00.000000Z"))
         );
+    }
+
+    private static void testOffsetMatchesFloorWithOffset(TimestampDriver driver) throws NumericException, SqlException {
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorMethod = driver.getTimestampFloorWithOffsetMethod('y');
+        final long[] offsets = {
+                driver.fromMinutes(-(23 * 60 + 59)),
+                driver.fromMinutes(-60),
+                -1,
+                1,
+                driver.fromMinutes(10 * 60),
+                driver.fromMinutes(23 * 60 + 59),
+        };
+        final int[] strides = {1, 2, 3, 5};
+        final long lo = driver.parseFloorLiteral("1971-01-01T00:00:00.000000Z");
+        final long hi = driver.parseFloorLiteral("2100-01-01T00:00:00.000000Z");
+        final long step = driver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = driver.getTimestampSampler(stride, 'y', 0);
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                for (long value = lo; value < hi; value += step) {
+                    final long rounded = sampler.round(value);
+                    Assert.assertEquals(floorMethod.floor(value, stride, offset), rounded);
+                    Assert.assertTrue(rounded <= value);
+                    Assert.assertTrue(value < sampler.nextTimestamp(rounded));
+                }
+            }
+        }
+    }
+
+    private static void testPositiveOffset(TimestampDriver driver) throws NumericException, SqlException {
+        final TimestampSampler sampler = driver.getTimestampSampler(1, 'y', 0);
+        sampler.setOffset(driver.fromMinutes(10 * 60));
+        assertRound(driver, sampler, "2025-01-01T06:00:00.000000Z", "2024-01-01T10:00:00.000000Z");
+        assertRound(driver, sampler, "2025-01-01T09:59:59.999999Z", "2024-01-01T10:00:00.000000Z");
+        assertRound(driver, sampler, "2025-01-01T10:00:00.000000Z", "2025-01-01T10:00:00.000000Z");
+        assertRound(driver, sampler, "2025-12-31T23:59:59.999999Z", "2025-01-01T10:00:00.000000Z");
+        assertGrid(
+                driver,
+                sampler,
+                "2023-01-01T10:00:00.000000Z",
+                """
+                        2024-01-01T10:00:00.000000Z
+                        2025-01-01T10:00:00.000000Z
+                        2026-01-01T10:00:00.000000Z
+                        """
+        );
+    }
+
+    private static void testRoundMatchesGridWalk(TimestampDriver driver) throws NumericException, SqlException {
+        final String[] anchors = {
+                "1945-01-01T00:00:00.000000Z",
+                "1999-01-15T10:30:15.123456Z",
+                "2018-03-15T08:00:00.000000Z",
+                "2019-02-28T00:00:00.000000Z",
+                "2020-02-29T12:00:00.000000Z",
+                "2021-08-31T00:00:00.000001Z",
+                "2018-12-31T10:00:00.000000Z",
+                "2059-07-01T00:00:00.000000Z",
+        };
+        final long[] offsets = {
+                driver.fromMinutes(-(47 * 60 + 58)),
+                driver.fromMinutes(-(23 * 60 + 59)),
+                driver.fromMinutes(-60),
+                -1,
+                0,
+                1,
+                driver.fromMinutes(10 * 60),
+                driver.fromMinutes(23 * 60 + 59),
+                driver.fromMinutes(47 * 60 + 58),
+        };
+        final int[] strides = {1, 2, 3, 5, 7, 12, 13};
+        final long lo = driver.parseFloorLiteral("1940-01-01T00:00:00.000000Z");
+        final long hi = driver.parseFloorLiteral("2060-01-01T00:00:00.000000Z");
+        final long step = driver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            // a sampler that neither setStart() nor setOffset() configured starts its grid in 1970
+            assertRoundMatchesGridWalk(driver.getTimestampSampler(stride, 'y', 0), 0, lo, hi, step);
+            final TimestampSampler sampler = driver.getTimestampSampler(stride, 'y', 0);
+            for (String anchor : anchors) {
+                final long anchorTs = driver.parseFloorLiteral(anchor);
+                sampler.setStart(anchorTs);
+                assertRoundMatchesGridWalk(sampler, anchorTs, lo, hi, step);
+            }
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                // the offset grid starts at 1970 plus the offset
+                assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
+            }
+        }
+    }
+
+    private static void testStartMatchesFloorWithOffset(TimestampDriver driver) throws NumericException, SqlException {
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorMethod = driver.getTimestampFloorWithOffsetMethod('y');
+        final String[] anchors = {
+                "2018-03-15T08:00:00.000000Z",
+                "2019-01-01T00:00:00.000001Z",
+                "2018-12-31T23:59:59.999999Z",
+                "2020-02-29T12:00:00.000000Z",
+                "2019-02-28T00:00:00.000000Z",
+        };
+        final int[] strides = {1, 2, 3, 5};
+        final long hi = driver.parseFloorLiteral("2100-01-01T00:00:00.000000Z");
+        final long step = driver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = driver.getTimestampSampler(stride, 'y', 0);
+            for (String anchor : anchors) {
+                final long anchorTs = driver.parseFloorLiteral(anchor);
+                sampler.setStart(anchorTs);
+                Assert.assertEquals(anchorTs, sampler.round(anchorTs));
+                for (long value = anchorTs; value < hi; value += step) {
+                    final long rounded = sampler.round(value);
+                    Assert.assertEquals(floorMethod.floor(value, stride, anchorTs), rounded);
+                    Assert.assertTrue(rounded <= value);
+                    Assert.assertTrue(value < sampler.nextTimestamp(rounded));
+                }
+            }
+        }
+    }
+
+    private static void testStartMidYear(TimestampDriver driver) throws NumericException, SqlException {
+        final TimestampSampler sampler = driver.getTimestampSampler(1, 'y', 0);
+        sampler.setStart(driver.parseFloorLiteral("2024-03-15T08:00:00.000000Z"));
+        assertRound(driver, sampler, "2025-02-10T00:00:00.000000Z", "2024-03-15T08:00:00.000000Z");
+        assertRound(driver, sampler, "2025-03-15T07:59:59.999999Z", "2024-03-15T08:00:00.000000Z");
+        assertRound(driver, sampler, "2025-03-15T08:00:00.000000Z", "2025-03-15T08:00:00.000000Z");
+
+        // the grid of a multi-year stride starts in the year of the anchor, not in 1970
+        final TimestampSampler twoYearSampler = driver.getTimestampSampler(2, 'y', 0);
+        twoYearSampler.setStart(driver.parseFloorLiteral("2025-03-15T08:00:00.000000Z"));
+        assertRound(driver, twoYearSampler, "2025-03-15T08:00:00.000000Z", "2025-03-15T08:00:00.000000Z");
+        assertRound(driver, twoYearSampler, "2026-12-31T00:00:00.000000Z", "2025-03-15T08:00:00.000000Z");
+        assertRound(driver, twoYearSampler, "2027-03-15T08:00:00.000000Z", "2027-03-15T08:00:00.000000Z");
+        assertRound(driver, twoYearSampler, "2025-03-01T00:00:00.000000Z", "2023-03-15T08:00:00.000000Z");
+
+        // an anchor on Feb 29 moves to Feb 28 in a year that is not a leap year
+        sampler.setStart(driver.parseFloorLiteral("2024-02-29T00:00:00.000000Z"));
+        assertRound(driver, sampler, "2025-02-28T12:00:00.000000Z", "2025-02-28T00:00:00.000000Z");
+        assertRound(driver, sampler, "2025-02-27T23:59:59.999999Z", "2024-02-29T00:00:00.000000Z");
+        assertRound(driver, sampler, "2028-02-29T00:00:00.000000Z", "2028-02-29T00:00:00.000000Z");
+        assertRound(driver, sampler, "2028-02-28T23:59:59.999999Z", "2027-02-28T00:00:00.000000Z");
     }
 
     private void testRound(int stepYears, String timestamp, String expectedRounded) throws NumericException {

@@ -44,10 +44,10 @@ import org.jetbrains.annotations.NotNull;
 
 public class InterpolationGroupByFunction implements GroupByFunction, FunctionExtension {
     private final GroupByFunction wrappedFunction;
-    private long current;
+    // the start of the bucket that the interpolation fills, see setBucketTimestamp()
+    private long bucketTimestamp;
     private long endTime;
     private boolean interpolating;
-    private long interval;
     private long startTime;
     private Record target;
 
@@ -103,7 +103,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public byte getByte(Record rec) {
         byte value = wrappedFunction.getByte(rec);
         if (interpolating) {
-            return (byte) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getByte(target));
+            return (byte) InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getByte(target));
         }
         return value;
     }
@@ -112,7 +112,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public char getChar(Record rec) {
         char value = wrappedFunction.getChar(rec);
         if (interpolating) {
-            return (char) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getChar(target));
+            return (char) InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getChar(target));
         }
         return value;
     }
@@ -156,7 +156,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public double getDouble(Record rec) {
         final double value = wrappedFunction.getDouble(rec);
         if (interpolating) {
-            return InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getDouble(target));
+            return InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getDouble(target));
         }
         return value;
     }
@@ -165,7 +165,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public float getFloat(Record rec) {
         float value = wrappedFunction.getFloat(rec);
         if (interpolating) {
-            return (float) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getFloat(target));
+            return (float) InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getFloat(target));
         }
         return value;
     }
@@ -199,7 +199,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public int getInt(Record rec) {
         int value = wrappedFunction.getInt(rec);
         if (interpolating) {
-            return (int) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getInt(target));
+            return (int) InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getInt(target));
         }
         return value;
     }
@@ -213,7 +213,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public long getLong(Record rec) {
         long value = wrappedFunction.getLong(rec);
         if (interpolating) {
-            return (long) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getLong(target));
+            return (long) InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getLong(target));
         }
         return value;
     }
@@ -257,7 +257,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public short getShort(Record rec) {
         short value = wrappedFunction.getShort(rec);
         if (interpolating) {
-            return (short) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getShort(target));
+            return (short) InterpolationUtil.interpolate(bucketTimestamp, startTime, value, endTime, wrappedFunction.getShort(target));
         }
         return value;
     }
@@ -342,6 +342,15 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
         wrappedFunction.initValueTypes(columnTypes);
     }
 
+    /**
+     * Sets the start of the bucket that the interpolation fills. The fill cursor calls it for every bucket of a gap
+     * after the first one. The bucket start is the x of the interpolation: bucket lengths vary for month and year
+     * strides, and a getter can run any number of times for a bucket, or not at all.
+     */
+    public void setBucketTimestamp(long bucketTimestamp) {
+        this.bucketTimestamp = bucketTimestamp;
+    }
+
     @Override
     public void setNull(MapValue mapValue) {
         wrappedFunction.setNull(mapValue);
@@ -355,8 +364,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
         interpolating = true;
         this.startTime = startTime;
         this.endTime = endTime;
-        this.interval = currentTime - startTime;
-        this.current = 1;
+        this.bucketTimestamp = currentTime;
     }
 
     public void stopInterpolating() {

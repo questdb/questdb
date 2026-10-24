@@ -194,6 +194,143 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerEvery5MonthsCountsFromStart() throws Exception {
+        // START falls in April, so the 5-month cadence runs April, September, February, July. A grid
+        // counted from January of each year would fire in June and November, and a grid counted
+        // from January 1970 would fire in August, January and June. The timer job registers the
+        // timer on 2024-05-10, inside the first period, so the first deadline comes from the grid.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2024-05-10T00:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH EVERY 5M DEFERRED START '2024-04-15T08:00:00.000000Z' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2024-05-10T00:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-06-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-08-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-09-15T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-09-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-09-15T08:00:00.000000Z");
+            tickTimer(timer, "2024-11-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-09-15T08:00:00.000000Z");
+            tickTimer(timer, "2025-01-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-09-15T08:00:00.000000Z");
+            tickTimer(timer, "2025-02-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2025-02-15T08:00:00.000000Z");
+            tickTimer(timer, "2025-06-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2025-02-15T08:00:00.000000Z");
+            tickTimer(timer, "2025-07-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2025-07-15T08:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testTimerEveryMonthClampsStartDayToMonthEnd() throws Exception {
+        // START falls on January 31st. The timer job registers the timer on 2024-02-10, so the
+        // first deadline falls on the last day of February, and the later firings go back to the
+        // 31st or to the last day of shorter months.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2024-02-10T00:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH EVERY 1M DEFERRED START '2024-01-31T08:00:00.000000Z' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2024-02-10T00:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-02-29T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-02-29T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-02-29T08:00:00.000000Z");
+            tickTimer(timer, "2024-03-31T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "2024-02-29T08:00:00.000000Z");
+            tickTimer(timer, "2024-03-31T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-03-31T08:00:00.000000Z");
+            tickTimer(timer, "2024-04-30T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-04-30T08:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testTimerEveryMonthCreatedMidPeriod() throws Exception {
+        // The timer job registers the timer on 2024-02-10, after START, so the first deadline comes
+        // from the sampler grid rather than from START. It must be the February firing.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2024-02-10T00:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH EVERY 1M DEFERRED START '2024-01-15T08:00:00.000000Z' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2024-02-10T00:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-02-15T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-02-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-02-15T08:00:00.000000Z");
+            tickTimer(timer, "2024-03-15T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "2024-02-15T08:00:00.000000Z");
+            tickTimer(timer, "2024-03-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-03-15T08:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testTimerEveryMonthRecreatedMidPeriod() throws Exception {
+        // ALTER re-creates the timer on 2024-02-10 with a START of 2024-01-15T08:00, partway
+        // through that schedule's January period. The re-created timer must keep the February
+        // firing. The old schedule fires on the 20th, so a firing on the 15th can only come from
+        // the re-created timer.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH EVERY 1M DEFERRED START '2024-01-20T08:00:00.000000Z' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2024-01-01T00:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2024-01-20T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-01-20T08:00:00.000000Z");
+
+            currentMicros = parseFloorPartialTimestamp("2024-02-10T00:00:00.000000Z");
+            execute("ALTER MATERIALIZED VIEW mv SET REFRESH EVERY 1M START '2024-01-15T08:00:00.000000Z';");
+            drainWalAndMatViewQueues();
+            tickTimer(timer, "2024-02-10T00:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-01-20T08:00:00.000000Z");
+            tickTimer(timer, "2024-02-15T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "2024-01-20T08:00:00.000000Z");
+            tickTimer(timer, "2024-02-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-02-15T08:00:00.000000Z");
+            tickTimer(timer, "2024-02-20T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2024-02-15T08:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testTimerEveryYearCreatedMidPeriod() throws Exception {
+        // The timer job registers both timers on 2024-03-01, after START and before the June
+        // anniversary. The 1-year timer must keep the 2024 firing, and the 2-year one must count
+        // its strides from 2021 rather than from 1970.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2024-03-01T00:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv_1y REFRESH EVERY 1y DEFERRED START '2023-06-15T08:00:00.000000Z' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            execute("CREATE MATERIALIZED VIEW mv_2y REFRESH EVERY 2y DEFERRED START '2021-06-15T08:00:00.000000Z' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2024-03-01T00:00:00.000000Z");
+            assertLastRefreshStart("mv_1y", "");
+            assertLastRefreshStart("mv_2y", "");
+            tickTimer(timer, "2024-06-15T07:59:59.999999Z");
+            assertLastRefreshStart("mv_1y", "");
+            assertLastRefreshStart("mv_2y", "");
+            tickTimer(timer, "2024-06-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv_1y", "2024-06-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv_2y", "");
+            tickTimer(timer, "2025-06-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv_1y", "2025-06-15T08:00:00.000000Z");
+            assertLastRefreshStart("mv_2y", "2025-06-15T08:00:00.000000Z");
+        });
+    }
+
+    @Test
     public void testUpdateDroppedStateDoesNotRegisterTimers() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable(engine, sqlExecutionContext);
@@ -253,6 +390,13 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
                 Path.clearThreadLocals();
             }
         }, "mat-view-drop");
+    }
+
+    private void assertLastRefreshStart(String viewName, String expectedTimestamp) throws Exception {
+        assertQuery("SELECT last_refresh_start_timestamp FROM materialized_views WHERE view_name = '" + viewName + "'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("last_refresh_start_timestamp\n" + expectedTimestamp + "\n");
     }
 
     private void createBaseTable(CairoEngine testEngine, SqlExecutionContext context) throws Exception {
@@ -356,6 +500,16 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Commits a fresh base table row before every tick: a refresh that finds no new base table
+    // transactions restores last_refresh_start_timestamp, which would hide the firing.
+    private void tickTimer(MatViewTimerJob timer, String now) throws Exception {
+        currentMicros = parseFloorPartialTimestamp(now);
+        execute("INSERT INTO base VALUES ('2024-01-01T00:00:00.000000Z', 42)");
+        drainWalAndMatViewQueues();
+        drainMatViewTimerQueue(timer);
+        drainWalAndMatViewQueues();
     }
 
     private static class GatedQueue implements Queue<MatViewTimerTask> {

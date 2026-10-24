@@ -33,7 +33,12 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.datetime.nanotime.Nanos.toNanos;
 
 public class MonthTimestampNanosSampler implements TimestampSampler {
+    // the calendar grid counts its months from January 1970, as Nanos.floorMM() does
+    private static final long EPOCH_MONTH_INDEX = Nanos.EPOCH_YEAR_0 * 12L;
     private final int stepMonths;
+    // The month of a bucket start, as 12 * year + month - 1, modulo stepMonths. The buckets start every stepMonths
+    // months from any month with that remainder.
+    private int anchorPhase;
     // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
     // long before the start of its calendar month, on the last day of the previous month.
     private long dayMod;
@@ -41,6 +46,7 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
 
     public MonthTimestampNanosSampler(int stepMonths) {
         this.stepMonths = stepMonths;
+        this.anchorPhase = Math.floorMod(EPOCH_MONTH_INDEX, stepMonths);
     }
 
     @Override
@@ -78,21 +84,32 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        // a negative offset moves each bucket start into the previous month, so the bucket of a value
-        // follows the calendar month of the value shifted by the offset
-        final long shifted = value - Math.min(dayMod, 0);
-        int y = Nanos.getYear(shifted);
-        final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(shifted, y, leap);
-        // target month
-        int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
-        int d = startDay > 0 ? startDay : 1;
-        return toNanos(y, leap, nextMonth, d) + dayMod;
+        // Returns the last bucket start at or before the value. A negative offset moves each bucket start into the
+        // month before, so the bucket follows the calendar month of the value shifted by the offset; max() keeps the
+        // value when the shift overflows at the end of the timestamp range. The bucket that starts in that month,
+        // counted from the anchor month in whole strides, can start after the value, when the value comes earlier in
+        // its month than the day and time of the grid. Every later bucket starts in a later month. setStart() keeps
+        // the time of day under a day, and setOffset() starts the grid on the first day of the month with an offset
+        // far shorter than a month, so one step back finds the bucket.
+        final long shifted = dayMod < 0 ? Math.max(value, value - dayMod) : value;
+        final int y = Nanos.getYear(shifted);
+        final boolean isLeap = CommonUtils.isLeapYear(y);
+        final int m = Nanos.getMonthOfYear(shifted, y, isLeap);
+        // 12 * y + m - 1 - anchorPhase fits an int whenever the bucket start fits a long; a bucket month below 1 falls
+        // in an earlier year
+        final int bucketMonth = stepMonths == 1 ? m : m - Math.floorMod(12 * y + m - 1 - anchorPhase, stepMonths);
+        if (bucketMonth > 0) {
+            final long bucketStart = toNanos(y, isLeap, bucketMonth, startDay > 0 ? startDay : 1) + dayMod;
+            // the difference stays correct when the bucket start overflows a long at the end of the timestamp range
+            return value - bucketStart < 0 ? bucketStart(12L * y + bucketMonth - 1 - stepMonths) : bucketStart;
+        }
+        return roundFromEarlierYear(value, 12L * y + bucketMonth - 1);
     }
 
     @Override
     public void setOffset(long timestamp) {
         // the offset applies to the calendar grid, which starts on the first day of the month
+        this.anchorPhase = Math.floorMod(EPOCH_MONTH_INDEX, stepMonths);
         this.startDay = 0;
         this.dayMod = timestamp;
     }
@@ -101,7 +118,9 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     public void setStart(long timestamp) {
         final int y = Nanos.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
-        this.startDay = Nanos.getDayOfMonth(timestamp, y, Nanos.getMonthOfYear(timestamp, y, leap), leap);
+        final int m = Nanos.getMonthOfYear(timestamp, y, leap);
+        this.anchorPhase = Math.floorMod(12L * y + m - 1, stepMonths);
+        this.startDay = Nanos.getDayOfMonth(timestamp, y, m, leap);
         long dayMod = timestamp % Nanos.DAY_NANOS;
         if (dayMod < 0) {
             dayMod += Nanos.DAY_NANOS;
@@ -147,5 +166,20 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
             }
         }
         return Nanos.toNanos(_y, _m, _d) + dayMod;
+    }
+
+    // Returns the start of the bucket in the given month, as 12 * year + month - 1. A start day past the end of the
+    // month moves to its last day, as in addMonth().
+    private long bucketStart(long monthIndex) {
+        final int y = (int) Math.floorDiv(monthIndex, 12);
+        final int m = (int) Math.floorMod(monthIndex, 12) + 1;
+        return toNanos(y, CommonUtils.isLeapYear(y), m, startDay > 0 ? startDay : 1) + dayMod;
+    }
+
+    // Returns the last bucket start at or before the value, for the bucket that starts in the given month of an
+    // earlier year than the value, as 12 * year + month - 1
+    private long roundFromEarlierYear(long value, long bucketMonthIndex) {
+        final long bucketStart = bucketStart(bucketMonthIndex);
+        return value - bucketStart < 0 ? bucketStart(bucketMonthIndex - stepMonths) : bucketStart;
     }
 }

@@ -360,9 +360,51 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        final long monthsDiff = getMonthsBetween(nanos, offset);
-        final long monthsToAdd = monthsDiff - (monthsDiff % stride);
-        return addMonths(offset, (int) monthsToAdd);
+        // Splits the offset into its calendar fields once and counts the calendar months from the offset to the
+        // value. The bucket that starts in the month of the value starts after the value when the value comes
+        // earlier in its month, and the value then belongs to the bucket before. This method and monthBucketStart()
+        // move the bucket start to the last day of a month shorter than the day of the offset, as addMonths() does.
+        // getMonthsBetween() compared the positions within the month without that move, and put 2024-04-30T23:45
+        // into the bucket before the one that starts at 2024-04-30T23:00 for the offset 1969-12-31T23:00 (GitHub
+        // issue #7798). For the month of the value, the check compares positions within that month, so it never
+        // builds a bucket start after the value, which could overflow a long.
+        final int offsetYear = getYear(offset);
+        final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
+        final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
+        // The formula equals getDayOfMonth(); the call measured slower in the TIMESTAMP_NS month floor benchmark, so
+        // all four floor sites keep it inline.
+        final int offsetDay = (int) ((offset - yearNanos(offsetYear, isOffsetLeap)
+                - monthOfYearNanos(offsetMonth, isOffsetLeap)) / DAY_NANOS) + 1;
+        final long offsetTime = getTimeNanos(offset);
+        final int year = getYear(nanos);
+        final boolean isLeap = CommonUtils.isLeapYear(year);
+        final long yearStart = yearNanos(year, isLeap);
+        final int month = getMonthOfYear(nanos, year, isLeap);
+        final long months = 12L * (year - offsetYear) + month - offsetMonth;
+        final long monthsPastBucket = months % stride;
+        final long monthsToAdd = months - monthsPastBucket;
+        if (monthsToAdd == 0) {
+            return offset;
+        }
+        if (monthsPastBucket == 0) {
+            final long monthStart = yearStart + monthOfYearNanos(month, isLeap);
+            final long bucketInMonth = (Math.min(offsetDay, CommonUtils.getDaysPerMonth(month, isLeap)) - 1)
+                    * DAY_NANOS + offsetTime;
+            if (bucketInMonth <= nanos - monthStart) {
+                return monthStart + bucketInMonth;
+            }
+        } else {
+            final long bucketStart = monthBucketStart(
+                    year, isLeap, yearStart, month - monthsPastBucket, offsetDay, offsetTime
+            );
+            if (bucketStart <= nanos) {
+                return bucketStart;
+            }
+        }
+        if (monthsToAdd == stride) {
+            return offset;
+        }
+        return monthBucketStart(year, isLeap, yearStart, month - monthsPastBucket - stride, offsetDay, offsetTime);
     }
 
     public static long floorMM(long nanos, int stride) {
@@ -521,9 +563,44 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        final long yearsDiff = getYearsBetween(nanos, offset);
-        final long yearsToAdd = yearsDiff - (yearsDiff % stride);
-        return addYears(offset, (int) yearsToAdd);
+        // Counts the calendar years, as floorMM() counts the months. This method and yearBucketStart() move an
+        // offset on Feb 29 to Feb 28 in a year that is not a leap year, as addYears() does, and getYearsBetween()
+        // put a value on Feb 28 after the moved bucket start into the bucket before. For the year of the value, the
+        // check compares positions within that year, so it never builds a bucket start after the value.
+        final int offsetYear = getYear(offset);
+        final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
+        final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
+        // The formula equals getDayOfMonth(); the call measured slower in the TIMESTAMP_NS month floor benchmark, so
+        // all four floor sites keep it inline.
+        final int offsetDay = (int) ((offset - yearNanos(offsetYear, isOffsetLeap)
+                - monthOfYearNanos(offsetMonth, isOffsetLeap)) / DAY_NANOS) + 1;
+        final long offsetTime = getTimeNanos(offset);
+        final int year = getYear(nanos);
+        final int years = year - offsetYear;
+        final int yearsPastBucket = years % stride;
+        final int yearsToAdd = years - yearsPastBucket;
+        if (yearsToAdd == 0) {
+            return offset;
+        }
+        if (yearsPastBucket == 0) {
+            final boolean isLeap = CommonUtils.isLeapYear(year);
+            final long yearStart = yearNanos(year, isLeap);
+            final long bucketInYear = monthOfYearNanos(offsetMonth, isLeap)
+                    + (Math.min(offsetDay, CommonUtils.getDaysPerMonth(offsetMonth, isLeap)) - 1) * DAY_NANOS
+                    + offsetTime;
+            if (bucketInYear <= nanos - yearStart) {
+                return yearStart + bucketInYear;
+            }
+        } else {
+            final long bucketStart = yearBucketStart(year - yearsPastBucket, offsetMonth, offsetDay, offsetTime);
+            if (bucketStart <= nanos) {
+                return bucketStart;
+            }
+        }
+        if (yearsToAdd == stride) {
+            return offset;
+        }
+        return yearBucketStart(year - yearsPastBucket - stride, offsetMonth, offsetDay, offsetTime);
     }
 
     public static int getCentury(long nanos) {
@@ -1168,5 +1245,31 @@ public final class Nanos {
 
     private static long getTimeNanos(long nanos, int strideDays, long offset) {
         return getRemainderNanos(nanos - offset, strideDays * DAY_NANOS);
+    }
+
+    // Returns the start of the bucket in the given month of the year, or in an earlier year when monthOfYear is
+    // zero or negative. The bucket starts on the day of the offset, or on the last day of a shorter month.
+    private static long monthBucketStart(
+            int year,
+            boolean isLeap,
+            long yearStart,
+            long monthOfYear,
+            int day,
+            long time
+    ) {
+        if (monthOfYear > 0) {
+            final int month = (int) monthOfYear;
+            return yearStart + monthOfYearNanos(month, isLeap)
+                    + (Math.min(day, CommonUtils.getDaysPerMonth(month, isLeap)) - 1) * DAY_NANOS + time;
+        }
+        final long monthIndex = 12L * year + monthOfYear - 1;
+        final int bucketYear = (int) Math.floorDiv(monthIndex, 12);
+        final int bucketMonth = (int) Math.floorMod(monthIndex, 12) + 1;
+        return toNanos(bucketYear, CommonUtils.isLeapYear(bucketYear), bucketMonth, day) + time;
+    }
+
+    // Returns the start of the bucket in the given year, with the day clamped to the length of the month.
+    private static long yearBucketStart(int year, int month, int day, long time) {
+        return toNanos(year, CommonUtils.isLeapYear(year), month, day) + time;
     }
 }

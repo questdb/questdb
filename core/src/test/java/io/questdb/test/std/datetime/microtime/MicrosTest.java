@@ -321,6 +321,66 @@ public class MicrosTest {
     }
 
     @Test
+    public void testFloorMMWithOffsetNearLongMax() {
+        // Long.MAX_VALUE is 294247-01-10T04:00:54.775807Z. The bucket after it would start after Long.MAX_VALUE, and
+        // its start must not wrap around and land in the result.
+        final long offset = MicrosFormatUtils.parseTimestamp("2024-01-15T00:00:00.000000Z");
+        Assert.assertEquals(Micros.toMicros(294_246, 12, 15), Micros.floorMM(Long.MAX_VALUE, 1, offset));
+        Assert.assertEquals(Micros.toMicros(294_246, 10, 15), Micros.floorMM(Long.MAX_VALUE, 3, offset));
+    }
+
+    @Test
+    public void testFloorMMWithOffsetOnLastDayOfMonth() {
+        // GitHub issue #7798. The bucket starts on the day of the offset, or on the last day of a shorter month. A
+        // value after the start of such a bucket, but earlier in its month than the offset in its own, went into the
+        // bucket before.
+        final long offset = MicrosFormatUtils.parseTimestamp("1969-12-31T23:00:00.000000Z");
+        assertFloorMM("2024-04-30T23:00:00.000000Z", "2024-04-30T23:45:00.000000Z", 1, offset);
+        assertFloorMM("2024-03-31T23:00:00.000000Z", "2024-04-30T22:59:59.999999Z", 1, offset);
+        assertFloorMM("2024-02-29T23:00:00.000000Z", "2024-02-29T23:30:00.000000Z", 1, offset);
+        assertFloorMM("2025-02-28T23:00:00.000000Z", "2025-03-01T00:00:00.000000Z", 1, offset);
+        assertFloorMM("2024-03-31T23:00:00.000000Z", "2024-06-30T22:00:00.000000Z", 3, offset);
+        assertFloorMM("2024-06-30T23:00:00.000000Z", "2024-06-30T23:00:00.000000Z", 3, offset);
+
+        final long from = MicrosFormatUtils.parseTimestamp("2024-01-31T00:00:00.000000Z");
+        assertFloorMM("2024-04-30T00:00:00.000000Z", "2024-04-30T12:00:00.000000Z", 1, from);
+        assertFloorMM("2024-03-31T00:00:00.000000Z", "2024-04-29T23:59:59.999999Z", 1, from);
+        assertFloorMM("2024-01-31T00:00:00.000000Z", "2024-01-31T00:00:00.000000Z", 1, from);
+        // a value before the offset goes into the first bucket
+        assertFloorMM("2024-01-31T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", 1, from);
+    }
+
+    @Test
+    public void testFloorMMWithOffsetStaysOnGrid() {
+        // The bucket of a value starts at or before the value, on the grid that addMonths() steps from the offset,
+        // and the next bucket on that grid starts after the value
+        final String[] offsets = {
+                "1969-12-31T23:00:00.000000Z",
+                "1970-01-01T10:00:00.000000Z",
+                "2000-01-29T00:00:00.000000Z",
+                "2000-01-30T12:00:00.000000Z",
+                "2000-03-31T23:59:59.999999Z",
+                "2000-08-15T06:00:00.000000Z",
+        };
+        final int[] strides = {1, 2, 3, 5, 12};
+        final long hi = MicrosFormatUtils.parseTimestamp("2010-01-01T00:00:00.000000Z");
+        final long step = 3 * Micros.HOUR_MICROS + 17 * Micros.MINUTE_MICROS + 13;
+        for (String offsetStr : offsets) {
+            final long offset = MicrosFormatUtils.parseTimestamp(offsetStr);
+            for (int stride : strides) {
+                for (long value = offset; value < hi; value += step) {
+                    final long floor = Micros.floorMM(value, stride, offset);
+                    Assert.assertTrue(floor <= value);
+                    final int months = (int) (monthIndex(floor) - monthIndex(offset));
+                    Assert.assertEquals(0, months % stride);
+                    Assert.assertEquals(Micros.addMonths(offset, months), floor);
+                    Assert.assertTrue(value < Micros.addMonths(offset, months + stride));
+                }
+            }
+        }
+    }
+
+    @Test
     public void testFloorMS() {
         testFloorMS("1969-12-31T23:59:59.999999Z", "1969-12-31T23:59:59.999000Z");
         testFloorMS("1969-01-01T00:00:00.000000Z", "1969-01-01T00:00:00.000000Z");
@@ -429,6 +489,26 @@ public class MicrosTest {
         micros = MicrosFormatUtils.parseTimestamp("1967-05-12T23:45:51.045045Z");
         MicrosFormatUtils.appendDateTimeUSec(sink, Micros.floorYYYY(micros, 3));
         TestUtils.assertEquals("1967-01-01T00:00:00.000000Z", sink);
+    }
+
+    @Test
+    public void testFloorYYYYWithOffsetNearLongMax() {
+        // as testFloorMMWithOffsetNearLongMax(), for years
+        final long offset = MicrosFormatUtils.parseTimestamp("2024-06-01T00:00:00.000000Z");
+        Assert.assertEquals(Micros.toMicros(294_246, 6, 1), Micros.floorYYYY(Long.MAX_VALUE, 1, offset));
+        Assert.assertEquals(Micros.toMicros(294_245, 6, 1), Micros.floorYYYY(Long.MAX_VALUE, 3, offset));
+    }
+
+    @Test
+    public void testFloorYYYYWithOffsetOnLeapDay() {
+        // as testFloorMMWithOffsetOnLastDayOfMonth(), for an offset on Feb 29 and a year that is not a leap year
+        final long offset = MicrosFormatUtils.parseTimestamp("2024-02-29T00:00:00.000000Z");
+        assertFloorYYYY("2025-02-28T00:00:00.000000Z", "2025-02-28T12:00:00.000000Z", 1, offset);
+        assertFloorYYYY("2024-02-29T00:00:00.000000Z", "2025-02-27T23:59:59.999999Z", 1, offset);
+        assertFloorYYYY("2028-02-29T00:00:00.000000Z", "2028-02-29T00:00:00.000000Z", 1, offset);
+        assertFloorYYYY("2027-02-28T00:00:00.000000Z", "2028-02-28T23:59:59.999999Z", 1, offset);
+        assertFloorYYYY("2026-02-28T00:00:00.000000Z", "2026-02-28T00:00:00.000000Z", 2, offset);
+        assertFloorYYYY("2024-02-29T00:00:00.000000Z", "2026-02-27T00:00:00.000000Z", 2, offset);
     }
 
     @Test
@@ -917,6 +997,25 @@ public class MicrosTest {
         long micros2 = MicrosFormatUtils.parseTimestamp("2024-04-24T01:49:12.005Z");
         Assert.assertEquals(4, Micros.getYearsBetween(micros1, micros2));
         Assert.assertEquals(4, Micros.getYearsBetween(micros2, micros1));
+    }
+
+    private static void assertFloorMM(String expected, String value, int stride, long offset) {
+        Assert.assertEquals(
+                MicrosFormatUtils.parseTimestamp(expected),
+                Micros.floorMM(MicrosFormatUtils.parseTimestamp(value), stride, offset)
+        );
+    }
+
+    private static void assertFloorYYYY(String expected, String value, int stride, long offset) {
+        Assert.assertEquals(
+                MicrosFormatUtils.parseTimestamp(expected),
+                Micros.floorYYYY(MicrosFormatUtils.parseTimestamp(value), stride, offset)
+        );
+    }
+
+    private static long monthIndex(long micros) {
+        final int y = Micros.getYear(micros);
+        return 12L * y + Micros.getMonthOfYear(micros, y, CommonUtils.isLeapYear(y)) - 1;
     }
 
     private void assertTrue(String date) throws NumericException {
