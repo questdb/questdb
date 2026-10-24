@@ -56,6 +56,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * the rows of row groups 0 and 1, an O3 row (v 50 at 01:30) merges into row group 0, then {@code b}
  * changes lazily to the target type. The rows read before the tie commit, through the decode of one
  * row group at a time, are the oracle: the tie commit adds its row and changes no stored row.
+ * <p>
+ * The run of a row group with values followed by one with a top needs {@code b} in the file before the
+ * O3 merge: the merge ends the top of row group 0 and leaves the null chunk of row group 1 as it is. A
+ * column added after the conversion is absent from the file, and the merge writes the row groups it
+ * copies with a zero chunk, which holds no top. The tests that need the run check that the tie commit
+ * merges it, so a writer change that removes the shape fails them instead of leaving them ineffective.
  */
 public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
     private static final String DAY_ROWS = "(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), "
@@ -106,6 +112,7 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
     // 2024-01-01T00:00:00.000000Z in micros
     private static final long DAY_START = 1_704_067_200_000_000L;
     private static final String TIE_ROW = "(51, '2024-01-01T03:00:00.000000Z')";
+    private static final long TIE_TS = DAY_START + 3 * 3_600_000_000L;
 
     @Override
     @Before
@@ -171,9 +178,9 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                         + "(9, '2024-01-01T03:00:00.000000Z'), (10, '2024-01-01T05:00:00.000000Z'), (11, '2024-01-01T06:00:00.000000Z'), "
                         + "(12, '2024-01-01T07:00:00.000000Z'), (99, '2024-01-02T00:00:00.000000Z')");
                 drainWalQueue();
-                convertToParquet(t);
                 execute("ALTER TABLE " + t + " ADD COLUMN b BYTE");
                 drainWalQueue();
+                convertToParquet(t);
                 execute("INSERT INTO " + t + " (v, ts, b) VALUES (50, '2024-01-01T01:30:00.000000Z', 5)");
                 drainWalQueue();
                 execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts, v, b)");
@@ -184,6 +191,7 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                         .returns("v\tb\ts\n4\t0\tnull\n50\t5\tnull\n");
                 assertQuery("SELECT count() FROM " + t).noLeakCheck().noRandomAccess().expectSize().returns("count\n14\n");
 
+                Assert.assertTrue(isTieRunWithNonLeadingTop(t, TIE_TS));
                 execute("INSERT INTO " + t + " (v, ts, b, s) VALUES (4, '2024-01-01T03:00:00.000000Z', " + pair[1] + ", 7)");
                 drainWalQueue();
                 assertQuery("SELECT v, b::INT b, s FROM " + t + " WHERE v IN (4, 50) ORDER BY v")
@@ -201,7 +209,8 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (String target : new String[]{"INT", "VARCHAR"}) {
                 final String t = "pt_" + target;
-                createTopTable(t, " DEDUP SKIP KEYS(ts, v)", "BYTE", "5", target, true);
+                createTopTable(t, " DEDUP SKIP KEYS(ts, v)", "BYTE", "5", target, TopShape.TOP_AT_ROW_COUNT);
+                Assert.assertTrue(isTieRunWithNonLeadingTop(t, TIE_TS));
                 assertQuery("SELECT b FROM " + t + " WHERE v = 50").noLeakCheck().returns("b\n5\n");
                 assertTieKeepsRows(t, TIE_ROW);
                 assertQuery("SELECT b FROM " + t + " WHERE v = 50").noLeakCheck().returns("b\n5\n");
@@ -223,13 +232,14 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                         + "(9, '2024-01-01T03:00:00.000000Z'), (10, '2024-01-01T05:00:00.000000Z'), (11, '2024-01-01T06:00:00.000000Z'), "
                         + "(12, '2024-01-01T07:00:00.000000Z'), (99, '2024-01-02T00:00:00.000000Z')");
                 drainWalQueue();
-                convertToParquet(t);
                 execute("ALTER TABLE " + t + " ADD COLUMN b SHORT");
                 drainWalQueue();
+                convertToParquet(t);
                 execute("INSERT INTO " + t + " (v, ts, b) VALUES (50, '2024-01-01T01:30:00.000000Z', 5)");
                 drainWalQueue();
                 execute("ALTER TABLE " + t + " ALTER COLUMN b TYPE " + target);
                 drainWalQueue();
+                Assert.assertTrue(isTieRunWithNonLeadingTop(t, TIE_TS));
                 assertTieKeepsRows(t, TIE_ROW);
                 assertQuery("SELECT v FROM " + t + " WHERE v = 50 AND b IS NULL").noLeakCheck().returns("v\n");
             }
@@ -238,9 +248,10 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
 
     @Test
     public void testDedupTieAcrossTwoTopsKeepsValues() throws Exception {
-        // row groups 00,01,02,03 | 03,04,05,06 | 06,07,08,09 with b added after the conversion: the O3 row
-        // v 50 at 04:30 merges into row group 1 alone and ends its top, row groups 0 and 2 keep theirs. The
-        // tie rows at 03:00 and 06:00 merge the three row groups as one run with two separate tops
+        // row groups 00,01,02,03 | 03,04,05,06 | 06,07,08,09 with b added before the conversion: the O3 row
+        // v 50 at 04:30 merges into row group 1 alone and ends its top, row groups 0 and 2 keep the null
+        // chunks of the column top. The tie rows at 03:00 and 06:00 merge the three row groups as one run
+        // with two separate tops
         assertMemoryLeak(() -> {
             for (String target : new String[]{"INT", "DOUBLE", "DECIMAL(9,2)", "VARCHAR", "STRING"}) {
                 final String t = "pt_" + target.replace('(', '_').replace(',', '_').replace(')', '_');
@@ -251,13 +262,14 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                         + "(9, '2024-01-01T06:00:00.000000Z'), (10, '2024-01-01T07:00:00.000000Z'), (11, '2024-01-01T08:00:00.000000Z'), "
                         + "(12, '2024-01-01T09:00:00.000000Z'), (99, '2024-01-02T00:00:00.000000Z')");
                 drainWalQueue();
-                convertToParquet(t);
                 execute("ALTER TABLE " + t + " ADD COLUMN b BYTE");
                 drainWalQueue();
+                convertToParquet(t);
                 execute("INSERT INTO " + t + " (v, ts, b) VALUES (50, '2024-01-01T04:30:00.000000Z', 5)");
                 drainWalQueue();
                 execute("ALTER TABLE " + t + " ALTER COLUMN b TYPE " + target);
                 drainWalQueue();
+                Assert.assertTrue(isTieRunWithNonLeadingTop(t, DAY_START + 6 * 3_600_000_000L));
                 assertTieKeepsRows(t, "(51, '2024-01-01T03:00:00.000000Z'), (52, '2024-01-01T06:00:00.000000Z')");
                 assertQuery("SELECT v FROM " + t + " WHERE v = 50 AND b IS NULL").noLeakCheck().returns("v\n");
             }
@@ -334,7 +346,8 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(ff, () -> {
-            createTopTable("pt", " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", "INT", true);
+            createTopTable("pt", " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", "INT", TopShape.TOP_AT_ROW_COUNT);
+            Assert.assertTrue(isTieRunWithNonLeadingTop("pt", TIE_TS));
             execute("CREATE TABLE snap AS (SELECT v, b, ts FROM pt) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             isFailing.set(true);
             execute("INSERT INTO pt (v, ts) VALUES " + TIE_ROW);
@@ -353,16 +366,29 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
 
     @Test
     public void testDedupTieKeepsValuesEveryLazyPair() throws Exception {
-        // b is added after the conversion (null chunks of the absent column) or before it (a native column
-        // top, rows 1..8, and v 9 with a value at 08:00)
+        // b is absent from the file, which the O3 merge ends with zero chunks and no top, or the file holds
+        // the column top of b over rows 1..8, with or without v 9 holding a value at 08:00. A column the
+        // file holds gives the tie a run with a non-leading top when the conversion is lazy and the source
+        // type has no NULL sentinel
         assertMemoryLeak(() -> {
             int tableIndex = 0;
-            for (boolean isAddedAfterConvert : new boolean[]{true, false}) {
+            for (TopShape shape : TopShape.values()) {
                 for (String[] pair : LAZY_PAIRS) {
                     final String t = "pt" + tableIndex++;
-                    createTopTable(t, " DEDUP UPSERT KEYS(ts, v)", pair[0], pair[1], pair[2], isAddedAfterConvert);
+                    createTopTable(t, " DEDUP UPSERT KEYS(ts, v)", pair[0], pair[1], pair[2], shape);
                     final String expected = "b\n" + pair[3] + "\n";
                     assertQuery("SELECT b FROM " + t + " WHERE v = 50").noLeakCheck().returns(expected);
+                    final boolean isLazyNoSentinel = !pair[0].equals("INT") && !pair[2].equals("BYTE") && !pair[2].equals("SHORT");
+                    Assert.assertEquals(shape != TopShape.ABSENT_FROM_FILE && isLazyNoSentinel, isTieRunWithNonLeadingTop(t, TIE_TS));
+                    if (shape == TopShape.ABSENT_FROM_FILE) {
+                        // the O3 merge ends the top of the column the file lacks: the rewrite writes the copied
+                        // row groups with the 0 of the source type, as the native merge does; 0 is the NULL of CHAR,
+                        // and the ended top of INT is its NULL sentinel
+                        final boolean isEndedTopNull = pair[0].equals("INT") || pair[0].equals("CHAR");
+                        assertQuery("SELECT count() FROM " + t + " WHERE b IS NULL AND ts < '2024-01-02'")
+                                .noLeakCheck().noRandomAccess().expectSize()
+                                .returns("count\n" + (isEndedTopNull ? 8 : 0) + "\n");
+                    }
                     assertTieKeepsRows(t, TIE_ROW);
                     assertQuery("SELECT b FROM " + t + " WHERE v = 50").noLeakCheck().returns(expected);
                 }
@@ -386,8 +412,9 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                 final String[] pair = pairs[rnd.nextInt(pairs.length)];
                 execute("CREATE TABLE " + t + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)");
                 final int rowCount = 8 + rnd.nextInt(16);
-                final boolean isAddedAfterConvert = rnd.nextBoolean();
-                final int topRowCount = isAddedAfterConvert ? rowCount : 1 + rnd.nextInt(rowCount);
+                final TopShape shape = TopShape.values()[rnd.nextInt(3)];
+                final boolean isAddedAfterConvert = shape == TopShape.ABSENT_FROM_FILE;
+                final int topRowCount = shape != TopShape.TOP_INSIDE ? rowCount : 1 + rnd.nextInt(rowCount - 1);
                 final StringBuilder rows = new StringBuilder();
                 final IntList sharedMinutes = new IntList();
                 // the minutes that rows v and v - 1 share where v starts a row group inside the column top of
@@ -492,9 +519,9 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
             execute("INSERT INTO pt SELECT x, '2024-01-01T00:00:00.000000Z'::TIMESTAMP + (x / 2) * 100_000L FROM long_sequence(200_000)");
             execute("INSERT INTO pt (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
             drainWalQueue();
-            convertToParquet("pt");
             execute("ALTER TABLE pt ADD COLUMN b BYTE");
             drainWalQueue();
+            convertToParquet("pt");
             execute("INSERT INTO pt (v, ts, b) VALUES (1_000_000, '2024-01-01T00:00:00.050000Z', 5)");
             drainWalQueue();
             execute("ALTER TABLE pt ALTER COLUMN b TYPE INT");
@@ -503,6 +530,7 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("v\tts\n100000\t2024-01-01T01:23:20.000000Z\n100001\t2024-01-01T01:23:20.000000Z\n");
+            Assert.assertTrue(isTieRunWithNonLeadingTop("pt", DAY_START + 5_000_000_000L));
             assertTieKeepsRows("pt", "(2_000_000, '2024-01-01T01:23:20.000000Z')");
             assertQuery("SELECT b FROM pt WHERE v = 1_000_000").noLeakCheck().returns("b\n5\n");
         });
@@ -533,7 +561,8 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
     public void testDedupTieRepeatedKeepsValues() throws Exception {
         // a second tie commit at the same boundary merges the rows the first one wrote
         assertMemoryLeak(() -> {
-            createTopTable("pt", " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", "VARCHAR", true);
+            createTopTable("pt", " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", "VARCHAR", TopShape.TOP_AT_ROW_COUNT);
+            Assert.assertTrue(isTieRunWithNonLeadingTop("pt", TIE_TS));
             assertTieKeepsRows("pt", TIE_ROW);
             assertTieKeepsRows("pt", "(52, '2024-01-01T03:00:00.000000Z')");
             assertQuery("SELECT v, b FROM pt WHERE v IN (50, 51, 52)").noLeakCheck().returns("v\tb\n50\t5\n51\t\n52\t\n");
@@ -548,7 +577,7 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (String target : new String[]{"INT", "VARCHAR"}) {
                 final String t = "pt_" + target;
-                createTopTable(t, " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", target, true);
+                createTopTable(t, " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", target, TopShape.ABSENT_FROM_FILE);
                 assertTieKeepsRows(t, TIE_ROW);
                 assertQuery("SELECT b FROM " + t + " WHERE v = 50").noLeakCheck().returns("b\n5\n");
             }
@@ -561,7 +590,8 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
             // {target type, literal of 0 in the target type}
             for (String[] target : new String[][]{{"INT", "0"}, {"VARCHAR", "'0'"}}) {
                 final String t = "pt_" + target[0];
-                createTopTable(t, " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", target[0], true);
+                createTopTable(t, " DEDUP UPSERT KEYS(ts, v)", "BYTE", "5", target[0], TopShape.TOP_AT_ROW_COUNT);
+                Assert.assertTrue(isTieRunWithNonLeadingTop(t, TIE_TS));
                 assertTieKeepsRows(t, TIE_ROW);
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
@@ -603,27 +633,29 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    // b gets a top over rows v 1..8, added after the conversion to parquet or before it, with row v 9
-    // at 08:00 holding a value. The O3 row v 50 at 01:30 merges into row group 0
+    // b gets a top over rows v 1..8 in the shape the caller picks. The O3 row v 50 at 01:30 merges into
+    // row group 0
     private static void createTopTable(
             String table,
             String dedup,
             String sourceType,
             String value,
             String targetType,
-            boolean isAddedAfterConvert
+            TopShape shape
     ) throws Exception {
         execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL" + dedup);
         execute("INSERT INTO " + table + " (v, ts) VALUES " + DAY_ROWS);
         drainWalQueue();
-        if (isAddedAfterConvert) {
+        if (shape == TopShape.ABSENT_FROM_FILE) {
             convertToParquet(table);
         }
         execute("ALTER TABLE " + table + " ADD COLUMN b " + sourceType);
         drainWalQueue();
-        if (!isAddedAfterConvert) {
+        if (shape == TopShape.TOP_INSIDE) {
             execute("INSERT INTO " + table + " (v, ts, b) VALUES (9, '2024-01-01T08:00:00.000000Z', " + value + ")");
             drainWalQueue();
+        }
+        if (shape != TopShape.ABSENT_FROM_FILE) {
             convertToParquet(table);
         }
         execute("INSERT INTO " + table + " (v, ts, b) VALUES (50, '2024-01-01T01:30:00.000000Z', " + value + ")");
@@ -667,5 +699,14 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
             }
             return runRowGroupCount > 1 && hasNonLeadingTop;
         }
+    }
+
+    private enum TopShape {
+        // b added after CONVERT TO PARQUET: the file lacks b
+        ABSENT_FROM_FILE,
+        // b added before CONVERT TO PARQUET with no row after it: a top over every row of 2024-01-01
+        TOP_AT_ROW_COUNT,
+        // b added before CONVERT TO PARQUET, then v 9 at 08:00 with a value
+        TOP_INSIDE
     }
 }
