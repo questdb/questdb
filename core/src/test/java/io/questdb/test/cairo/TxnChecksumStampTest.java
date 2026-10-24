@@ -97,11 +97,6 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins where the stamp lives. It must sit in the record's reserved tail gap, immediately after the
-     * checksum and entirely below the next occupied field -- otherwise it clobbers a live value, and no
-     * record may grow.
-     */
-    /**
      * A checksummed record whose base-header geometry stamp names another txn fails the load path, which falls
      * back to the previous record. The diagnosis path must call the same file torn, or a reader that cannot
      * acquire the live txn times out looking like contention.
@@ -126,6 +121,11 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Pins where the stamp lives. It must sit in the record's reserved tail gap, immediately after the
+     * checksum and entirely below the next occupied field -- otherwise it clobbers a live value, and no
+     * record may grow.
+     */
     @Test
     public void testStampOccupiesTheReservedRecordGap() {
         Assert.assertEquals(

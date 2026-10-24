@@ -124,7 +124,7 @@ public interface MapWriter extends SymbolCountProvider {
      * {@code sync()}. The default does nothing, for writers with no such memory (e.g.
      * {@link io.questdb.cairo.vm.NullMapWriter}).
      */
-    default void setAppendOnly(boolean appendOnly) {
+    default void setAppendOnly(boolean isAppendOnly) {
     }
 
     void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);

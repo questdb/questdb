@@ -241,9 +241,9 @@ public class FdCache {
         return rename0(oldName, newName, true);
     }
 
-    private int rename0(LPSZ oldName, LPSZ newName, boolean durable) {
+    private int rename0(LPSZ oldName, LPSZ newName, boolean isDurable) {
         int keyIndex = openFdMapByPath.keyIndex(oldName);
-        int result = durable
+        int result = isDurable
                 ? Files.renameDurable0(oldName.ptr(), newName.ptr())
                 : Files.rename(oldName.ptr(), newName.ptr());
         if (result == 0 && keyIndex < 0) {

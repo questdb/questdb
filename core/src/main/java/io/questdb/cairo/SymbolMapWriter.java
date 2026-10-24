@@ -499,8 +499,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
      * reopens.
      */
     @Override
-    public void setAppendOnly(boolean appendOnly) {
-        charMem.setAppendOnly(appendOnly);
+    public void setAppendOnly(boolean isAppendOnly) {
+        charMem.setAppendOnly(isAppendOnly);
     }
 
     @Override

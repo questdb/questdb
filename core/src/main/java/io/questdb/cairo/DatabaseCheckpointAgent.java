@@ -95,10 +95,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final TxReader txReader;
+    private boolean hasRecoveredCheckpoint;
+    private boolean hasRecoveredCheckpointTrigger;
     private boolean isBackupCheckpoint; // protected with #lock
-    private boolean recoveredCheckpoint;
     private String recoveredCheckpointDir;
-    private boolean recoveredCheckpointTriggerExists;
     private volatile boolean ownsWalPurgeJobRunLock = false;
 
     DatabaseCheckpointAgent(CairoEngine engine) {
@@ -1051,7 +1051,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     }
 
     void completeRecovery() {
-        if (!recoveredCheckpoint || recoveredCheckpointDir == null) {
+        if (!hasRecoveredCheckpoint || recoveredCheckpointDir == null) {
             return;
         }
         final FilesFacade ff = configuration.getFilesFacade();
@@ -1059,7 +1059,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // Remove the trigger and make its removal durable first. A crash after this point can leave an inert
             // checkpoint directory, but never a trigger that points at a deleted checkpoint.
             path.of(configuration.getInstallRoot()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
-            if (recoveredCheckpointTriggerExists
+            if (hasRecoveredCheckpointTrigger
                     && ff.exists(path.$())
                     && !ff.removeQuiet(path.$())
                     && ff.exists(path.$())) {
@@ -1076,14 +1076,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
             syncRestoredState(ff, path.of(recoveredCheckpointDir).parent(), false);
             recoveredCheckpointDir = null;
-            recoveredCheckpointTriggerExists = false;
+            hasRecoveredCheckpointTrigger = false;
         }
     }
 
     void recover() {
-        recoveredCheckpoint = false;
+        hasRecoveredCheckpoint = false;
         recoveredCheckpointDir = null;
-        recoveredCheckpointTriggerExists = false;
+        hasRecoveredCheckpointTrigger = false;
         if (!configuration.isCheckpointRecoveryEnabled()) {
             return;
         }
@@ -1231,7 +1231,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
 
             recoveryAgent.finalizeParallelTasks();
-            recoveredCheckpoint = true;
+            hasRecoveredCheckpoint = true;
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
@@ -1251,7 +1251,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             memFile.close();
             syncRestoredState(ff, dstPath.trimTo(rootLen), true);
             recoveredCheckpointDir = srcPath.toString();
-            recoveredCheckpointTriggerExists = triggerExists;
+            hasRecoveredCheckpointTrigger = triggerExists;
         }
     }
 }

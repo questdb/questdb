@@ -64,7 +64,7 @@ public interface MemoryMA extends MemoryM, MemoryA {
      * memories that update in place with {@code put*(offset, value)} below the cursor must keep the
      * default. The default implementation does nothing.
      */
-    default void setAppendOnly(boolean appendOnly) {
+    default void setAppendOnly(boolean isAppendOnly) {
     }
 
     /**
@@ -74,7 +74,7 @@ public interface MemoryMA extends MemoryM, MemoryA {
      * WAL, made durable by the save point and recovery. WAL segment columns, which fdatasync on each commit,
      * and other commit modes never set it. The default implementation does nothing.
      */
-    default void setApplyLazy(boolean applyLazy) {
+    default void setApplyLazy(boolean isApplyLazy) {
     }
 
     /**

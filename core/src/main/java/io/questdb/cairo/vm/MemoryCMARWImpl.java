@@ -53,13 +53,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // so the first extend after mapping reserves from offset 0.
     private long allocatedSize = 0;
     private long appendAddress = 0;
-    // When true, this memory is append-only (no in-place put*(offset, ..) below the cursor), so sync() may
-    // narrow the msync to the appended range and skip it when nothing was appended. When false, sync()
-    // msyncs the full extent.
-    private boolean appendOnly = false;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
     private long fd = -1;
+    // When true, this memory is append-only (no in-place put*(offset, ..) below the cursor), so sync() may
+    // narrow the msync to the appended range and skip it when nothing was appended. When false, sync()
+    // msyncs the full extent.
+    private boolean isAppendOnly = false;
     // Append offset covered by the last msync (append-only path only). It can only be stale-low (a fresh,
     // remapped or truncated memory resets it to 0), never stale-high, so the worst case is one extra msync.
     private long lastSyncedAppendOffset = 0;
@@ -204,7 +204,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         if (pageAddress != 0 && !ff.isSyncfsFileSystemWide()) {
             // Off Linux, write the mapped pages into the file before the flush (see MemoryMA.flushFile), over the
             // range sync(true) used to msync.
-            final long len = appendOnly ? getAppendOffset() : size;
+            final long len = isAppendOnly ? getAppendOffset() : size;
             if (len > 0) {
                 ff.msync(pageAddress, len, true);
             }
@@ -255,7 +255,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         // column the cursor ends on the old offset, both watermarks match, and the rewritten bytes would never
         // be msynced. Lowering the watermark to the rewind point makes the next sync() flush them. Memories
         // that are not append-only never skip, so they keep a plain jumpTo.
-        if (appendOnly && offset < lastSyncedAppendOffset) {
+        if (isAppendOnly && offset < lastSyncedAppendOffset) {
             lastSyncedAppendOffset = offset;
         }
         appendAddress = pageAddress + offset;
@@ -371,14 +371,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         other.lastSyncedSize = tLastSynced;
 
         // The last-synced append offset describes the swapped append cursor, so it travels with it, as does
-        // lastSyncedSize. appendOnly is a per-file policy and belongs to the swapped identity too.
+        // lastSyncedSize. isAppendOnly is a per-file policy and belongs to the swapped identity too.
         long tLastSyncedAo = this.lastSyncedAppendOffset;
         this.lastSyncedAppendOffset = other.lastSyncedAppendOffset;
         other.lastSyncedAppendOffset = tLastSyncedAo;
 
-        boolean tAppendOnly = this.appendOnly;
-        this.appendOnly = other.appendOnly;
-        other.appendOnly = tAppendOnly;
+        boolean tAppendOnly = this.isAppendOnly;
+        this.isAppendOnly = other.isAppendOnly;
+        other.isAppendOnly = tAppendOnly;
     }
 
     @Override
@@ -399,7 +399,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         // An async sync is a no-op: msync(MS_ASYNC) has been a no-op on Linux since 2.6.19, and the
         // Windows msync ignores the flag and flushes synchronously. The OS writes dirty pages back
         // on its own.
-        if (appendOnly) {
+        if (isAppendOnly) {
             // Append-only memory: the only dirty bytes lie between the last synced append offset and the
             // current one. Narrow the msync to the written range, and skip it when nothing was appended.
             final long ao = getAppendOffset();
@@ -408,7 +408,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 // above the watermark changed since the last msync. A rewind and re-append can return the
                 // cursor to its old value with different bytes in between; jumpTo() and truncate() lower the
                 // watermark on any backwards move, so that case reaches the msync below. The caller sets
-                // appendOnly only on memories that never write in place below the cursor (MemoryMA.setAppendOnly).
+                // isAppendOnly only on memories that never write in place below the cursor (MemoryMA.setAppendOnly).
                 return;
             }
             if (ao > 0 && !async) {
@@ -444,7 +444,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         // a second flush. Advance the watermarks to the durable size, as sync() does after its msync.
         if (size > lastSyncedSize) {
             lastSyncedSize = size;
-            if (appendOnly) {
+            if (isAppendOnly) {
                 lastSyncedAppendOffset = getAppendOffset();
             }
         }
@@ -467,8 +467,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void setAppendOnly(boolean appendOnly) {
-        this.appendOnly = appendOnly;
+    public void setAppendOnly(boolean isAppendOnly) {
+        this.isAppendOnly = isAppendOnly;
     }
 
     @Override
@@ -613,7 +613,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // The range the batched flush writes back. The mapping starts at file offset 0, so it is
     // [0, appendOffset) for append-only memory and [0, size) otherwise, the range sync() selects.
     private long syncFlushLen() {
-        return appendOnly ? getAppendOffset() : size;
+        return isAppendOnly ? getAppendOffset() : size;
     }
 
     protected void map(FilesFacade ff, @Nullable Utf8Sequence name, long size, int memoryTag) {

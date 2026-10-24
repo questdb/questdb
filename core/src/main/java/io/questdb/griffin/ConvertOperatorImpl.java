@@ -384,8 +384,10 @@ public class ConvertOperatorImpl implements Closeable {
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
                                     if (tableWriter.getEffectiveCommitMode() == CommitMode.SYNC) {
-                                        // Make the new column files' names durable; the conversion task
-                                        // fsyncs their data. Both precede the ALTER's commit.
+                                        // Make the new column files' names durable before the ALTER's commit.
+                                        // A dispatched conversion task also fsyncs their data; the piece-walk
+                                        // paths below close the files without an fsync, the known SYNC gap
+                                        // #7843 (adaptive-commit-mode.md section 7.6).
                                         TableUtils.fsyncDirDurable(ff, path.trimTo(pathTrimToLen).$());
                                     }
 

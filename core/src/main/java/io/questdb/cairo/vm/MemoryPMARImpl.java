@@ -42,22 +42,22 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
-    // When true, this memory is append-only, so sync() narrows the current-page msync to the bytes written
-    // into that page. sync() never skips, so no offset state carries across syncs. Set only on ADAPTIVE WAL
-    // columns and ADAPTIVE table columns, so it also picks the page-release grade.
-    private boolean appendOnly = false;
-    // When true, this is a table partition column under CommitMode.ADAPTIVE: page release and close skip
-    // the msync, because the column is a rebuildable cache of the durable WAL, made durable by the save
-    // point and recovery. TableWriter sets it only for partition columns under ADAPTIVE, never for WAL
-    // segment columns, which fdatasync on each commit.
-    private boolean applyLazy = false;
     // The commit mode threaded in by the opening caller (TableWriter.configureColumn), mirroring
-    // applyLazy. CommitMode.UNSET (default) => never threaded, so read the instance-global
+    // isApplyLazy. CommitMode.UNSET (default) => never threaded, so read the instance-global
     // configuration.getCommitMode() instead. TableWriter threads its own grade because a table that is
     // not yet enrolled in adaptive runs at SYNC while the instance runs ADAPTIVE.
     private int commitMode = CommitMode.UNSET;
     private long fd = -1;
     private FilesFacade ff;
+    // When true, this memory is append-only, so sync() narrows the current-page msync to the bytes written
+    // into that page. sync() never skips, so no offset state carries across syncs. Set only on ADAPTIVE WAL
+    // columns and ADAPTIVE table columns, so it also picks the page-release grade.
+    private boolean isAppendOnly = false;
+    // When true, this is a table partition column under CommitMode.ADAPTIVE: page release and close skip
+    // the msync, because the column is a rebuildable cache of the durable WAL, made durable by the save
+    // point and recovery. TableWriter sets it only for partition columns under ADAPTIVE, never for WAL
+    // segment columns, which fdatasync on each commit.
+    private boolean isApplyLazy = false;
     private int madviseOpts = -1;
     private int mappedPage;
     private long pageAddress = 0;
@@ -119,7 +119,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         if (pageAddress != 0 && !ff.isSyncfsFileSystemWide()) {
             // Off Linux, write the mapped page into the file before the flush (see MemoryMA.flushFile), over the
             // range sync(true) used to msync.
-            final long len = appendOnly ? inPageWritten() : getPageSize();
+            final long len = isAppendOnly ? inPageWritten() : getPageSize();
             if (len > 0) {
                 ff.msync(pageAddress, len, true);
             }
@@ -179,13 +179,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void setAppendOnly(boolean appendOnly) {
-        this.appendOnly = appendOnly;
+    public void setAppendOnly(boolean isAppendOnly) {
+        this.isAppendOnly = isAppendOnly;
     }
 
     @Override
-    public void setApplyLazy(boolean applyLazy) {
-        this.applyLazy = applyLazy;
+    public void setApplyLazy(boolean isApplyLazy) {
+        this.isApplyLazy = isApplyLazy;
     }
 
     @Override
@@ -207,7 +207,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         // Windows msync ignores the flag and flushes synchronously. The OS writes dirty pages back
         // on its own.
         if (!async && pageAddress != 0) {
-            if (appendOnly) {
+            if (isAppendOnly) {
                 // Flush only the bytes written into the mapped page: the active partition's partial last page
                 // is synced on every commit, and most of it is clean. The length comes from the live append
                 // offset on each call (see inPageWritten()), so a jumpTo or rollback cannot make it stale. The
@@ -291,7 +291,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private int syncFlushRange(int flags) {
         if (pageAddress != 0) {
             final long pageStart = pageOffset(mappedPage);
-            final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
+            final long dirtyLen = isAppendOnly ? inPageWritten() : getPageSize();
             if (dirtyLen > 0) {
                 return ff.syncFileRange(fd, pageStart, dirtyLen, flags);
             }
@@ -310,15 +310,15 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 int commitMode = this.commitMode != CommitMode.UNSET
                         ? this.commitMode
                         : (configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC);
-                // applyLazy (an adaptive table partition column) skips the page-release msync: the column is a
+                // isApplyLazy (an adaptive table partition column) skips the page-release msync: the column is a
                 // rebuildable cache of the durable WAL, made durable by the save point and recovery. WAL
-                // segment columns never set it. An ADAPTIVE WAL column (appendOnly) releases with MS_ASYNC on
+                // segment columns never set it. An ADAPTIVE WAL column (isAppendOnly) releases with MS_ASYNC on
                 // Linux: the page stays dirty in the page cache, and the commit's fdatasync of this file writes
                 // it back before the commit is sequenced. Elsewhere that fdatasync is not known to cover a page
                 // after it is unmapped.
-                if (commitMode != CommitMode.NOSYNC && !applyLazy) {
+                if (commitMode != CommitMode.NOSYNC && !isApplyLazy) {
                     ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC
-                            || (appendOnly && commitMode == CommitMode.ADAPTIVE && Os.isLinux()));
+                            || (isAppendOnly && commitMode == CommitMode.ADAPTIVE && Os.isLinux()));
                 }
             } finally {
                 ff.munmap(address, getPageSize(), memoryTag);

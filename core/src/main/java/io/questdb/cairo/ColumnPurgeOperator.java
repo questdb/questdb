@@ -74,7 +74,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
-    private boolean lastPurgeHeldByEpoch;
+    private boolean isLastPurgeHeldByEpoch;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionFd = -1;
@@ -140,7 +140,7 @@ public class ColumnPurgeOperator implements Closeable {
      * True when the last purge left a version because a save point still names it ({@link #isVersionHeldByEpoch}).
      */
     public boolean isLastPurgeHeldByEpoch() {
-        return lastPurgeHeldByEpoch;
+        return isLastPurgeHeldByEpoch;
     }
 
     public boolean purge(@NotNull ColumnPurgeTask task) {
@@ -391,7 +391,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task) {
-        lastPurgeHeldByEpoch = false;
+        isLastPurgeHeldByEpoch = false;
         try {
             setTablePath(task.getTableToken());
             final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -574,7 +574,7 @@ public class ColumnPurgeOperator implements Closeable {
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
-                            lastPurgeHeldByEpoch |= heldByEpoch;
+                            isLastPurgeHeldByEpoch |= heldByEpoch;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
                             continue;
                         } else {
