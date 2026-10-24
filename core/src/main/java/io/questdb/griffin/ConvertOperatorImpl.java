@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.SymbolMapReaderImpl;
@@ -371,6 +372,9 @@ public class ConvertOperatorImpl implements Closeable {
                                     openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
+                                    if (ColumnType.isSymbol(newType)) {
+                                        syncDestinationDirectory(pathTrimToLen);
+                                    }
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").$safe(columnName)
@@ -638,6 +642,14 @@ public class ConvertOperatorImpl implements Closeable {
                     asyncProcessingErrorCount.incrementAndGet();
                 }
             }
+            if (asyncProcessingErrorCount.get() == 0
+                    && ColumnType.isSymbol(newType)
+                    && configuration.getCommitMode() != CommitMode.NOSYNC) {
+                ff.fsync(dstFixFd);
+                if (dstVarFd != -1) {
+                    ff.fsync(dstVarFd);
+                }
+            }
         } catch (Throwable th) {
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
@@ -727,6 +739,15 @@ public class ConvertOperatorImpl implements Closeable {
         } else {
             fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             varFd = -1;
+        }
+    }
+
+    private void syncDestinationDirectory(int pathTrimToLen) {
+        if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathTrimToLen).$(), LOG);
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
         }
     }
 
