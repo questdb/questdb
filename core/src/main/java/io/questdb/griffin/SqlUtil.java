@@ -285,23 +285,24 @@ public class SqlUtil {
 
     /**
      * Collects into {@code depMap} the objects the parsed SELECT of a view names, and the tables the
-     * view selects every column of. Every table and view the SELECT reads, and every object a
-     * table-name function in it names, becomes a key of the map. A table the view selects every
-     * column of also gets the column {@code *}: the view selects every column the table has,
+     * view reads every column of. Every table and view the SELECT reads, and every object a
+     * table-name function in it names, becomes a key of the map. A table the view reads every
+     * column of also gets the column {@code *}: the view reads every column the table has,
      * including one it gains after the view is created. That is a table a wildcard in the SELECT
      * list of the view selects from, such as {@code x} in {@code SELECT * FROM x} or in
      * {@code SELECT t.* FROM x t}, or one the wildcard selects from through a sub-query, a CTE or a
      * view whose own wildcard selects every column of it, such as {@code x} in
-     * {@code SELECT * FROM (SELECT * FROM x)}.
+     * {@code SELECT * FROM (SELECT * FROM x)}. It is also a table a wildcard selects from in a
+     * SELECT that compares or groups whole rows, which reads every column the wildcard selects
+     * whichever columns the query above it keeps: a SELECT DISTINCT, a SELECT that groups, and a
+     * branch of a set operation other than UNION ALL, such as {@code x} in
+     * {@code SELECT a FROM (SELECT DISTINCT * FROM x)}.
      * <p>
-     * A wildcard under a SELECT list that names the columns it keeps records no {@code *}: the view
-     * selects only the columns that list names, such as {@code a} in
+     * Any other wildcard under a SELECT list that names the columns it keeps records no {@code *}:
+     * the view reads only the columns that list names, such as {@code a} in
      * {@code SELECT a FROM (SELECT * FROM x)}. Reading a table through the view takes no permission
      * on the columns the map lists for it, so a {@code *} there would let a reader that overrides a
      * variable the view declares {@code OVERRIDABLE} read a column of the table the view does not.
-     * Such a view that still reads every column, such as {@code SELECT a FROM (SELECT DISTINCT * FROM x)},
-     * records the columns the table has, so reading a column the table gains later through it takes
-     * SELECT on that column, until ALTER VIEW or CREATE OR REPLACE VIEW records the view again.
      * <p>
      * This records no other column. The parsed model has not resolved its column references, so it
      * cannot tell which table {@code t.a}, or {@code a} in a join, reads. The columns the view reads
@@ -317,7 +318,7 @@ public class SqlUtil {
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
         collectObjectReferences(engine, model, depMap);
-        collectWildcardReferences(engine, model, depMap);
+        collectWildcardReferences(engine, model, depMap, true);
     }
 
     /**
@@ -2361,49 +2362,56 @@ public class SqlUtil {
         }
     }
 
-    // Adds "*" for the tables a parsed SELECT selects every column of, when the view selects every column
-    // that SELECT does: the SELECT of the view, every branch of a set operation it is made of, which the
-    // operation reads whole, and a sub-query, a CTE or a view a wildcard of such a SELECT selects from. A
-    // wildcard selects every column of the tables in the FROM clause of its SELECT, and a qualified one,
-    // such as t.*, every column of the one it names. The parser keeps the SELECT list in a model of its
-    // own, whose nested model holds the FROM clause: the table or sub-query read first, and the models
-    // joined to it. The walk follows wildcards only, so a wildcard records nothing under a SELECT list
-    // that names the columns it keeps, in a sub-query of an expression, or under a PIVOT, whose source
-    // is a FROM clause with no SELECT list.
+    // Adds "*" for the tables a parsed SELECT reads every column of, see collectTableAndColumnReferences().
+    // A wildcard reads every column it selects when the query above its SELECT keeps every column of it,
+    // isEveryColumnKept: the SELECT of the view, every branch of a set operation it is made of, and a
+    // sub-query, a CTE or a view a wildcard of such a SELECT selects from. A wildcard also reads every
+    // column it selects when its SELECT compares or groups whole rows, whichever columns the query above
+    // keeps: the optimiser keeps every column of a SELECT DISTINCT, of a SELECT that groups, which groups
+    // by every column it selects, and of every branch of a set operation that has an operation other than
+    // UNION ALL, which compares the rows of the branches. A wildcard selects every column of the sources
+    // in the FROM clause of its SELECT, and a qualified one, such as t.*, every column of the one it names.
+    // The parser keeps the SELECT list in a model of its own, whose nested model holds the FROM clause:
+    // the table or sub-query read first, and the models joined to it. The walk visits every source of a
+    // FROM clause once, and records nothing in a sub-query of an expression, whose scans the reader
+    // authorizes, or under a PIVOT, whose source is a FROM clause with no SELECT list.
     private static void collectWildcardReferences(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
-            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            boolean isEveryColumnKept
     ) {
+        boolean isEveryRowCompared = false;
+        for (IQueryModel branch = model; branch.getUnionModel() != null; branch = branch.getUnionModel()) {
+            if (branch.getSetOperationType() != IQueryModel.SET_OPERATION_UNION_ALL) {
+                isEveryRowCompared = true;
+                break;
+            }
+        }
+        final FunctionFactoryCache functionFactoryCache = engine.getFunctionFactoryCache();
         for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
-            final ObjList<QueryColumn> columns = branch.getColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn column = columns.getQuick(i);
-                final ExpressionNode ast = column != null ? column.getAst() : null;
-                if (ast == null || !ast.isWildcard()) {
+            final IQueryModel fromModel = branch.getNestedModel() != null ? branch.getNestedModel() : branch;
+            final boolean isEveryColumnRead = isEveryColumnKept
+                    || isEveryRowCompared
+                    || branch.isDistinct()
+                    || fromModel.getGroupBy().size() > 0
+                    || hasGroupByFunction(functionFactoryCache, branch.getColumns());
+            final ObjList<IQueryModel> sources = fromModel.getJoinModels();
+            for (int i = 0, n = sources.size(); i < n; i++) {
+                final IQueryModel source = sources.getQuick(i);
+                final boolean isSourceRead = isEveryColumnRead && isSelectedByWildcard(branch, source);
+                final IQueryModel sourceModel = source.getNestedModel();
+                if (sourceModel != null) {
+                    // the columns of a sub-query, a CTE or a view are the ones its own SELECT selects
+                    collectWildcardReferences(engine, sourceModel, depMap, isSourceRead);
                     continue;
                 }
-                final int dot = Chars.indexOfLastUnquoted(ast.token, '.');
-                final IQueryModel fromModel = branch.getNestedModel() != null ? branch.getNestedModel() : branch;
-                final ObjList<IQueryModel> sources = fromModel.getJoinModels();
-                for (int j = 0, m = sources.size(); j < m; j++) {
-                    final IQueryModel source = sources.getQuick(j);
-                    if (dot > -1 && !isModelAlias(source, ast.token, dot)) {
-                        continue;
-                    }
-                    final IQueryModel sourceModel = source.getNestedModel();
-                    if (sourceModel != null) {
-                        // the columns of a sub-query, a CTE or a view are the ones its own SELECT selects
-                        collectWildcardReferences(engine, sourceModel, depMap);
-                        continue;
-                    }
-                    // a table-valued function has no table to select from
-                    final ExpressionNode tableNameExpr = source.getTableNameExpr();
-                    if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                        final CharSequence tableName = unquote(tableNameExpr.token);
-                        if (engine.getTableTokenIfExists(tableName) != null) {
-                            addDependency(depMap, tableName, "*");
-                        }
+                // a table-valued function has no table to select from
+                final ExpressionNode tableNameExpr = source.getTableNameExpr();
+                if (isSourceRead && tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                    final CharSequence tableName = unquote(tableNameExpr.token);
+                    if (engine.getTableTokenIfExists(tableName) != null) {
+                        addDependency(depMap, tableName, "*");
                     }
                 }
             }
@@ -2438,6 +2446,41 @@ public class SqlUtil {
             throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
         }
         return k;
+    }
+
+    // Whether a SELECT list calls an aggregate function, which makes the SELECT group its rows by every
+    // other column it selects.
+    private static boolean hasGroupByFunction(
+            @NotNull FunctionFactoryCache functionFactoryCache,
+            @NotNull ObjList<QueryColumn> columns
+    ) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column != null && hasGroupByFunction(functionFactoryCache, column.getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A window function aggregates no rows of its SELECT, and an aggregate in a sub-query of an expression
+    // groups the rows of that sub-query only.
+    private static boolean hasGroupByFunction(
+            @NotNull FunctionFactoryCache functionFactoryCache,
+            @Nullable ExpressionNode node
+    ) {
+        if (node == null || node.queryModel != null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION && node.windowExpression == null && functionFactoryCache.isGroupBy(node.token)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasGroupByFunction(functionFactoryCache, node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return hasGroupByFunction(functionFactoryCache, node.lhs) || hasGroupByFunction(functionFactoryCache, node.rhs);
     }
 
     /**
@@ -2475,6 +2518,24 @@ public class SqlUtil {
     private static boolean isModelAlias(@NotNull IQueryModel model, @NotNull CharSequence qualifiedName, int dot) {
         final ExpressionNode aliasExpr = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         return aliasExpr != null && Chars.equalsIgnoreCase(unquote(aliasExpr.token), unquote(qualifiedName.subSequence(0, dot)));
+    }
+
+    // Whether a wildcard of the SELECT list selects every column of a source of its FROM clause: an
+    // unqualified one selects every column of every source, and a qualified one, such as t.*, every
+    // column of the source it names.
+    private static boolean isSelectedByWildcard(@NotNull IQueryModel select, @NotNull IQueryModel source) {
+        final ObjList<QueryColumn> columns = select.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode ast = column != null ? column.getAst() : null;
+            if (ast != null && ast.isWildcard()) {
+                final int dot = Chars.indexOfLastUnquoted(ast.token, '.');
+                if (dot == -1 || isModelAlias(source, ast.token, dot)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

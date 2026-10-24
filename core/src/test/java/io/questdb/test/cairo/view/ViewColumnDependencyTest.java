@@ -151,15 +151,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             drainWalAndViewQueues();
             Assert.assertEquals("{x=[a, k]}", dependenciesOf("v_narrowed"));
             try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                TestUtils.assertEquals(
-                        """
+                assertQuery("SELECT * FROM v_narrowed")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 k\ta
                                 k1\t1
                                 k1\t3
                                 k2\t5
-                                """,
-                        print(context, "SELECT * FROM v_narrowed")
-                );
+                                """);
             }
         });
     }
@@ -223,10 +224,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             execute("CREATE VIEW v AS (DECLARE OVERRIDABLE @c := t.a SELECT t.ts, @c FROM x t)");
             drainWalAndViewQueues();
             try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                TestUtils.assertContains(
-                        failureOf(context, "DECLARE @c := t.b SELECT * FROM v"),
-                        "permission denied [table=x, columns=b]"
-                );
+                assertQuery("DECLARE @c := t.b SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=x, columns=b]");
             }
         });
     }
@@ -301,10 +302,14 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     1970-01-01T02:00:00.000000Z\tk2\t5\t6\t42
                     """;
             try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                TestUtils.assertEquals(expected, print(context, "SELECT * FROM v_created"));
-                TestUtils.assertEquals(expected, print(context, "SELECT * FROM v_altered"));
-                TestUtils.assertEquals(expected, print(context, "SELECT * FROM v_nested"));
-                TestUtils.assertEquals(expected, print(context, "SELECT * FROM v_outer"));
+                for (String viewName : new String[]{"v_created", "v_altered", "v_nested", "v_outer"}) {
+                    assertQuery("SELECT * FROM " + viewName)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(expected);
+                }
             }
         });
     }
@@ -401,9 +406,49 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies("SELECT t.a, u.c FROM x t SPLICE JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
             // the first table in join order provides the timestamp of a temporal join after an inner one
             assertDependencies(
-                    "SELECT t.a, u.c, w.b FROM x t JOIN y u ON (k) ASOF JOIN x w ON (k)",
-                    "{x=[a, b, k, ts], y=[c, k]}"
+                    "SELECT t.a, u.c, w.d FROM x t JOIN y u ON (k) ASOF JOIN y w ON (k)",
+                    "{x=[a, k, ts], y=[c, d, k, ts]}"
             );
+        });
+    }
+
+    @Test
+    public void testViewReadingWholeRowsReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_distinct AS (SELECT a FROM (SELECT DISTINCT * FROM x))");
+            execute("CREATE VIEW v_grouped AS (SELECT a FROM (SELECT *, count() AS n FROM x))");
+            execute("CREATE VIEW v_union AS (SELECT a FROM (SELECT * FROM x UNION SELECT * FROM x))");
+            execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
+            execute("CREATE VIEW v_rows AS (SELECT DISTINCT * FROM x)");
+            drainWalAndViewQueues();
+            execute("ALTER VIEW v_altered AS (SELECT a FROM (SELECT DISTINCT * FROM x))");
+            execute("CREATE VIEW v_outer AS (SELECT a FROM v_rows)");
+            drainWalAndViewQueues();
+
+            // each view reads the column x gains, and a principal with SELECT on the view only still reads it
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            final String expected = """
+                    a
+                    1
+                    3
+                    5
+                    """;
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                for (String viewName : new String[]{"v_distinct", "v_grouped", "v_altered", "v_outer"}) {
+                    assertQuery("SELECT * FROM " + viewName + " ORDER BY a")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expected);
+                }
+                assertQuery("SELECT * FROM v_union ORDER BY a")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .returns(expected);
+            }
         });
     }
 
@@ -423,6 +468,52 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testWildcardsOfSelectsReadingWholeRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A SELECT DISTINCT, a SELECT that groups and the branches of a set operation other than UNION ALL
+            // read every column their wildcards select, whichever columns the query above them keeps.
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT DISTINCT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT * FROM x))", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT t.* FROM x t JOIN y u ON (k))", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies("SELECT a FROM (SELECT *, count() AS n FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x UNION SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x EXCEPT SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x INTERSECT ALL SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            // an operation other than UNION ALL compares the rows of every branch
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x UNION ALL SELECT * FROM y UNION SELECT * FROM x)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            execute("CREATE VIEW v_rows AS (SELECT DISTINCT * FROM x)");
+            drainWalAndViewQueues();
+            assertDependencies("SELECT a FROM v_rows", "{v_rows=[], x=[*, a, b, k, ts]}");
+
+            // such a SELECT reads only the columns a SELECT list names, its own or one under it
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT a, b FROM x))", "{x=[a, b]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT a, b FROM (SELECT * FROM x))", "{x=[a, b]}");
+            // a window function groups no rows
+            assertDependencies("SELECT a FROM (SELECT *, sum(b) OVER () AS s FROM x)", "{x=[a]}");
+            // a sub-query in an expression reads no column through the view
+            assertDependencies(
+                    "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT DISTINCT * FROM y))",
+                    "{x=[a, k], y=[c, d, k, ts]}",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -432,40 +523,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "{x=[a, b, k]}"
             );
         });
-    }
-
-    private static void assertDependencies(String viewSql, String expectedDependencies) throws Exception {
-        assertDependencies(viewSql, expectedDependencies, true);
-    }
-
-    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a
-    // view, and, unless told otherwise, that a principal with no permission on the columns of the base
-    // tables reads the view exactly as a principal with every permission does.
-    private static void assertDependencies(String viewSql, String expectedDependencies, boolean isReadableWithViewPermissionOnly) throws Exception {
-        forEachViewStatement(
-                viewSql,
-                statement -> assertViewDependencies(viewSql, expectedDependencies, isReadableWithViewPermissionOnly, statement)
-        );
-    }
-
-    // Asserts that a principal with no permission on the columns of the base tables cannot read through
-    // the view, by overriding a variable the view declares OVERRIDABLE, a column the view does not read.
-    private static void assertOverrideDenied(String viewSql, String readSql, String expectedFailure) throws Exception {
-        forEachViewStatement(viewSql, statement -> {
-            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                TestUtils.assertContains(statement + ": " + viewSql, failureOf(context, readSql), expectedFailure);
-            }
-        });
-    }
-
-    private static void assertViewDependencies(String viewSql, String expectedDependencies, boolean isReadableWithViewPermissionOnly, String statement) throws Exception {
-        Assert.assertEquals(statement + ": " + viewSql, expectedDependencies, dependenciesOf("v"));
-        if (isReadableWithViewPermissionOnly) {
-            final String expected = print(sqlExecutionContext, "SELECT * FROM v");
-            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                TestUtils.assertEquals(statement + ": " + viewSql, expected, print(context, "SELECT * FROM v"));
-            }
-        }
     }
 
     private static void createTables() throws Exception {
@@ -506,16 +563,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         return sorted.toString();
     }
 
-    private static String failureOf(SqlExecutionContext context, String sql) throws Exception {
-        try {
-            print(context, sql);
-        } catch (CairoException e) {
-            return e.getFlyweightMessage().toString();
-        }
-        Assert.fail("expected the read to be denied: " + sql);
-        return null;
-    }
-
     // Records the SELECT as the definition of the view v with CREATE VIEW, ALTER VIEW and CREATE OR REPLACE
     // VIEW in turn, and runs the assertion after each.
     private static void forEachViewStatement(String viewSql, ViewStatementAssertion assertion) throws Exception {
@@ -542,6 +589,52 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
 
     private static String print(SqlExecutionContext context, String sql) throws Exception {
         return TestUtils.printSqlToString(engine, context, sql, new StringSink());
+    }
+
+    private void assertDependencies(String viewSql, String expectedDependencies) throws Exception {
+        assertDependencies(viewSql, expectedDependencies, true);
+    }
+
+    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a
+    // view, and, unless told otherwise, that a principal with no permission on the columns of the base
+    // tables reads the view exactly as a principal with every permission does.
+    private void assertDependencies(String viewSql, String expectedDependencies, boolean isReadableWithViewPermissionOnly) throws Exception {
+        forEachViewStatement(
+                viewSql,
+                statement -> assertViewDependencies(viewSql, expectedDependencies, isReadableWithViewPermissionOnly, statement)
+        );
+    }
+
+    // Asserts that a principal with no permission on the columns of the base tables cannot read through
+    // the view, by overriding a variable the view declares OVERRIDABLE, a column the view does not read.
+    private void assertOverrideDenied(String viewSql, String readSql, String expectedFailure) throws Exception {
+        forEachViewStatement(viewSql, statement -> {
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery(readSql).withContext(context).noLeakCheck().failsWith(expectedFailure);
+            } catch (AssertionError e) {
+                throw new AssertionError(statement + ": " + viewSql, e);
+            }
+        });
+    }
+
+    private void assertViewDependencies(String viewSql, String expectedDependencies, boolean isReadableWithViewPermissionOnly, String statement) throws Exception {
+        Assert.assertEquals(statement + ": " + viewSql, expectedDependencies, dependenciesOf("v"));
+        if (isReadableWithViewPermissionOnly) {
+            // The views differ in timestamp, size and random access, which the read infers. It returns the
+            // rows a principal with every permission reads.
+            final String expected = print(sqlExecutionContext, "SELECT * FROM v");
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(expected);
+            } catch (AssertionError e) {
+                throw new AssertionError(statement + ": " + viewSql, e);
+            }
+        }
     }
 
     @FunctionalInterface
