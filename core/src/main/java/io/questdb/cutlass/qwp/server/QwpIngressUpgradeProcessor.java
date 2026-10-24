@@ -111,7 +111,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      */
     public static final int GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Cumulative ACK batch size
-    private static final int ACK_BATCH_SIZE = 8;
+    private static final int ACK_BATCH_SIZE = 64;
     // Per-dispatch BYTE budget for the post-CLOSE drain in resumeRecv. The recv-
     // count guard also bounds syscalls, but its byte cost scales with the configured
     // HTTP recv buffer. Capping each recv to the remainder limits a worker turn to
