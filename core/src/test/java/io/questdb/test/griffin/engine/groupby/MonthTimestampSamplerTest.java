@@ -32,6 +32,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -385,7 +386,7 @@ public class MonthTimestampSamplerTest {
                 timestampDriver.fromMinutes(23 * 60 + 59),
                 timestampDriver.fromMinutes(47 * 60 + 58),
         };
-        final int[] strides = {1, 2, 3, 5, 7, 12, 13};
+        final int[] strides = {1, 2, 3, 4, 5, 6, 7, 12, 13, 24};
         final long lo = timestampDriver.parseFloorLiteral("1960-01-01T00:00:00.000000Z");
         final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
         final long step = timestampDriver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
@@ -401,6 +402,41 @@ public class MonthTimestampSamplerTest {
             for (long offset : offsets) {
                 sampler.setOffset(offset);
                 // the offset grid starts at January 1970 plus the offset
+                assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
+            }
+            // setStart() after setOffset() anchors the grid at a month that no stride counts from January 1970
+            final long anchorTs = timestampDriver.parseFloorLiteral("2029-12-31T10:00:00.000000Z");
+            sampler.setStart(anchorTs);
+            assertRoundMatchesGridWalk(sampler, anchorTs, lo, hi, step);
+        }
+    }
+
+    @Test
+    public void testRoundMatchesGridWalkAroundYearZero() throws Exception {
+        // TIMESTAMP reaches years before year 0, where the month index 12 * year + month - 1 of the value and of the
+        // anchor is negative. round() counts the strides from the anchor month across year 0 as well.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long[] anchors = {
+                Micros.toMicros(-2, 11, 30) + 10 * Micros.HOUR_MICROS,
+                Micros.toMicros(-1, 1, 1),
+                Micros.toMicros(0, 2, 29) + 8 * Micros.HOUR_MICROS,
+                Micros.toMicros(1, 12, 31) + 23 * Micros.HOUR_MICROS,
+        };
+        final long[] offsets = {-Micros.HOUR_MICROS, Micros.HOUR_MICROS};
+        final int[] strides = {1, 2, 3, 4, 5, 6, 7, 12, 13, 24};
+        final long lo = Micros.toMicros(-4, 1, 1);
+        final long hi = Micros.toMicros(4, 1, 1);
+        final long step = timestampDriver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            assertRoundMatchesGridWalk(sampler, 0, lo, hi, step);
+            for (long anchor : anchors) {
+                sampler.setStart(anchor);
+                assertRoundMatchesGridWalk(sampler, anchor, lo, hi, step);
+            }
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
                 assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
             }
         }

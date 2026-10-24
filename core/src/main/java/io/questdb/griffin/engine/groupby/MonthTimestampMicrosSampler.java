@@ -36,8 +36,9 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     // the calendar grid counts its months from January 1970, as Micros.floorMM() does
     private static final long EPOCH_MONTH_INDEX = Micros.EPOCH_YEAR_0 * 12L;
     private final int stepMonths;
-    // The month of a bucket start, as 12 * year + month - 1. The buckets start every stepMonths months from it.
-    private long anchorMonthIndex = EPOCH_MONTH_INDEX;
+    // The month of a bucket start, as 12 * year + month - 1, modulo stepMonths. The buckets start every stepMonths
+    // months from any month with that remainder.
+    private int anchorPhase;
     // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
     // long before the start of its calendar month, on the last day of the previous month.
     private long dayMod;
@@ -45,6 +46,7 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     public MonthTimestampMicrosSampler(int stepMonths) {
         this.stepMonths = stepMonths;
+        this.anchorPhase = Math.floorMod(EPOCH_MONTH_INDEX, stepMonths);
     }
 
     @Override
@@ -89,20 +91,21 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         final int y = Micros.getYear(shifted);
         final boolean isLeap = CommonUtils.isLeapYear(y);
         final int m = Micros.getMonthOfYear(shifted, y, isLeap);
-        final long monthIndex = 12L * y + m - 1;
-        final int monthsIntoBucket = stepMonths == 1 ? 0 : Math.floorMod(monthIndex - anchorMonthIndex, stepMonths);
-        final long bucketMonthIndex = monthIndex - monthsIntoBucket;
-        final long bucketStart = monthsIntoBucket == 0
-                ? toMicros(y, isLeap, m, startDay > 0 ? startDay : 1) + dayMod
-                : bucketStart(bucketMonthIndex);
-        // the difference stays correct when the bucket start overflows a long at the end of the timestamp range
-        return value - bucketStart < 0 ? bucketStart(bucketMonthIndex - stepMonths) : bucketStart;
+        // 12 * y + m - 1 - anchorPhase fits an int whenever the bucket start fits a long; a bucket month below 1 falls
+        // in an earlier year
+        final int bucketMonth = stepMonths == 1 ? m : m - Math.floorMod(12 * y + m - 1 - anchorPhase, stepMonths);
+        if (bucketMonth > 0) {
+            final long bucketStart = toMicros(y, isLeap, bucketMonth, startDay > 0 ? startDay : 1) + dayMod;
+            // the difference stays correct when the bucket start overflows a long at the end of the timestamp range
+            return value - bucketStart < 0 ? bucketStart(12L * y + bucketMonth - 1 - stepMonths) : bucketStart;
+        }
+        return roundFromEarlierYear(value, 12L * y + bucketMonth - 1);
     }
 
     @Override
     public void setOffset(long timestamp) {
         // the offset applies to the calendar grid, which starts on the first day of the month
-        this.anchorMonthIndex = EPOCH_MONTH_INDEX;
+        this.anchorPhase = Math.floorMod(EPOCH_MONTH_INDEX, stepMonths);
         this.startDay = 0;
         this.dayMod = timestamp;
     }
@@ -112,7 +115,7 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         final int m = Micros.getMonthOfYear(timestamp, y, leap);
-        this.anchorMonthIndex = 12L * y + m - 1;
+        this.anchorPhase = Math.floorMod(12L * y + m - 1, stepMonths);
         this.startDay = Micros.getDayOfMonth(timestamp, y, m, leap);
         long dayMod = timestamp % Micros.DAY_MICROS;
         if (dayMod < 0) {
@@ -167,5 +170,12 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         final int y = (int) Math.floorDiv(monthIndex, 12);
         final int m = (int) Math.floorMod(monthIndex, 12) + 1;
         return toMicros(y, CommonUtils.isLeapYear(y), m, startDay > 0 ? startDay : 1) + dayMod;
+    }
+
+    // Returns the last bucket start at or before the value, for the bucket that starts in the given month of an
+    // earlier year than the value, as 12 * year + month - 1
+    private long roundFromEarlierYear(long value, long bucketMonthIndex) {
+        final long bucketStart = bucketStart(bucketMonthIndex);
+        return value - bucketStart < 0 ? bucketStart(bucketMonthIndex - stepMonths) : bucketStart;
     }
 }
