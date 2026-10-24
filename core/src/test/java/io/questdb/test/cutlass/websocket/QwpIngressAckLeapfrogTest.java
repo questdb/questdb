@@ -290,6 +290,53 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
+     * The appender reuses its column resolution for a repeated schema only while
+     * the writer's metadata is unchanged: after a rename, the same column name in
+     * the same schema must resolve again (here: auto-create a new {@code v}), not
+     * land in the renamed column's slot.
+     */
+    @Test
+    public void testColumnResolutionFollowsRenameBetweenFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(concat(frame0, frame1));
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                getLV().set(context, state);
+
+                drive(processor, context, nf, frame0.length);
+                drainWalQueue();
+                execute("alter table tab rename column v to w");
+                drainWalQueue();
+                drive(processor, context, nf, frame1.length);
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("select w, v from tab").noLeakCheck().expectSize().returns("""
+                    w\tv
+                    100\tnull
+                    null\t200
+                    """);
+        });
+    }
+
+    /**
      * Plain frames already in the receive buffer share one WAL commit, and the
      * single ack after it covers all of them.
      */

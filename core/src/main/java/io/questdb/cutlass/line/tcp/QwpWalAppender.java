@@ -46,6 +46,7 @@ import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
+import io.questdb.std.ObjList;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -72,6 +73,17 @@ public class QwpWalAppender implements QuietCloseable {
 
     // Reusable mapping arrays
     private int[] columnIndexMap;  // Maps QWP column index to QuestDB column index
+    // Phase 1 cache: what columnIndexMap/columnTypeMap/qwpTypes and the designated
+    // timestamp position were last resolved for. The block cursor hands back the
+    // same schema list for a byte-identical schema section, so the same list,
+    // through the same writer at the same metadata version, resolves the same way;
+    // resolving it again was a lower-case name hash per column per message (13% of
+    // the ingress fiber at one row per message). Phase 1 is the only writer of
+    // those arrays, and it clears this before overwriting them.
+    private long resolvedMetadataVersion = -1;
+    private ObjList<QwpColumnDef> resolvedSchema;
+    private int resolvedTimestampColumnInBlock;
+    private TableWriterAPI resolvedWriter;
     private int[] columnTypeMap;   // QuestDB column types
     private byte[] qwpTypes;       // QWP type codes for conversion
 
@@ -947,6 +959,17 @@ public class QwpWalAppender implements QuietCloseable {
         int timestampIndex = tud.getTimestampIndex();
         long metadataVersion = writer.getMetadataVersion();
 
+        final ObjList<QwpColumnDef> schema = tableBlock.getSchema();
+        if (schema != null && schema == resolvedSchema && writer == resolvedWriter
+                && metadataVersion == resolvedMetadataVersion) {
+            appendToWalColumnar(tableBlock, (WalWriter) writer, resolvedTimestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
+            return;
+        }
+        resolvedSchema = null;
+        // Not cached: array columns resolve against each block's data, and a
+        // deferred missing column (-1) is created later.
+        boolean cacheable = schema != null;
+
         // Phase 1: Resolve column indices and create missing columns
         int timestampColumnInBlock = -1;
         for (int i = 0; i < columnCount; i++) {
@@ -1029,6 +1052,7 @@ public class QwpWalAppender implements QuietCloseable {
             }
             columnIndexMap[i] = columnWriterIndex;
             columnTypeMap[i] = columnType;
+            cacheable &= colType != TYPE_DOUBLE_ARRAY && columnWriterIndex >= 0;
         }
 
         // A concurrent ALTER TABLE (e.g., ALTER COLUMN TYPE) can change the
@@ -1036,6 +1060,12 @@ public class QwpWalAppender implements QuietCloseable {
         // happens, column types resolved earlier in the loop are stale.
         if (writer.getMetadataVersion() != metadataVersion) {
             throw MetadataChangedException.INSTANCE;
+        }
+        if (cacheable) {
+            resolvedSchema = schema;
+            resolvedWriter = writer;
+            resolvedMetadataVersion = metadataVersion;
+            resolvedTimestampColumnInBlock = timestampColumnInBlock;
         }
 
         // Phase 2: Write data - always use columnar path
