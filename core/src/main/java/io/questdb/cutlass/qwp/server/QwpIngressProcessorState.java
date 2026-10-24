@@ -268,8 +268,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // cumulative-ack watermark until that commit. See the upgrade processor's
     // handleBinaryMessage. Reset by clear(), which rolls the rows back.
     private long commitBatchBytes;
+    // The one table the commit batch's rows are in, null while it holds only
+    // rowless frames. A batch never spans tables: see isFrameJoinableToCommitBatch.
+    private WalTableUpdateDetails commitBatchTud;
     private int commitBatchFrames;
     private long firstCommitBatchSequence = -1;
+    // The table the current frame appended rows to, null if none; and whether it
+    // appended to more than one. Set by processMessage.
+    private WalTableUpdateDetails frameRowTud;
+    private boolean isFrameMultiTable;
     private long lastCommitBatchSequence = -1;
     // Non-zero while a frame that follows a pending commit batch is processed:
     // tags the savepoints that frame takes (see processMessage). Unique per frame.
@@ -442,6 +449,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             firstCommitBatchSequence = seq;
         }
         lastCommitBatchSequence = seq;
+        if (frameRowTud != null) {
+            commitBatchTud = frameRowTud;
+        }
         commitBatchFrames++;
         commitBatchBytes += frameBytes;
     }
@@ -475,6 +485,35 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         commitBatchBytes = 0;
         firstCommitBatchSequence = -1;
         lastCommitBatchSequence = -1;
+        commitBatchTud = null;
+    }
+
+    /**
+     * Commits only the commit batch's table. A commit batch never spans tables:
+     * commitAll commits table by table, so a failure part way would leave some
+     * tables' rows committed under frames the client must replay -- duplicating
+     * them on every retry. One writer's commit is all or nothing.
+     */
+    public void commitCommitBatchTable() {
+        if (commitBatchTud == null) {
+            return;
+        }
+        try {
+            tudCache.commitTable(commitBatchTud, committedTxnConsumer);
+        } catch (Throwable th) {
+            tudCache.setDistressed();
+            LOG.error().$('[').$(fd).$("] commit batch error: ").$(th).$();
+            rejectCommitError(th);
+        }
+    }
+
+    /**
+     * True when the current frame may share a commit with the pending batch: it
+     * wrote to at most one table, and that table is the batch's (or either holds
+     * no rows).
+     */
+    public boolean isFrameJoinableToCommitBatch() {
+        return !isFrameMultiTable && (frameRowTud == null || commitBatchTud == null || frameRowTud == commitBatchTud);
     }
 
     /**
@@ -1339,6 +1378,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     public void processMessage() {
+        // Before the early return: an empty frame must not inherit the previous
+        // frame's table (see isFrameJoinableToCommitBatch).
+        frameRowTud = null;
+        isFrameMultiTable = false;
         if (bufferPosition == 0 || !isOk()) {
             return;
         }
@@ -1436,6 +1479,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 }
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
                 messageAppendedRows |= blockHasRows;
+                if (blockHasRows) {
+                    if (frameRowTud == null) {
+                        frameRowTud = tud;
+                    } else if (frameRowTud != tud) {
+                        isFrameMultiTable = true;
+                    }
+                }
             }
 
         } catch (QwpParseException e) {

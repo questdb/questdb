@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -396,6 +398,145 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                         -1, maxCumulativeOkAck(rawSocket.sentFrames));
             }
         });
+    }
+
+    /**
+     * A commit batch holds frames of one table only: a frame for another table
+     * commits the batch's table first. One writer's commit is all or nothing,
+     * so no failure can commit part of a batch.
+     */
+    @Test
+    public void testCommitBatchNeverSpansTables() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table a (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final long aBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a"));
+            final long bBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from a").noLeakCheck().expectSize().returns("v\n100\n300\n");
+            assertQuery("select v from b").noLeakCheck().expectSize().returns("v\n200\n");
+            Assert.assertEquals("a's frames are split by b's: two commits",
+                    2, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a")) - aBefore);
+            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")) - bBefore);
+            Assert.assertEquals(2, maxCumulativeOkAck(sent));
+        });
+    }
+
+    /**
+     * A commit failure on one table must not commit another table's rows from
+     * frames the client will replay. Here b's commit is refused: frame 0 (a) is
+     * committed and acked on its own, frame 1 (b) is NACKed, and frame 2 (a),
+     * behind the gap, is neither committed nor acked -- one commit per frame
+     * would leave exactly this, so the replay duplicates nothing.
+     */
+    @Test
+    public void testCommitFailureOnOneTableCommitsNoLaterFramesOfAnother() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table a (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    denyCommitTo("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from a").noLeakCheck().expectSize().returns("v\n100\n");
+            assertQuery("select count() from b").noLeakCheck().inferRandomAccess().sizeMayVary().returns("count\n0\n");
+            Assert.assertEquals(0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the failed commit must be NACKed at the batch's first frame", hasErrorResponseForSeq(sent, 1));
+        });
+    }
+
+    /**
+     * A failed batch commit is NACKed at the batch's first frame: nothing from it
+     * on is committed, and it is the frame the client replays first, so a
+     * deterministic failure keeps striking the same frame.
+     */
+    @Test
+    public void testFailedBatchCommitIsNackedAtFirstFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    denyCommitTo("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L))
+            );
+
+            Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+            Assert.assertTrue("NACK must name the batch's first frame", hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
+        });
+    }
+
+    private static SecurityContext denyCommitTo(String tableName) {
+        // On the QWP path authorizeInsert runs only at commit (TableUpdateDetails.authorizeCommit).
+        return new AllowAllSecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                if (tableToken.getTableName().equals(tableName)) {
+                    throw CairoException.nonCritical().put("test: commit denied for ").put(tableName);
+                }
+            }
+        };
+    }
+
+    private static byte[] oneRowMessage(String table, long value, long tsMicros) {
+        byte[] name = table.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assert name.length < 128;
+        byte[] payload = new byte[1 + name.length + 25];
+        int i = 0;
+        payload[i++] = (byte) name.length;
+        System.arraycopy(name, 0, payload, i, name.length);
+        i += name.length;
+        payload[i++] = 1; // rowCount
+        payload[i++] = 2; // columnCount
+        payload[i++] = 1; // column name length
+        payload[i++] = 'v';
+        payload[i++] = QwpConstants.TYPE_LONG;
+        payload[i++] = 0; // empty name = designated timestamp
+        payload[i++] = QwpConstants.TYPE_TIMESTAMP;
+        payload[i++] = 0; // no null bitmap
+        i = writeLeLong(payload, i, value);
+        payload[i++] = 0; // no null bitmap
+        writeLeLong(payload, i, tsMicros);
+
+        byte[] message = new byte[QwpConstants.HEADER_SIZE + payload.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = QwpConstants.VERSION;
+        message[5] = 0; // flags
+        message[6] = 1; // tableCount lo
+        message[7] = 0; // tableCount hi
+        message[8] = (byte) payload.length;
+        System.arraycopy(payload, 0, message, QwpConstants.HEADER_SIZE, payload.length);
+        return message;
     }
 
     /**
@@ -1221,6 +1362,15 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             HttpFullFatServerConfiguration httpConfig,
             byte[]... frames
     ) throws Exception {
+        return ingestInOnePass(processor, httpConfig, AllowAllSecurityContext.INSTANCE, frames);
+    }
+
+    private ObjList<byte[]> ingestInOnePass(
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            SecurityContext securityContext,
+            byte[]... frames
+    ) throws Exception {
         byte[] wire = concat(frames);
         assert wire.length <= RECV_BUFFER_SIZE;
         PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
@@ -1234,7 +1384,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     engine,
                     httpConfig.getLineHttpProcessorConfiguration()
             );
-            state.of(-1, AllowAllSecurityContext.INSTANCE);
+            state.of(-1, securityContext);
             getLV().set(context, state);
             // Every frame arrives in one receive pass, as from a client with many in flight.
             drive(processor, context, nf, wire.length);

@@ -265,6 +265,45 @@ public class QwpTudCache implements QuietCloseable {
         }
     }
 
+    /**
+     * Commits one cached table, with {@link #commitAll}'s semantics for that
+     * entry: a dropped table is evicted, and if it held rows the call refuses
+     * to acknowledge them. A table no longer cached was evicted by a lookup
+     * that salvaged its rows (a discarding eviction fails that lookup), so
+     * there is nothing left to commit.
+     */
+    public void commitTable(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
+        final Utf8Sequence tableName = tud.getTableNameUtf8();
+        final int keyIndex = tableUpdateDetails.keyIndex(tableName);
+        if (keyIndex > -1 || tableUpdateDetails.valueAt(keyIndex) != tud) {
+            return;
+        }
+        final boolean hadBufferedRows = !tud.isFirstRow();
+        try {
+            if (!tud.isDropped()) {
+                tud.commit(false);
+                advanceStructureCheckGate(tud);
+                reportCommittedTxn(tud, consumer);
+            }
+        } catch (CommitFailedException e) {
+            if (!e.isTableDropped()) {
+                throw e.getReason();
+            }
+            tud.setIsDropped();
+        }
+        if (tud.isDropped()) {
+            final CairoException discarded = hadBufferedRows
+                    ? CairoException.nonCritical().put("dropped table discarded buffered rows, cannot acknowledge: ").put(tableName)
+                    : null;
+            tableUpdateDetails.removeAt(keyIndex);
+            cachedTableCount = tableUpdateDetails.size();
+            Misc.free(tud);
+            if (discarded != null) {
+                throw discarded;
+            }
+        }
+    }
+
     public void commitAll() throws Throwable {
         commitAll(null);
     }
