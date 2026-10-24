@@ -83,6 +83,7 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -2246,42 +2247,182 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInPlaceIndexVersionTxnMsyncFailureWal() throws Exception {
-        // WAL: the _txn msync fails after the commit landed. The apply job marks the writer distressed
-        // and suspends the table; after RESUME WAL the committed index answers and the commit is not
-        // applied twice.
+    public void testInPlaceIndexVersionTxnMsyncFailureWalBitmap() throws Exception {
+        assertInPlaceIndexVersionTxnMsyncFailureWal("INDEX");
+    }
+
+    @Test
+    public void testInPlaceIndexVersionTxnMsyncFailureWalPosting() throws Exception {
+        assertInPlaceIndexVersionTxnMsyncFailureWal("INDEX TYPE POSTING");
+    }
+
+    @Test
+    public void testInPlaceIndexVersionTxnMsyncFailureWalPostingCovering() throws Exception {
+        assertInPlaceIndexVersionTxnMsyncFailureWal("INDEX TYPE POSTING INCLUDE (v)");
+    }
+
+    @Test
+    public void testInPlaceIndexVersionTxnMsyncFailureWalStaleCursor() throws Exception {
+        // WAL: the _txn msync fails after the commit landed, while a cursor of the earlier txn reads the
+        // replaced index version. The apply job discards the writer, so the replaced version stays on
+        // disk; VACUUM TABLE leaves it to the cursor, which keeps its snapshot, and once the cursor
+        // closes the purge job removes it.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
         assertMemoryLeak(ff, () -> {
             createIndexedParquetTable("INDEX", "TIMESTAMP");
             final TableToken tableToken = engine.verifyTableName("pt");
+            final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+            final long txnBefore = getTableTxn("pt");
+            final String replacedFiles = listColumnFiles("pt", 0, "s");
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, columnNameTxn));
+            try (
+                    RecordCursorFactory factory = select(STALE_INDEX_QUERIES[0]);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                ff.isArmed.set(true);
+                execute(symRowsInsert(SYM_MERGE_ROWS));
+                drainWalQueue();
+                Assert.assertFalse(ff.isArmed.get());
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                execute("ALTER TABLE pt RESUME WAL");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
+                Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+                execute("VACUUM TABLE pt");
+                drainWalQueue();
+                engine.releaseInactive();
+                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                    purgeJob.run();
+                }
+                assertColumnFilesPresent("after VACUUM TABLE with the cursor open", 0, "s", replacedFiles);
+                assertStaleCursor("after VACUUM TABLE", expectedStaleIndexQueryResult(0, false, SYM_BASE_ROWS), factory, cursor);
+                assertQuery(STALE_INDEX_QUERIES[0])
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(expectedStaleIndexQueryResult(0, false, SYM_BASE_ROWS, SYM_MERGE_ROWS));
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            assertOnlyIndexVersion("after the cursor closed", "INDEX", 0, "s", txnBefore);
+            assertSqlCursors(
+                    "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'a'",
+                    "SELECT s, v, ts FROM pt WHERE s = 'a'"
+            );
+        });
+    }
+
+    @Test
+    public void testInPlaceIndexVersionTxnMsyncFailureWalTwoPartitions() throws Exception {
+        // WAL: one commit merges into two parquet partitions with two indexed columns, and its _txn
+        // msync fails after the commit landed. The apply job discards the writer, so the four replaced
+        // index versions stay on disk, across a reopen too, until VACUUM TABLE removes each of them.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        setInPlaceParquetO3Properties();
+        final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
+        final SymRow[] firstDayRows = Arrays.copyOf(SYM_BASE_ROWS, 12);
+        final SymRow[] secondDayRows = new SymRow[12];
+        for (int i = 0; i < secondDayRows.length; i++) {
+            secondDayRows[i] = new SymRow(SYM_BASE_ROWS[i].s, SYM_BASE_ROWS[i].v + 20, "2024-01-02", SYM_BASE_ROWS[i].time);
+        }
+        final SymRow[] lastDayRow = {new SymRow("a", 99, "2024-01-03", "00:00")};
+        final SymRow[] o3Rows = {
+                new SymRow("a", 101, "2024-01-01", "04:30"),
+                new SymRow("a", 121, "2024-01-02", "04:30")
+        };
+        final String[] columnNames = {"s", "t"};
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE pt (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(twoSymbolRowsInsert("pt", firstDayRows));
+            execute(twoSymbolRowsInsert("pt", secondDayRows));
+            execute(twoSymbolRowsInsert("pt", lastDayRow));
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final String[][] replacedFiles = new String[2][columnNames.length];
+            for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                for (int c = 0; c < columnNames.length; c++) {
+                    final long columnNameTxn = getColumnNameTxn("pt", partitionIndex, columnNames[c]);
+                    Assert.assertTrue(isIndexKeyFilePresent("pt", partitionIndex, IndexType.BITMAP, columnNames[c], columnNameTxn));
+                    replacedFiles[partitionIndex][c] = listColumnFiles("pt", partitionIndex, columnNames[c]);
+                }
+            }
             final long txnBefore = getTableTxn("pt");
             ff.isArmed.set(true);
-            execute(symRowsInsert(SYM_MERGE_ROWS));
+            execute(twoSymbolRowsInsert("pt", o3Rows));
             drainWalQueue();
             Assert.assertFalse(ff.isArmed.get());
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-
             execute("ALTER TABLE pt RESUME WAL");
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
-            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
-            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
-            Assert.assertTrue(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
-            assertQuery(STALE_INDEX_QUERIES[0])
+            final String expectedRows = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow, o3Rows);
+            assertQuery("SELECT s, v, ts FROM pt WHERE s = 'a'")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(expectedStaleIndexQueryResult(0, false, SYM_BASE_ROWS, SYM_MERGE_ROWS));
+                    .returns(expectedRows);
+            assertQuery("SELECT t, v, ts FROM pt WHERE t = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedRows.replace("s\tv\tts", "t\tv\tts"));
             assertQuery("SELECT count() FROM pt")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n" + (SYM_BASE_ROWS.length + SYM_MERGE_ROWS.length) + "\n");
+                    .returns("count\n" + (firstDayRows.length + secondDayRows.length + lastDayRow.length + o3Rows.length) + "\n");
+
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                for (int c = 0; c < columnNames.length; c++) {
+                    final String context = "partition " + partitionIndex + ", column " + columnNames[c];
+                    Assert.assertEquals(context, txnBefore, getColumnNameTxn("pt", partitionIndex, columnNames[c]));
+                    assertColumnFilesPresent(context + ", after RESUME WAL and the purge job", partitionIndex, columnNames[c], replacedFiles[partitionIndex][c]);
+                }
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                for (int c = 0; c < columnNames.length; c++) {
+                    final String context = "partition " + partitionIndex + ", column " + columnNames[c] + ", after a reopen";
+                    assertColumnFilesPresent(context, partitionIndex, columnNames[c], replacedFiles[partitionIndex][c]);
+                }
+            }
+
+            execute("VACUUM TABLE pt");
+            drainWalQueue();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                for (String columnName : columnNames) {
+                    final String context = "partition " + partitionIndex + ", column " + columnName + ", after VACUUM TABLE";
+                    assertOnlyIndexVersion(context, "INDEX", partitionIndex, columnName, txnBefore);
+                }
+            }
+            assertQuery("SELECT s, v, ts FROM pt WHERE s = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedRows);
             assertSqlCursors(
                     "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'a'",
                     "SELECT s, v, ts FROM pt WHERE s = 'a'"
+            );
+            assertSqlCursors(
+                    "SELECT t, v, ts FROM pt WHERE t::VARCHAR = 'a'",
+                    "SELECT t, v, ts FROM pt WHERE t = 'a'"
             );
         });
     }
@@ -2507,8 +2648,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // must build the index under a new version. Each start makes pt a WAL or a non-WAL table. Some
         // merges fail to msync the _txn file after it switched its record: the commit landed. On a WAL
         // table it holds as any other merge after RESUME WAL; on a non-WAL table the insert fails, and
-        // rollback() must keep the new index version the committed _cv references. The number of batches
-        // is a budget property.
+        // rollback() must keep the new index version the committed _cv references. At the end of each start
+        // VACUUM TABLE removes the index versions the failing WAL merges left. The number of batches is a
+        // budget property.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
@@ -2705,6 +2847,27 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                                 purgeJob.run();
                             }
+                        }
+                    }
+                    // a WAL merge whose _txn msync failed leaves the index version it replaced on disk:
+                    // VACUUM TABLE removes it, and leaves each parquet partition with its live version only.
+                    // VACUUM keeps every version at or above the table txn, so in the attached start whose
+                    // merges name versions above the txn the replaced versions that high stay.
+                    final boolean isAttachedAboveTxn = isAttached && start > shapes.length;
+                    final long vacuumTxn = getTableTxn("pt");
+                    execute("VACUUM TABLE pt");
+                    drainWalQueue();
+                    engine.releaseInactive();
+                    try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                        purgeJob.run();
+                    }
+                    for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                        final String vacuumContext = indexDefinition + ", " + startName + ", partition " + partitionIndex + " after VACUUM TABLE at txn " + vacuumTxn;
+                        final long liveNameTxn = getColumnNameTxn("pt", partitionIndex, "s");
+                        if (isAttachedAboveTxn && partitionIndex == 0) {
+                            assertBitmapIndexVersionsKeptByVacuum(vacuumContext, partitionIndex, "s", liveNameTxn, vacuumTxn);
+                        } else {
+                            assertOnlyIndexVersion(vacuumContext, indexDefinition, partitionIndex, "s", liveNameTxn);
                         }
                     }
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-02'");
@@ -3474,6 +3637,60 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
             assertOnlyIndexVersion("after the landed commit", "INDEX", 0, "s", 32);
             assertAttachedRows("after the landed commit", o3Rows);
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexVersionTxnMsyncFailureWal() throws Exception {
+        // WAL: the _txn commit at txn 4 switches its record and then fails to msync it, so the commit
+        // landed with s at version 32, one above the foreign version 31. The apply job discards the
+        // writer, so 31 stays on disk. VACUUM TABLE keeps every version at or above the table txn, so it
+        // leaves 31 while the table is at txn 4, and removes it once the table txn passes 31.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        setInPlaceParquetO3Properties();
+        final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
+        assertMemoryLeak(ff, () -> {
+            createAttachedForeignParquetTable("INDEX", true, 31);
+            final TableToken tableToken = engine.verifyTableName("pt");
+            ff.isArmed.set(true);
+            execute(symRowsInsert(SYM_MERGE_ROWS));
+            drainWalQueue();
+            Assert.assertFalse(ff.isArmed.get());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            execute("ALTER TABLE pt RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(4, getTableTxn("pt"));
+            Assert.assertEquals(32, getColumnNameTxn("pt", 0, "s"));
+            assertAttachedRows("after RESUME WAL", SYM_MERGE_ROWS);
+
+            execute("VACUUM TABLE pt");
+            drainWalQueue();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            Assert.assertEquals(4, getTableTxn("pt"));
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, 31));
+            Assert.assertTrue(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, 31));
+            assertBitmapIndexVersionsKeptByVacuum("after VACUUM TABLE at txn 4", 0, "s", 32, 4);
+
+            // appends to partition 2024-01-02 move the table txn above 31
+            final SymRow[] appendRows = new SymRow[28];
+            for (int i = 0; i < appendRows.length; i++) {
+                appendRows[i] = new SymRow("b", 200 + i, "2024-01-02", String.format("05:%02d", i));
+                execute(symRowsInsert(appendRows[i]));
+                drainWalQueue();
+            }
+            Assert.assertEquals(32, getTableTxn("pt"));
+            execute("VACUUM TABLE pt");
+            drainWalQueue();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            assertOnlyIndexVersion("after VACUUM TABLE at txn 32", "INDEX", 0, "s", 32);
+            assertAttachedRows("after VACUUM TABLE at txn 32", SYM_MERGE_ROWS, appendRows);
         });
     }
 
@@ -4903,6 +5120,36 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * What VACUUM TABLE at table txn {@code vacuumTxn} leaves of the BITMAP index of column
+     * {@code columnName} in partition {@code partitionIndex} of table pt: the files of the live
+     * version {@code liveNameTxn}, and of other versions only those at or above {@code vacuumTxn},
+     * which VacuumColumnVersions keeps as possibly uncommitted.
+     */
+    private static void assertBitmapIndexVersionsKeptByVacuum(String context, int partitionIndex, String columnName, long liveNameTxn, long vacuumTxn) {
+        final String files = listColumnFiles("pt", partitionIndex, columnName);
+        final List<String> names = Arrays.asList(files.substring(1, files.length() - 1).split(", "));
+        Assert.assertTrue(context + ' ' + files, names.contains(columnName + ".k." + liveNameTxn));
+        Assert.assertTrue(context + ' ' + files, names.contains(columnName + ".v." + liveNameTxn));
+        for (String name : names) {
+            Assert.assertTrue(context + ' ' + files, name.matches(columnName + "\\.[kv]\\.\\d+"));
+            final long nameTxn = Long.parseLong(name.substring(name.lastIndexOf('.') + 1));
+            Assert.assertTrue(context + ' ' + files, nameTxn == liveNameTxn || nameTxn >= vacuumTxn);
+        }
+    }
+
+    /**
+     * Every file of {@code files}, a listing {@link #listColumnFiles} took earlier, is still in the
+     * directory of partition {@code partitionIndex} of table pt.
+     */
+    private static void assertColumnFilesPresent(String context, int partitionIndex, String columnName, String files) {
+        final String presentFiles = listColumnFiles("pt", partitionIndex, columnName);
+        final List<String> presentNames = Arrays.asList(presentFiles.substring(1, presentFiles.length() - 1).split(", "));
+        for (String name : files.substring(1, files.length() - 1).split(", ")) {
+            Assert.assertTrue(context + ": " + name + " in " + presentFiles, presentNames.contains(name));
+        }
+    }
+
+    /**
      * Moves table src to txn {@code foreignNameTxn} with commits into partition 2024-01-09, then
      * updates column s of partition {@code partitionIndex} under a pinned reader: s takes column
      * version {@code foreignNameTxn} there, and the previous version stays on disk beside it.
@@ -5012,6 +5259,86 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     .expectSize(isCovering)
                     .returns(expectedRows);
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            assertQuery(STALE_INDEX_QUERIES[0])
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .supportsRandomAccess(!isCovering)
+                    .expectSize(isCovering)
+                    .returns(expectedRows);
+            assertSqlCursors(referenceSql, indexSql);
+        });
+    }
+
+    /**
+     * WAL: the _txn msync fails after the commit landed. The apply job marks the writer distressed and
+     * suspends the table; after RESUME WAL the committed index answers and the commit is not applied
+     * twice. The apply job discards the writer without rollback(), so the replaced index version stays
+     * on disk, across a reopen too, until VACUUM TABLE removes it.
+     */
+    private void assertInPlaceIndexVersionTxnMsyncFailureWal(String indexDefinition) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        setInPlaceParquetO3Properties();
+        final byte indexType = indexDefinition.contains("POSTING") ? IndexType.POSTING : IndexType.BITMAP;
+        // a covering index answers the query from the index: no random access, known size
+        final boolean isCovering = indexDefinition.contains("INCLUDE");
+        final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
+        final String referenceSql = "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'a'";
+        final String indexSql = "SELECT s, v, ts FROM pt WHERE s = 'a'";
+        final String expectedRows = expectedStaleIndexQueryResult(0, false, SYM_BASE_ROWS, SYM_MERGE_ROWS);
+        assertMemoryLeak(ff, () -> {
+            createIndexedParquetTable(indexDefinition, "TIMESTAMP");
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+            final long txnBefore = getTableTxn("pt");
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, indexType, columnNameTxn));
+            final String replacedFiles = listColumnFiles("pt", 0, "s");
+            ff.isArmed.set(true);
+            execute(symRowsInsert(SYM_MERGE_ROWS));
+            drainWalQueue();
+            Assert.assertFalse(ff.isArmed.get());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            execute("ALTER TABLE pt RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, indexType, txnBefore));
+            if (indexType == IndexType.BITMAP) {
+                Assert.assertTrue(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
+            }
+            assertQuery(STALE_INDEX_QUERIES[0])
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .supportsRandomAccess(!isCovering)
+                    .expectSize(isCovering)
+                    .returns(expectedRows);
+            assertQuery("SELECT count() FROM pt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + (SYM_BASE_ROWS.length + SYM_MERGE_ROWS.length) + "\n");
+            assertSqlCursors(referenceSql, indexSql);
+
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            assertColumnFilesPresent("after RESUME WAL and the purge job", 0, "s", replacedFiles);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            assertColumnFilesPresent("after a reopen", 0, "s", replacedFiles);
+
+            execute("VACUUM TABLE pt");
+            drainWalQueue();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            assertOnlyIndexVersion("after VACUUM TABLE", indexDefinition, 0, "s", txnBefore);
             assertQuery(STALE_INDEX_QUERIES[0])
                     .noLeakCheck()
                     .timestamp("ts")
