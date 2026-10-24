@@ -47,7 +47,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
@@ -67,6 +66,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+    // 64 KiB: ~1500 records per extension instead of ~100; the file is this big on disk at minimum.
+    private static final long EXTEND_SEGMENT_SIZE = 64 * 1024;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
@@ -134,7 +135,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     @Override
     public void create(Path path, long tableCreateTimestamp) {
         final int pathLength = path.size();
-        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openTxnLog(path, pathLength);
 
         txnMem.jumpTo(0L);
         txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V1);
@@ -207,7 +208,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public long open(Path path) {
         if (!txnMem.isOpen()) {
             txnMem.close(false);
-            openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+            openTxnLog(path, path.size());
         }
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
@@ -216,6 +217,23 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
+    }
+
+    /**
+     * The txn log is an append-only file that grows by one {@link #RECORD_SIZE}
+     * record per commit, so it is opened with a {@link #EXTEND_SEGMENT_SIZE}
+     * extend segment rather than as a small file (one page). Every extension is
+     * a fallocate plus an mremap, and the mremap shoots down TLBs on every core
+     * the process runs on: with a 4 KiB segment that ran once per ~100 one-row
+     * transactions and was 13% of the ingress thread's CPU.
+     */
+    private void openTxnLog(Path path, int rootLen) {
+        path.concat(TXNLOG_FILE_NAME);
+        try {
+            txnMem.of(ff, path.$(), EXTEND_SEGMENT_SIZE, ff.length(path.$()), MemoryTag.MMAP_TX_LOG, CairoConfiguration.O_NONE, -1);
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private void sync0() {
