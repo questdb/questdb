@@ -586,6 +586,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        clear();
+        lexer.of(viewSql);
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        if (model.getModelType() != ExecutionModel.QUERY) {
+            throw SqlException.$(0, "SELECT query expected");
+        }
+        // The parsed model names the objects and the wildcards of the view, the optimised one resolves
+        // the columns it reads. Optimisation rewrites the model it is given, so the parsed one goes first.
+        SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies);
+        try {
+            final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies);
+            return queryModel;
+        } catch (Throwable e) {
+            // like compileExecutionModel(): nothing generates the factories optimise() left in flight
+            optimiser.freeTableFactoriesInFlight(e);
+            throw e;
+        }
+    }
+
+    @Override
     public BytecodeAssembler getAsm() {
         return asm;
     }
@@ -2154,9 +2180,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+            final ExecutionModel executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
             final IQueryModel queryModel = executionModel.getQueryModel();
-            SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
             engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
             try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
@@ -4633,6 +4658,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw e;
                 }
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // The parser recorded the objects and the wildcards of the view, see
+                // SqlParser.parseCreateView(). The optimised model resolves the columns it reads.
+                SqlUtil.collectTableColumnReads(engine, queryModel, createViewOp.getViewDefinition().getDependencies());
                 // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
                 // same reason: a throw must free the table factories optimise() left in flight.
                 cacheable = queryModel.isCacheable();

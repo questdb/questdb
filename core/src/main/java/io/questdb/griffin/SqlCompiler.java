@@ -33,6 +33,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -58,6 +60,22 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
+
+    /**
+     * Parses and optimises the SELECT of a view, like {@link #generateExecutionModel}, and collects its
+     * dependencies: the objects it names, see {@link SqlUtil#collectTableAndColumnReferences}, and the
+     * columns it reads from each table, see {@link SqlUtil#collectTableColumnReads}.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param dependencies     the dependency map of the view, which this adds to
+     * @return the optimised model of the SELECT
+     */
+    ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException;
 
     /**
      * Parses a single expression text into an {@link ExpressionNode} tree without
