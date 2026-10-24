@@ -76,6 +76,10 @@ public class QwpTableBlockCursor implements Mutable {
     private int columnCount;
     // Column definitions from schema
     private ObjList<QwpColumnDef> columnDefs;
+    // True from of() until clear(). The message cursor clears this cursor when a
+    // message starts and again before each table block; the second clear of an
+    // untouched cursor walked every column cursor for nothing.
+    private boolean dirty;
     // Cached null flags per column for current row (avoids megamorphic isNull() calls)
     private boolean[] columnNullFlags = new boolean[16];
     // Delta symbol dictionary support
@@ -117,6 +121,10 @@ public class QwpTableBlockCursor implements Mutable {
 
     @Override
     public void clear() {
+        if (!dirty) {
+            return;
+        }
+        dirty = false;
         tableHeader.reset();
         parseResult.clear();
         rowCount = 0;
@@ -343,6 +351,7 @@ public class QwpTableBlockCursor implements Mutable {
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
+        this.dirty = true;
         this.gorillaEnabled = gorillaEnabled;
         this.connectionSymbolDict = connectionSymbolDict;
         this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;

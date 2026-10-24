@@ -523,7 +523,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        int columnType = walWriter.getMetadata().getColumnType(columnIndex);
 
         if (nullBitmapAddress == 0) {
             // Fast path: no nulls, direct memory copy
@@ -531,6 +530,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         } else {
             // Expand sparse to dense, inserting null sentinels
             int valueIdx = 0;
+            final int columnType = walWriter.getMetadata().getColumnType(columnIndex);
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BYTE -> {
                     for (int row = 0; row < rowCount; row++) {
