@@ -31,6 +31,10 @@ import io.questdb.std.str.Path;
 
 public interface PartitionDeltaWriter extends QuietCloseable {
 
+    /** Stops background work on a removed partition version while old readers finish. */
+    default void cancel(Path partitionDir) {
+    }
+
     /**
      * Checks the Delta state in the attachable directory and writes its visible timestamp bounds.
      * Throws when it does not belong to the table, e.g. another base row count or index set.

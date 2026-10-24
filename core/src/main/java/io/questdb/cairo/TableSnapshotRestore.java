@@ -825,7 +825,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                             parquetFileSize,
                             partitionBy,
                             timestampType,
-                            doRebuild
+                            doRebuild,
+                            txWriter.getPartitionHasDelta(i)
                     );
                 } finally {
                     // POSTING seal() retains Path thread-locals; clear per partition.
@@ -1154,6 +1155,8 @@ public class TableSnapshotRestore implements QuietCloseable {
      * shallow-copies its state, so the {@code _pm} footer is resolved and
      * CRC-verified once instead of three times. The caller owns {@code path}; the
      * rebuild-only buffers are non-null only when {@code rebuildIndexes} is set.
+     * With {@code hasDelta}, only {@code data.parquet} is validated: the Delta
+     * catalog owns {@code _pm}.
      */
     private void processParquetPartition(
             Path path,
@@ -1172,7 +1175,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetFileSize,
             int partitionBy,
             int timestampType,
-            boolean rebuildIndexes
+            boolean rebuildIndexes,
+            boolean hasDelta
     ) {
         // Reset the reused path to the table root.
         path.of(tablePathStr).trimTo(pathTableLen);
@@ -1199,6 +1203,12 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .put(", committed=").put(parquetFileSize)
                     .put(", onDisk=").put(onDiskSize)
                     .put(']');
+        }
+        if (hasDelta) {
+            // The Delta catalog owns this partition's _pm slots and its checkpoint restore has
+            // installed the selected one. A replaced base can occupy _pm, so data.parquet need
+            // not match it.
+            return;
         }
 
         long parquetMetaAddr = 0;
