@@ -213,6 +213,10 @@ behave as before. The QWP UDP receiver writes through the WAL and is covered lik
 A table created with `BYPASS WAL` has no WAL to replay. In `adaptive` mode it behaves as in `nosync`: a power loss
 can lose its recent commits.
 
+A parallel COPY into a new table creates that table as non-WAL, whatever `cairo.wal.enabled.default` says, so it is
+in this group too: a power loss soon after COPY returned can lose or damage the table. To keep the promise, create
+the table first (`CREATE TABLE ... WAL`) and COPY into it.
+
 ### 7.4 `RESUME WAL FROM TXN` on a table with held-back transactions
 
 When the WAL apply stops in the middle of out-of-order data (its time quota, a shutdown, an error), the table holds
@@ -252,8 +256,9 @@ one case and removes an endless apply loop and stray rows in another, but it doe
   squash, and its bookkeeping steps. A crash within one save point interval of such a step puts the table back at
   the save point before it. The files the step replaced are still there (the save point keeps them), and the policy
   job does the step again at its next pass. No row is lost. A clean shutdown keeps the step.
-- **A power loss during a parallel COPY** that has not reported it finished can leave the table in a state that
-  needs a manual step (section 11.6). Nothing COPY reported done is lost.
+- **A power loss during a parallel COPY into an existing WAL table** that has not reported it finished can leave
+  the table in a state that needs a manual step (section 11.6). Nothing such a COPY reported done is lost. A COPY
+  into a new table has no promise in `adaptive` (section 7.3).
 - **QuestDB Enterprise: the view audit table on a replica has no working manual recovery step.** The replica
   applies it without a save point and purges its WAL once applied (it is the one table a replica writes itself).
   A power loss can lose its most recent records and leave it suspended. `ALTER TABLE "sys.view_audit" RESUME WAL
@@ -291,13 +296,6 @@ Found while this mode was built, reproduced on the current release line, and fil
 - The old UDP receiver: a commit list that loses rows ([#7847](https://github.com/questdb/questdb/issues/7847)), a
   column added to a WAL table ([#7848](https://github.com/questdb/questdb/issues/7848)), and a writer cache that
   sends rows to the wrong table ([#5151](https://github.com/questdb/questdb/issues/5151)).
-
-Found while this mode was built, not yet filed:
-
-- A parallel COPY into a new table on an instance that creates WAL tables by default (`cairo.wal.enabled.default`,
-  `true` by default) creates the table without its sequencer, in every mode. After any restart the table can be
-  read but not written, altered or dropped. Create the table first (`CREATE TABLE ... WAL`) and COPY into it;
-  section 11.6 says how to get out of the state.
 
 ### 7.7 Deferred work and accepted costs
 
@@ -467,17 +465,18 @@ More detail:
   relies on it. On Linux that is one write per table and one `syncfs` per file system (the root and each volume) per
   start: 1,000 tables took 244 ms, of which the `syncfs` 51 ms. Elsewhere it is one `fsync` per table (5-8 ms each,
   measured on Linux with that path forced).
-- **A parallel COPY** in `sync`, and into a WAL table it creates in `adaptive`, flushes twice before COPY returns:
+- **A parallel COPY** in `sync` flushes twice before COPY returns:
   the imported partitions and symbol files before the attach, then `_txn` and the renamed directories after it. On
   Linux that is two `syncfs` per COPY. In `sync` the import also flushes each partition directory it creates, and
   that directory's parent, as it writes the partition. A 5-million-row import (258 MB of CSV, 30 partitions, four
-  workers) takes 2.52 s in `sync` (2.36 s before; the two `syncfs` take 31 ms, the directory `fsync` the rest) and
-  1.83 s in `adaptive` (the two `syncfs` take 30 ms); `nosync` is unchanged (1.3 s). Elsewhere it is every file of
+  workers) takes 2.52 s in `sync` (2.36 s before; the two `syncfs` take 31 ms, the directory `fsync` the rest);
+  `nosync` is unchanged (1.3 s). Elsewhere it is every file of
   the imported partitions, the table's root files and directories, before and after the attach (45-50 flushes for
   three partitions of four columns). COPY into an existing WAL table in `adaptive` pays for two save points instead,
   one per generation, so that a start which falls back to the older save point keeps the import; a skipped or failed
   save point fails the COPY (section 11.6).
-  `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
+  `nosync`, `async` and a non-WAL table in `adaptive`, which includes every table a COPY creates (section 7.3): no
+  flush.
 - **The first `sync` or `adaptive` start after `nosync` or `async`** that did not stop cleanly reads each WAL
   table's version 1 sequencer log from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
   transaction in the log. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
@@ -778,14 +777,15 @@ an existing table it imports into must be empty. The steps below therefore never
 **After a failed flush stopped the server** (section 11.2), start it again. The server stopped at the failed flush,
 before the COPY could clean up, so the table is as the COPY left it:
 
-- A table the COPY created is still there and can hold some imported partitions. If it is a non-WAL table, run
-  `DROP TABLE`, then COPY again. If it is a WAL table, follow "A WAL table the COPY created" below.
+- A table the COPY created (always a non-WAL table) is still there and can hold some imported partitions: run
+  `DROP TABLE`, then COPY again.
 - An existing table can hold some imported partitions: run `TRUNCATE TABLE`.
 - Imported partitions that were not attached yet are left as `<partition>.attachable` directories in the table's
   directory, and COPY again fails with `could not copy partition file [to=.../<partition>.attachable]`: delete the
   `.attachable` directories the failed COPY left, then run COPY again.
 
-**After a power loss during the COPY** (in `sync`, or into a WAL table it created in `adaptive`):
+**After a power loss during the COPY** (in `sync`; in `adaptive` a table the COPY created has no promise, section
+7.3):
 
 - **A non-WAL table the COPY created, or any existing table.** The table can hold some imported partitions, each
   whole, and a retry is refused with `target table must be empty [table=...]`; or reading the table fails with
@@ -793,13 +793,6 @@ before the COPY could clean up, so the table is as the COPY left it:
   repair the table or the database from the backup.` (a partition whose move into place did not reach the disk).
   Run `DROP TABLE`, then `CREATE TABLE` again if the table existed before the COPY (it was empty), then run COPY
   again.
-- **A WAL table the COPY created.** If the table is not there after the restart, create it with
-  `CREATE TABLE ... WAL` and run COPY into it. If it is there, no SQL step works on it, because of the missing
-  sequencer (section 7.6), and the
-  last imported partition can read as one row of zero and empty values. Do not run `DROP TABLE` on it: that fails,
-  hides the table from then on and keeps its name taken. Stop the server, delete the table's directory
-  (`<table>~<id>` under the database root), start, create the table with `CREATE TABLE ... WAL`, and run COPY into
-  it.
 
 **COPY failed with `import is not durable against a save point fallback: a save point after the attach was skipped
 or failed [...]`** (into an existing WAL table in `adaptive`). The import was attached, but the save point that makes
@@ -808,12 +801,6 @@ it survive a start which falls back to the older save point was skipped or faile
 [...]` line, both critical). Nothing in the WAL redoes an import, so COPY did not report it done: its clean-up
 truncated the target table, which was empty before the COPY. Fix the cause the log names (the skip is transient: a
 structural change in flight, a busy pin slot; a failure is an I/O error on the save point file) and run COPY again.
-
-**A WAL table the COPY created, after any restart** (no crash needed, section 7.6). The table can be read, but
-INSERT and ALTER TABLE fail with `could not open read-write [file=.../txn_seq/_wal_index.d]`, and `DROP TABLE` fails
-and hides the table as above. To keep its rows: copy them into a new table while it is still visible (for example
-`CREATE TABLE t2 AS (SELECT * FROM t) TIMESTAMP(ts) PARTITION BY DAY WAL`), stop the server, delete the old table's
-directory (`<table>~<id>` under the database root), and start. The copy takes writes.
 
 ## Appendix A. Configuration
 

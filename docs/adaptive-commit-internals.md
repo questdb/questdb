@@ -273,7 +273,7 @@ measurements identified above, not a bound on current structural operations, whi
   it enrols at the end of its constructor (`enrollTableInAdaptiveMode`), before it applies anything, so a table is
   never applied lazily without a save point behind it. A failed enrolment fails the writer open (`could not publish
   adaptive enrollment baseline [...]`). A writer on a private root (the COPY staging writers) or holding a non-WAL
-  token for a WAL table (the import's writer of a WAL table COPY creates) does not enrol.
+  token for a WAL table does not enrol.
 - **The exit.** A start in `nosync`, `async` or `sync` mode, after recovery (`RecoveryCoordinator.recover`), makes
   every enrolled table durable and removes its save point: one flush (`syncfs` of the database root and of each
   volume on Linux, `fsyncTableFiles` per table elsewhere), then per table the two-step removal and the release of
@@ -569,10 +569,11 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   the attaches (`ParallelCsvFileImporter.attachPartitions`): nothing in the WAL redoes an import, so a start that
   fell back to the older generation would lose it. When a save point is skipped or fails (both are logged as
   critical and leave it owed), COPY fails with `import is not durable against a save point fallback [...]` instead
-  of reporting the import done, and its clean-up truncates the target, which was empty. COPY into a new table holds a
-  non-WAL token for it, so its writer does not enrol and takes no save point. The import writes its partitions and
-  merged symbol files outside a commit, so in `sync` (any target) and in `adaptive` for a WAL table the import
-  created (`isImportFlushed`), the importer flushes twice. Before the first attach, `flushPartitionsToAttach`
+  of reporting the import done, and its clean-up truncates the target, which was empty. COPY into a new table creates
+  it non-WAL (`TableStructureAdapter.isWalEnabled`), so its writer does not enrol, takes no save point and, in
+  `adaptive`, flushes nothing: the table has no power-loss promise, as any non-WAL table (guide section 7.3). The
+  import writes its partitions and merged symbol files outside a commit, so in `sync`, for any target
+  (`isImportFlushed`), the importer flushes twice. Before the first attach, `flushPartitionsToAttach`
   flushes the moved `<partition>.attachable` directories and the table root (the symbol files), because each attach
   names its partition in `_txn`, which in `sync` the writer flushes at once. After the last attach,
   `flushImportedTable` flushes `_txn` and the renames, before COPY reports the import finished. Where `syncfs` is
@@ -587,11 +588,9 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   In `nosync`, `async` and for a non-WAL table in `adaptive` nothing is flushed. In `sync` the import also flushes each
   partition directory it creates in its work directory, and that directory's parent, and the attach flushes the
   partition and table directories: about 60 directory `fsync` for 30 partitions. A 5-million-row import takes
-  2.52 s in `sync` against 2.36 s in the base release (+6.7%, of which the two `syncfs` are 31 ms) and 1.83 s in
-  `adaptive` (two `syncfs`, 30 ms); `nosync` is unchanged. What a power loss can still leave (an attach
-  whose rename did not reach the disk, partitions attached before it) and the manual steps are in guide section
-  11.6. A WAL table COPY creates gets no sequencer, in every mode, a base issue (guide section 7.6), so after a
-  restart it cannot be written, altered or dropped.
+  2.52 s in `sync` against 2.36 s in the base release (+6.7%, of which the two `syncfs` are 31 ms); `nosync` is
+  unchanged. What a power loss can still leave (an attach whose rename did not reach the disk, partitions attached
+  before it) and the manual steps are in guide section 11.6.
 - **`RESUME WAL`.** Ordinary plain `RESUME WAL` is writer-free when no required logical completion is outstanding,
   as on a non-adaptive table; it no longer answers "table busy" right after a plain `SUSPEND WAL`. `RESUME WAL FROM
   TXN` on a suspended table, and a plain RESUME with a required completion outstanding (an unfinished DETACH,

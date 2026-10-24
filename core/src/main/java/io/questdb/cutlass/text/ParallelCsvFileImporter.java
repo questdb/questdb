@@ -1043,8 +1043,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private boolean isImportFlushed() {
-        final int commitMode = configuration.getCommitMode();
-        return commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && targetTableCreated && writer.getMetadata().isWalEnabled());
+        // Only SYNC flushes the import. ADAPTIVE covers WAL tables only, and a table COPY creates is non-WAL
+        // (TableStructureAdapter.isWalEnabled()), so it gets no flush, as under NOSYNC. A COPY into an existing
+        // WAL table under ADAPTIVE is covered by the save points attachPartitions() takes instead.
+        return configuration.getCommitMode() == CommitMode.SYNC;
     }
 
     private boolean isOneOfMainDirectories(CharSequence p) {
