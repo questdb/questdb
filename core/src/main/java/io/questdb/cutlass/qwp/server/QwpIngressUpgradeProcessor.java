@@ -1631,12 +1631,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         final long batchFirstSeq = state.getFirstCommitBatchSequence();
         final long batchLastSeq = state.getLastCommitBatchSequence();
         boolean batched = false;
-        if (batchPending) {
-            // A failure in this frame must drop only this frame's rows: frame by
-            // frame, the batch would already be committed and acked, and the
-            // client's poison detector strikes the frame a NACK names.
-            state.setCommitBatchSavepoints();
-        }
+        // A failure in this frame must drop only this frame's rows: frame by
+        // frame, the batch would already be committed and acked, and the
+        // client's poison detector strikes the frame a NACK names.
+        state.armCommitBatchSavepoints(batchPending);
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);

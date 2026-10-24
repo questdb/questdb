@@ -77,6 +77,10 @@ public class QwpTudCache implements QuietCloseable {
     private final long maxUncommittedRows;
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
+    // Set when a lookup evicted an entry and discarded its uncommitted rows. With
+    // a QWP commit batch pending those rows belong to earlier frames, which then
+    // cannot be acknowledged. See rollbackToSavepoints.
+    private boolean discardedBufferedRows;
     private final Telemetry<TelemetryTask> telemetry;
     private volatile int cachedTableCount;
     // Optional callback mirroring commitAll(consumer)'s: invoked after a
@@ -208,19 +212,21 @@ public class QwpTudCache implements QuietCloseable {
      * that propagate the error to the client (e.g. HTTP/WebSocket).
      */
     /**
-     * Restores every cached writer to the savepoint {@link #setSavepoints()} took:
-     * a writer touched since keeps only the rows before it, a writer created since
-     * rolls back its whole transaction. Returns false if the cache is distressed or
-     * a restore failed -- the uncommitted rows are then unrecoverable.
+     * Restores the writers the current frame touched to the savepoints
+     * {@link #setSavepoint} took at their first touch in it, keeping the rows of
+     * earlier frames; writers it did not touch keep everything. Returns false
+     * when earlier frames' rows cannot be kept: the cache is distressed, a
+     * restore failed, or this frame's lookups evicted an entry and discarded its
+     * buffered rows (see evictStaleTud).
      */
-    public boolean rollbackToSavepoints() {
-        if (isDistressed) {
+    public boolean rollbackToSavepoints(long epoch) {
+        if (isDistressed || discardedBufferedRows) {
             return false;
         }
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             WalTableUpdateDetails tud = tableUpdateDetails.get(keys.getQuick(i));
-            if (tud.isDropped()) {
+            if (tud.isDropped() || tud.getSavepointEpoch() != epoch) {
                 continue;
             }
             try {
@@ -239,16 +245,23 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Marks a savepoint at the current end of every cached writer's open
-     * transaction, at a message boundary. See {@link #rollbackToSavepoints()}.
+     * Starts a frame that follows a pending commit batch: forgets an earlier
+     * frame's discard, so {@link #rollbackToSavepoints} judges this frame alone.
      */
-    public void setSavepoints() {
-        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.getQuick(i));
-            if (!tud.isDropped() && tud.getWriter() instanceof WalWriter walWriter) {
+    public void resetDiscardedBufferedRows() {
+        discardedBufferedRows = false;
+    }
+
+    /**
+     * Marks a savepoint at the end of this writer's open transaction the first
+     * time frame {@code epoch} touches it, before the frame appends anything.
+     */
+    public void setSavepoint(WalTableUpdateDetails tud, long epoch) {
+        if (tud.getSavepointEpoch() != epoch) {
+            if (tud.getWriter() instanceof WalWriter walWriter) {
                 walWriter.setSavepoint();
             }
+            tud.setSavepointEpoch(epoch);
         }
     }
 
@@ -588,6 +601,7 @@ public class QwpTudCache implements QuietCloseable {
                     // the QWP layer refuses the frame (the deferred-ack clamp
                     // holds; the client replays). The next lookup acquires a
                     // fresh writer from the pool.
+                    discardedBufferedRows |= !tud.isFirstRow();
                     tableUpdateDetails.removeAt(key);
                     cachedTableCount = tableUpdateDetails.size();
                     Misc.free(tud, th);
@@ -976,6 +990,7 @@ public class QwpTudCache implements QuietCloseable {
         // rejects instead of acknowledging them; the UDP receiver has no ack and
         // simply drops the datagram.
         if (hadBufferedRows && !isSalvaged) {
+            discardedBufferedRows = true;
             throw CairoException.nonCritical()
                     .put(isRenamed ? "renamed" : "dropped")
                     .put(" table discarded buffered rows, cannot acknowledge: ")

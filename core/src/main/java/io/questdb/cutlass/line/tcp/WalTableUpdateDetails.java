@@ -64,6 +64,9 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
      * per cache, so it needs no synchronisation.
      */
     private long lastStructureCheckSeqTxn = Long.MIN_VALUE;
+    // The QWP commit-batch frame epoch this writer's savepoint was taken in; see
+    // QwpTudCache.setSavepoint.
+    private long savepointEpoch;
 
     public WalTableUpdateDetails(
             CairoEngine engine,
@@ -104,6 +107,14 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
 
     public void setLastReportedSeqTxn(long seqTxn) {
         this.lastReportedSeqTxn = seqTxn;
+    }
+
+    public long getSavepointEpoch() {
+        return savepointEpoch;
+    }
+
+    public void setSavepointEpoch(long savepointEpoch) {
+        this.savepointEpoch = savepointEpoch;
     }
 
     public void setLastStructureCheckSeqTxn(long seqTxn) {

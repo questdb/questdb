@@ -271,6 +271,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private int commitBatchFrames;
     private long firstCommitBatchSequence = -1;
     private long lastCommitBatchSequence = -1;
+    // Non-zero while a frame that follows a pending commit batch is processed:
+    // tags the savepoints that frame takes (see processMessage). Unique per frame.
+    private long savepointEpoch;
+    private long savepointEpochCounter;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
@@ -480,11 +484,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * writers); the batch's rows are then lost and must not be acknowledged.
      */
     public boolean rollbackToCommitBatchSavepoints() {
-        return tudCache.rollbackToSavepoints();
+        return tudCache.rollbackToSavepoints(savepointEpoch);
     }
 
-    public void setCommitBatchSavepoints() {
-        tudCache.setSavepoints();
+    /**
+     * Called before every frame. With a commit batch pending, this frame takes a
+     * savepoint in each writer at its first touch, so a failure can drop only
+     * this frame's rows; otherwise none are taken.
+     */
+    public void armCommitBatchSavepoints(boolean batchPending) {
+        savepointEpoch = batchPending ? ++savepointEpochCounter : 0;
+        if (batchPending) {
+            tudCache.resetDiscardedBufferedRows();
+        }
     }
 
     /**
@@ -1419,6 +1431,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 // Read BEFORE the append: the cursor is consumed by it, and a
                 // metadata-change retry resets row iteration.
                 final boolean blockHasRows = tableBlock.getRowCount() > 0;
+                if (savepointEpoch != 0) {
+                    tudCache.setSavepoint(tud, savepointEpoch);
+                }
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
                 messageAppendedRows |= blockHasRows;
             }

@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -333,6 +334,67 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     100\tnull
                     null\t200
                     """);
+        });
+    }
+
+    /**
+     * If a frame's table lookup evicts a stale entry and discards its
+     * uncommitted rows, those rows belong to the frames before it in the commit
+     * batch. None of those frames may be acked; the client replays them.
+     */
+    @Test
+    public void testEvictionThatDiscardsBatchRowsAcksNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final AtomicLong frames = new AtomicLong();
+            try (CairoEngine droppingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                // processMessage consults the read-only flag once per frame: from
+                // the third frame on, the table looks dropped to the TUD cache.
+                @Override
+                public TableToken getTableTokenByDirName(CharSequence dirName) {
+                    return frames.get() >= 3 ? null : super.getTableTokenByDirName(dirName);
+                }
+
+                @Override
+                public TableToken getTableTokenIfExists(CharSequence tableName) {
+                    return frames.get() >= 3 ? null : super.getTableTokenIfExists(tableName);
+                }
+
+                @Override
+                public boolean isReadOnlyMode() {
+                    frames.incrementAndGet();
+                    return false;
+                }
+            }) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(droppingEngine, httpConfig);
+                byte[] wire = concat(
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+                );
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = new QwpIngressProcessorState(
+                            RECV_BUFFER_SIZE,
+                            httpConfig.getSendBufferSize(),
+                            droppingEngine,
+                            httpConfig.getLineHttpProcessorConfiguration()
+                    );
+                    state.of(-1, AllowAllSecurityContext.INSTANCE);
+                    getLV().set(context, state);
+                    drive(processor, context, nf, wire.length);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+                Assert.assertTrue("test setup: the third frame must be refused", hasErrorResponseForSeq(rawSocket.sentFrames, 2));
+                Assert.assertEquals("frames whose rows the eviction discarded must not be acked",
+                        -1, maxCumulativeOkAck(rawSocket.sentFrames));
+            }
         });
     }
 
