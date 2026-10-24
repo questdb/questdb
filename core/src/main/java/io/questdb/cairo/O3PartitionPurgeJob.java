@@ -316,7 +316,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     // older one is always below the last txn, which would keep the version for ever. Past a pin the version is
     // free once no save point on disk lists it, the only way recovery can bring it back. The task reads each save
     // point's _txn copy once. A save point written meanwhile copies a later _txn, which cannot list a version this
-    // task may delete: a partition created or attached later takes a name txn at or above the snapshot's txn.
+    // task may delete: a partition created or attached later gets a parsed name txn (directory suffix + 1) at or
+    // above the snapshot's txn.
     private boolean isDroppedVersionFree(
             TableToken tableToken,
             FilesFacade ff,

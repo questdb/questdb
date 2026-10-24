@@ -381,9 +381,10 @@ A dropped partition (DROP PARTITION, TTL, the original of a DETACH) has left `_t
 always lies below the current txn, so a range check against the pins would keep it for ever. For a version that
 left the table, `O3PartitionPurgeJob.isDroppedVersionFree` checks readers and a running checkpoint over [name txn,
 current txn) as before, but treats a save point pin in that range only as a reason to look: it then reads the `_txn`
-copy in each save point file with a valid header (`DurableEpochManifest.namesPartition`, `TxReader
+copy in each save point file with a valid header (`DurableEpochManifest.TxnSectionCache`, `TxReader
 .imageListsPartition`) and keeps the version while either copy lists it. A read or checksum problem counts as
-listed. Nothing else queues a purge once a version is free, so a writer that leaves versions to the purge job
+listed. A purge task reads each copy at most once and frees it when the task ends; a fault while loading a copy
+keeps every version for the rest of that task. Nothing else queues a purge once a version is free, so a writer that leaves versions to the purge job
 records the txn (`partitionPurgeOwedTxn`), and after each save point it queues a partition purge until the older pin
 has reached that txn. On a table that gets no further write, the idle save point below moves the older pin; `VACUUM
 TABLE` cannot remove the versions earlier.

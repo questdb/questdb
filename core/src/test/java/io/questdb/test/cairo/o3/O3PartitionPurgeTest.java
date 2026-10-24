@@ -196,6 +196,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             while (purgeJob.run()) {
                 maxOpens = Math.max(maxOpens, manifestOpens.getAndSet(0));
             }
+            Assert.assertTrue("no task read a save point", maxOpens > 0);
             Assert.assertTrue("manifest opens in one task: " + maxOpens, maxOpens <= 4);
             checkOnDisk(failures, "no save point names them", tt, dropped, false);
             Assert.assertEquals("", failures.toString());
