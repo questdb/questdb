@@ -48,8 +48,10 @@ import java.util.function.Predicate;
  *       {@code catch (Throwable)} in {@code ApplyWal2TableJob} turns the Error into {@code suspendTable(...)}
  *       and returns normally. The crash shows up as
  *       {@link io.questdb.cairo.wal.seq.TableSequencerAPI#isSuspended}.</li>
+ *   <li><b>A best-effort step after a commit</b> (one of {@link #BEST_EFFORT_FLUSH_METHODS}): the step catches
+ *       the Error, logs it and goes on. The crash shows up only as the fired arm.</li>
  * </ul>
- * The driver treats either as "the crash fired". A workload's commit phase stops as soon as it observes a
+ * The driver treats each as "the crash fired". A workload's commit phase stops as soon as it observes a
  * suspend (see {@link #anyTableSuspended}), so post-crash commits do not durably extend the WAL and mask the
  * injection point.
  *
@@ -86,6 +88,15 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
      * Default crash-point cap. Truncation past it is logged.
      */
     protected static final int DEFAULT_ADAPTIVE_CRASH_POINT_CAP = 200;
+    // Product methods that catch a failed flush on purpose: they run after their commit is done, and whatever they
+    // leave on disk is safe. A crash one of them swallows is still a crash, since the power loss is marked when it
+    // fires, so the sweep recovers and runs the oracle. Under ADAPTIVE a real failed flush there still stops the
+    // engine: CairoException.dataSyncFailure reports it to the engine when the exception is created.
+    private static final String[] BEST_EFFORT_FLUSH_METHODS = {
+            // Sets the _meta storage version back to plain once the last composite partition is gone. A version
+            // left high is safe, and a save point carries _meta together with _txn.
+            "io.questdb.cairo.TableWriter.maybeDowngradeStorageVersion",
+    };
 
     private int phaseFirstOp = -1; // 1-based index of the count pass's first commit-phase durability op
     private int phaseOpCount;      // how many ops that phase performed (N)
@@ -501,6 +512,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
                 fired = anyTableSuspended(tokens);
             }
             if (!fired && !crashFf.isCrashArmed()) {
+                fired = isSwallowedByBestEffortFlush(crashFf.getFiredCrash());
+            }
+            if (!fired && !crashFf.isCrashArmed()) {
                 workload.teardown();
                 releaseEngineHandles();
                 reclaimLingeringNonCacheFds(nonCacheFdBaseline);
@@ -532,5 +546,19 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         // drain its queued mappings before the enclosing exact fd check.
         Files.getMmapCache().asyncMunmap();
         return new SweepResult(n, atomicCommitOps, cap, sweptPoints, firstK, lastSweptK, truncated, recoveredByK);
+    }
+
+    private static boolean isSwallowedByBestEffortFlush(CrashSimulationError crash) {
+        if (crash != null) {
+            for (StackTraceElement frame : crash.getStackTrace()) {
+                final String method = frame.getClassName() + '.' + frame.getMethodName();
+                for (String bestEffort : BEST_EFFORT_FLUSH_METHODS) {
+                    if (bestEffort.equals(method)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }

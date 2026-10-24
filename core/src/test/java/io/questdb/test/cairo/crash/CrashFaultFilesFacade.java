@@ -220,6 +220,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private boolean powerLossMarked;
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
+    private CrashSimulationError firedCrash; // the crash the last arm fired, null until it fires
     private int killAtPoint = -1; // -1 = disarmed
     private boolean killImageTaken;
     private int killPoints = 0;
@@ -952,6 +953,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         pendingRenameTargetImages.clear();
         durabilityOps = 0;
         crashAtOp = -1;
+        firedCrash = null;
         killImageDirectories.clear();
         killImageFiles.clear();
         killAtPoint = -1;
@@ -1202,6 +1204,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public void armCrashAt(int n) {
         this.crashAtOp = n;
+        this.firedCrash = null;
+    }
+
+    /**
+     * The crash the last {@link #armCrashAt(int)} fired, or null while it has not fired. Its stack names the code
+     * that ran the durability op, so a sweep can tell which catch swallowed it.
+     */
+    public CrashSimulationError getFiredCrash() {
+        return firedCrash;
     }
 
     /**
@@ -1684,7 +1695,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             crashAtOp = -1; // one-shot
             // The op completed; the machine stops right after it.
             powerLoss();
-            throw new CrashSimulationError(durabilityOps);
+            firedCrash = new CrashSimulationError(durabilityOps);
+            throw firedCrash;
         }
     }
 
