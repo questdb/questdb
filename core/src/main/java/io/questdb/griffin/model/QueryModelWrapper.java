@@ -123,16 +123,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void addLateralNullCheck(ExpressionNode check, int columnType) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void addLateralNullCheckGroup(IntList checkIndices) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -430,26 +420,6 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return delegate.getLateralCountTemplates();
-    }
-
-    @Override
-    public IntList getLateralNullCheckGroups() {
-        return delegate.getLateralNullCheckGroups();
-    }
-
-    @Override
-    public IntList getLateralNullCheckTypes() {
-        return delegate.getLateralNullCheckTypes();
-    }
-
-    @Override
-    public ObjList<ExpressionNode> getLateralNullChecks() {
-        return delegate.getLateralNullChecks();
-    }
-
-    @Override
-    public LateralNullRejection getLateralNullRejection() {
-        return delegate.getLateralNullRejection();
     }
 
     @Override
@@ -1213,11 +1183,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void setLateralNullRejection(LateralNullRejection lateralNullRejection) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void setLatestByType(int latestByType) {
         throw new UnsupportedOperationException();
     }
@@ -1449,7 +1414,9 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setViewNameExpr(ExpressionNode viewNameExpr) {
-        throw new UnsupportedOperationException();
+        // A model passes the name of its view down to its nested, union and join models, and so
+        // reaches a wrapper. The wrapper only refers to the shared model, which the tree holds itself
+        // where it takes the name.
     }
 
     @Override

@@ -34,8 +34,8 @@ import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
 import io.questdb.griffin.model.QueryModelWrapper;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -49,6 +49,23 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class LateralJoinTest extends AbstractCairoTest {
+    // over the tables of createCorrelatedRightJoinTables(), the trade that refund 100 matches for
+    // o.k = 1 on t.x = r.k AND r.k = o.k
+    private static final String TRADE_10 = "1\t10\t100\n";
+    // over the tables of createCorrelatedRightJoinTables(), the refunds that a RIGHT join on
+    // t.x = r.k AND r.k = o.k, or after a join with xs on o.k, NULL-extends per outer row
+    private static final String UNMATCHED_REFUNDS = """
+            1\tnull\t101
+            2\tnull\t100
+            2\tnull\t101
+            """;
+    // TRADE_10 and UNMATCHED_REFUNDS, in the order of ORDER BY 1, 2, 3
+    private static final String TRADE_10_AND_UNMATCHED_REFUNDS = """
+            1\tnull\t101
+            1\t10\t100
+            2\tnull\t100
+            2\tnull\t101
+            """;
 
     @Test
     public void testCrossJoinLateral() throws Exception {
@@ -1208,23 +1225,30 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The outer-ref join must run before the FULL join, whose ON reads the outer row, so the
-    // unmatched rows of that join lose their outer row. Per outer row, o.k = 2 keeps trade 10
-    // and refunds 100 and 101 unmatched. That cannot be decorrelated, so the query fails.
+    // The ON clause of the FULL join reads the outer row, and both sides of the join keep the rows
+    // it does not match. Per outer row, o.k = 1 matches trade 10 with refund 100 and keeps refund
+    // 101 unmatched, and o.k = 2 keeps trade 10 and refunds 100 and 101 unmatched.
     @Test
-    public void testLateralCorrelatedFullJoinOnFails() throws Exception {
+    public void testLateralCorrelatedFullJoinOn() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k AND t.id > 0) l")
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k AND t.id > 0) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t101
+                            2\t10\tnull
+                            """);
         });
     }
 
-    // WHERE a.id > 0 drops the rows in which the FULL join NULL-extends a, so the outer-ref join stays
-    // ahead of the FULL join, and so does a, whose column the ON clause reads. Per outer row, a 10
-    // matches b 20 for o.k = 1, and a 11 matches b 21 for o.k = 2. The other a row stays with a NULL
-    // bid, and the b row that matches no a row has a NULL aid, which the filter drops.
+    // WHERE a.id > 0 drops the rows in which the FULL join NULL-extends a. Per outer row, a 10 matches
+    // b 20 for o.k = 1, and a 11 matches b 21 for o.k = 2. The other a row stays with a NULL bid, and
+    // the b row that matches no a row has a NULL aid, which the filter drops.
     @Test
     public void testLateralCorrelatedFullJoinOnWithMasterFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1259,40 +1283,50 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // Per outer row, the FULL join emits the b rows of s that match no a row with a NULL a.x, and
-    // WHERE a.x = o.x keeps them only for a NULL o.x: 2 null 22. One FULL join over the b rows of
-    // all outer rows cannot tell them apart from the b rows of o.x = 1, so the query fails.
+    // WHERE a.x = o.x keeps them only for a NULL o.x: 2 null 22. Each b row carries the outer row of
+    // its own copy of s, so the b rows of o.x = 1 do not reach the NULL o.x. For o.x = 1, a 10
+    // matches b 21.
     @Test
-    public void testLateralCorrelatedFullJoinSubQueryWhereKeyFails() throws Exception {
+    public void testLateralCorrelatedFullJoinSubQueryWhereKey() throws Exception {
         assertMemoryLeak(() -> {
             createNullOuterKeyTables();
-            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l")
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(80, "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t21
+                            2\tnull\t22
+                            """);
         });
     }
 
     // A FULL join to the correlated sub-query, keyed on a TIMESTAMP_NS or string column against an
     // outer column of another type, with a condition next to the WHERE key that reads the outer
-    // column. With a same-typed key the query fails at the FULL join, so it fails there with a
-    // mixed-type key too.
+    // column. Per outer row, a row 10 matches b row 20 for o row 1 and has a y below o.ts + 1 or
+    // o.s. The rows that the FULL join NULL-extends have a NULL a.ts or a.s, which equals the outer
+    // column of o row 3 only, and NULL < NULL is false, so WHERE drops them.
     @Test
-    public void testLateralCorrelatedFullJoinSubQueryWhereKeyRetypedKeyFails() throws Exception {
+    public void testLateralCorrelatedFullJoinSubQueryWhereKeyRetypedKey() throws Exception {
         assertMemoryLeak(() -> {
-            final String error = "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query";
+            final String rows = """
+                    id\taid\tsid
+                    1\t10\t20
+                    """;
             createRetypedKeyTables();
-            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, ts FROM b WHERE ts = o.ts) s ON a.ts = s.k WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3";
-            assertQuery(sql)
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, ts FROM b WHERE ts = o.ts) s ON a.ts = s.k WHERE a.ts = o.ts AND a.y < o.ts + 1) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(sql.indexOf("FULL"), error);
+                    .sizeMayVary()
+                    .returns(rows);
             execute("DROP TABLE o");
             execute("DROP TABLE a");
             execute("DROP TABLE b");
 
             createRetypedStringKeyTables("VARCHAR", "SYMBOL");
-            final String stringSql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, s FROM b WHERE s = o.s) s ON a.s = s.k WHERE a.s = o.s AND a.y < o.s) l ORDER BY 1, 2, 3";
-            assertQuery(stringSql)
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, s FROM b WHERE s = o.s) s ON a.s = s.k WHERE a.s = o.s AND a.y < o.s) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(stringSql.indexOf("FULL"), error);
+                    .sizeMayVary()
+                    .returns(rows);
         });
     }
 
@@ -1312,15 +1346,23 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The correlated ON of the INNER join before the FULL join keeps the outer-ref join ahead of
-    // the FULL join, which loses its unmatched refunds.
+    // The correlated ON of the INNER join before the FULL join joins trade 10 only for o.k = 1, and
+    // the FULL join keeps the refunds it does not match per outer row: refund 101 for o.k = 1, and
+    // both refunds for o.k = 2.
     @Test
-    public void testLateralCorrelatedInnerOnBeforeFullJoinFails() throws Exception {
+    public void testLateralCorrelatedInnerOnBeforeFullJoin() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k FULL JOIN refunds r ON r.k = t.x) l")
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k FULL JOIN refunds r ON r.k = t.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(117, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t101
+                            """);
         });
     }
 
@@ -1381,15 +1423,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                             3\t10\t100
                             3\t15\t102
                             """);
-            final String zeroInList = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id::short id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id IN (0, 10)) l";
-            assertQuery(zeroInList)
+            // the SHORT id of trade NULL is 0 too
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id::short id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id IN (0, 10)) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(zeroInList.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\t0\t100
+                            1\t0\t101
+                            1\t10\t100
+                            2\t0\t100
+                            2\t0\t101
+                            2\t0\t102
+                            3\t0\t100
+                            3\t0\t101
+                            3\t10\t100
+                            """);
         });
     }
 
     // BETWEEN is false for a NULL value, so it drops the refunds that match no trade, per outer row
-    // too. NOT BETWEEN keeps them, and they would carry a NULL outer-ref key and be lost.
+    // too. NOT BETWEEN keeps them, and trade NULL, which refund 100 matches for o.k = 1 and NULL.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithBetweenFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1402,17 +1456,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t15\t102
                             3\t15\t102
                             """);
-            final String notBetween = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id NOT BETWEEN 11 AND 15) l";
-            assertQuery(notBetween)
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id NOT BETWEEN 11 AND 15) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(notBetween.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t100
+                            1\tnull\t101
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t101
+                            2\tnull\t102
+                            3\tnull\t100
+                            3\tnull\t101
+                            3\t10\t100
+                            """);
         });
     }
 
     // WHERE t.id = $1 drops the refunds that match no trade per outer row while $1 is not NULL, as a
     // NULL t.id does not equal it: for $1 = 10, order 1 returns 10 100. For a NULL $1, = keeps those
-    // refunds, which the decorrelated query would lose, so the execution fails. The query compiles
-    // once for all three executions.
+    // refunds. The query compiles once for all three executions.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithBindVariableEquality() throws Exception {
         assertMemoryLeak(() -> {
@@ -1421,15 +1485,13 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
-                    .assertBinds(nullCheckBindCases(sql.indexOf("$1"), 10));
+                    .assertBinds(nullValueBindCases(10, UNMATCHED_REFUNDS));
         });
     }
 
-    // The code generator knows the type of a computed sub-query column, which LateralJoinRewriter
-    // does not, and decides on it as the rewriter does for a table column. Against a bind variable,
-    // = drops the refunds that match no trade from a computed INT column while the value is not NULL,
-    // which the plan checks once per execution. A computed SHORT column holds 0 in those refunds
-    // whatever the value, so the query fails.
+    // Against a bind variable, = drops the refunds that match no trade from a computed INT column
+    // while the value is not NULL, and keeps them while it is NULL. A computed SHORT column holds 0 in
+    // those refunds, so = keeps them while the value is 0.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithComputedColumnBindVariable() throws Exception {
         assertMemoryLeak(() -> {
@@ -1438,21 +1500,29 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
-                    .assertBinds(nullCheckBindCases(sql.indexOf("$1"), 10));
+                    .assertBinds(nullValueBindCases(10, UNMATCHED_REFUNDS));
             bindVariableService.clear();
             bindVariableService.setShort(0, (short) 10);
-            final String shortColumn = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id::short id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id = $1) l";
-            assertQuery(shortColumn)
+            final ObjList<BindVarTuple> shortCases = new ObjList<>();
+            shortCases.add(BindVarTuple.ok("value", "id\ttid\trid\n" + TRADE_10, bindVariableService -> bindVariableService.setShort(0, (short) 10)));
+            shortCases.add(BindVarTuple.ok("zero", """
+                    id\ttid\trid
+                    1\t0\t101
+                    2\t0\t100
+                    2\t0\t101
+                    """, bindVariableService -> bindVariableService.setShort(0, (short) 0)));
+            shortCases.add(BindVarTuple.ok("value again", "id\ttid\trid\n" + TRADE_10, bindVariableService -> bindVariableService.setShort(0, (short) 10)));
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id::short id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE t.id = $1) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(shortColumn.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .assertBinds(shortCases);
+            bindVariableService.clear();
         });
     }
 
-    // terminateHere() moves the correlated WHERE t.id > o.k into the ON clause of the outer-ref join,
-    // ahead of the RIGHT join. As t.id is computed, LateralJoinRewriter leaves the check of that
-    // conjunct to the code generator, and copies it into WHERE, after the join, as it does for a
-    // table column. The computed INT t.id is NULL in the rows that the join NULL-extends, so the copy
-    // drops them, also refund 101 for order 3, whose NULL key they would match otherwise.
+    // The computed INT t.id is NULL in the rows that the RIGHT join NULL-extends, so per outer row
+    // WHERE t.id > o.k drops them, as it does on a table column, and for the NULL o.k of order 3 it
+    // holds for no row at all. Trade 10 matches refund 100 for o.k = 1.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithComputedColumnCorrelatedFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1468,12 +1538,11 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // LateralJoinRewriter does not know the type of a sub-query column that the sub-query computes,
-    // that a set operation may widen or that a join may take from any of its tables, so the code
-    // generator, which knows it, checks a filter on such a column as the rewriter checks one on a
-    // table column. Per outer row, the RIGHT or FULL join NULL-extends trades for refund 101 of order
-    // 1 and for both refunds of order 2, which xs does not match: NULL in i, d and v, false in f and
-    // 0 in s. A filter that drops those rows returns 1 10 100, and one that keeps them fails.
+    // A sub-query column that the sub-query computes, that a set operation may widen or that a join
+    // may take from any of its tables. Per outer row, the RIGHT or FULL join NULL-extends trades for
+    // refund 101 of order 1 and for both refunds of order 2, which xs does not match: NULL in i, d
+    // and v, false in f and 0 in s. A filter that drops those rows returns 1 10 100, and one that
+    // keeps them returns them, with trade 10 when it holds for it too.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithComputedColumnFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1502,20 +1571,31 @@ public class LateralJoinTest extends AbstractCairoTest {
                                         1\t10\t100
                                         """);
                     }
-                    for (String filter : new String[]{"t.s = 0", "t.s IS NOT NULL", "t.f = false", "t.i IS NULL", "t.d != 0.5", "t.v != 'a'", "t.s > x.v - 1000"}) {
-                        assertQuery(body + filter + ") l")
+                    final String[][] cases = {
+                            {"t.s = 0", UNMATCHED_REFUNDS},
+                            {"t.s IS NOT NULL", TRADE_10_AND_UNMATCHED_REFUNDS},
+                            {"t.f = false", UNMATCHED_REFUNDS},
+                            {"t.i IS NULL", UNMATCHED_REFUNDS},
+                            {"t.d != 0.5", TRADE_10_AND_UNMATCHED_REFUNDS},
+                            {"t.v != 'a'", TRADE_10_AND_UNMATCHED_REFUNDS},
+                            // NULL - 1000 is NULL, and 0 > NULL is false
+                            {"t.s > x.v - 1000", TRADE_10}
+                    };
+                    for (String[] c : cases) {
+                        assertQuery(body + c[0] + ") l ORDER BY 1, 2, 3")
                                 .noLeakCheck()
-                                .fails(body.indexOf(join + " JOIN refunds"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                                .sizeMayVary()
+                                .returns("id\ttid\trid\n" + c[1]);
                     }
                 }
             }
         });
     }
 
-    // Per outer row, IN with non-NULL values drops the refunds that match no trade, so losing them
-    // changes nothing. The NULL k of order 3 matches the NULL key of xs, and the NULL x of trade 15
-    // matches refund 102. As = matches NULL to NULL, IN with a NULL value keeps those refunds, and
-    // so does NOT IN. They would carry a NULL outer-ref key and be lost, so those filters fail.
+    // Per outer row, IN with non-NULL values drops the refunds that match no trade. The NULL k of
+    // order 3 matches the NULL key of xs, and the NULL x of trade 15 matches refund 102. As = matches
+    // NULL to NULL, IN with a NULL value keeps the refunds that match no trade, and trade NULL, which
+    // refund 100 matches for o.k = 1 and NULL. NOT IN keeps the refunds that match no trade too.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithInFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1530,21 +1610,51 @@ public class LateralJoinTest extends AbstractCairoTest {
                             3\t10\t100
                             3\t15\t102
                             """);
-            for (String filter : new String[]{"t.id IN (NULL, 10)", "t.id NOT IN (10, 15)"}) {
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE " + filter + ") l";
+            final String[][] cases = {
+                    {
+                            "t.id IN (NULL, 10)",
+                            """
+                                    id\ttid\trid
+                                    1\tnull\t100
+                                    1\tnull\t101
+                                    1\t10\t100
+                                    2\tnull\t100
+                                    2\tnull\t101
+                                    2\tnull\t102
+                                    3\tnull\t100
+                                    3\tnull\t101
+                                    3\t10\t100
+                                    """
+                    },
+                    {
+                            "t.id NOT IN (10, 15)",
+                            """
+                                    id\ttid\trid
+                                    1\tnull\t100
+                                    1\tnull\t101
+                                    2\tnull\t100
+                                    2\tnull\t101
+                                    2\tnull\t102
+                                    3\tnull\t100
+                                    3\tnull\t101
+                                    """
+                    }
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE " + c[0] + ") l ORDER BY 1, 2, 3";
                 assertQuery(sql)
                         .noLeakCheck()
-                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                        .sizeMayVary()
+                        .returns(c[1]);
             }
         });
     }
 
-    // The ON clause of the RIGHT or FULL join reads the outer row through refunds only, so only the
-    // order as written keeps trades ahead of the join. Run after it, trades would fill in the columns
-    // of refund 103, which matches no outer key and so has a NULL outer-ref key, and that NULL key
-    // would match order 3. Per outer row, the refund with the outer key matches every trade, refund
-    // 102 for the NULL key of order 3, as = matches NULL to NULL, and t.id > 0 drops trade NULL and
-    // the unmatched refunds.
+    // The ON clause of the RIGHT or FULL join reads the outer row through refunds only. Per outer
+    // row, the refund with the outer key matches every trade, refund 102 for the NULL key of order 3,
+    // as = matches NULL to NULL, and t.id > 0 drops trade NULL and the unmatched refunds. Without the
+    // filter, both joins keep the unmatched refunds, refund 103 for every outer row, and as every
+    // trade finds a refund, the FULL join returns the rows of the RIGHT join.
     @Test
     public void testLateralCorrelatedOuterJoinOnOnlyOuterKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -1567,11 +1677,33 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 3\t12\t102
                                 3\t15\t102
                                 """);
-                // without the filter, the unmatched refunds would lose their outer row
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (" + body + ") l";
-                assertQuery(sql)
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (" + body + ") l ORDER BY 1, 2, 3")
                         .noLeakCheck()
-                        .fails(sql.indexOf(join + " JOIN"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                        .sizeMayVary()
+                        .returns("""
+                                id\ttid\trid
+                                1\tnull\t100
+                                1\tnull\t101
+                                1\tnull\t102
+                                1\tnull\t103
+                                1\t10\t100
+                                1\t12\t100
+                                1\t15\t100
+                                2\tnull\t100
+                                2\tnull\t101
+                                2\tnull\t102
+                                2\tnull\t103
+                                2\t10\t101
+                                2\t12\t101
+                                2\t15\t101
+                                3\tnull\t100
+                                3\tnull\t101
+                                3\tnull\t102
+                                3\tnull\t103
+                                3\t10\t102
+                                3\t12\t102
+                                3\t15\t102
+                                """);
             }
         });
     }
@@ -1629,14 +1761,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // s holds b row 20, which matches no a row. Per outer row, the first two queries return 1 null 20,
-    // and the third, whose filter drops that row, returns 1 10 null and 1 11 null. The rewriter keeps
-    // the outer-ref join ahead of a RIGHT or FULL join to a correlated sub-query, but checks neither that
-    // the join keeps its unmatched rows nor the ON clause from which it removes the clone of the
-    // sub-query: with the second outer column o.k, it drops a.k = s.x. Run with a ahead of the join, each
-    // rewritten query returns 1 10 20 and 1 11 20, so the optimiser leaves the order free and the
-    // queries fail instead.
+    // and the third, whose filter drops that row, returns 1 10 null and 1 11 null, as the ON clause of
+    // the FULL join, which reads the second outer column o.k, matches no a row with s.
     @Test
-    public void testLateralCorrelatedOuterJoinToCorrelatedSubQueryFails() throws Exception {
+    public void testLateralCorrelatedOuterJoinToCorrelatedSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, k INT, x INT)");
             execute("CREATE TABLE a (id INT, k INT, x INT)");
@@ -1650,58 +1778,93 @@ public class LateralJoinTest extends AbstractCairoTest {
                     // the ON clause reads o.k, and WHERE drops the rows that the join NULL-extends on a
                     "a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.k = s.x AND s.k < o.k WHERE a.id > 0",
             };
-            for (String body : bodies) {
-                final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM " + body + ") l";
-                assertQuery(sql).noLeakCheck().fails(sql.indexOf(") s ON") + 2, "could not determine join order for this table");
+            final String unmatchedB = """
+                    id\taid\tsid
+                    1\tnull\t20
+                    """;
+            final String[] rows = {
+                    unmatchedB,
+                    unmatchedB,
+                    """
+                            id\taid\tsid
+                            1\t10\tnull
+                            1\t11\tnull
+                            """
+            };
+            for (int i = 0; i < bodies.length; i++) {
+                assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM " + bodies[i] + ") l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .returns(rows[i]);
             }
         });
     }
 
     // Per outer row, count(*) counts both refunds: 2 for each order.
     @Test
-    public void testLateralCorrelatedRightJoinOnCountFails() throws Exception {
+    public void testLateralCorrelatedRightJoinOnCount() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.c FROM orders o JOIN LATERAL (SELECT count(*) c FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l")
+            assertQuery("SELECT o.id, l.c FROM orders o JOIN LATERAL (SELECT count(*) c FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .fails(77, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t2
+                            """);
         });
     }
 
     // Per outer row, the RIGHT JOIN keeps both refunds: 1 10 100, 1 null 101, 2 null 100 and
-    // 2 null 101. The unmatched ones would carry a NULL outer-ref key and be dropped.
+    // 2 null 101. The unmatched ones carry the outer row of their own copy of the refunds.
     @Test
-    public void testLateralCorrelatedRightJoinOnFails() throws Exception {
+    public void testLateralCorrelatedRightJoinOn() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l")
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t101
+                            """);
         });
     }
 
-    // WHERE t.id IS NULL keeps exactly the unmatched refunds, which the decorrelated query loses.
+    // WHERE t.id IS NULL keeps exactly the refunds that the RIGHT join NULL-extends per outer row.
     @Test
-    public void testLateralCorrelatedRightJoinOnIsNullFilterFails() throws Exception {
+    public void testLateralCorrelatedRightJoinOnIsNullFilter() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.rid FROM orders o JOIN LATERAL (SELECT r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id IS NULL) l")
+            assertQuery("SELECT o.id, l.rid FROM orders o JOIN LATERAL (SELECT r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id IS NULL) l ORDER BY 1, 2")
                     .noLeakCheck()
-                    .fails(77, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\trid
+                            1\t101
+                            2\t100
+                            2\t101
+                            """);
         });
     }
 
-    // WHERE t.x = o.k lets the rewrite drop the outer-ref join and key the rows by t.x, which the
-    // RIGHT join NULL-extends. For a NULL o.k, the ON clause matches no refund, and WHERE keeps
-    // every refund with a NULL t.x, also those that match trade 10 for o.k = 1. One RIGHT join
-    // cannot produce both, so the query fails as it does without the WHERE equality.
+    // WHERE t.x = o.k keeps, per outer row, the refund that trade 10 matches for o.k = 1, and drops
+    // the refunds that the RIGHT join NULL-extends, as their NULL t.x equals no o.k.
     @Test
-    public void testLateralCorrelatedRightJoinOnWhereKeyFails() throws Exception {
+    public void testLateralCorrelatedRightJoinOnWhereKey() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.x = o.k) l")
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.x = o.k) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
         });
     }
 
@@ -1730,10 +1893,9 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // NULL >= NULL is true, so WHERE t.id >= $1 drops the refunds that match no trade per outer row
     // only while $1 is not NULL: for $1 = 5, order 1 returns 10 100. For a NULL $1, it keeps 1 null
-    // 101, 2 null 100 and 2 null 101, which the decorrelated query would lose, so the execution
-    // fails. The query compiles once for all three executions, and checks $1 at the top of the plan.
-    // A cast of NULL is NULL in every execution, so such a filter fails to compile. < and > are false
-    // for a NULL t.id whatever $1 holds, so they drop those refunds for every value, without a check.
+    // 101, 2 null 100 and 2 null 101. The query compiles once for all three executions, and checks $1
+    // at the top of the plan. A cast of NULL keeps them in every execution. < and > are false for a
+    // NULL t.id whatever $1 holds, so they drop those refunds for every value, without a check.
     @Test
     public void testLateralCorrelatedRightJoinOnWithBindVariableFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1744,7 +1906,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                 assertQuery(sql)
                         .noLeakCheck()
                         .expectSize()
-                        .assertBinds(nullCheckBindCases(sql.indexOf("$1"), value));
+                        .assertBinds(nullValueBindCases(value, UNMATCHED_REFUNDS));
                 bindVariableService.clear();
                 bindVariableService.setInt(0, value);
                 assertQuery(sql)
@@ -1754,10 +1916,10 @@ public class LateralJoinTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setInt(0, 5);
             for (String filter : new String[]{"t.id >= NULL::int", "t.id <= CAST(NULL AS INT)"}) {
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
-                assertQuery(sql)
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3")
                         .noLeakCheck()
-                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                        .sizeMayVary()
+                        .returns("id\ttid\trid\n" + UNMATCHED_REFUNDS);
             }
             final String gtSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > $1) l ORDER BY 1, 2, 3";
             assertQuery(gtSql)
@@ -1777,9 +1939,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // systimestamp() is not a runtime constant, so the plan cannot check WHERE t.ts <= systimestamp()
-    // once per execution, and LateralJoinRewriter skips that conjunct for t.id >= $1, whose value the
-    // plan checks: for $1 = 5, order 1 returns 10 100, and a NULL $1 fails the execution.
+    // WHERE t.ts <= systimestamp() reads the clock in every row, so the plan cannot check it once per
+    // execution, and checks the value of t.id >= $1 instead: for $1 = 5, order 1 returns 10 100. For a
+    // NULL $1, t.id >= NULL holds for the refunds that match no trade, and t.ts <= systimestamp()
+    // drops them, as their t.ts is NULL, so no row remains.
     @Test
     public void testLateralCorrelatedRightJoinOnWithBindVariableAfterRowVaryingFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1788,7 +1951,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
-                    .assertBinds(nullCheckBindCases(sql.indexOf("$1"), 5));
+                    .assertBinds(nullValueBindCases(5, ""));
             bindVariableService.clear();
             bindVariableService.setInt(0, 5);
             assertQuery(sql)
@@ -1797,11 +1960,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // A row-varying operand, such as one over systimestamp(), takes no single value per execution,
-    // so the plan cannot check it for NULL once, and the filter may keep the refunds that match no
-    // trade per outer row: with a NULL $1, each filter below returns 1 null 101, 2 null 100 and
-    // 2 null 101, which the decorrelated query would lose. Such a filter fails to compile, also on a
-    // computed sub-query column, whose type only the code generator knows.
+    // A row-varying operand, such as one over systimestamp(), is NULL here: with a NULL $1, dateadd()
+    // returns NULL. NULL = NULL and NULL >= NULL are true, so each filter below keeps the refunds
+    // that match no trade per outer row: 1 null 101, 2 null 100 and 2 null 101. So does a filter on a
+    // computed sub-query column.
     @Test
     public void testLateralCorrelatedRightJoinOnWithRowVaryingNullFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1814,20 +1976,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     {"(SELECT id + 0 id, x, ts FROM trades)", "t.id >= CASE WHEN systimestamp() > 0::timestamp THEN NULL::int END"}
             };
             for (String[] c : cases) {
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + c[0] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[1] + ") l";
-                assertQuery(sql)
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + c[0] + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[1] + ") l ORDER BY 1, 2, 3")
                         .noLeakCheck()
-                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                        .sizeMayVary()
+                        .returns("id\ttid\trid\n" + UNMATCHED_REFUNDS);
             }
+            bindVariableService.clear();
         });
     }
 
     // A text bind variable converts to the type of the column it is compared with: '0.0.0.0' is the
     // NULL of an IPv4 column, and 'NaN' that of a DOUBLE column. Against such a NULL, WHERE keeps the
-    // refunds that match no trade per outer row, which the decorrelated query would lose, so the
-    // execution fails, as it does for a NULL text compared with a SYMBOL column. A value that converts
-    // to no NULL drops them: order 1 returns 10 100. The plan checks the filter on the NULL of the
-    // column type once per execution.
+    // refunds that match no trade per outer row, as it does for a NULL text compared with a SYMBOL
+    // column. A value that converts to no NULL drops them: order 1 returns 10 100. The compiled query
+    // returns the rows of each value in turn. The plan checks the filter on the NULL of the column
+    // type once per execution.
     @Test
     public void testLateralCorrelatedRightJoinOnWithTextBindVariableFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1844,14 +2007,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                 final String value = c[2];
                 final String nullText = c[3];
                 final ObjList<BindVarTuple> binds = new ObjList<>();
-                binds.add(BindVarTuple.ok("non-NULL value", "id\ttid\trid\n1\t10\t100\n", bindVariableService -> bindVariableService.setStr(0, value)));
-                binds.add(BindVarTuple.fails(
-                        "NULL text",
-                        sql.indexOf("$1"),
-                        "is not supported in a correlated lateral sub-query when this value is NULL",
-                        bindVariableService -> bindVariableService.setStr(0, nullText)
-                ));
-                binds.add(BindVarTuple.ok("non-NULL value again", "id\ttid\trid\n1\t10\t100\n", bindVariableService -> bindVariableService.setStr(0, value)));
+                binds.add(BindVarTuple.ok("non-NULL value", "id\ttid\trid\n" + TRADE_10, bindVariableService -> bindVariableService.setStr(0, value)));
+                binds.add(BindVarTuple.ok("NULL text", "id\ttid\trid\n" + UNMATCHED_REFUNDS, bindVariableService -> bindVariableService.setStr(0, nullText)));
+                binds.add(BindVarTuple.ok("non-NULL value again", "id\ttid\trid\n" + TRADE_10, bindVariableService -> bindVariableService.setStr(0, value)));
                 assertQuery(sql)
                         .noLeakCheck()
                         .expectSize()
@@ -1941,35 +2099,53 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // The INNER join keyed on t.x does not drop the unmatched refunds: = matches their NULL t.x
     // to the NULL key of xs. Per outer row, o.k = 1 returns 1 10 100 100 and 1 null 101 200, and
-    // o.k = 2 returns 2 null 100 200 and 2 null 101 200. The unmatched refunds would carry a NULL
-    // outer-ref key and be lost, so the query fails.
+    // o.k = 2 returns 2 null 100 200 and 2 null 101 200.
     @Test
-    public void testLateralCorrelatedRightJoinOnWithMasterKeyedJoinFails() throws Exception {
+    public void testLateralCorrelatedRightJoinOnWithMasterKeyedJoin() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             execute("INSERT INTO xs VALUES (NULL, 200)");
-            assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x) l")
+            assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x) l ORDER BY 1, 2, 3, 4")
                     .noLeakCheck()
-                    .fails(104, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid\tv
+                            1\tnull\t101\t200
+                            1\t10\t100\t100
+                            2\tnull\t100\t200
+                            2\tnull\t101\t200
+                            """);
         });
     }
 
     // NaN is the NULL of a DOUBLE column, and so are the strings 'NaN' and 'Infinity' that a DOUBLE
-    // column reads, and '0.0.0.0' is the NULL of an IPv4 column. = and <= against them, and IN with
-    // them, keep the refunds that match no trade per outer row: WHERE t.d = NaN returns 1 null 101,
-    // 2 null 100 and 2 null 101. They would carry a NULL outer-ref key and be lost, so those filters
-    // fail. != against them is IS NOT NULL, which drops those refunds, and so does IN with non-NULL
-    // values on a SYMBOL column.
+    // column reads, and '0.0.0.0' is the NULL of an IPv4 column. = and <= against them keep the
+    // refunds that match no trade per outer row: WHERE t.d = NaN returns 1 null 101, 2 null 100 and
+    // 2 null 101. IN with them keeps trade 10 too when it lists its value. != against them is IS NOT
+    // NULL, which drops those refunds, and so does IN with non-NULL values on a SYMBOL column.
     @Test
     public void testLateralCorrelatedRightJoinOnWithNullConstantFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTypedCorrelatedRightJoinTables();
-            for (String filter : new String[]{"t.d = NaN", "t.d <= NaN", "t.d IN (NaN, 10.0)", "t.ip = '0.0.0.0'", "t.ip IN ('0.0.0.0', '1.1.1.1')",
-                    "t.d = 'NaN'", "'NaN' = t.d", "t.d >= 'NaN'", "t.d IN ('NaN', 10.0)", "t.d = 'Infinity'", "t.d >= NULL::double", "t.sym IN (NULL, 'abc')"}) {
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
-                assertQuery(sql)
+            final String[][] cases = {
+                    {"t.d = NaN", UNMATCHED_REFUNDS},
+                    {"t.d <= NaN", UNMATCHED_REFUNDS},
+                    {"t.d IN (NaN, 10.0)", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.ip = '0.0.0.0'", UNMATCHED_REFUNDS},
+                    {"t.ip IN ('0.0.0.0', '1.1.1.1')", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.d = 'NaN'", UNMATCHED_REFUNDS},
+                    {"'NaN' = t.d", UNMATCHED_REFUNDS},
+                    {"t.d >= 'NaN'", UNMATCHED_REFUNDS},
+                    {"t.d IN ('NaN', 10.0)", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.d = 'Infinity'", UNMATCHED_REFUNDS},
+                    {"t.d >= NULL::double", UNMATCHED_REFUNDS},
+                    {"t.sym IN (NULL, 'abc')", TRADE_10_AND_UNMATCHED_REFUNDS}
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[0] + ") l ORDER BY 1, 2, 3")
                         .noLeakCheck()
-                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                        .sizeMayVary()
+                        .returns("id\ttid\trid\n" + c[1]);
             }
             for (String filter : new String[]{"t.d != NaN", "t.ip != '0.0.0.0'", "t.d != 'NaN'", "t.d = 10.0", "t.sym IN ('abc', 'xyz')"}) {
                 assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3")
@@ -1984,30 +2160,36 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // NULL >= NULL is true, so per outer row WHERE t.id >= o.k keeps both unmatched refunds for
-    // the NULL o.k of order 3: 3 null 100 and 3 null 101. They would carry a NULL outer-ref key
-    // and be lost, so the query fails.
+    // the NULL o.k of order 3: 3 null 100 and 3 null 101. For o.k = 1 it keeps trade 10, and for
+    // o.k = 2 nothing.
     @Test
-    public void testLateralCorrelatedRightJoinOnWithNullableMasterFilterFails() throws Exception {
+    public void testLateralCorrelatedRightJoinOnWithNullableMasterFilter() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             execute("INSERT INTO orders VALUES (3, NULL, 3::timestamp)");
-            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= o.k) l")
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= o.k) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            3\tnull\t100
+                            3\tnull\t101
+                            """);
         });
     }
 
-    // The scalar sub-query runs when the query runs. max(id) over no row is NULL, so WHERE keeps the
-    // refunds that match no trade, which the decorrelated query would lose, and the execution
-    // fails. min(id) is 10, which drops them.
+    // The scalar sub-query runs when the query runs. max(id) over no row is NULL, and NULL >= NULL is
+    // true, so WHERE keeps the refunds that match no trade per outer row. min(id) is 10, which drops
+    // them.
     @Test
     public void testLateralCorrelatedRightJoinOnWithScalarSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            final String nullSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT max(id) FROM trades WHERE id > 1000)) l";
-            assertQuery(nullSql)
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT max(id) FROM trades WHERE id > 1000)) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(nullSql.indexOf("SELECT max"), "is not supported in a correlated lateral sub-query when this value is NULL");
+                    .sizeMayVary()
+                    .returns("id\ttid\trid\n" + UNMATCHED_REFUNDS);
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT min(id) FROM trades)) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
                     .expectSize()
@@ -2040,15 +2222,14 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // A sub-query that is NULL in some executions only must give the NULL check and the filter the
-    // same value: when the check sees 0 and the filter NULL, the filter drops every row, and the
-    // query returns no row instead of failing or returning 1 10 100.
+    // A sub-query that is NULL in some executions only: each execution returns the rows of the value
+    // that the sub-query takes in that execution, see assertScalarSubQueryFilterOfEitherValue().
     @Test
     public void testLateralCorrelatedRightJoinOnWithScalarSubQueryFilterRandomNull() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertScalarSubQueryFilterNeverEmpty("t.id >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::int ELSE 0 END FROM long_sequence(1))");
-            assertScalarSubQueryFilterNeverEmpty("t.ts >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::timestamp ELSE 0::timestamp END FROM long_sequence(1))");
+            assertScalarSubQueryFilterOfEitherValue("t.id >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::int ELSE 0 END FROM long_sequence(1))");
+            assertScalarSubQueryFilterOfEitherValue("t.ts >= (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::timestamp ELSE 0::timestamp END FROM long_sequence(1))");
         });
     }
 
@@ -2081,8 +2262,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // The sub-query picks trade 20, the only one with id > 10. Per outer row, t.id = 20 and
-    // t.id >= 20 keep trade 20 with refund 101 for order 2. The NULL check of the sub-query must
-    // read the value that the sub-query returns with its WHERE, as the filter reads that value.
+    // t.id >= 20 keep trade 20 with refund 101 for order 2. The filter must read the value that the
+    // sub-query returns with its WHERE, not trade 10, its first row without it.
     @Test
     public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2168,18 +2349,22 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // No trade has id > 1000, so the sub-query is NULL, and the execution fails as it does for
-    // max(id) over no row. Trade 10, the value of the sub-query without its WHERE, must not pass
-    // the check.
+    // No trade has id > 1000, so the sub-query is NULL, and NULL >= NULL keeps the refunds that match
+    // no trade per outer row: refund 101 for o.k = 1, and refund 100 for o.k = 2, where trade 20
+    // matches refund 101. Trade 10, the value of the sub-query without its WHERE, must not count.
     @Test
     public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterNull() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
             execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
-            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT id FROM trades WHERE id > 1000 LIMIT 1)) l";
-            assertQuery(sql)
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT id FROM trades WHERE id > 1000 LIMIT 1)) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(sql.indexOf("SELECT id FROM trades WHERE id > 1000"), "is not supported in a correlated lateral sub-query when this value is NULL");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            2\tnull\t100
+                            """);
         });
     }
 
@@ -2206,9 +2391,8 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // A sub-query column that passes a table column through has its type, under the same name or
     // another, so WHERE t.v IS NOT NULL on the INT id drops the refunds that match no trade, per
-    // outer row too. The type of a computed column is not known before code generation, and a
-    // SHORT one holds 0 in those refunds, which IS NOT NULL keeps. Such a filter fails, while
-    // t.v > 5 is false for both NULL and 0 and counts.
+    // outer row too. A computed SHORT column holds 0 in those refunds, which IS NOT NULL keeps,
+    // while t.v > 5 is false for both NULL and 0.
     @Test
     public void testLateralCorrelatedRightJoinOnWithSubQueryColumnFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2222,10 +2406,16 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 1\t10\t100
                                 """);
             }
-            final String computed = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v IS NOT NULL) l";
-            assertQuery(computed)
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v IS NOT NULL) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .fails(computed.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns("""
+                            id\ttid\trid
+                            1\t0\t101
+                            1\t10\t100
+                            2\t0\t100
+                            2\t0\t101
+                            """);
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v > 5) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
                     .expectSize()
@@ -2237,20 +2427,28 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // A sub-query that passes the SHORT, BYTE and BOOLEAN columns of trades through holds 0 or false
-    // in them for the refunds that match no trade, as the table does. A filter that holds for 0 or
-    // false keeps those refunds per outer row: WHERE t.s < 11 returns 1 10 100, 1 null 101,
-    // 2 null 100 and 2 null 101. They would carry a NULL outer-ref key and be lost, so such a filter
-    // fails. A filter that is false for 0 or false drops them, so losing them changes nothing.
+    // in them for the refunds that match no trade, as the table does. Per outer row, a filter that
+    // holds for 0 or false keeps those refunds: WHERE t.s < 11 returns 1 10 100, 1 null 101,
+    // 2 null 100 and 2 null 101. A filter that is false for 0 or false keeps trade 10 only.
     @Test
     public void testLateralCorrelatedRightJoinOnWithSubQueryTypeWithoutNullFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTypedCorrelatedRightJoinTables();
+            final String[][] cases = {
+                    {"t.s < 11", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.s >= 0", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.s = 0", UNMATCHED_REFUNDS},
+                    {"t.s IS NOT NULL", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.b <= 10", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.f = false", UNMATCHED_REFUNDS},
+                    {"t.f IS NOT NULL", TRADE_10_AND_UNMATCHED_REFUNDS}
+            };
             for (String table : new String[]{"(SELECT id, x, s, b, f FROM trades)", "(SELECT * FROM trades)", "(SELECT * FROM (SELECT id, x, s, b, f FROM trades))"}) {
-                for (String filter : new String[]{"t.s < 11", "t.s >= 0", "t.s = 0", "t.s IS NOT NULL", "t.b <= 10", "t.f = false", "t.f IS NOT NULL"}) {
-                    final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
-                    assertQuery(sql)
+                for (String[] c : cases) {
+                    assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[0] + ") l ORDER BY 1, 2, 3")
                             .noLeakCheck()
-                            .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                            .sizeMayVary()
+                            .returns("id\ttid\trid\n" + c[1]);
                 }
                 for (String filter : new String[]{"t.s > 5", "t.b >= 1", "t.f = true"}) {
                     assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3")
@@ -2265,10 +2463,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Each lateral NULL check passes its scalar sub-query value only to the filter over the same
-    // sub-query. The two guards have the same function class, min(id) is 20 and min(k) is 1, so a
-    // value passed to the other guard's filter drops every row or keeps 1 10 100. Two guards in one
-    // body tell the sub-queries apart, and two bodies with one guard each tell the checks apart.
+    // Each filter reads the value of its own scalar sub-query. The two sub-queries have the same
+    // function class, min(id) is 20 and min(k) is 1, so a filter that read the value of the other one
+    // would drop every row or keep 1 10 100. Two filters in one body, and two bodies with one filter
+    // each, tell the sub-queries apart.
     @Test
     public void testLateralCorrelatedRightJoinOnWithTwoScalarSubQueryFilters() throws Exception {
         assertMemoryLeak(() -> {
@@ -2308,19 +2506,30 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // BOOLEAN, BYTE and SHORT have no NULL, so the refunds that match no trade hold false or 0 in
-    // those columns of trades. A filter that holds for false or 0 keeps them per outer row: WHERE
-    // t.s < 11 returns 1 10 100, 1 null 101, 2 null 100 and 2 null 101. They would carry a NULL
-    // outer-ref key and be lost, so such a filter fails. A filter that is false for false or 0,
-    // such as t.s > 5, drops them, so losing them changes nothing.
+    // those columns of trades. Per outer row, a filter that holds for false or 0 keeps them: WHERE
+    // t.s < 11 returns 1 10 100, 1 null 101, 2 null 100 and 2 null 101, and WHERE t.s = 0 all but
+    // trade 10. A filter that is false for false or 0, such as t.s > 5, keeps trade 10 only.
     @Test
     public void testLateralCorrelatedRightJoinOnWithTypeWithoutNullFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTypedCorrelatedRightJoinTables();
-            for (String filter : new String[]{"t.s < 11", "t.s >= 0", "t.s = 0", "t.s IS NOT NULL", "t.s IN (0, 10)", "t.b <= 10", "t.b IN (0, 10)", "t.f = false", "t.f IS NOT NULL", "t.s > r.id - 200"}) {
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
-                assertQuery(sql)
+            final String[][] cases = {
+                    {"t.s < 11", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.s >= 0", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.s = 0", UNMATCHED_REFUNDS},
+                    {"t.s IS NOT NULL", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.s IN (0, 10)", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.b <= 10", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.b IN (0, 10)", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.f = false", UNMATCHED_REFUNDS},
+                    {"t.f IS NOT NULL", TRADE_10_AND_UNMATCHED_REFUNDS},
+                    {"t.s > r.id - 200", TRADE_10_AND_UNMATCHED_REFUNDS}
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[0] + ") l ORDER BY 1, 2, 3")
                         .noLeakCheck()
-                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                        .sizeMayVary()
+                        .returns("id\ttid\trid\n" + c[1]);
             }
             for (String filter : new String[]{"t.s > 5", "5 < t.s", "t.s != 0", "t.s IN (5, 10)", "t.b >= 1", "t.b IN (10)", "t.f = true"}) {
                 assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3")
@@ -2543,11 +2752,18 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // A later FULL join NULL-extends the rows of the repaired RIGHT join, see
-    // testLateralCorrelatedRightJoinSubQueryWhereKeyLaterRightJoinFails().
+    // A later FULL join NULL-extends the rows of the RIGHT join with s. Per outer row, it keeps the c
+    // rows that match no s row, c rows 100 and 102 for the NULL o.x, whose a.x is NULL, as WHERE
+    // a.x = o.x keeps them for the NULL o.x only.
     @Test
-    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterFullJoinFails() throws Exception {
-        assertRepairedRightJoinFollowedByJoinFails("FULL JOIN c ON c.sid = s.id");
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterFullJoin() throws Exception {
+        assertRightJoinSubQueryWhereKeyLaterJoin("FULL JOIN c ON c.sid = s.id", """
+                id\taid\tsid\tcid
+                1\t10\t21\t100
+                2\tnull\tnull\t100
+                2\tnull\tnull\t102
+                2\tnull\t22\t101
+                """);
     }
 
     // The rewrite moves the equality between a.x and the outer key that s carries into WHERE, after
@@ -2618,10 +2834,17 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // The RIGHT join with c2 is not the next join after the RIGHT join with s, and it still NULL-extends
-    // the rows of that join, so the rewriter does not repair it.
+    // the rows of that join: per outer row, c2 rows 100 and 102 match no s row for the NULL o.x, and
+    // WHERE a.x = o.x keeps them, with NULL in every column but those of c2.
     @Test
-    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoinThenRightJoinFails() throws Exception {
-        assertRepairedRightJoinFollowedByJoinFails("JOIN c ON c.sid = s.id RIGHT JOIN c c2 ON c2.sid = s.id");
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoinThenRightJoin() throws Exception {
+        assertRightJoinSubQueryWhereKeyLaterJoin("JOIN c ON c.sid = s.id RIGHT JOIN c c2 ON c2.sid = s.id", """
+                id\taid\tsid\tcid
+                1\t10\t21\t100
+                2\tnull\tnull\tnull
+                2\tnull\tnull\tnull
+                2\tnull\t22\t101
+                """);
     }
 
     // No c row has sid = s.id + 100, so the LEFT join keeps each row with a NULL cid.
@@ -2640,17 +2863,23 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // A later RIGHT join NULL-extends the rows of the RIGHT join with s, so the rewriter does not
-    // repair that join, see LateralJoinRewriter.checkOuterJoinsAfterOuterRef(), and the query fails
-    // at its join keyword.
+    // A later RIGHT join NULL-extends the rows of the RIGHT join with s. Per outer row, it keeps the c
+    // rows that match no s row, which WHERE a.x = o.x keeps for the NULL o.x only, as in
+    // testLateralCorrelatedRightJoinSubQueryWhereKeyLaterFullJoin().
     @Test
-    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterRightJoinFails() throws Exception {
-        assertRepairedRightJoinFollowedByJoinFails("RIGHT JOIN c ON c.sid = s.id");
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterRightJoin() throws Exception {
+        assertRightJoinSubQueryWhereKeyLaterJoin("RIGHT JOIN c ON c.sid = s.id", """
+                id\taid\tsid\tcid
+                1\t10\t21\t100
+                2\tnull\tnull\t100
+                2\tnull\tnull\t102
+                2\tnull\t22\t101
+                """);
     }
 
     @Test
     public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterSpliceJoinFails() throws Exception {
-        assertRepairedRightJoinFollowedByJoinFails("SPLICE JOIN c");
+        assertRightJoinSubQueryWhereKeyLaterSpliceJoinFails();
     }
 
     @Test
@@ -2855,13 +3084,11 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The ON clause of the RIGHT join reads both outer queries, so LateralJoinRewriter checks the
-    // filter after the join once for each of them, and on a computed column leaves both checks to
-    // the code generator, which fails the query unless both hold. Per order 1 and ps row, the filters
-    // drop the refund that matches no trade; order 2 matches no refund. A computed column behaves as
-    // the column that it passes through: t.s != 0 drops the refunds that the join NULL-extends, while
-    // t.s = 0 keeps them, as t.s holds 0 there. One of the checks reads only WHERE, so t.i IS NOT
-    // NULL in the ON clause of a later INNER join satisfies the other one only, and t.s = 0 fails.
+    // The ON clause of the RIGHT join reads both outer queries. Per order 1 and ps row, t.s != 0 drops
+    // the refund that matches no trade, and WHERE t.x = o.k drops it too, as its NULL t.x equals no
+    // o.k. A computed column behaves as the column that it passes through: t.s holds 0 in the rows
+    // that the join NULL-extends, so t.s = 0 holds there but t.x = o.k does not, and trade 10 has
+    // s = 10, so no row remains, also after a later INNER join.
     @Test
     public void testLateralNestedCorrelatedRightJoinWithComputedColumnFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2887,9 +3114,10 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 1\t11\t10\t100
                                 """);
                 for (String tail : new String[]{"WHERE t.x = o.k AND t.s = 0", "JOIN xs y ON y.k = r.k AND t.i IS NOT NULL WHERE t.x = o.k AND t.s = 0"}) {
-                    assertQuery(body + tail + ") m) l")
+                    assertQuery(body + tail + ") m) l ORDER BY 1, 2, 3, 4")
                             .noLeakCheck()
-                            .fails(body.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                            .sizeMayVary()
+                            .returns("id\tpid\ttid\trid\n");
                 }
             }
         });
@@ -3854,30 +4082,68 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // A condition on the outer row alone in the ON clause of a join before a RIGHT or FULL join decides,
-    // per outer row, whether the master side of that join is empty, so the rewriter leaves it in its
-    // ON clause, where it reads the outer row ahead of the RIGHT or FULL join, and rejects the query
-    // at that join. Each query fails, and the tables still serve a query.
+    // per outer row, whether the master side of that join is empty. Per outer row, o.x > 1 leaves it
+    // empty for o row 1, and the RIGHT or FULL join then NULL-extends every s row, which WHERE a.x =
+    // o.x drops, as their NULL a.x is not 1. For the NULL o.x of o row 2 it keeps them, as NULL = NULL
+    // is true, and for o row 3, a row 11 matches s row 24, once per c row that the ON clause keeps.
+    // The correlated sub-query of s keeps the s rows with a NULL x for o row 2, and o.id > 1 keeps the
+    // master side of o row 2, where only s rows 20 and 22 match no a row.
     @Test
-    public void testLateralOuterOnlyConditionBeforeRightJoinFails() throws Exception {
+    public void testLateralOuterOnlyConditionBeforeRightJoin() throws Exception {
         assertMemoryLeak(() -> {
             createKeyAndComparisonTables();
+            final String nullExtendedForRow2 = """
+                    id\taid\tsid
+                    2\tnull\t20
+                    2\tnull\t21
+                    2\tnull\t22
+                    2\tnull\t23
+                    2\tnull\t24
+                    3\t11\t24
+                    """;
             final String[][] cases = {
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k", "RIGHT",
-                            "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query"},
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b s ON a.x = s.k", "RIGHT",
-                            "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query"},
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.x > 1 FULL JOIN b s ON a.x = s.k", "FULL",
-                            "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query"},
-                    {"a JOIN c ON o.x > 1 RIGHT JOIN b s ON a.x = s.k", "RIGHT",
-                            "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query"},
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b s ON a.x = s.k", "RIGHT",
-                            "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query"},
+                    {
+                            "a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k",
+                            """
+                                    id\taid\tsid
+                                    2\tnull\t22
+                                    2\tnull\t23
+                                    3\t11\t24
+                                    """
+                    },
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b s ON a.x = s.k", nullExtendedForRow2},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.x > 1 FULL JOIN b s ON a.x = s.k", nullExtendedForRow2},
+                    {
+                            "a JOIN c ON o.x > 1 RIGHT JOIN b s ON a.x = s.k",
+                            """
+                                    id\taid\tsid
+                                    2\tnull\t20
+                                    2\tnull\t21
+                                    2\tnull\t22
+                                    2\tnull\t23
+                                    2\tnull\t24
+                                    3\t11\t24
+                                    3\t11\t24
+                                    3\t11\t24
+                                    3\t11\t24
+                                    3\t11\t24
+                                    """
+                    },
+                    {
+                            "a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b s ON a.x = s.k",
+                            """
+                                    id\taid\tsid
+                                    2\tnull\t20
+                                    2\tnull\t22
+                                    3\t11\t24
+                                    """
+                    },
             };
             for (String[] c : cases) {
-                final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM " + c[0] + " WHERE a.x = o.x) l";
-                assertQuery(sql)
+                assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM " + c[0] + " WHERE a.x = o.x) l ORDER BY 1, 2, 3")
                         .noLeakCheck()
-                        .fails(sql.indexOf(c[1]), c[2]);
+                        .sizeMayVary()
+                        .returns(c[1]);
             }
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN b s ON a.x = s.k WHERE a.x = o.x AND o.x > 1) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
@@ -4288,8 +4554,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // WHERE keys o.x on b2, which joins after c's ON clause reads o.x, but before the RIGHT join, as
-    // an INNER or a LEFT join. The rewriter rewrites c's ON clause to b2.k, which the optimiser
-    // applies after b2 joins, ahead of the RIGHT join. DuckDB returns 1 10 21 and 1 10 23 for both.
+    // an INNER or a LEFT join. DuckDB returns 1 10 21 and 1 10 23 for both.
     // Without a.id IS NOT NULL, which drops the rows that the RIGHT join NULL-extends, b2.k is NULL
     // on those rows. For the NULL o.x, o.x > 0 leaves the master side empty, so the RIGHT join
     // NULL-extends every b row, and QuestDB's = matches their NULL b2.k to the NULL o.x: DuckDB, with
@@ -4365,28 +4630,31 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // c's ON clause reads o.id, which no WHERE key maps to an inner column, so the outer-ref join stays
-    // ahead of the RIGHT or FULL join, and WHERE keys o.x on b, the slave of that join, or on a later
-    // table. A filter after the join drops the rows that it NULL-extends, so the rewriter moves the
-    // WHERE conjuncts that read b or a later table from the ON clause of the outer-ref join back into
-    // WHERE, where they run after the join. Per outer row, o.id > 1 leaves the master side empty for o
-    // row 1, a row 12 of the NULL o.x matches no b row, and a row 11 of o.x = 3 matches b row 24, so
+    // c's ON clause reads o.id, ahead of the RIGHT or FULL join, and WHERE keys o.x on b, the slave of
+    // that join, or on a later table. Per outer row, o.id > 1 leaves the master side empty for o row
+    // 1, a row 12 of the NULL o.x matches no b row, and a row 11 of o.x = 3 matches b row 24, so
     // DuckDB, with IS NOT DISTINCT FROM for =, returns 3 11 24 for each form of the key. On a.x < b.k,
     // a row 10 matches b row 24 instead. With c.sid = a.id + 10 + o.id, a row 10 of o row 1 matches b
     // rows 21 and 23. The FULL join keeps a row 12 of the NULL o.x, whose NULL b.k matches o.x. Each
-    // query compiles twice, after the query that fails because no filter drops those rows. A b row
-    // with a NULL k then matches a row 12 of the NULL o.x.
+    // query compiles twice. Without a filter that drops the rows that the RIGHT join NULL-extends,
+    // o row 1 keeps b rows 21 and 23, whose k is 1. A b row with a NULL k then matches a row 12 of
+    // the NULL o.x.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejecting() throws Exception {
         assertMemoryLeak(() -> {
             createKeyAndComparisonTables();
-            final String outerColumnError = "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query";
             final String item = "a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL";
             final String noNullRejection = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x) l ORDER BY 1, 2, 3";
             for (int i = 0; i < 2; i++) {
                 assertQuery(noNullRejection)
                         .noLeakCheck()
-                        .fails(noNullRejection.indexOf("RIGHT"), outerColumnError);
+                        .sizeMayVary()
+                        .returns("""
+                                id\taid\tsid
+                                1\tnull\t21
+                                1\tnull\t23
+                                3\t11\t24
+                                """);
             }
             final String itemRows = """
                     id\taid\tsid
@@ -4406,11 +4674,11 @@ public class LateralJoinTest extends AbstractCairoTest {
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k LEFT JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k RIGHT JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
-                    // two conjuncts that read no b column stay ahead of the RIGHT join, where a.id > o.id + 8
-                    // drops a row 11 of o row 3, and a.id > o.id + 7 keeps it
+                    // two conjuncts that read no b column, where a.id > o.id + 8 drops a row 11 of o row 3,
+                    // and a.id > o.id + 7 keeps it
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 8 AND a.id IS NOT NULL", "id\taid\tsid\n"},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 7 AND a.id IS NOT NULL", itemRows},
-                    // a conjunct that moves drops the NULL-extended rows
+                    // a conjunct that drops the NULL-extended rows and reads b and the outer row
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x < b.k + o.x", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x < b.k WHERE b.k = o.x AND a.id IS NOT NULL", """
                             id\taid\tsid
@@ -4467,7 +4735,8 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // The query of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejecting() with a.id >= $1,
     // which drops the rows that the RIGHT join NULL-extends while $1 is not NULL: with 5 it returns
-    // the rows of DuckDB, and with NULL the execution fails at $1.
+    // the rows of DuckDB. With NULL, NULL >= NULL keeps those rows, b rows 21 and 23 of o row 1, and
+    // 11 >= NULL drops a row 11.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingBindVariable() throws Exception {
         assertMemoryLeak(() -> {
@@ -4476,10 +4745,13 @@ public class LateralJoinTest extends AbstractCairoTest {
             final String rows = "id\taid\tsid\n3\t11\t24\n";
             final ObjList<BindVarTuple> binds = new ObjList<>();
             binds.add(BindVarTuple.ok("5", rows, bindVariableService -> bindVariableService.setInt(0, 5)));
-            binds.add(BindVarTuple.fails(
+            binds.add(BindVarTuple.ok(
                     "NULL",
-                    sql.indexOf("$1"),
-                    "is not supported in a correlated lateral sub-query when this value is NULL",
+                    """
+                            id\taid\tsid
+                            1\tnull\t21
+                            1\tnull\t23
+                            """,
                     bindVariableService -> bindVariableService.setInt(0, Numbers.INT_NULL)
             ));
             binds.add(BindVarTuple.ok("5 again", rows, bindVariableService -> bindVariableService.setInt(0, 5)));
@@ -5256,7 +5528,7 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // The key is a computed column on one side, whose type only the code generator knows: of the
     // sub-query over a, or of the outer sub-query over o. The rewriter removes the outer-ref join,
-    // which a GROUP BY over o would feed, and runs a.id > o.x on the inner key.
+    // which a GROUP BY over o would feed, and runs the comparison after the lateral join, on o.x.
     @Test
     public void testLateralWhereKeyAndCorrelatedComparisonUnknownKeyType() throws Exception {
         assertMemoryLeak(() -> {
@@ -19835,17 +20107,12 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Binds $1 to a non-NULL value, under which order 1 returns trade 10 with refund 100, then to
-    // NULL, which fails the execution at the position of $1, then to the value again
-    private static ObjList<BindVarTuple> nullCheckBindCases(int position, int value) {
+    // Binds $1 to a non-NULL value, under which order 1 returns trade 10 with refund 100, then to NULL,
+    // under which the query returns nullRows, then to the value again
+    private static ObjList<BindVarTuple> nullValueBindCases(int value, String nullRows) {
         final ObjList<BindVarTuple> cases = new ObjList<>();
         cases.add(BindVarTuple.ok("non-NULL value", "id\ttid\trid\n1\t10\t100\n", bindVariableService -> bindVariableService.setInt(0, value)));
-        cases.add(BindVarTuple.fails(
-                "NULL value",
-                position,
-                "is not supported in a correlated lateral sub-query when this value is NULL",
-                bindVariableService -> bindVariableService.setInt(0, Numbers.INT_NULL)
-        ));
+        cases.add(BindVarTuple.ok("NULL value", "id\ttid\trid\n" + nullRows, bindVariableService -> bindVariableService.setInt(0, Numbers.INT_NULL)));
         cases.add(BindVarTuple.ok("non-NULL value again", "id\ttid\trid\n1\t10\t100\n", bindVariableService -> bindVariableService.setInt(0, value)));
         return cases;
     }
@@ -19884,13 +20151,27 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // The query of testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoin() with laterJoin in
-    // place of its INNER join fails at the RIGHT join with s, and the tables still serve that query.
-    private void assertRepairedRightJoinFollowedByJoinFails(String laterJoin) throws Exception {
+    // place of its INNER join returns the rows of expected
+    private void assertRightJoinSubQueryWhereKeyLaterJoin(String laterJoin, String expected) throws Exception {
         assertMemoryLeak(() -> {
             createNullOuterKeyAndLaterJoinTables();
-            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k " + laterJoin + " WHERE a.x = o.x) l")
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k " + laterJoin + " WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
                     .noLeakCheck()
-                    .fails(97, "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                    .sizeMayVary()
+                    .returns(expected);
+        });
+    }
+
+    // The query of testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoin() with a SPLICE join in
+    // place of its INNER join fails at the SPLICE join, as it does when it runs once per outer row, as
+    // its tables have no designated timestamp, and the tables still serve that query.
+    private void assertRightJoinSubQueryWhereKeyLaterSpliceJoinFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            final String sql = "SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k SPLICE JOIN c WHERE a.x = o.x) l";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("SPLICE"), "left side of time series join has no timestamp");
             assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
                     .noLeakCheck()
                     .expectSize()
@@ -19936,27 +20217,28 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // Runs the query 60 times, with the filter on a sub-query that rnd_int() makes NULL in about
-    // half the executions. Each execution fails on a NULL value or returns 1 10 100.
-    private void assertScalarSubQueryFilterNeverEmpty(String filter) throws Exception {
+    // half the executions. Each execution returns 1 10 100, the rows of the value 0, or the refunds
+    // that the RIGHT join NULL-extends, the rows of NULL, as NULL >= NULL is true. Both occur.
+    private void assertScalarSubQueryFilterOfEitherValue(String filter) throws Exception {
         final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3";
         sqlExecutionContext.setRandom(new Rnd(42, 4242));
-        int okCount = 0;
-        int nullValueCount = 0;
+        int valueCount = 0;
+        int nullCount = 0;
         try (RecordCursorFactory factory = select(sql)) {
             for (int i = 0; i < 60; i++) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    TestUtils.assertEquals("execution " + i, "id\ttid\trid\n1\t10\t100\n", sink);
-                    okCount++;
-                } catch (SqlException e) {
-                    Assert.assertEquals(sql.indexOf("SELECT CASE"), e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR);
-                    nullValueCount++;
+                }
+                if (Chars.equals("id\ttid\trid\n1\t10\t100\n", sink)) {
+                    valueCount++;
+                } else {
+                    TestUtils.assertEquals("execution " + i, "id\ttid\trid\n" + UNMATCHED_REFUNDS, sink);
+                    nullCount++;
                 }
             }
         }
-        Assert.assertTrue(filter, okCount > 0);
-        Assert.assertTrue(filter, nullValueCount > 0);
+        Assert.assertTrue(filter, valueCount > 0);
+        Assert.assertTrue(filter, nullCount > 0);
     }
 
     // Trade 10 matches refund 100 only for o.k = 1. Every other refund, and trade 10 for

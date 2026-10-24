@@ -24,11 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
-import org.postgresql.util.PSQLException;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -40,13 +36,11 @@ public class PGLateralJoinTest extends BasePGTest {
 
     // A prepared statement whose LATERAL body holds a RIGHT join over a computed SHORT column runs with
     // a NULL value: t.sid != 0 is false on the 0 that the join puts in the SHORT column, so it drops
-    // the rows that the join NULL-extends whatever the value of t.i = ?, and the plan needs no check.
-    // Trade 11 holds NULL in i, and NULL = NULL is true. The simple query mode sends NULL as a
-    // constant, which the rewriter decides on when it compiles the query, so only the extended modes
-    // run.
+    // the rows that the join NULL-extends whatever the value of t.i = ?. Trade 11 holds NULL in i, and
+    // NULL = NULL is true.
     @Test
-    public void testRuntimeNullCheckNextToAComputedColumn() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+    public void testNullValueNextToAComputedColumn() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 createOrdersAndRefunds(statement);
                 statement.execute("CREATE TABLE trades (id INT, x INT, i INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -69,12 +63,13 @@ public class PGLateralJoinTest extends BasePGTest {
         });
     }
 
-    // A prepared statement whose LATERAL body holds a RIGHT join checks, at each execution, the value
-    // of a CASE over a scalar sub-query, which the filter reads too. Per outer row, refund k matches
-    // both trades, and t.id >= 10 keeps both. Refund 103 makes max(id) 103, so the CASE becomes NULL,
-    // and the next execution fails at the CASE.
+    // A prepared statement whose LATERAL body holds a RIGHT join reads, at each execution, the value of
+    // a CASE over a scalar sub-query. Per outer row, refund k matches both trades, and t.id >= 10 keeps
+    // both. Refund 103 makes max(id) 103, so the CASE becomes NULL, and NULL >= NULL keeps the rows that
+    // the join NULL-extends: per outer row, the refunds of no trade, 103 included, as it matches no
+    // outer key.
     @Test
-    public void testRuntimeNullCheckOfANestedSubQuery() throws Exception {
+    public void testNullValueOfANestedSubQuery() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 createOrdersAndRefunds(statement);
@@ -95,22 +90,23 @@ public class PGLateralJoinTest extends BasePGTest {
                     insert.execute("INSERT INTO refunds VALUES (103, 4, 4::timestamp)");
                 }
                 for (int i = 0; i < 2; i++) {
-                    assertNullValueError(statement, sql.indexOf("CASE") + 1);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "1,null,101\n1,null,102\n1,null,103\n2,null,100\n2,null,102\n2,null,103\n3,null,100\n3,null,101\n3,null,103\n", sink, rs);
+                    }
                 }
             }
         });
     }
 
-    // A prepared statement whose LATERAL body holds a RIGHT join checks, at each execution, the
-    // values of the filter conjuncts that drop the rows the join NULL-extends only while their value
-    // is not NULL. The conjuncts are ANDed, so the execution fails only when every value is NULL, at
-    // the first of them. Trade 11 holds NULL in i and 10 in l: with i = NULL and l >= 10 it matches,
-    // as NULL = NULL is true, while NULL >= 10 is false on the NULL-extended rows. The simple query
-    // mode sends NULL as a constant, which the rewriter rejects when it compiles the query, so only
-    // the extended modes run.
+    // A prepared statement whose LATERAL body holds a RIGHT join runs with each pair of values of two
+    // ANDed conjuncts that keep the rows the join NULL-extends only while their value is NULL. Trade 11
+    // holds NULL in i and 10 in l: with i = NULL and l >= 10 it matches, as NULL = NULL is true, while
+    // NULL >= 10 is false on the NULL-extended rows. With both values NULL, NULL = NULL and
+    // NULL >= NULL keep the NULL-extended rows, and 10 >= NULL drops trade 11. Each execution returns
+    // the rows of the body run once per outer row.
     @Test
-    public void testRuntimeNullCheckOfAnyConjunct() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+    public void testNullValueOfAnyConjunct() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 createOrdersAndRefunds(statement);
                 statement.execute("CREATE TABLE trades (id INT, x INT, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -132,13 +128,9 @@ public class PGLateralJoinTest extends BasePGTest {
             ) {
                 final Integer[] firstValues = {null, null, 10, 10};
                 final Long[] secondValues = {10L, null, null, 10L};
-                final String[] rows = {"2,11,101\n", null, "", "1,10,100\n"};
+                final String[] rows = {"2,11,101\n", "1,null,101\n1,null,102\n2,null,100\n2,null,102\n3,null,100\n3,null,101\n3,null,102\n", "", "1,10,100\n"};
                 for (int i = 0; i < rows.length; i++) {
                     bind(statement, 1, firstValues[i], secondValues[i]);
-                    if (rows[i] == null) {
-                        assertNullValueError(statement, sql.indexOf('?') + 1);
-                        continue;
-                    }
                     try (ResultSet rs = statement.executeQuery()) {
                         assertResultSet(header + rows[i], sink, rs);
                     }
@@ -263,13 +255,13 @@ public class PGLateralJoinTest extends BasePGTest {
     }
 
     // The statement of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingPrepared() with
-    // a.id >= ?, which drops the rows that the RIGHT join NULL-extends only while ? is not NULL: with
-    // NULL each execution fails at ?, and with 5 the next one returns 3 11 24. The simple query mode
-    // sends NULL as a constant, which the rewriter decides on when it compiles the query, so only the
-    // extended modes run.
+    // a.id >= ?, which drops the rows that the RIGHT join NULL-extends only while ? is not NULL. With
+    // NULL, o.id > 1 leaves the master side of the RIGHT join empty for o row 1, and NULL >= NULL keeps
+    // its b rows 21 and 23, whose k is 1, while for o row 3 10 >= NULL drops a row 11. With 5 the next
+    // execution returns 3 11 24.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingNullValue() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 createKeyAndComparisonTables(statement);
             }
@@ -277,7 +269,9 @@ public class PGLateralJoinTest extends BasePGTest {
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 for (int i = 0; i < 2; i++) {
                     statement.setNull(1, Types.INTEGER);
-                    assertNullValueError(statement, sql.indexOf('?') + 1);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n1,null,21\n1,null,23\n", sink, rs);
+                    }
                 }
                 statement.setInt(1, 5);
                 try (ResultSet rs = statement.executeQuery()) {
@@ -285,17 +279,6 @@ public class PGLateralJoinTest extends BasePGTest {
                 }
             }
         });
-    }
-
-    // Executes the statement, which must fail with the NULL value error at the 1-based position
-    private static void assertNullValueError(PreparedStatement statement, int position) throws SQLException {
-        try (ResultSet ignore = statement.executeQuery()) {
-            Assert.fail("expected the NULL value error");
-        } catch (PSQLException e) {
-            Assert.assertNotNull(e.getServerErrorMessage());
-            Assert.assertEquals(LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR, e.getServerErrorMessage().getMessage());
-            Assert.assertEquals(position, e.getServerErrorMessage().getPosition());
-        }
     }
 
     private static void bind(PreparedStatement statement, int index, Integer first, Long second) throws SQLException {

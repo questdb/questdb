@@ -309,7 +309,6 @@ import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
-import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -362,7 +361,6 @@ import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.griffin.model.LateralNullRejection;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelGenerationState;
@@ -520,23 +518,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-    // the indices in lateralNullChecks of the checks of the group that checkLateralNullRejection() or
-    // collectLateralNullChecks() builds
-    private final IntList lateralNullCheckGroup = new IntList();
-    // the groups of lateralNullChecks, each its size followed by the indices of its checks; the query
-    // fails when every check of a group is true
-    private final IntList lateralNullCheckGroups = new IntList();
-    // the index in lateralNullChecks of each check of the model that collectLateralNullChecks() reads
-    private final IntList lateralNullCheckIndices = new IntList();
-    // the type of the probe column of each of lateralNullChecks
-    private final IntList lateralNullCheckTypes = new IntList();
-    // the type of the column of each of lateralNullRejectionCandidates
-    private final IntList lateralNullRejectionCandidateTypes = new IntList();
-    // the indices of the candidates of a LateralNullRejection that checkLateralNullRejection() checks
-    // once per execution
-    private final IntList lateralNullRejectionCandidates = new IntList();
-    // the lateral NULL checks of the models that the outermost generate() call has generated so far
-    private final ObjList<ExpressionNode> lateralNullChecks = new ObjList<>();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
@@ -549,11 +530,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
-    // the sub-query that each of scalarSubQueryConsumers reads
-    private final ObjList<IQueryModel> scalarSubQueryConsumerModels = new ObjList<>();
-    // the functions over a scalar sub-query that the outermost generate() call has parsed so far,
-    // which applyLateralNullChecks() links to the functions of the NULL checks that read the same sub-query
-    private final ObjList<Function> scalarSubQueryConsumers = new ObjList<>();
     // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
     // When a QueryModelWrapper is encountered, we look up its delegate here.
@@ -766,18 +742,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
-    // FunctionParser reports each function that it creates over a scalar sub-query operand
-    public void addScalarSubQueryConsumer(IQueryModel subQueryModel, Function function) {
-        if (whereClauseParserDepth > 0) {
-            scalarSubQueryConsumerModels.add(subQueryModel);
-            scalarSubQueryConsumers.add(function);
-        }
-    }
-
     @Override
     public void clear() {
-        scalarSubQueryConsumerModels.clear();
-        scalarSubQueryConsumers.clear();
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
             whereClauseParsers.getQuick(i).clear();
         }
@@ -801,8 +767,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
-        scalarSubQueryConsumerModels.clear();
-        scalarSubQueryConsumers.clear();
         generationState.setPreparationHook(null);
         generationState.clear();
         clearSharedFactories();
@@ -986,30 +950,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             if (parserIndex == 0) {
                 clearSharedFactories();
-                lateralNullChecks.clear();
-                lateralNullCheckGroups.clear();
-                lateralNullCheckTypes.clear();
-                scalarSubQueryConsumerModels.clear();
-                scalarSubQueryConsumers.clear();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
             }
-            final RecordCursorFactory factory = generateQuery(model, executionContext, true);
-            return parserIndex == 0 && lateralNullChecks.size() > 0
-                    ? applyLateralNullChecks(factory, executionContext)
-                    : factory;
+            return generateQuery(model, executionContext, true);
         } catch (Throwable th) {
             failure = th;
             throw th;
         } finally {
             generationState.exitRegion(hasEntered);
             whereClauseParserDepth--;
-            if (parserIndex == 0) {
-                // the factory owns the functions, so drop the references whatever the outcome
-                scalarSubQueryConsumerModels.clear();
-                scalarSubQueryConsumers.clear();
-            }
             // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
             // them downstream; free them here so a throw before that handoff does not leak the
             // open factory. On the success path ownership was already transferred, so this is a
@@ -1775,19 +1726,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    // Returns the index of the master-side column of a join that the token names. The master side is
-    // the factory of the model named masterAlias, whose metadata does not qualify its columns, or a
-    // join of several models when masterAlias is null.
-    private static int getMasterColumnIndexQuiet(RecordMetadata masterMetadata, @Nullable CharSequence masterAlias, CharSequence token) {
-        final int dot = Chars.indexOfLastUnquoted(token, '.');
-        if (masterAlias == null || dot < 0) {
-            return masterMetadata.getColumnIndexQuiet(token);
-        }
-        return Chars.equalsIgnoreCase(masterAlias, token, 0, dot)
-                ? masterMetadata.getColumnIndexQuiet(token, dot + 1, token.length())
-                : -1;
-    }
-
     // Returns the peeled HORIZON JOIN slave metadata with every column under the name the query reads it by.
     // A column that no name reads keeps its own name when no read name takes it. Otherwise, it gets a name
     // that is not a read name. Only the projected names resolve in the join metadata, see
@@ -2013,26 +1951,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
-    }
-
-    // Returns whether the expression reads the scalar sub-query of the model, at any depth, without
-    // looking into the sub-queries that it reads
-    private static boolean readsScalarSubQuery(ExpressionNode node, IQueryModel subQueryModel) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.QUERY) {
-            return node.queryModel == subQueryModel;
-        }
-        if (node.paramCount < 3) {
-            return readsScalarSubQuery(node.lhs, subQueryModel) || readsScalarSubQuery(node.rhs, subQueryModel);
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (readsScalarSubQuery(node.args.getQuick(i), subQueryModel)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // Gives a nested loop LEFT join the RIGHT and FULL joins with join keys that the query writes after it and
@@ -2330,77 +2248,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
         return null;
-    }
-
-    // Compiles the checks that LateralJoinRewriter attached to models of the query, each a filter
-    // conjunct that reads NULL_REJECTING_PROBE_COLUMN of the column type instead of the column, over
-    // an operand that takes one value per execution. A LateralNullCheckRecordCursorFactory on top of
-    // the plan evaluates them once per execution on the NULL record of the type, and fails the query
-    // when every check of a group is true, as the filter would then keep the rows that a RIGHT or
-    // FULL join NULL-extends. The checks of a group are ANDed in the filter, so the filter drops
-    // those rows while any of them is false.
-    // A function of a check that reads a scalar sub-query, at any depth of the check, owns the value
-    // of the sub-query: the filter functions that read the same sub-query, its receivers, reuse it, so
-    // the filter never reads a value that the check has not seen. The check generates the sub-query
-    // again, after the filter, and generationState gives it the state of the sub-query model that the
-    // filter generation consumed.
-    // Takes ownership of the factory.
-    private RecordCursorFactory applyLateralNullChecks(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
-        final ObjList<Function> checks = new ObjList<>();
-        final ObjList<Record> nullRecords = new ObjList<>();
-        final IntList positions = new IntList();
-        // each function of a check that passes its value to the filter function at the same index
-        final ObjList<Function> donors = new ObjList<>();
-        final ObjList<Function> receivers = new ObjList<>();
-        // the sub-queries that the donors read, for the assertion of one donor per sub-query
-        final ObjList<IQueryModel> donorModels = new ObjList<>();
-        // the checks parse after this point and report themselves, but must not receive a value
-        final int consumerCount = scalarSubQueryConsumers.size();
-        try {
-            GenericRecordMetadata metadata = null;
-            for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
-                final ExpressionNode node = lateralNullChecks.getQuick(i);
-                metadata = SqlOptimiser.nullProbeMetadata(lateralNullCheckTypes.getQuick(i));
-                // the check reports the functions that read its sub-queries after this point, and so
-                // does the second generation of each sub-query for the sub-queries that it reads
-                final int donorStart = scalarSubQueryConsumers.size();
-                final Function check = functionParser.parseFunction(node, metadata, executionContext);
-                checks.add(check);
-                nullRecords.add(NullRecordFactory.getInstance(metadata));
-                positions.add(node.position);
-                for (int k = donorStart, m = scalarSubQueryConsumers.size(); k < m; k++) {
-                    final IQueryModel subQueryModel = scalarSubQueryConsumerModels.getQuick(k);
-                    if (readsScalarSubQuery(node, subQueryModel)) {
-                        // one donor per sub-query, whose value the filter reads
-                        assert donorModels.indexOf(subQueryModel) < 0;
-                        donorModels.add(subQueryModel);
-                        final Function donor = scalarSubQueryConsumers.getQuick(k);
-                        for (int j = 0; j < consumerCount; j++) {
-                            if (scalarSubQueryConsumerModels.getQuick(j) == subQueryModel) {
-                                final Function consumer = scalarSubQueryConsumers.getQuick(j);
-                                // the parser builds both from copies of an expression that reads no column
-                                assert consumer.getClass() == donor.getClass();
-                                donors.add(donor);
-                                receivers.add(consumer);
-                            }
-                        }
-                    }
-                }
-            }
-            final IntList groups = new IntList(lateralNullCheckGroups.size());
-            groups.addAll(lateralNullCheckGroups);
-            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, donors, receivers, groups);
-        } catch (Throwable th) {
-            // the frees attach any close failure to th instead of throwing it
-            Misc.freeObjList(checks, th);
-            Misc.freeObjListIfCloseableBestEffort(th, nullRecords);
-            Misc.free(factory, th);
-            throw th;
-        } finally {
-            lateralNullChecks.clear();
-            lateralNullCheckGroups.clear();
-            lateralNullCheckTypes.clear();
-        }
     }
 
     private boolean assembleKeysAndFunctionReferences(
@@ -2727,61 +2574,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return castIsRequired;
     }
 
-    // LateralJoinRewriter leaves this check to the code generator when the filter after a RIGHT or
-    // FULL join in a LATERAL body reads a master-side column whose type is known only here, such as
-    // a computed sub-query column; see LateralNullRejection. As the rewriter requires when it knows
-    // the type, a conjunct of the filter must drop the rows that the join NULL-extends on its master
-    // side, where the column holds what NullRecordFactory gives its type. A conjunct that drops them
-    // only while a value is not NULL counts when no other one does. The filter then drops them while
-    // the value of any such conjunct is not NULL, so the values of all of them form a group, which is
-    // checked once per execution. Fails the query otherwise.
-    private void checkLateralNullRejection(
-            IQueryModel slaveModel,
-            LateralNullRejection check,
-            @Nullable RecordCursorFactory master,
-            @Nullable CharSequence masterAlias,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        lateralNullRejectionCandidates.clear();
-        lateralNullRejectionCandidateTypes.clear();
-        if (master != null) {
-            final RecordMetadata masterMetadata = master.getMetadata();
-            for (int i = 0, n = check.size(); i < n; i++) {
-                final int columnIndex = getMasterColumnIndexQuiet(masterMetadata, masterAlias, check.getColumn(i));
-                if (columnIndex < 0) {
-                    continue;
-                }
-                final int columnType = masterMetadata.getColumnType(columnIndex);
-                final ExpressionNode probe = check.getProbe(i);
-                if (probe != null) {
-                    if (SqlOptimiser.isFalseOnNullRecord(functionParser, deepClone(expressionNodePool, probe), columnType, executionContext)) {
-                        return;
-                    }
-                } else if (!LateralJoinRewriter.isTypeWithoutNull(columnType)) {
-                    if (check.getNullCheck(i) == null) {
-                        return;
-                    }
-                    lateralNullRejectionCandidates.add(i);
-                    lateralNullRejectionCandidateTypes.add(columnType);
-                }
-            }
-        }
-        if (lateralNullRejectionCandidates.size() == 0) {
-            throw SqlException.position(slaveModel.getJoinKeywordPosition()).put(check.getError());
-        }
-        lateralNullCheckGroup.clear();
-        for (int i = 0, n = lateralNullRejectionCandidates.size(); i < n; i++) {
-            final int index = collectLateralNullCheck(
-                    check.getNullCheck(lateralNullRejectionCandidates.getQuick(i)),
-                    lateralNullRejectionCandidateTypes.getQuick(i)
-            );
-            if (!lateralNullCheckGroup.contains(index)) {
-                lateralNullCheckGroup.add(index);
-            }
-        }
-        LateralJoinRewriter.addRuntimeNullCheckGroup(lateralNullCheckGroups, lateralNullCheckGroup);
-    }
-
     private void clearJitScratch(Throwable failure) {
         final boolean hasPrimaryFailure = failure != null;
         failure = Misc.clearBestEffort(failure, jitIRSerializer);
@@ -2800,38 +2592,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         freedSharedModels.clear();
         sharedPrimaries.clear();
         sharedPrimaryModels.clear();
-    }
-
-    // Returns the index of the check in lateralNullChecks, which hold each check once, so that a
-    // check of several groups, or of a model that the code generator generates more than once, runs
-    // once per execution
-    private int collectLateralNullCheck(ExpressionNode check, int columnType) {
-        for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
-            if (LateralJoinRewriter.isSameRuntimeNullCheck(lateralNullChecks.getQuick(i), lateralNullCheckTypes.getQuick(i), check, columnType)) {
-                return i;
-            }
-        }
-        lateralNullChecks.add(check);
-        lateralNullCheckTypes.add(columnType);
-        return lateralNullChecks.size() - 1;
-    }
-
-    private void collectLateralNullChecks(IQueryModel model) {
-        final ObjList<ExpressionNode> checks = model.getLateralNullChecks();
-        final IntList checkTypes = model.getLateralNullCheckTypes();
-        lateralNullCheckIndices.clear();
-        for (int i = 0, n = checks.size(); i < n; i++) {
-            lateralNullCheckIndices.add(collectLateralNullCheck(checks.getQuick(i), checkTypes.getQuick(i)));
-        }
-        final IntList groups = model.getLateralNullCheckGroups();
-        for (int i = 0, n = groups.size(); i < n; ) {
-            final int size = groups.getQuick(i++);
-            lateralNullCheckGroup.clear();
-            for (int j = 0; j < size; j++) {
-                lateralNullCheckGroup.add(lateralNullCheckIndices.getQuick(groups.getQuick(i++)));
-            }
-            LateralJoinRewriter.addRuntimeNullCheckGroup(lateralNullCheckGroups, lateralNullCheckGroup);
-        }
     }
 
     @Nullable
@@ -7191,11 +6951,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         continue;
                     }
 
-                    // the type of the master-side column that decides these checks is known only now
-                    for (LateralNullRejection check = slaveModel.getLateralNullRejection(); check != null; check = check.getNext()) {
-                        checkLateralNullRejection(slaveModel, check, master, masterAlias, executionContext);
-                    }
-
                     // compile
                     RecordMetadata horizonSlaveProjectionMetadata = null;
                     // the peeled slave's metadata under the names the query reads, set when a peeled
@@ -10011,7 +9766,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         generationState.enterModel(model);
-        collectLateralNullChecks(model);
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.

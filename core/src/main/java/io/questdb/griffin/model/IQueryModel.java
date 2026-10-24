@@ -202,11 +202,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addLateralCountTemplate(QueryColumn template);
 
-    void addLateralNullCheck(ExpressionNode check, int columnType);
-
-    // Adds a group of getLateralNullChecks(), by their indices; see getLateralNullCheckGroups()
-    void addLateralNullCheckGroup(IntList checkIndices);
-
     void addLatestBy(ExpressionNode latestBy);
 
     boolean addModelAliasIndex(ExpressionNode node, int index);
@@ -322,23 +317,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getJoinType();
 
     ObjList<QueryColumn> getLateralCountTemplates();
-
-    // The groups of getLateralNullChecks(), each its size followed by the indices of its checks.
-    // The query fails when every check of a group is true.
-    IntList getLateralNullCheckGroups();
-
-    // The type of the column that each of getLateralNullChecks() reads
-    IntList getLateralNullCheckTypes();
-
-    // Filter conjuncts that read NULL_REJECTING_PROBE_COLUMN instead of a column, which the code
-    // generator evaluates once per execution on the NULL of the column type, failing the query when
-    // every check of one of getLateralNullCheckGroups() is true; see
-    // LateralJoinRewriter.runtimeNullCheckOperand()
-    ObjList<ExpressionNode> getLateralNullChecks();
-
-    // The filter conjuncts of a RIGHT or FULL join model whose null rejection the code generator
-    // decides, or null; see LateralJoinRewriter.deferNullRejection()
-    LateralNullRejection getLateralNullRejection();
 
     ObjList<ExpressionNode> getLatestBy();
 
@@ -657,8 +635,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setLateralCountCoalesceGuard(ExpressionNode guard);
 
     void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
-
-    void setLateralNullRejection(LateralNullRejection lateralNullRejection);
 
     void setLatestByType(int latestByType);
 

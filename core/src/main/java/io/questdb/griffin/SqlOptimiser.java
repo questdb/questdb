@@ -123,19 +123,6 @@ import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class SqlOptimiser implements Mutable {
-    // The probe column of isFalseOnNullRecord() and of LateralNullCheckRecordCursorFactory holds the
-    // NULL of its type, which reads no symbol table
-    public static final SymbolTableSource NULL_REJECTING_PROBE_SYMBOL_TABLES = new SymbolTableSource() {
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return null;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return null;
-        }
-    };
     public static final int REWRITE_STATUS_FORCE_INNER_MODEL = 64;
     public static final int REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE = 32;
     public static final int REWRITE_STATUS_USE_DISTINCT_MODEL = 16;
@@ -188,6 +175,18 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
+    // The probe column of isFalseOnNullRecord() holds the NULL of its type, which reads no symbol table
+    private static final SymbolTableSource NULL_REJECTING_PROBE_SYMBOL_TABLES = new SymbolTableSource() {
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return null;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return null;
+        }
+    };
     // states of the conjuncts in nullRejectionConjunctNodes, see isNullRejectedAfter()
     private static final int NULL_REJECTION_NOT_REJECTING = 1;
     private static final int NULL_REJECTION_REJECTING = 2;
@@ -1306,6 +1305,13 @@ public class SqlOptimiser implements Mutable {
     // RIGHT/FULL join: every one but SPLICE.
     private static boolean isTimeSeriesJoinAheadCandidate(int joinType) {
         return joinsRequiringTimestamp[joinType] && joinType != IQueryModel.JOIN_SPLICE;
+    }
+
+    // BOOLEAN, BYTE and SHORT have no NULL: a RIGHT or FULL join puts false or 0 in the rows that
+    // it NULL-extends, which compare as any other value
+    private static boolean isTypeWithoutNull(int columnType) {
+        final short tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT;
     }
 
     // Returns the last model before boundaryIndex that the ON clause of the prefix model may read while
@@ -8063,16 +8069,16 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
         final int columnType = getQueryColumnType(tableModel, getModelColumn(tableModel, node.token));
-        return columnType >= 0 && !LateralJoinRewriter.isTypeWithoutNull(columnType);
+        return columnType >= 0 && !isTypeWithoutNull(columnType);
     }
 
     // Returns true when the WHERE conjunct, which reads only columns of the table and is stable within an
     // execution, is false on the NULL row of the table, whatever the values of its bind variables. That
     // holds for < and > with a bare column of the table on one side, and for BETWEEN with a bare column as
-    // its value, when the column type has NULL: they are false for a NULL operand, see
-    // LateralJoinRewriter.isNullRejectingConjunct(). It also holds for a conjunct that reads one column of
-    // the table, of a known type, whose other parts fold to constants, when the conjunct evaluates to false
-    // on the NULL record of the column type.
+    // its value, when the column type has NULL: they are false for a NULL operand, whatever the other
+    // operands hold, while = <= and >= hold when both operands are NULL. It also holds for a conjunct that
+    // reads one column of the table, of a known type, whose other parts fold to constants, when the
+    // conjunct evaluates to false on the NULL record of the column type.
     private boolean isNullRejectingColumnPredicate(
             IQueryModel tableModel,
             ExpressionNode node,
@@ -15782,6 +15788,12 @@ public class SqlOptimiser implements Mutable {
                 true,
                 translatingModel
         );
+        // Over a join, the translating model chooses between the tables of the join and names their
+        // columns for the window model, whose PARTITION BY and ORDER BY read them by those names: the
+        // record of the join names its columns after their tables.
+        if (translationIsRedundant && (rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0 && model.containsJoin()) {
+            translationIsRedundant = false;
+        }
 
         // If it wasn't redundant, we might be able to make it redundant.
         // Taking the query:
@@ -17884,7 +17896,7 @@ public class SqlOptimiser implements Mutable {
     // Evaluating the predicate keeps the NULL semantics of the type: a BOOLEAN, BYTE or SHORT column
     // holds false or 0, and a constant such as 'NaN' or NULL::int may read as NULL. Any failure to
     // parse or evaluate the predicate returns false.
-    static boolean isFalseOnNullRecord(
+    private static boolean isFalseOnNullRecord(
             FunctionParser functionParser,
             ExpressionNode predicate,
             int columnType,
@@ -17919,7 +17931,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Returns the metadata of NULL_REJECTING_PROBE_COLUMN of the type, the only column a probe reads
-    static GenericRecordMetadata nullProbeMetadata(int columnType) {
+    private static GenericRecordMetadata nullProbeMetadata(int columnType) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata(
                 NULL_REJECTING_PROBE_COLUMN,
@@ -18223,7 +18235,7 @@ public class SqlOptimiser implements Mutable {
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
-            lateralJoinRewriter.rewrite(rewrittenModel, sqlExecutionContext);
+            lateralJoinRewriter.rewrite(rewrittenModel);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             verifyNoResidualSubsample(rewrittenModel, true);

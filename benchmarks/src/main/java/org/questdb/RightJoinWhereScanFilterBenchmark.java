@@ -131,9 +131,11 @@ public class RightJoinWhereScanFilterBenchmark {
         final String sql = switch (shape) {
             case "c_eq" -> "SELECT count(*)" + JOINS + " WHERE t0.c = 1";
             case "ts_in_day" -> "SELECT count(*)" + JOINS + " WHERE t0.ts IN '2024-01-05'";
-            case "ts_between" -> "SELECT count(*)" + JOINS + " WHERE t0.ts BETWEEN '2024-01-05' AND '2024-01-05T23:59:59'";
+            case "ts_between" ->
+                    "SELECT count(*)" + JOINS + " WHERE t0.ts BETWEEN '2024-01-05' AND '2024-01-05T23:59:59'";
             case "c_regex" -> "SELECT count(*)" + JOINS + " WHERE t0.c::string ~ '^1$'";
-            case "keyed_prefix" -> "SELECT count(*) FROM t0 JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t0.k WHERE t0.c = 1";
+            case "keyed_prefix" ->
+                    "SELECT count(*) FROM t0 JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t0.k WHERE t0.c = 1";
             case "ts_gt_lt_bind" -> "SELECT count(*)" + JOINS + " WHERE t0.ts > $1 AND t0.ts < $2";
             case "ts_ge_lt_bind" -> "SELECT count(*)" + JOINS + " WHERE t0.ts >= $1 AND t0.ts < $2";
             case "ts_ge_le_bind" -> "SELECT count(*)" + JOINS + " WHERE t0.ts >= $1 AND t0.ts <= $2";

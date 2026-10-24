@@ -24,13 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.LateralNullRejection;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
@@ -40,7 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -61,21 +55,17 @@ import static io.questdb.griffin.model.IQueryModel.*;
  * Neumann, Kemper — Unnesting Arbitrary Queries (BTW 2015)</a>
  */
 class LateralJoinRewriter implements Mutable {
-    // The errors that fail a correlated LATERAL body whose RIGHT or FULL join would lose the rows that
-    // it NULL-extends; the code generator fails such a body with them too, see deferNullRejection()
-    static final String CORRELATED_SUB_QUERY_ERROR = "correlated sub-query at or before a RIGHT or FULL join "
-            + "is not supported in a correlated lateral sub-query";
     // Stands in for the compensated count inside a lifted filter guard.
     // materializeLateralCountCarrier substitutes the compensated template for it, which
     // is the value the filter has to judge - the raw column is NULL for an outer row
     // with no group, and NULL fails every comparison.
     static final String LATERAL_COUNT_PLACEHOLDER = "__qdb_lateral_count__";
-    // see CORRELATED_SUB_QUERY_ERROR
-    static final String OUTER_COLUMN_ERROR = "outer column reference in an ON clause at or before a RIGHT or FULL join "
-            + "is not supported in a correlated lateral sub-query";
     // Alias prefix of the joins that this rewriter inserts for outer references. SqlOptimiser
     // recognises those joins by it.
     static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
+    // Alias prefix of the sub-query of wrapWithOuterRefCopy() that takes the place of a relation
+    // without a name
+    private static final String RELATION_ALIAS_PREFIX = "__qdb_relation__";
     private static final int CMP_EQ = 0;
     private static final int CMP_GE = 5;
     private static final int CMP_GT = 4;
@@ -111,46 +101,63 @@ class LateralJoinRewriter implements Mutable {
     private static final byte TERMINATE_DESCEND = 3;
     private static final byte TERMINATE_HERE = 1;
     private static final byte TERMINATE_SKIP = 0;
+    // the tag that pushDownOuterRefsForJoinBranch() leaves for the caller: the outer-ref columns of
+    // the copy of the outer-ref join in the branch, as the branch projects them, one per outer column
+    private final ObjList<ExpressionNode> branchTag = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap carrierAliasSequenceMap;
     private final LowerCaseCharSequenceHashSet carrierAliases;
     private final ObjList<IQueryModel> carrierChain;
     private final CharacterStore characterStore;
     private final ObjList<ExpressionNode> correlatedPreds = new ObjList<>();
+
     private final ObjectPool<ExpressionNode> expressionNodePool;
-    private final ObjList<ExpressionNode> filterConjuncts = new ObjList<>();
     private final FunctionParser functionParser;
     private final ObjList<ExpressionNode> groupingCols;
     private final ObjList<ExpressionNode> innerJoinCorrelated = new ObjList<>();
     private final ObjList<ExpressionNode> innerJoinNonCorrelated = new ObjList<>();
-    private final ObjList<ExpressionNode> joinConjuncts = new ObjList<>();
-    private final ObjectPool<LateralNullRejection> lateralNullRejectionPool = new ObjectPool<>(LateralNullRejection::new, 4);
+    // outer-ref column -> the column that WHERE equates it with in a layer above the data source
+    // layer, see tryEliminateOuterRefInBranch()
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> layerEqualities = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> nonCorrelatedPreds = new ObjList<>();
     private final IntList orderByDirSave;
     private final ObjList<ExpressionNode> orderBySave;
     private final ObjList<CharSequence> outerAliasSaveStack;
     private final ObjList<ExpressionNode> outerCols;
+    // the outer-ref join that decorrelate() creates for each lateral join, as opposed to its copies
+    private final ObjList<IQueryModel> mainOuterRefJoins = new ObjList<>();
+    // the join models of the sub-queries of wrapWithOuterRefCopy()
+    private final ObjList<IQueryModel> outerRefCopyWrappers = new ObjList<>();
+    // the layers that rename the columns of the sub-query of a copy of an outer-ref join, see cloneOuterRef()
+    private final ObjHashSet<IQueryModel> outerRefRenamingLayers = new ObjHashSet<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias;
-    // outer-ref joins that outerRefInsertPos() keeps ahead of a RIGHT/FULL join because an ON
-    // clause at or before that join reads the outer row
-    private final ObjList<IQueryModel> pinnedOuterRefJoins = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
-    // the indices of the checks of the group that collectRuntimeNullChecks() builds
-    private final IntList runtimeNullCheckGroup = new IntList();
+    // conjuncts of the criteria of an outer-ref join that Pass 3 moves into the criteria of the
+    // lateral join when it removes the outer-ref join, see tryEliminateOuterRefInBranch()
+    // the shared sub-queries of sharedModels that the FROM clauses hold themselves, see rehomeSharedSubqueries()
+    private final ObjHashSet<QueryModel> rehomedSubqueries = new ObjHashSet<>();
+    private final ObjList<ExpressionNode> residualConjuncts = new ObjList<>();
     private final ObjHashSet<QueryModel> sharedModels = new ObjHashSet<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack;
     private final ArrayDeque<ExpressionNode> sqlNodeStack2;
+    // outer column -> the tag column that an ON clause reads it from, see terminateWithTaggedPrefix()
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> tagAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    // copies of an outer-ref join in correlated sub-queries whose columns the joins after the
+    // sub-query read as its tag, see terminateWithTaggedPrefix()
+    private final ObjList<IQueryModel> tagSourceOuterRefJoins = new ObjList<>();
+    // the tags of the rows that the active calls of terminateWithTaggedPrefix() have joined so far,
+    // one list per call, as a call pushes branches down into layers that make calls of their own
+    private final ObjList<ObjList<ExpressionNode>> tagStack = new ObjList<>();
     private final ObjList<QueryColumn> templateBuffer;
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjList<IQueryModel> wrapperKeyLayers = new ObjList<>();
     private int carrierId;
-    // context of the query that rewrite() decorrelates; the null-rejection checks parse constants with it
-    private SqlExecutionContext executionContext;
     private boolean hasAggregateLeaf;
     private boolean hasCorrelation;
     private boolean hasZeroOnEmptyLeaf;
     private int outerRefId;
+    private int tagStackDepth;
     // set by scalarAggregateBodyKind when the body carries a filter that must be lifted
     // into the guard rather than left to run inside the body; read immediately by
     // the caller, which copies it before any nested call can overwrite it
@@ -214,20 +221,21 @@ class LateralJoinRewriter implements Mutable {
 
     @Override
     public void clear() {
+        branchTag.clear();
         carrierAliases.clear();
         carrierAliasSequenceMap.clear();
         carrierChain.clear();
         carrierId = 0;
         correlatedPreds.clear();
-        executionContext = null;
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
         nonCorrelatedPreds.clear();
-        filterConjuncts.clear();
-        joinConjuncts.clear();
-        lateralNullRejectionPool.clear();
-        pinnedOuterRefJoins.clear();
-        runtimeNullCheckGroup.clear();
+        layerEqualities.clear();
+        mainOuterRefJoins.clear();
+        outerRefCopyWrappers.clear();
+        outerRefRenamingLayers.clear();
+        rehomedSubqueries.clear();
+        residualConjuncts.clear();
         hasAggregateLeaf = false;
         hasCorrelation = false;
         hasZeroOnEmptyLeaf = false;
@@ -237,16 +245,20 @@ class LateralJoinRewriter implements Mutable {
         scalarCountGuardBlocker = null;
         scalarCountGuardDisarmed = false;
         sharedModels.clear();
+        tagAliasMap.clear();
+        tagSourceOuterRefJoins.clear();
+        tagStackDepth = 0;
         templateBuffer.clear();
         templateNodeBudget = 0;
     }
 
-    public void rewrite(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        pinnedOuterRefJoins.clear();
+    public void rewrite(IQueryModel model) throws SqlException {
+        mainOuterRefJoins.clear();
+        outerRefCopyWrappers.clear();
+        tagSourceOuterRefJoins.clear();
         if (!model.isOptimisable()) {
             return;
         }
-        this.executionContext = executionContext;
 
         // Pass 1 (top-down): tag correlated refs with lateralDepth
         // and collect correlated columns per lateral join model
@@ -277,11 +289,7 @@ class LateralJoinRewriter implements Mutable {
             //         GROUP BY order_id) sub
             //     ON sub.order_id = o.id
             tryEliminateOuterRefs(model, null);
-            // Pass 4: reject an outer-ref join that Pass 3 kept ahead of a RIGHT/FULL
-            // join that would lose its unmatched rows
-            if (pinnedOuterRefJoins.size() > 0) {
-                rejectPinnedOuterRefJoins(model);
-            }
+            rehomeSharedSubqueries(model);
         }
     }
 
@@ -413,6 +421,21 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Returns the outer-ref operand of an equality that scanWhereForOuterRefEqualities() maps, such as
+    // `x = __qdb_outer_ref__0_x`, or null for any other conjunct. The other operand is the column
+    // that the mapping makes the equivalent of the outer-ref column.
+    private static ExpressionNode findMappedOuterRefOperand(ExpressionNode node, CharSequence outerRefAlias) {
+        if (Chars.equals(node.token, "=")) {
+            if (isOuterRefToken(node.lhs, outerRefAlias) && isSimpleColumnRef(node.rhs)) {
+                return node.lhs;
+            }
+            if (isOuterRefToken(node.rhs, outerRefAlias) && isSimpleColumnRef(node.lhs)) {
+                return node.rhs;
+            }
+        }
+        return null;
+    }
+
     // operand swap: `k < count` becomes `count > k`
     private static int flipComparison(int op) {
         return switch (op) {
@@ -472,6 +495,24 @@ class LateralJoinRewriter implements Mutable {
         return hasSameQueryModels(a.lhs, b.lhs) && hasSameQueryModels(a.rhs, b.rhs);
     }
 
+    private static boolean hasSubQuery(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            return true;
+        }
+        if (hasSubQuery(node.lhs) || hasSubQuery(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasSubQuery(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean hasZeroOnEmptyAggregate(ExpressionNode node) {
         if (node == null) {
             return false;
@@ -493,20 +534,25 @@ class LateralJoinRewriter implements Mutable {
 
     // True for an equality that pushDownOuterRefsForJoinBranch() adds to the ON clause of a
     // correlated sub-query branch: <branch>.<clone column> = <outer-ref column>
-    private static boolean isAlignmentConjunct(ExpressionNode node, CharSequence outerRefAlias) {
-        if (node == null || node.paramCount != 2 || !Chars.equals(node.token, "=")) {
-            return false;
+    // Inserts the join model into the FROM clause of the layer at index, and registers the aliases of
+    // it and of the join models it shifts
+    private static void insertJoinModel(IQueryModel layer, IQueryModel joinModel, int index) {
+        final ObjList<IQueryModel> joinModels = layer.getJoinModels();
+        joinModels.add(joinModel);
+        for (int i = joinModels.size() - 1; i > index; i--) {
+            joinModels.setQuick(i, joinModels.getQuick(i - 1));
         }
-        return (isOuterRefToken(node.rhs, outerRefAlias) && isCloneColumn(node.lhs, outerRefAlias))
-                || (isOuterRefToken(node.lhs, outerRefAlias) && isCloneColumn(node.rhs, outerRefAlias));
-    }
-
-    // True for a column of another outer-ref join, as a correlated sub-query projects it
-    private static boolean isCloneColumn(ExpressionNode node, CharSequence outerRefAlias) {
-        return node != null
-                && node.type == ExpressionNode.LITERAL
-                && Chars.startsWith(unqualify(node.token), OUTER_REF_PREFIX)
-                && !matchesOuterRefAlias(node.token, outerRefAlias);
+        joinModels.setQuick(index, joinModel);
+        if (joinModel.getAlias() != null) {
+            layer.addModelAliasIndex(joinModel.getAlias(), index);
+        }
+        for (int i = index + 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel shifted = joinModels.getQuick(i);
+            final ExpressionNode shiftedAlias = shifted.getAlias() != null ? shifted.getAlias() : shifted.getTableNameExpr();
+            if (shiftedAlias != null) {
+                layer.getModelAliasIndexes().put(shiftedAlias.token, i);
+            }
+        }
     }
 
     private static boolean isCountAggregate(ExpressionNode node) {
@@ -515,64 +561,12 @@ class LateralJoinRewriter implements Mutable {
                 && Chars.equalsIgnoreCase(node.token, "count");
     }
 
-    private static boolean isGroupAt(IntList groups, int offset, IntList group) {
-        for (int i = 0, n = group.size(); i < n; i++) {
-            if (groups.getQuick(offset + i) != group.getQuick(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // True when no join after the one at joinIndex NULL-extends the rows that it produces
-    private static boolean isLastOuterJoin(ObjList<IQueryModel> joinModels, int joinIndex) {
-        for (int i = joinIndex + 1, n = joinModels.size(); i < n; i++) {
-            final int joinType = joinModels.getQuick(i).getJoinType();
-            if (isRightOrFullJoin(joinType) || joinType == IQueryModel.JOIN_SPLICE) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // True for an integer constant that is neither 0, which a RIGHT or FULL join puts in a BYTE or
     // SHORT column, nor Integer.MIN_VALUE, which an INT column reads as NULL. Every other integer
     // constant differs from what such a join puts in a column of any type.
-    private static boolean isNonFillIntConstant(ExpressionNode node) {
-        final long value = constOperand(node);
-        return value != LIMIT_NOT_CONSTANT && value != 0 && value != Integer.MIN_VALUE;
-    }
-
-    // For a column whose type is not known, which a RIGHT or FULL join fills with NULL, or with false
-    // or 0 if its type has no NULL: true when the comparison or IN is false for both. Against an
-    // integer constant other than Integer.MIN_VALUE, which an INT column reads as NULL, = < <= > >=
-    // are false for NULL, so the comparison counts when it is false for 0. IN counts when no value
-    // is 0, see isNonFillIntConstant(). != does not count: it is true for NULL and a value.
-    private static boolean isNullAndZeroRejecting(ExpressionNode conjunct, ExpressionNode column, int op, boolean isIn) {
-        if (isIn) {
-            if (conjunct.paramCount == 2) {
-                return isNonFillIntConstant(conjunct.rhs);
-            }
-            for (int i = 0, n = conjunct.args.size(); i < n; i++) {
-                final ExpressionNode value = conjunct.args.getQuick(i);
-                if (value != column && !isNonFillIntConstant(value)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        if (op == CMP_NE) {
-            return false;
-        }
-        final boolean isColumnLhs = column == conjunct.lhs;
-        final long value = constOperand(isColumnLhs ? conjunct.rhs : conjunct.lhs);
-        return value != LIMIT_NOT_CONSTANT
-                && value != Integer.MIN_VALUE
-                && !compare(isColumnLhs ? op : flipComparison(op), 0, value);
-    }
-
-    private static boolean isOuterRefJoinModel(IQueryModel joinModel) {
-        return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, OUTER_REF_PREFIX);
+    // True for a RIGHT, FULL or SPLICE join, which emits rows that it NULL-extends on its master side
+    private static boolean isMasterNullingJoin(int joinType) {
+        return isRightOrFullJoin(joinType) || joinType == IQueryModel.JOIN_SPLICE;
     }
 
     private static boolean isOuterRefToken(ExpressionNode node, CharSequence outerRefAlias) {
@@ -639,42 +633,6 @@ class LateralJoinRewriter implements Mutable {
                 && SqlKeywords.isTrueKeyword(condition.token));
     }
 
-    // Adds the group of check indices to the groups, each its size followed by its indices, unless
-    // the groups already hold the same indices in the same order
-    static void addRuntimeNullCheckGroup(IntList groups, IntList group) {
-        if (!hasRuntimeNullCheckGroup(groups, group)) {
-            groups.add(group.size());
-            groups.addAll(group);
-        }
-    }
-
-    static boolean hasRuntimeNullCheckGroup(IntList groups, IntList group) {
-        final int size = group.size();
-        for (int i = 0, n = groups.size(); i < n; i += groups.getQuick(i) + 1) {
-            if (groups.getQuick(i) == size && isGroupAt(groups, i + 1, group)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // True when the two checks are one: the same comparison, read on the NULL of the same type,
-    // over the same sub-queries. compareNodesExact() does not compare the sub-query models of
-    // two QUERY nodes, so two checks over different sub-queries may look alike.
-    static boolean isSameRuntimeNullCheck(ExpressionNode a, int aType, ExpressionNode b, int bType) {
-        return aType == bType && ExpressionNode.compareNodesExact(a, b) && hasSameQueryModels(a, b);
-    }
-
-    // BOOLEAN, BYTE and SHORT have no NULL: a RIGHT or FULL join puts false or 0 in the rows that
-    // it NULL-extends, which compare as any other value
-    static boolean isTypeWithoutNull(int columnType) {
-        if (columnType < 0) {
-            return false;
-        }
-        final short tag = ColumnType.tagOf(columnType);
-        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT;
-    }
-
     private static boolean isUnaryMinusConstant(ExpressionNode node) {
         return node.type == ExpressionNode.OPERATION
                 && node.paramCount == 1
@@ -690,6 +648,16 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
+    }
+
+    // Returns the index of the last RIGHT, FULL or SPLICE join of the FROM clause, or 0 when it has none
+    private static int lastMasterNullingJoin(ObjList<IQueryModel> joinModels) {
+        for (int i = joinModels.size() - 1; i > 0; i--) {
+            if (isMasterNullingJoin(joinModels.getQuick(i).getJoinType())) {
+                return i;
+            }
+        }
+        return 0;
     }
 
     private static boolean matchesOuterRefAlias(CharSequence token, CharSequence outerRefAlias) {
@@ -734,46 +702,6 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
-    // Returns the type of the table column that the sub-query outputs under the name, following the
-    // columns that only rename a column down the nested models, or -1. A set operation may widen the
-    // type, and a column of a join may come from any of its tables, so they return -1, as does a
-    // column that a qualifier other than the model's own may take from an outer query.
-    private static int resolveSubQueryColumnType(IQueryModel model, CharSequence name) {
-        for (int depth = 0; model != null && depth < 16; depth++) {
-            if (model.getUnionModel() != null || model.getJoinModels().size() > 1) {
-                return -1;
-            }
-            final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-            QueryColumn selected = null;
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn qc = columns.getQuick(i);
-                if (!qc.getAst().isWildcard() && Chars.equalsIgnoreCase(qc.getAlias(), name)) {
-                    selected = qc;
-                    break;
-                }
-            }
-            if (selected != null) {
-                final ExpressionNode ast = selected.getAst();
-                if (ast.type != ExpressionNode.LITERAL) {
-                    return -1;
-                }
-                final int dot = Chars.indexOf(ast.token, '.');
-                if (dot > 0 && model.getModelAliasIndex(ast.token, 0, dot) != 0) {
-                    return -1;
-                }
-                name = ast.token.subSequence(dot + 1, ast.token.length());
-            } else if (columns.size() > 0 && !isWildcard(columns)) {
-                return -1;
-            }
-            if (model.getTableNameExpr() != null) {
-                final QueryColumn qc = model.getAliasToColumnMap().get(name);
-                return qc != null ? qc.getColumnType() : -1;
-            }
-            model = model.getNestedModel();
-        }
-        return -1;
-    }
-
     // A clone of a clone reads the previous clone's column names as its source
     // tokens; stripping the previous __qdb_outer_ref__N_ prefix keeps every
     // clone's projection on the <cloneAlias>_<base column> convention that all
@@ -805,6 +733,16 @@ class LateralJoinRewriter implements Mutable {
     private static CharSequence unqualify(CharSequence token) {
         int dotPos = Chars.indexOfLastUnquoted(token, '.');
         return dotPos > 0 ? token.subSequence(dotPos + 1, token.length()) : token;
+    }
+
+    // Returns the name under which the sub-query of wrapWithOuterRefCopy() takes the relation's place:
+    // its alias or the name of its table, or null when it has neither
+    private static ExpressionNode wrapAlias(IQueryModel relation) {
+        if (relation.getAlias() != null) {
+            return relation.getAlias();
+        }
+        final ExpressionNode tableName = relation.getTableNameExpr();
+        return tableName != null && tableName.type == ExpressionNode.LITERAL ? tableName : null;
     }
 
     // Builds the row-1 evaluation of the row_number filter for one body layer and
@@ -868,6 +806,32 @@ class LateralJoinRewriter implements Mutable {
         outerRefSubquery.addBottomUpColumnIfNotExists(qc);
     }
 
+    // Adds the outer-ref columns of a copy of the outer-ref join to the projection of a sub-query of
+    // wrapWithOuterRefCopy(). A wildcard over the sub-query leaves them out, as a wildcard over the
+    // lateral body leaves out its outer-ref columns.
+    private void addCopyColumns(
+            IQueryModel projection,
+            CharSequence copyAlias,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias
+    ) throws SqlException {
+        final ObjList<CharSequence> keys = outerToInnerAlias.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final CharSequence key = keys.getQuick(i);
+            if (key != null) {
+                final CharacterStoreEntry name = characterStore.newEntry();
+                name.put(copyAlias).put('_').put(unqualify(key));
+                final CharSequence columnName = name.toImmutable();
+                final CharacterStoreEntry ref = characterStore.newEntry();
+                ref.put(copyAlias).put('.').put(columnName);
+                final QueryColumn column = queryColumnPool.next().of(
+                        columnName, expressionNodePool.next().of(ExpressionNode.LITERAL, ref.toImmutable(), 0, 0), false
+                );
+                column.setGenerated(true);
+                projection.addBottomUpColumn(column);
+            }
+        }
+    }
+
     private CharSequence addCountMarker(int originLayer, CharSequence originAlias, int position) throws SqlException {
         characterStore.newEntry();
         characterStore.put(LATERAL_COUNT_MARKER_PREFIX).put(carrierId++);
@@ -927,36 +891,6 @@ class LateralJoinRewriter implements Mutable {
                 partitionBy.add(cloned);
             }
         }
-    }
-
-    // The code generator checks, once per execution, whether the conjunct is false on the NULL of
-    // the type of its column; see runtimeNullCheckOperand(). Returns the index of the check in the
-    // checks of the level, which hold each check once.
-    private int addRuntimeNullCheck(IQueryModel level, ExpressionNode conjunct, ExpressionNode operand) {
-        final ExpressionNode column = conjunct.lhs == operand ? conjunct.rhs : conjunct.lhs;
-        final int columnType = resolveColumnType(level, column);
-        final ExpressionNode check = createRuntimeNullCheck(conjunct, column, operand);
-        final ObjList<ExpressionNode> checks = level.getLateralNullChecks();
-        final IntList checkTypes = level.getLateralNullCheckTypes();
-        for (int i = 0, n = checks.size(); i < n; i++) {
-            if (isSameRuntimeNullCheck(checks.getQuick(i), checkTypes.getQuick(i), check, columnType)) {
-                return i;
-            }
-        }
-        level.addLateralNullCheck(check, columnType);
-        return checks.size() - 1;
-    }
-
-    // Adds runtimeNullCheckGroup to the groups of the level, see IQueryModel.getLateralNullCheckGroups(),
-    // and returns false when it is empty
-    private boolean addRuntimeNullCheckGroup(IQueryModel level) {
-        if (runtimeNullCheckGroup.size() == 0) {
-            return false;
-        }
-        if (!hasRuntimeNullCheckGroup(level.getLateralNullCheckGroups(), runtimeNullCheckGroup)) {
-            level.addLateralNullCheckGroup(runtimeNullCheckGroup);
-        }
-        return true;
     }
 
     private void addSelfCountTemplate(CharSequence alias, int position) {
@@ -1333,7 +1267,9 @@ class LateralJoinRewriter implements Mutable {
     // Per-side push: skip main chain CROSS JOIN (Neumann-Kemper transform
     // R ⋈ (D ⋈ S) instead of (R × D) ⋈ S). Conditions:
     //  1. Main chain has no own correlated expressions (R doesn't need D)
-    //  2. All branches are INNER/CROSS/RIGHT (no LEFT/FULL row preservation)
+    //  2. All branches are INNER/CROSS/RIGHT (no LEFT/FULL row preservation), and the slave of
+    //     each RIGHT join is a correlated branch: a RIGHT join keeps every row of its slave once
+    //     per outer row, which only a slave that joins D does
     //  3. Table-model branches have no correlated ON (can't create clone)
     //  4. At least one correlated branch exists (alignment needs a source)
     //  5. No main chain layer carries a LIMIT. Lateral semantics apply a body
@@ -1364,6 +1300,10 @@ class LateralJoinRewriter implements Mutable {
                     boolean hasCorrelatedOn = branch.getJoinCriteria() != null
                             && hasCorrelatedExprAtDepth(branch.getJoinCriteria(), depth);
                     if (hasCorrelatedOn && branch.getNestedModel() == null) {
+                        return false;
+                    }
+                    if (jt == IQueryModel.JOIN_RIGHT_OUTER
+                            && (branch.getNestedModel() == null || !branch.getNestedModel().isCorrelatedAtDepth(depth))) {
                         return false;
                     }
                     if (hasCorrelatedOn || (branch.getNestedModel() != null
@@ -1419,100 +1359,6 @@ class LateralJoinRewriter implements Mutable {
         return true;
     }
 
-    // Pass 3 replaces each outer-ref column with the inner column that WHERE equates it with, and
-    // the lateral join then matches each row of the level to the outer rows whose key equals that
-    // column. A RIGHT or FULL join after the outer-ref join breaks that when its matching depends
-    // on the outer row, through an ON clause that reads the outer-ref join or a correlated
-    // sub-query at or before the join. Per outer row, the join emits the unmatched rows of that
-    // outer row, while after the rewrite it emits the unmatched rows of all outer rows once.
-    // Where the join NULL-extends the key column, those rows have a NULL key, which = matches to
-    // the outer rows whose key is NULL. Where it preserves the key column, the equalities that
-    // align a correlated sub-query with the outer-ref join sit in its ON clause, so they do not
-    // filter the rows that it preserves.
-    //
-    // A RIGHT join that depends on the outer row only through a correlated sub-query as its slave
-    // is repaired: its alignment equalities move into WHERE, after the join. The join then
-    // matches each slave row against all master rows, as it does per outer row, and WHERE keeps
-    // the rows whose key equals the outer key of their slave row. An unmatched slave row has a
-    // NULL key, which equals only a NULL outer key, as per outer row. Returns that join, or null.
-    //
-    // Any other such join fails at its join keyword, unless a WHERE conjunct of the level drops
-    // the rows that it NULL-extends on its master side. A key of a later INNER join does not
-    // count, as = matches NULL to NULL, and neither does a correlated WHERE conjunct, which
-    // terminateHere() moved into the outer-ref join's ON clause, ahead of the join. When that
-    // depends on the type of a column, which only the code generator knows, the code generator
-    // decides, with the checks of the conjuncts on columns of known type; see deferNullRejection().
-    private IQueryModel checkOuterJoinsAfterOuterRef(
-            IQueryModel level,
-            int outerRefIndex,
-            CharSequence outerRefAlias
-    ) throws SqlException {
-        final ObjList<IQueryModel> joinModels = level.getJoinModels();
-        IQueryModel alignedRightJoin = null;
-        boolean isBranchDependent = false;
-        boolean isOuterRowDependent = false;
-        for (int i = outerRefIndex + 1, n = joinModels.size(); i < n; i++) {
-            final IQueryModel jm = joinModels.getQuick(i);
-            final ExpressionNode criteria = jm.getJoinCriteria();
-            boolean hasAlignment = false;
-            boolean hasCorrelatedConjunct = false;
-            boolean hasOtherConjunct = false;
-            if (criteria != null && hasOuterRefLiteral(criteria, outerRefAlias)) {
-                splitAndPredicates(criteria, joinConjuncts);
-                for (int c = 0, cn = joinConjuncts.size(); c < cn; c++) {
-                    final ExpressionNode conjunct = joinConjuncts.getQuick(c);
-                    if (isAlignmentConjunct(conjunct, outerRefAlias)) {
-                        hasAlignment = true;
-                    } else {
-                        hasOtherConjunct = true;
-                        hasCorrelatedConjunct |= hasOuterRefLiteral(conjunct, outerRefAlias);
-                    }
-                }
-            }
-            final int joinType = jm.getJoinType();
-            if (isRightOrFullJoin(joinType) && (hasAlignment || hasCorrelatedConjunct || isOuterRowDependent)) {
-                final boolean isFull = joinType == IQueryModel.JOIN_FULL_OUTER;
-                boolean isKeyNullExtended = false;
-                boolean isKeyOffMasterSide = false;
-                final ObjList<CharSequence> keys = outerToInnerAlias.keys();
-                for (int k = 0, kn = keys.size(); k < kn; k++) {
-                    final CharSequence key = keys.getQuick(k);
-                    if (key == null) {
-                        continue;
-                    }
-                    final int index = resolveJoinModelIndex(level, outerToInnerAlias.get(key));
-                    final boolean isUnresolved = index < 0 || index == outerRefIndex;
-                    final boolean isMasterSide = !isUnresolved && index < i;
-                    isKeyNullExtended |= isUnresolved || isMasterSide || (isFull && index == i);
-                    isKeyOffMasterSide |= !isMasterSide;
-                }
-                final String error = hasAlignment || isBranchDependent ? CORRELATED_SUB_QUERY_ERROR : OUTER_COLUMN_ERROR;
-                // a WHERE conjunct that drops the rows the join NULL-extends on its master side
-                // leaves only matched rows, which satisfy the alignment equalities
-                final boolean isNullExtensionFiltered = (!isFull || !isKeyOffMasterSide)
-                        && (isKeyNullExtended || hasAlignment)
-                        && isWhereNullRejecting(level, i, error);
-                if ((isKeyNullExtended || hasAlignment) && !isNullExtensionFiltered) {
-                    if (!isFull
-                            && hasAlignment
-                            && hasOtherConjunct
-                            && !hasCorrelatedConjunct
-                            && !isOuterRowDependent
-                            && isLastOuterJoin(joinModels, i)) {
-                        alignedRightJoin = jm;
-                    } else {
-                        if ((isFull && isKeyOffMasterSide) || !deferNullRejection(level, i, true, error)) {
-                            throw SqlException.position(jm.getJoinKeywordPosition()).put(error);
-                        }
-                    }
-                }
-            }
-            isBranchDependent |= hasAlignment;
-            isOuterRowDependent |= hasAlignment || hasCorrelatedConjunct;
-        }
-        return alignedRightJoin;
-    }
-
     private int classifyGroupByOnZeroCountRow(IQueryModel layer) {
         final ObjList<ExpressionNode> groupBy = layer.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
@@ -1542,9 +1388,19 @@ class LateralJoinRewriter implements Mutable {
             cloneAlias = characterStore.toImmutable();
         } while (aliasOwner != null && aliasOwner.getModelAliasIndex(cloneAlias, 0, cloneAlias.length()) >= 0);
 
-        IQueryModel origSubquery = outerRefJoinModel.getNestedModel();
-        assert origSubquery instanceof QueryModel;
-        IQueryModel sharedDistinct = createSharedRef((QueryModel) origSubquery);
+        // terminateWithTaggedPrefix() can leave the outer-ref join reading its sub-query through a
+        // wrapper, which shares the sub-query with a copy ahead of the join
+        final IQueryModel origNested = outerRefJoinModel.getNestedModel();
+        QueryModel origSubquery = origNested instanceof QueryModelWrapper wrapper ? wrapper.getDelegate() : (QueryModel) origNested;
+        // A copy of a copy reads the sub-query that the copy renames. Sharing the renaming layer of
+        // the copy would make the code generator build that layer once per wrapper, each time with
+        // the wrapper of the sub-query that the layer holds, so that the wrappers of all those
+        // layers would read the sub-query through one shared cursor.
+        while (outerRefRenamingLayers.contains(origSubquery)) {
+            final IQueryModel renamed = origSubquery.getNestedModel().getNestedModel();
+            origSubquery = renamed instanceof QueryModelWrapper wrapper ? wrapper.getDelegate() : (QueryModel) renamed;
+        }
+        IQueryModel sharedDistinct = createSharedRef(origSubquery);
         IQueryModel renamingLayer = queryModelPool.next();
         IQueryModel emptyLayer = queryModelPool.next();
         emptyLayer.setNestedModel(sharedDistinct);
@@ -1564,6 +1420,7 @@ class LateralJoinRewriter implements Mutable {
             generatedColumn.setGenerated(true);
             renamingLayer.addBottomUpColumnIfNotExists(generatedColumn);
         }
+        outerRefRenamingLayers.add(renamingLayer);
 
         IQueryModel clonedOuterRef = queryModelPool.next();
         clonedOuterRef.setNestedModel(renamingLayer);
@@ -1572,6 +1429,8 @@ class LateralJoinRewriter implements Mutable {
                 ExpressionNode.LITERAL, cloneAlias, 0, 0
         );
         clonedOuterRef.setAlias(cloneAliasExpr);
+        // a join model resolves its own alias, as the optimiser reads a filter that it moves there
+        clonedOuterRef.addModelAliasIndex(cloneAliasExpr, 0);
         clonedOuterRef.setJoinType(IQueryModel.JOIN_CROSS);
         return clonedOuterRef;
     }
@@ -1595,6 +1454,28 @@ class LateralJoinRewriter implements Mutable {
             copy.args.add(cloneWithCountPlaceholder(node.args.getQuick(i), layer));
         }
         return copy;
+    }
+
+    // Collects the outer-ref columns of a copy of the outer-ref join, as the relation under
+    // relationAlias provides them: the copy itself, or the sub-query of wrapWithOuterRefCopy() that
+    // joins it. One column per outer column in the order of outerToInnerAlias.keys(), named as
+    // cloneOuterRef() and saveAndRemapOuterToInnerAlias() name them.
+    private void collectCopyTag(
+            CharSequence relationAlias,
+            CharSequence copyAlias,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            ObjList<ExpressionNode> tag
+    ) {
+        tag.clear();
+        final ObjList<CharSequence> keys = outerToInnerAlias.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final CharSequence key = keys.getQuick(i);
+            if (key != null) {
+                final CharacterStoreEntry entry = characterStore.newEntry();
+                entry.put(relationAlias).put('.').put(copyAlias).put('_').put(unqualify(key));
+                tag.add(expressionNodePool.next().of(ExpressionNode.LITERAL, entry.toImmutable(), 0, 0));
+            }
+        }
     }
 
     private void collectCorrelatedRef(
@@ -1713,87 +1594,23 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
-    // Adds to runtimeNullCheckGroup, once, the index of the check of each conjunct of the filter
-    // that runtimeNullCheckOperand() accepts. Returns how many indices it added.
-    private int collectRuntimeNullChecks(IQueryModel level, ExpressionNode filter, int joinIndex, boolean isEqualityAccepted) {
-        if (filter == null) {
-            return 0;
-        }
-        final int groupSize = runtimeNullCheckGroup.size();
-        splitAndPredicates(filter, filterConjuncts);
-        for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = filterConjuncts.getQuick(i);
-            final ExpressionNode operand = runtimeNullCheckOperand(level, conjunct, joinIndex, isEqualityAccepted);
-            if (operand != null) {
-                final int index = addRuntimeNullCheck(level, conjunct, operand);
-                if (!runtimeNullCheckGroup.contains(index)) {
-                    runtimeNullCheckGroup.add(index);
+    // Collects the conjuncts of the criteria of an outer-ref join other than the equalities that
+    // give the outer-ref columns their equivalents in outerToInnerAlias. When Pass 3 removes the
+    // join, the lateral join enforces only those equalities, by comparing each equivalent with its
+    // outer column.
+    private void collectResidualConjuncts(ExpressionNode criteria, CharSequence outerRefAlias, ObjList<ExpressionNode> result) {
+        splitAndPredicates(criteria, result);
+        for (int i = result.size() - 1; i >= 0; i--) {
+            final ExpressionNode conjunct = result.getQuick(i);
+            final ExpressionNode outerRef = findMappedOuterRefOperand(conjunct, outerRefAlias);
+            if (outerRef != null) {
+                final ExpressionNode equivalent = outerRef == conjunct.lhs ? conjunct.rhs : conjunct.lhs;
+                final CharSequence mapped = outerToInnerAlias.get(outerRef.token);
+                if (mapped != null && Chars.equalsIgnoreCase(mapped, equivalent.token)) {
+                    result.remove(i);
                 }
             }
         }
-        return runtimeNullCheckGroup.size() - groupSize;
-    }
-
-    // Adds to the check each conjunct of the filter on a master-side column of the join at joinIndex
-    // whose type is not known before code generation, which would count in isNullRejectingConjunct()
-    // or runtimeNullCheckOperand() with some types: against compile-time constants, with its probe;
-    // with < or > against any other operand; and with <= >=, or = when isEqualityAccepted, against
-    // an operand that takes one value per execution, see isRuntimeConstantOperand(), with a check
-    // that the conjunct is false on the NULL of the column type. BETWEEN already
-    // counts for such a column. A conjunct of an outer-ref join's ON clause is copied into WHERE,
-    // see ensureNullRejectingFilter(). Adds, in the order of the conjuncts, each conjunct that
-    // runtimeNullCheckOperand() accepts too, on a column of known type, with its check and no probe:
-    // the filter drops the rows while the value of any of the conjuncts is not NULL, so the code
-    // generator puts the checks of both kinds in one group. Returns how many conjuncts on a column
-    // of unknown type it added.
-    private int collectTypeDependentConjuncts(
-            IQueryModel level,
-            ExpressionNode filter,
-            int joinIndex,
-            boolean isEqualityAccepted,
-            boolean isCopiedIntoWhere,
-            LateralNullRejection check
-    ) {
-        if (filter == null) {
-            return 0;
-        }
-        int typeDependentCount = 0;
-        splitAndPredicates(filter, filterConjuncts);
-        for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = filterConjuncts.getQuick(i);
-            final ExpressionNode operand = runtimeNullCheckOperand(level, conjunct, joinIndex, isEqualityAccepted);
-            if (operand != null) {
-                // the ON clause of an outer-ref join holds no such conjunct, see ensureNullRejectingFilter()
-                assert !isCopiedIntoWhere;
-                final ExpressionNode knownColumn = conjunct.lhs == operand ? conjunct.rhs : conjunct.lhs;
-                check.add(knownColumn.token, null, createRuntimeNullCheck(conjunct, knownColumn, operand));
-                continue;
-            }
-            final ExpressionNode column = nullRejectionColumn(level, conjunct, joinIndex);
-            if (column == null || resolveColumnType(level, column) >= 0) {
-                continue;
-            }
-            final int op = comparisonOp(conjunct.token);
-            ExpressionNode probe = null;
-            ExpressionNode nullCheck = null;
-            if (hasOnlyConstantOperands(conjunct, column)) {
-                probe = createNullRejectionProbe(conjunct, column);
-            } else if (op == CMP_LE || op == CMP_GE || (op == CMP_EQ && isEqualityAccepted)) {
-                final ExpressionNode value = conjunct.lhs == column ? conjunct.rhs : conjunct.lhs;
-                if (hasColumnRef(value) || !isRuntimeConstantOperand(value)) {
-                    continue;
-                }
-                nullCheck = createRuntimeNullCheck(conjunct, column, value);
-            } else if (op != CMP_LT && op != CMP_GT) {
-                continue;
-            }
-            check.add(column.token, probe, nullCheck);
-            typeDependentCount++;
-            if (isCopiedIntoWhere) {
-                copyIntoWhere(level, conjunct);
-            }
-        }
-        return typeDependentCount;
     }
 
     // Adds groupingCols (outer ref columns) to GROUP BY and SELECT.
@@ -2297,12 +2114,6 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
-    private void copyIntoWhere(IQueryModel level, ExpressionNode conjunct) {
-        final ExpressionNode copy = ExpressionNode.deepClone(expressionNodePool, conjunct);
-        final ExpressionNode where = level.getWhereClause();
-        level.setWhereClause(where == null ? copy : createBinaryOp("and", where, copy));
-    }
-
     private boolean countIntervalFor(int op, long k) {
         switch (op) {
             case CMP_EQ -> {
@@ -2370,26 +2181,6 @@ class LateralJoinRewriter implements Mutable {
         );
     }
 
-    // Returns a copy of the conjunct that reads NULL_REJECTING_PROBE_COLUMN instead of the column,
-    // see SqlOptimiser.isFalseOnNullRecord()
-    private ExpressionNode createNullRejectionProbe(ExpressionNode conjunct, ExpressionNode column) {
-        final ExpressionNode probe = ExpressionNode.deepClone(expressionNodePool, conjunct);
-        final ExpressionNode probeColumn = expressionNodePool.next().of(
-                ExpressionNode.LITERAL,
-                NULL_REJECTING_PROBE_COLUMN,
-                0,
-                column.position
-        );
-        if (conjunct.lhs == column) {
-            probe.lhs = probeColumn;
-        } else if (conjunct.rhs == column) {
-            probe.rhs = probeColumn;
-        } else {
-            probe.args.setQuick(conjunct.args.size() - 1, probeColumn);
-        }
-        return probe;
-    }
-
     private IQueryModel createOuterRefBase(IQueryModel outerJm) throws SqlException {
         IQueryModel outerRefBase = queryModelPool.next();
         if (outerJm.getTableNameExpr() != null) {
@@ -2423,16 +2214,6 @@ class LateralJoinRewriter implements Mutable {
             outerRefBase.addField(outerJm.getAliasToColumnMap().get(srcKeys.getQuick(i)));
         }
         return outerRefBase;
-    }
-
-    // Returns the probe of the conjunct, see createNullRejectionProbe(), at the position of the
-    // operand, which the code generator evaluates once per execution on the NULL of the column type.
-    // The comparison converts the operand to that type as the filter does, so a text bind variable
-    // that holds '0.0.0.0' compares as the NULL of an IPv4 column.
-    private ExpressionNode createRuntimeNullCheck(ExpressionNode conjunct, ExpressionNode column, ExpressionNode operand) {
-        final ExpressionNode check = createNullRejectionProbe(conjunct, column);
-        check.position = operand.position;
-        return check;
     }
 
     private IQueryModel createSharedRef(QueryModel delegate) {
@@ -2506,6 +2287,7 @@ class LateralJoinRewriter implements Mutable {
                         ExpressionNode.LITERAL, outerRefAlias, 0, 0
                 );
                 outerRefJoinModel.setAlias(outerRefAliasExpr);
+                mainOuterRefJoins.add(outerRefJoinModel);
 
                 // Push down outer refs
                 boolean isPerSidePush = canPerSidePush(topInner, depth);
@@ -2627,42 +2409,6 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
-    // Called when no conjunct provably drops the rows in which the RIGHT or FULL join at joinIndex
-    // NULL-extends its master side. Whether a conjunct on a column whose type is not known before
-    // code generation, such as a computed or set operation sub-query column, drops them depends on
-    // that type: != 0 drops them in a SHORT column, which the join fills with 0, but not in an INT
-    // column, which it fills with NULL. Attaches such conjuncts to the join, with the conjuncts on
-    // columns of known type that drop those rows only while their value is not NULL, and the code
-    // generator, which knows the type, fails the query with the error unless one of them drops those
-    // rows, or fails it once per execution while the value of each of the latter is NULL; see
-    // LateralNullRejection. The conjuncts come from WHERE and, unless isWhereOnly, from the ON
-    // clauses that ensureNullRejectingFilter() reads. Returns false when there is no conjunct on a
-    // column of unknown type, and the caller then decides on the conjuncts of known type.
-    private boolean deferNullRejection(IQueryModel level, int joinIndex, boolean isWhereOnly, String error) {
-        final ObjList<IQueryModel> joinModels = level.getJoinModels();
-        final LateralNullRejection check = lateralNullRejectionPool.next();
-        int typeDependentCount = collectTypeDependentConjuncts(level, level.getWhereClause(), joinIndex, !isWhereOnly, false, check);
-        if (!isWhereOnly) {
-            for (int i = 1, n = joinModels.size(); i < n; i++) {
-                final IQueryModel jm = joinModels.getQuick(i);
-                if (isOuterRefJoinModel(jm)) {
-                    typeDependentCount += collectTypeDependentConjuncts(level, jm.getJoinCriteria(), joinIndex, true, true, check);
-                } else if (i > joinIndex && jm.getJoinType() == IQueryModel.JOIN_INNER) {
-                    typeDependentCount += collectTypeDependentConjuncts(level, jm.getJoinCriteria(), joinIndex, true, false, check);
-                }
-            }
-        }
-        if (typeDependentCount == 0) {
-            return false;
-        }
-        // the join may hold the check of another outer-ref join, which must hold as well
-        final IQueryModel join = joinModels.getQuick(joinIndex);
-        check.setError(error);
-        check.setNext(join.getLateralNullRejection());
-        join.setLateralNullRejection(check);
-        return true;
-    }
-
     private CharSequence ensureColumnInSelect(
             IQueryModel model,
             ExpressionNode colExpr,
@@ -2699,15 +2445,13 @@ class LateralJoinRewriter implements Mutable {
         return alias;
     }
 
+    // propagateColumnUp() calls it for a layer with a projection and no bare wildcard
     private CharSequence ensureColumnInSelectAtFront(
             IQueryModel model,
             ExpressionNode colExpr,
             CharSequence preferredAlias
     ) {
         ObjList<QueryColumn> cols = model.getBottomUpColumns();
-        if (cols.size() == 0 || hasBareWildcard(cols)) {
-            return preferredAlias;
-        }
         for (int i = 0, n = cols.size(); i < n; i++) {
             QueryColumn col = cols.getQuick(i);
             if (ExpressionNode.compareNodesExact(col.getAst(), colExpr)) {
@@ -2782,68 +2526,15 @@ class LateralJoinRewriter implements Mutable {
         return alias;
     }
 
-    // Returns true when a filter that runs after the RIGHT/FULL join at joinIndex drops every row
-    // in which that join NULL-extends its master side. Per outer row, the filter drops those rows
-    // as well, so the rows that the join loses with their NULL outer-ref key do not change the
-    // result. The filter is a WHERE conjunct, or a conjunct of a later INNER join's ON clause.
-    // A correlated WHERE conjunct that terminateHere() moved into an outer-ref join's ON clause
-    // runs ahead of the join and never sees those rows, which = would then match to the outer
-    // rows whose key is NULL. Such a conjunct is copied into WHERE, so it runs after the join too.
-    // An = key of the later INNER join does not count: it matches the NULL-extended column to a
-    // NULL key of the joined table, so per outer row those rows survive it.
-    // A conjunct that drops those rows only while its operand is not NULL, such as t.id >= $1,
-    // counts when no other conjunct drops them. The conjuncts of the filter are ANDed, so the filter
-    // drops those rows while the operand of any such conjunct is not NULL. The level gets a group of
-    // the checks of all of them, and the code generator then checks the operands once per
-    // execution; see runtimeNullCheckOperand(). When a conjunct on a column whose type only the code
-    // generator knows may drop those rows, the code generator decides, with those checks; see
-    // deferNullRejection().
-    private boolean ensureNullRejectingFilter(IQueryModel level, int joinIndex) {
-        if (findNullRejectingConjunct(level, level.getWhereClause(), joinIndex) != null) {
-            return true;
-        }
-        final ObjList<IQueryModel> joinModels = level.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            final IQueryModel jm = joinModels.getQuick(i);
-            if (isOuterRefJoinModel(jm)) {
-                final ExpressionNode conjunct = findNullRejectingConjunct(level, jm.getJoinCriteria(), joinIndex);
-                if (conjunct != null) {
-                    copyIntoWhere(level, conjunct);
-                    return true;
-                }
-            } else if (i > joinIndex
-                    && jm.getJoinType() == IQueryModel.JOIN_INNER
-                    && findNullRejectingConjunct(level, jm.getJoinCriteria(), joinIndex) != null) {
-                return true;
-            }
-        }
-        if (deferNullRejection(level, joinIndex, false, OUTER_COLUMN_ERROR)) {
-            return true;
-        }
-        // the filter drops the rows while any of these conjuncts has a value that is not NULL
-        runtimeNullCheckGroup.clear();
-        collectRuntimeNullChecks(level, level.getWhereClause(), joinIndex, true);
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            final IQueryModel jm = joinModels.getQuick(i);
-            if (isOuterRefJoinModel(jm)) {
-                // terminateHere() moves into the ON clause of an outer-ref join only conjuncts that
-                // read the outer row, and runtimeNullCheckOperand() rejects an operand that reads a
-                // column; a lateral body does not compile a correlated scalar sub-query
-                assert collectRuntimeNullChecks(level, jm.getJoinCriteria(), joinIndex, true) == 0;
-            } else if (i > joinIndex && jm.getJoinType() == IQueryModel.JOIN_INNER) {
-                collectRuntimeNullChecks(level, jm.getJoinCriteria(), joinIndex, true);
-            }
-        }
-        return addRuntimeNullCheckGroup(level);
-    }
-
+    // Handles the joins of the layer from firstJoinIndex on
     private void extractCorrelatedFromInnerJoins(
             IQueryModel inner,
+            int firstJoinIndex,
             ObjList<ExpressionNode> correlated,
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) {
-        for (int i = 1, n = inner.getJoinModels().size(); i < n; i++) {
+        for (int i = firstJoinIndex, n = inner.getJoinModels().size(); i < n; i++) {
             IQueryModel jm = inner.getJoinModels().getQuick(i);
             ExpressionNode joinCriteria = jm.getJoinCriteria();
             if (joinCriteria != null && hasCorrelatedExprAtDepth(joinCriteria, depth)) {
@@ -2965,22 +2656,6 @@ class LateralJoinRewriter implements Mutable {
         return findEqualityPartner(where, outerColToken);
     }
 
-    // Returns a conjunct of the filter that is false for every row in which the join at joinIndex
-    // NULL-extends its master side, or null; see isNullRejectingConjunct()
-    private ExpressionNode findNullRejectingConjunct(IQueryModel level, ExpressionNode filter, int joinIndex) {
-        if (filter == null) {
-            return null;
-        }
-        splitAndPredicates(filter, filterConjuncts);
-        for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = filterConjuncts.getQuick(i);
-            if (isNullRejectingConjunct(level, conjunct, joinIndex)) {
-                return conjunct;
-            }
-        }
-        return null;
-    }
-
     private ExpressionNode findOriginalOuterRef(
             CharSequence outerRefToken,
             ObjList<QueryColumn> outerRefCols
@@ -3067,6 +2742,36 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // True when a conjunct that the lift of tryEliminateOuterRefInBranch() moves into the criteria of
+    // the lateral join holds a sub-query: a criterion of the outer-ref join, or a conjunct that reads
+    // the outer-ref join in the WHERE clause of a layer above the data source layer
+    private boolean hasCorrelatedSubQuery(
+            IQueryModel branchTop,
+            IQueryModel dataSourceLayer,
+            ExpressionNode outerRefCriteria,
+            CharSequence outerRefAlias
+    ) {
+        if (hasSubQuery(outerRefCriteria)) {
+            return true;
+        }
+        for (IQueryModel model = branchTop; model != null && model != dataSourceLayer; model = model.getNestedModel()) {
+            if (hasCorrelatedSubQueryConjunct(model.getWhereClause(), outerRefAlias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasCorrelatedSubQueryConjunct(ExpressionNode node, CharSequence outerRefAlias) {
+        if (node == null) {
+            return false;
+        }
+        if (SqlKeywords.isAndKeyword(node.token)) {
+            return hasCorrelatedSubQueryConjunct(node.lhs, outerRefAlias) || hasCorrelatedSubQueryConjunct(node.rhs, outerRefAlias);
+        }
+        return hasSubQuery(node) && hasOuterRefLiteral(node, outerRefAlias);
+    }
+
     private boolean hasEarlierQualifiedWildcardSource(
             IQueryModel model,
             ObjList<CharSequence> columnNames,
@@ -3143,21 +2848,6 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    // True when every operand of the conjunct but the column is a compile-time constant
-    private boolean hasOnlyConstantOperands(ExpressionNode conjunct, ExpressionNode column) {
-        if (conjunct.paramCount < 3) {
-            return (conjunct.lhs == column || isCompileTimeConstant(conjunct.lhs))
-                    && (conjunct.rhs == column || isCompileTimeConstant(conjunct.rhs));
-        }
-        for (int i = 0, n = conjunct.args.size(); i < n; i++) {
-            final ExpressionNode arg = conjunct.args.getQuick(i);
-            if (arg != column && !isCompileTimeConstant(arg)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private boolean hasOuterRefLiteral(ExpressionNode node, CharSequence outerRefAlias) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -3174,17 +2864,6 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
             node = node.lhs != null ? node.lhs : (sqlNodeStack.poll());
-        }
-        return false;
-    }
-
-    // True when runtimeNullCheckOperand() accepts a conjunct of the WHERE filter, where = does not count
-    private boolean hasRuntimeNullCheckConjunct(IQueryModel level, ExpressionNode where, int joinIndex) {
-        splitAndPredicates(where, filterConjuncts);
-        for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
-            if (runtimeNullCheckOperand(level, filterConjuncts.getQuick(i), joinIndex, false) != null) {
-                return true;
-            }
         }
         return false;
     }
@@ -3305,39 +2984,6 @@ class LateralJoinRewriter implements Mutable {
         return isBaseCompatibleCountMarkerTemplate(template);
     }
 
-    // True when the function parser folds the expression to a constant. A column, a bind variable or a
-    // sub-query is no such constant, and neither is a function such as now(), whose value a cached
-    // plan takes at run time. The expression is not parsed when it holds any of the first three, as
-    // parsing a bind variable may define its type.
-    private boolean isCompileTimeConstant(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        sqlNodeStack.clear();
-        sqlNodeStack.push(node);
-        while (!sqlNodeStack.isEmpty()) {
-            final ExpressionNode n = sqlNodeStack.pop();
-            if (n.type == ExpressionNode.LITERAL
-                    || n.type == ExpressionNode.BIND_VARIABLE
-                    || n.type == ExpressionNode.QUERY
-                    || n.type == ExpressionNode.SET_OPERATION
-                    || n.type == ExpressionNode.UNKNOWN) {
-                sqlNodeStack.clear();
-                return false;
-            }
-            if (n.lhs != null) {
-                sqlNodeStack.push(n.lhs);
-            }
-            if (n.rhs != null) {
-                sqlNodeStack.push(n.rhs);
-            }
-            for (int i = 0, m = n.args.size(); i < m; i++) {
-                sqlNodeStack.push(n.args.getQuick(i));
-            }
-        }
-        return isParsedConstant(node, false);
-    }
-
     private boolean isComplexChain(
             IQueryModel branchTop,
             IQueryModel dataSourceLayer,
@@ -3403,14 +3049,13 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    // Returns true for a column of a table on the master side of the join at joinIndex, other
-    // than an outer-ref join
-    private boolean isMasterSideColumn(IQueryModel level, ExpressionNode node, int joinIndex) {
-        if (node == null || node.type != ExpressionNode.LITERAL) {
-            return false;
+    private boolean isMainOuterRefJoin(IQueryModel joinModel) {
+        for (int i = 0, n = mainOuterRefJoins.size(); i < n; i++) {
+            if (mainOuterRefJoins.getQuick(i) == joinModel) {
+                return true;
+            }
         }
-        final int index = resolveJoinModelIndex(level, node.token);
-        return index >= 0 && index < joinIndex && !isOuterRefJoinModel(level.getJoinModels().getQuick(index));
+        return false;
     }
 
     // False only when the filter provably accepts the count column's whole
@@ -3429,63 +3074,9 @@ class LateralJoinRewriter implements Mutable {
         return truthLo > 0 || truthHi != Long.MAX_VALUE;
     }
 
-    // True when the conjunct is false for every row in which the join at joinIndex NULL-extends
-    // its master side. The conjunct is a comparison, IN or BETWEEN on a master-side column. In such
-    // a row the column holds what NullRecordFactory gives its type: NULL, or false or 0 for BOOLEAN,
-    // BYTE and SHORT, which have no NULL.
-    //
-    // When every other operand is a compile-time constant, the conjunct is evaluated on that value
-    // with the type of the column, so the type decides which constants read as NULL, such as 'NaN'
-    // or NULL::int. A bind variable or now() is no such constant: the plan is cached, and the value
-    // may be NULL in another execution. Against such operands, only < > and BETWEEN count, for a
-    // type with NULL: they are false for a NULL column, whatever the other operands. = <= and >=
-    // count only while the value is not NULL, which runtimeNullCheckOperand() leaves to a check
-    // once per execution.
-    //
-    // The type of a computed sub-query column is not known before code generation, so a conjunct on
-    // it counts here only when it is false for both NULL and 0, see isNullAndZeroRejecting(). BETWEEN
-    // is false for NULL, and it does not accept a BOOLEAN, BYTE or SHORT value. When no conjunct
-    // counts, deferNullRejection() leaves the other conjuncts on such a column to the code
-    // generator, which knows its type.
-    private boolean isNullRejectingConjunct(IQueryModel level, ExpressionNode conjunct, int joinIndex) {
-        final ExpressionNode column = nullRejectionColumn(level, conjunct, joinIndex);
-        if (column == null) {
-            return false;
-        }
-        final boolean isIn = SqlKeywords.isInKeyword(conjunct.token);
-        final boolean isBetween = !isIn && SqlKeywords.isBetweenKeyword(conjunct.token);
-        final int op = isIn || isBetween ? CMP_NONE : comparisonOp(conjunct.token);
-        final int columnType = resolveColumnType(level, column);
-        if (columnType < 0) {
-            return isBetween || isNullAndZeroRejecting(conjunct, column, op, isIn);
-        }
-        if (hasOnlyConstantOperands(conjunct, column)) {
-            return isFalseOnNullRecord(functionParser, createNullRejectionProbe(conjunct, column), columnType, executionContext);
-        }
-        return (isBetween || op == CMP_LT || op == CMP_GT) && !isTypeWithoutNull(columnType);
-    }
-
-    // True when the function parser, with no columns, makes the expression a constant, or a runtime
-    // constant when isRuntimeConstantAccepted, such as now()
-    private boolean isParsedConstant(ExpressionNode node, boolean isRuntimeConstantAccepted) {
-        Function function = null;
-        try {
-            function = functionParser.parseFunction(
-                    ExpressionNode.deepClone(expressionNodePool, node),
-                    EmptyRecordMetadata.INSTANCE,
-                    executionContext
-            );
-            return function != null && (function.isConstant() || (isRuntimeConstantAccepted && function.isRuntimeConstant()));
-        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
-            return false;
-        } finally {
-            Misc.free(function);
-        }
-    }
-
-    private boolean isPinnedOuterRefJoin(IQueryModel joinModel) {
-        for (int i = 0, n = pinnedOuterRefJoins.size(); i < n; i++) {
-            if (pinnedOuterRefJoins.getQuick(i) == joinModel) {
+    private boolean isOuterRefCopyWrapper(IQueryModel joinModel) {
+        for (int i = 0, n = outerRefCopyWrappers.size(); i < n; i++) {
+            if (outerRefCopyWrappers.getQuick(i) == joinModel) {
                 return true;
             }
         }
@@ -3525,38 +3116,68 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    // True when the operand, which reads no column, takes one value per execution, which the code
-    // generator then checks once: a constant, a bind variable, a scalar sub-query, an expression that
-    // the function parser makes a runtime constant, such as now(), or a function or operator over
-    // only such operands, such as dateadd('h', $1, now()). An expression over systimestamp(),
-    // sysdate() or rnd_int() changes from row to row, so it does not count. An expression that holds
-    // a bind variable or a sub-query is not parsed, as parsing a bind variable may define its type.
-    private boolean isRuntimeConstantOperand(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.CONSTANT || node.type == ExpressionNode.BIND_VARIABLE || node.type == ExpressionNode.QUERY) {
-            return true;
-        }
-        if (!hasBindVariableOrSubQuery(node)) {
-            return isParsedConstant(node, true);
-        }
-        if (node.paramCount < 3) {
-            return (node.lhs == null || isRuntimeConstantOperand(node.lhs))
-                    && (node.rhs == null || isRuntimeConstantOperand(node.rhs));
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (!isRuntimeConstantOperand(node.args.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private boolean isScalarCountRef(ExpressionNode node, IQueryModel layer) {
         return node != null
                 && node.type == ExpressionNode.LITERAL
                 && resolvesToScalarCount(node.token, layer, 0);
+    }
+
+    private boolean isTagSourceOuterRefJoin(IQueryModel joinModel) {
+        for (int i = 0, n = tagSourceOuterRefJoins.size(); i < n; i++) {
+            if (tagSourceOuterRefJoins.getQuick(i) == joinModel) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True when terminateWithTaggedPrefix() can give the joins of the data source layer up to its last
+    // RIGHT, FULL or SPLICE join, at lastNullingJoin, the tag they need: no join there other than an
+    // INNER, CROSS, LEFT, RIGHT, FULL, ASOF or LT join reads the outer row, and a SPLICE join reads it
+    // neither on its sides nor in its ON clause.
+    // isBaseCorrelated says that the layer's own FROM clause is a sub-query that reads the outer row,
+    // which then takes a copy as a correlated sub-query of a join does, unless it is a scalar
+    // aggregate, whose row for an outer row without rows the copy does not provide.
+    private boolean isTaggedPrefixApplicable(IQueryModel current, int lastNullingJoin, boolean isBaseCorrelated, int depth) throws SqlException {
+        if (lastNullingJoin < 1
+                || (isBaseCorrelated && scalarAggregateBodyKind(current.getNestedModel(), false) != SCALAR_BODY_NONE)) {
+            return false;
+        }
+        final ObjList<IQueryModel> joinModels = current.getJoinModels();
+        boolean isTagged = isBaseCorrelated;
+        for (int j = 1; j <= lastNullingJoin; j++) {
+            final IQueryModel jm = joinModels.getQuick(j);
+            final IQueryModel nested = jm.getNestedModel();
+            final boolean isNestedCorrelated = nested != null && nested.isCorrelatedAtDepth(depth);
+            final boolean isOnCorrelated = jm.getJoinCriteria() != null && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
+            final boolean isOuterRowRead = isTagged || isNestedCorrelated || isOnCorrelated;
+            switch (jm.getJoinType()) {
+                // an ASOF or LT join keeps its master rows with their tag, and the tag of its master
+                // rows keys the join to the slave of a correlated sub-query, which reads the outer row
+                // from its own copy, see pushDownOuterRefsForJoinBranch()
+                case IQueryModel.JOIN_INNER, IQueryModel.JOIN_CROSS, IQueryModel.JOIN_LEFT_OUTER,
+                     IQueryModel.JOIN_RIGHT_OUTER, IQueryModel.JOIN_FULL_OUTER,
+                     IQueryModel.JOIN_ASOF, IQueryModel.JOIN_LT -> {
+                }
+                case IQueryModel.JOIN_SPLICE -> {
+                    // A SPLICE join needs a master and a slave with random access, which no join has,
+                    // so the optimiser runs the joins written ahead of it after it, as it runs the copy
+                    // that terminateWithTaggedPrefix() joins ahead of them: the join emits the same
+                    // rows for every outer row unless its master, its slave or its ON clause reads it.
+                    if (isBaseCorrelated || isNestedCorrelated || isOnCorrelated) {
+                        return false;
+                    }
+                    continue;
+                }
+                default -> {
+                    if (isOuterRowRead) {
+                        return false;
+                    }
+                }
+            }
+            isTagged = isOuterRowRead;
+        }
+        return true;
     }
 
     private boolean isTemplateNodeValid(ExpressionNode ast, int layer, int depth) throws SqlException {
@@ -3567,29 +3188,6 @@ class LateralJoinRewriter implements Mutable {
             return false;
         }
         return hasZeroOnEmptyLeaf || !hasAggregateLeaf;
-    }
-
-    // True when a WHERE conjunct of the level drops the rows in which the join at joinIndex
-    // NULL-extends its master side. <= and >= also count against an operand that
-    // runtimeNullCheckOperand() accepts, and the code generator then checks that the operand of
-    // any of them is not NULL; = does not, so such a join keeps its repair. When such a conjunct
-    // exists and a conjunct on a column whose type only the code generator knows may drop those
-    // rows too, the code generator decides on both, and fails the query with the error; see
-    // deferNullRejection().
-    private boolean isWhereNullRejecting(IQueryModel level, int joinIndex, String error) {
-        final ExpressionNode where = level.getWhereClause();
-        if (findNullRejectingConjunct(level, where, joinIndex) != null) {
-            return true;
-        }
-        if (!hasRuntimeNullCheckConjunct(level, where, joinIndex)) {
-            return false;
-        }
-        if (deferNullRejection(level, joinIndex, true, error)) {
-            return true;
-        }
-        runtimeNullCheckGroup.clear();
-        collectRuntimeNullChecks(level, where, joinIndex, false);
-        return addRuntimeNullCheckGroup(level);
     }
 
     private boolean joinKeepsSingleRow(IQueryModel layer) {
@@ -3628,61 +3226,39 @@ class LateralJoinRewriter implements Mutable {
             return rootResult;
         }
 
-        ExpressionNode rootClone = expressionNodePool.next().of(
-                node.type, node.token, node.precedence, node.position
-        );
-        rootClone.paramCount = node.paramCount;
+        // a deep copy keeps what a copy of the token alone loses, such as the model of a sub-query
+        final ExpressionNode copy = ExpressionNode.deepClone(expressionNodePool, node);
         sqlNodeStack.clear();
-        sqlNodeStack2.clear();
-        sqlNodeStack.push(node);
-        sqlNodeStack2.push(rootClone);
-
+        sqlNodeStack.push(copy);
         while (!sqlNodeStack.isEmpty()) {
-            ExpressionNode orig = sqlNodeStack.pop();
-            ExpressionNode clone = sqlNodeStack2.pop();
-            if (orig.lhs != null) {
-                ExpressionNode leafResult = liftLeaf(orig.lhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
-                if (leafResult != null) {
-                    clone.lhs = leafResult;
+            final ExpressionNode current = sqlNodeStack.pop();
+            if (current.lhs != null) {
+                final ExpressionNode lifted = liftLeaf(current.lhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+                if (lifted != null) {
+                    current.lhs = lifted;
                 } else {
-                    clone.lhs = expressionNodePool.next().of(
-                            orig.lhs.type, orig.lhs.token, orig.lhs.precedence, orig.lhs.position
-                    );
-                    clone.lhs.paramCount = orig.lhs.paramCount;
-                    sqlNodeStack.push(orig.lhs);
-                    sqlNodeStack2.push(clone.lhs);
+                    sqlNodeStack.push(current.lhs);
                 }
             }
-            if (orig.rhs != null) {
-                ExpressionNode leafResult = liftLeaf(orig.rhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
-                if (leafResult != null) {
-                    clone.rhs = leafResult;
+            if (current.rhs != null) {
+                final ExpressionNode lifted = liftLeaf(current.rhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+                if (lifted != null) {
+                    current.rhs = lifted;
                 } else {
-                    clone.rhs = expressionNodePool.next().of(
-                            orig.rhs.type, orig.rhs.token, orig.rhs.precedence, orig.rhs.position
-                    );
-                    clone.rhs.paramCount = orig.rhs.paramCount;
-                    sqlNodeStack.push(orig.rhs);
-                    sqlNodeStack2.push(clone.rhs);
+                    sqlNodeStack.push(current.rhs);
                 }
             }
-            for (int i = 0, n = orig.args.size(); i < n; i++) {
-                ExpressionNode argOrig = orig.args.getQuick(i);
-                ExpressionNode leafResult = liftLeaf(argOrig, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
-                if (leafResult != null) {
-                    clone.args.add(leafResult);
+            for (int i = 0, n = current.args.size(); i < n; i++) {
+                final ExpressionNode arg = current.args.getQuick(i);
+                final ExpressionNode lifted = liftLeaf(arg, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+                if (lifted != null) {
+                    current.args.setQuick(i, lifted);
                 } else {
-                    ExpressionNode argClone = expressionNodePool.next().of(
-                            argOrig.type, argOrig.token, argOrig.precedence, argOrig.position
-                    );
-                    argClone.paramCount = argOrig.paramCount;
-                    clone.args.add(argClone);
-                    sqlNodeStack.push(argOrig);
-                    sqlNodeStack2.push(argClone);
+                    sqlNodeStack.push(arg);
                 }
             }
         }
-        return rootClone;
+        return copy;
     }
 
     // Returns transformed node if node is a LITERAL (leaf), null if non-leaf.
@@ -3702,15 +3278,17 @@ class LateralJoinRewriter implements Mutable {
             ExpressionNode original = findOriginalOuterRef(node.token, outerRefCols);
             return ExpressionNode.deepClone(expressionNodePool, original != null ? original : node);
         }
-        CharSequence colName = node.token;
-        int dotPos = Chars.indexOf(colName, '.');
-        if (dotPos > 0) {
-            colName = colName.subSequence(dotPos + 1, colName.length());
-        }
         CharSequence selectAlias;
         if (dataSourceLayer != null) {
-            selectAlias = propagateColumnUp(colName, branchTop, dataSourceLayer);
+            // the column keeps its table alias in the data source layer, which can join two
+            // relations that have a column of that name
+            selectAlias = unqualify(propagateColumnUp(node.token, branchTop, dataSourceLayer));
         } else {
+            CharSequence colName = node.token;
+            int dotPos = Chars.indexOf(colName, '.');
+            if (dotPos > 0) {
+                colName = colName.subSequence(dotPos + 1, colName.length());
+            }
             ExpressionNode innerRef = expressionNodePool.next().of(
                     ExpressionNode.LITERAL, colName, node.precedence, node.position
             );
@@ -3800,59 +3378,17 @@ class LateralJoinRewriter implements Mutable {
         return null;
     }
 
-    // Moves the alignment equalities of a RIGHT join to a correlated sub-query from its ON
-    // clause into the WHERE clause of the level; see checkOuterJoinsAfterOuterRef()
-    private void moveAlignmentIntoWhere(IQueryModel level, IQueryModel join, CharSequence outerRefAlias) {
-        splitAndPredicates(join.getJoinCriteria(), joinConjuncts);
-        ExpressionNode criteria = null;
-        ExpressionNode where = level.getWhereClause();
-        for (int i = 0, n = joinConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = joinConjuncts.getQuick(i);
-            if (isAlignmentConjunct(conjunct, outerRefAlias)) {
-                where = where == null ? conjunct : createBinaryOp("and", where, conjunct);
-            } else {
-                criteria = criteria == null ? conjunct : createBinaryOp("and", criteria, conjunct);
-            }
-        }
-        join.setJoinCriteria(criteria);
-        level.setWhereClause(where);
-    }
-
-    // Returns the master-side column of the join at joinIndex that the conjunct compares, by a
-    // comparison, IN or BETWEEN, or null
-    private ExpressionNode nullRejectionColumn(IQueryModel level, ExpressionNode conjunct, int joinIndex) {
-        final ExpressionNode column;
-        if (SqlKeywords.isInKeyword(conjunct.token)) {
-            if (conjunct.paramCount < 2) {
-                return null;
-            }
-            column = conjunct.paramCount == 2 ? conjunct.lhs : conjunct.args.getLast();
-        } else if (SqlKeywords.isBetweenKeyword(conjunct.token)) {
-            if (conjunct.paramCount != 3) {
-                return null;
-            }
-            column = conjunct.args.getLast();
-        } else if (comparisonOp(conjunct.token) != CMP_NONE && conjunct.paramCount == 2) {
-            column = isMasterSideColumn(level, conjunct.lhs, joinIndex) ? conjunct.lhs : conjunct.rhs;
-        } else {
-            return null;
-        }
-        return isMasterSideColumn(level, column, joinIndex) ? column : null;
-    }
-
     // Returns the join-model index at which terminateHere() inserts the outer-ref join.
     // A RIGHT or FULL OUTER join emits each unmatched slave row once, with NULL master
     // columns. When the outer-ref join runs before it, those rows carry a NULL outer-ref
     // key and the lateral join drops them, whereas per-outer-row semantics repeat them
-    // for every outer row. When no join up to the last RIGHT/FULL join reads the outer
-    // row, this method places the outer-ref join right after that join, so the whole
-    // join prefix repeats per outer row. A correlated sub-query branch reads a shared
-    // clone of the outer-ref source, and the optimiser may then run that clone before
-    // the outer-ref join itself, which fails. A level with such a branch therefore
-    // keeps the outer-ref join at index 1. So does an ON clause at or before the last
-    // RIGHT/FULL join that reads the outer row, since it runs inside its join; Pass 4
-    // checks the outer-ref join that this keeps ahead of a RIGHT/FULL join.
-    private int outerRefInsertPos(IQueryModel current, IQueryModel outerRefJoinModel, int depth) {
+    // for every outer row. terminateWithTaggedPrefix() terminates a layer in which a join
+    // up to its last RIGHT/FULL join reads the outer row, unless isTaggedPrefixApplicable()
+    // rejects the layer, so this method places the outer-ref join right after that join,
+    // and the whole join prefix repeats per outer row. A correlated sub-query branch reads
+    // a clone of the outer-ref source, and a level with such a branch keeps the outer-ref
+    // join at index 1.
+    private int outerRefInsertPos(IQueryModel current, int depth) {
         final ObjList<IQueryModel> joinModels = current.getJoinModels();
         int lastRightOrFullJoinIndex = 0;
         boolean hasCorrelatedBranch = false;
@@ -3863,16 +3399,6 @@ class LateralJoinRewriter implements Mutable {
             }
             if (isRightOrFullJoin(jm.getJoinType())) {
                 lastRightOrFullJoinIndex = i;
-            }
-        }
-        for (int i = 1; i <= lastRightOrFullJoinIndex; i++) {
-            final ExpressionNode joinCriteria = joinModels.getQuick(i).getJoinCriteria();
-            if (joinCriteria != null && hasCorrelatedExprAtDepth(joinCriteria, depth)) {
-                pinnedOuterRefJoins.add(outerRefJoinModel);
-                // Pass 4 checks the RIGHT/FULL joins after the outer-ref join, but Pass 3 may remove the
-                // clone of a correlated sub-query from an ON clause unchecked
-                outerRefJoinModel.setOuterRefJoinChecked(!hasCorrelatedBranch);
-                return 1;
             }
         }
         return hasCorrelatedBranch ? 1 : lastRightOrFullJoinIndex + 1;
@@ -3921,20 +3447,46 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Carries the column that the token names in the data source layer up to current, and returns
+    // the name under which current provides it. A layer with a projection projects the column; the
+    // layer right above the data source layer reads it by the token, table alias included. A layer
+    // without a projection passes it through under its bare name. A bare wildcard passes through
+    // only the columns that the layer below includes into it, which a generated column is not, so
+    // such a column gets a column of its own next to the wildcard.
     private CharSequence propagateColumnUp(
-            CharSequence columnName,
+            CharSequence token,
             IQueryModel current,
             IQueryModel dataSourceLayer
-    ) {
+    ) throws SqlException {
         if (current == dataSourceLayer || current == null) {
-            return columnName;
+            return token;
         }
 
-        CharSequence alias = propagateColumnUp(columnName, current.getNestedModel(), dataSourceLayer);
-        ExpressionNode colNode = expressionNodePool.next().of(
-                ExpressionNode.LITERAL, alias, 0, 0
+        final IQueryModel nested = current.getNestedModel();
+        final CharSequence name = propagateColumnUp(token, nested, dataSourceLayer);
+        final ObjList<QueryColumn> columns = current.getBottomUpColumns();
+        if (columns.size() == 0) {
+            return unqualify(name);
+        }
+        if (hasBareWildcard(columns)) {
+            final CharSequence bareName = unqualify(name);
+            // a layer without a projection passes on the columns of the layer below it, so the
+            // column comes from the first layer below that projects columns
+            IQueryModel source = nested;
+            while (source != dataSourceLayer && source.getBottomUpColumns().size() == 0) {
+                source = source.getNestedModel();
+            }
+            final QueryColumn nestedColumn = source != dataSourceLayer ? source.getAliasToColumnMap().get(bareName) : null;
+            if (nestedColumn != null && !nestedColumn.isIncludeIntoWildcard() && current.getAliasToColumnMap().excludes(bareName)) {
+                final ExpressionNode ref = expressionNodePool.next().of(ExpressionNode.LITERAL, bareName, 0, 0);
+                current.addBottomUpColumn(queryColumnPool.next().of(bareName, ref, false));
+            }
+            return bareName;
+        }
+        final ExpressionNode colNode = expressionNodePool.next().of(
+                ExpressionNode.LITERAL, name, 0, 0
         );
-        return ensureColumnInSelectAtFront(current, colNode, alias);
+        return ensureColumnInSelectAtFront(current, colNode, name);
     }
 
     // Walks the lateral subquery's nestedModel chain top-down, at each layer:
@@ -4085,6 +3637,23 @@ class LateralJoinRewriter implements Mutable {
             if (current.getUnionModel() != null) {
                 compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
             }
+        } else if ((terminate == TERMINATE_HERE || terminate == TERMINATE_DESCEND)
+                && isTaggedPrefixApplicable(current, lastMasterNullingJoin(current.getJoinModels()), terminate == TERMINATE_DESCEND, depth)) {
+            final int outerRefIndex = terminateWithTaggedPrefix(
+                    current, outerRefJoinModel, outerToInnerAlias, isLeftJoin, lateralJoinModel.getNestedModel(),
+                    terminate == TERMINATE_DESCEND, depth
+            );
+            if (current.getUnionModel() != null) {
+                compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
+            }
+            // the joins after the outer-ref join read its columns, as with terminateHere()
+            for (int ji = outerRefIndex + 1, jn = current.getJoinModels().size(); ji < jn; ji++) {
+                final IQueryModel jm = current.getJoinModels().getQuick(ji);
+                pushDownOuterRefsForJoinBranch(
+                        current, jm, jm.getNestedModel(), outerToInnerAlias, isLeftJoin,
+                        lateralJoinModel.getNestedModel(), outerRefJoinModel, null, depth
+                );
+            }
         } else {
             for (int ji = 0, jn = current.getJoinModels().size(); ji < jn; ji++) {
                 IQueryModel jm = current.getJoinModels().getQuick(ji);
@@ -4111,7 +3680,7 @@ class LateralJoinRewriter implements Mutable {
                     // loop skips it by identity
                     pushDownOuterRefsForJoinBranch(
                             current, jm, jmNested, outerToInnerAlias, isLeftJoin,
-                            lateralJoinModel.getNestedModel(), outerRefJoinModel, depth
+                            lateralJoinModel.getNestedModel(), outerRefJoinModel, null, depth
                     );
                 }
             }
@@ -4134,6 +3703,11 @@ class LateralJoinRewriter implements Mutable {
     //
     // hasCorrelatedCriteria is false when extractCorrelatedFromInnerJoins
     // already handled ON (terminate=1); true at levels above terminateHere.
+    //
+    // terminateWithTaggedPrefix() passes alignTo, the tag of the rows the branch joins, for the
+    // branches it joins ahead of the outer-ref join. The alignment criteria then equate the clone's
+    // columns with that tag, none when it is empty, and the caller rewrites a correlated ON itself.
+    // The method leaves the clone's columns, as the branch projects them, in branchTag.
     private void pushDownOuterRefsForJoinBranch(
             IQueryModel current,
             IQueryModel jm,
@@ -4142,11 +3716,14 @@ class LateralJoinRewriter implements Mutable {
             boolean isLeftJoin,
             IQueryModel localCountModel,
             IQueryModel outerRefJoinModel,
+            ObjList<ExpressionNode> alignTo,
             int depth
     ) throws SqlException {
+        branchTag.clear();
         final int originalJoinType = jm.getJoinType();
         final boolean isTrivialOnCondition = isTrivialJoinCondition(jm.getJoinCriteria());
-        boolean hasCorrelatedCriteria = jm.getJoinCriteria() != null
+        boolean hasCorrelatedCriteria = alignTo == null
+                && jm.getJoinCriteria() != null
                 && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
         if (hasCorrelatedCriteria) {
             jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
@@ -4169,6 +3746,9 @@ class LateralJoinRewriter implements Mutable {
         IQueryModel clonedOuterRef = cloneOuterRef(outerRefJoinModel);
         CharSequence cloneAlias = clonedOuterRef.getAlias().token;
         int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
+        if (alignTo != null) {
+            tagSourceOuterRefJoins.add(clonedOuterRef);
+        }
 
         // Branch-local guard scope: consumed below onto the owning join level; the
         // caller's guard state must be restored, or this branch's guard would leak
@@ -4217,6 +3797,8 @@ class LateralJoinRewriter implements Mutable {
         CharSequence jmAlias = jm.getAlias() != null ? jm.getAlias().token : null;
         ObjList<CharSequence> oKeys = outerToInnerAlias.keys();
         int savedIdx = aliasSaveBase;
+        // the nested push-down above may have left the tag of a deeper branch here
+        branchTag.clear();
         for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
             CharSequence key = oKeys.getQuick(ok);
             if (key == null) {
@@ -4238,22 +3820,33 @@ class LateralJoinRewriter implements Mutable {
             } else {
                 qualifiedSubCol = subAlias;
             }
-            ExpressionNode mainColNode = expressionNodePool.next().of(
-                    ExpressionNode.LITERAL, mainColAlias, 0, 0
-            );
-            CharSequence mainAlias = ensureColumnInSelect(current, mainColNode, mainColAlias);
+            branchTag.add(expressionNodePool.next().of(ExpressionNode.LITERAL, qualifiedSubCol, 0, 0));
+            ExpressionNode mainRef;
+            if (alignTo == null) {
+                ExpressionNode mainColNode = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, mainColAlias, 0, 0
+                );
+                CharSequence mainAlias = ensureColumnInSelect(current, mainColNode, mainColAlias);
+                mainRef = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, mainAlias, 0, 0
+                );
+            } else {
+                mainRef = alignTo.size() > 0
+                        ? ExpressionNode.deepClone(expressionNodePool, alignTo.getQuick(savedIdx - aliasSaveBase))
+                        : null;
+            }
+            savedIdx++;
+            if (mainRef == null) {
+                continue;
+            }
             ExpressionNode subRef = expressionNodePool.next().of(
                     ExpressionNode.LITERAL, qualifiedSubCol, 0, 0
             );
-            ExpressionNode mainRef = expressionNodePool.next().of(
-                    ExpressionNode.LITERAL, mainAlias, 0, 0
-            );
             ExpressionNode eq = createBinaryOp("=", subRef, mainRef);
             alignCriteria = alignCriteria == null ? eq : createBinaryOp("and", alignCriteria, eq);
-            savedIdx++;
         }
         jm.setJoinCriteria(alignCriteria);
-        if (jm.getJoinType() == IQueryModel.JOIN_CROSS) {
+        if (jm.getJoinType() == IQueryModel.JOIN_CROSS && alignCriteria != null) {
             jm.setJoinType(IQueryModel.JOIN_INNER);
         }
 
@@ -4582,43 +4175,47 @@ class LateralJoinRewriter implements Mutable {
         return result;
     }
 
+    // The optimiser processes a shared sub-query of sharedModels where it meets the sub-query itself,
+    // which it must meet before any wrapper of it in the order in which it walks the FROM clauses, see
+    // SqlOptimiser.rewriteSelectClause(), and the code generator builds the models in that order too:
+    // a wrapper that it builds first reads a factory of its own, which no cursor of the query opens.
+    // Pass 3 can remove the join that holds the sub-query itself, and a copy of an outer-ref join
+    // that reads it through a wrapper can come ahead of that join, so the first reference in that order
+    // takes the sub-query itself, and the others read it through wrappers.
+    private void rehomeSharedSubqueries(IQueryModel model) {
+        rehomedSubqueries.clear();
+        rehomeSharedSubqueries0(model);
+    }
+
+    private void rehomeSharedSubqueries0(IQueryModel model) {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            final IQueryModel nested = joinModel.getNestedModel();
+            final QueryModel subquery = nested instanceof QueryModelWrapper wrapper ? wrapper.getDelegate() : null;
+            final QueryModel shared = subquery != null ? subquery : nested instanceof QueryModel held && sharedModels.contains(held) ? held : null;
+            if (shared == null || !sharedModels.contains(shared)) {
+                rehomeSharedSubqueries0(nested);
+            } else if (rehomedSubqueries.add(shared)) {
+                if (nested != shared) {
+                    joinModel.setNestedModel(shared);
+                }
+                rehomeSharedSubqueries0(shared);
+            } else if (nested == shared) {
+                joinModel.setNestedModel(createSharedRef(shared));
+            }
+        }
+        rehomeSharedSubqueries0(model.getUnionModel());
+    }
+
     private void rejectCorrelatedScalarCountLimit() throws SqlException {
         if (scalarCountGuardBlocker != null) {
             throw SqlException.position(scalarCountGuardBlocker.position)
                     .put("LIMIT referencing an outer column is not supported over a scalar count ")
                     .put("in a correlated lateral sub-query; use a constant or bind variable");
-        }
-    }
-
-    // Pass 4. outerRefInsertPos() keeps the outer-ref join ahead of a RIGHT/FULL join when an
-    // ON clause at or before that join reads the outer row. If Pass 3 does not remove the
-    // outer-ref join, the unmatched slave rows of the RIGHT/FULL join carry a NULL outer-ref
-    // key and the lateral join drops them, whereas per-outer-row semantics keep them for
-    // every outer row. The query fails unless a filter after the join drops those rows anyway.
-    // When that depends on the type of a column, which only the code generator knows, the code
-    // generator decides; see ensureNullRejectingFilter(). When Pass 3 removes the outer-ref join,
-    // checkOuterJoinsAfterOuterRef() checks the join.
-    private void rejectPinnedOuterRefJoins(IQueryModel model) throws SqlException {
-        if (model == null || !model.isOptimisable()) {
-            return;
-        }
-        rejectPinnedOuterRefJoins(model.getNestedModel());
-        rejectPinnedOuterRefJoins(model.getUnionModel());
-        final ObjList<IQueryModel> joinModels = model.getJoinModels();
-        boolean isPinned = false;
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            final IQueryModel jm = joinModels.getQuick(i);
-            if (isOuterRefJoinModel(jm)) {
-                // its nested model reads the outer query
-                isPinned |= isPinnedOuterRefJoin(jm);
-                continue;
-            }
-            rejectPinnedOuterRefJoins(jm.getNestedModel());
-            if (isPinned
-                    && isRightOrFullJoin(jm.getJoinType())
-                    && !ensureNullRejectingFilter(model, i)) {
-                throw SqlException.position(jm.getJoinKeywordPosition()).put(OUTER_COLUMN_ERROR);
-            }
         }
     }
 
@@ -4770,41 +4367,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
-    }
-
-    // Returns the type of a column of the level: of a table column, or of a sub-query column that
-    // passes a table column through, under its name or another. Returns -1 for any other sub-query
-    // column, such as a computed one, whose type is not known before code generation.
-    private int resolveColumnType(IQueryModel level, ExpressionNode column) {
-        final CharSequence token = column.token;
-        final int index = resolveJoinModelIndex(level, token);
-        if (index < 0) {
-            return -1;
-        }
-        final IQueryModel joinModel = level.getJoinModels().getQuick(index);
-        final int nameLo = Chars.indexOf(token, '.') + 1;
-        if (joinModel.getNestedModel() == null) {
-            final QueryColumn qc = joinModel.getAliasToColumnMap().get(token, nameLo, token.length());
-            return qc != null ? qc.getColumnType() : -1;
-        }
-        return resolveSubQueryColumnType(joinModel.getNestedModel(), token.subSequence(nameLo, token.length()));
-    }
-
-    // Returns the index of the join model that the column token resolves to, or -1
-    private int resolveJoinModelIndex(IQueryModel level, CharSequence token) {
-        final int dot = Chars.indexOf(token, '.');
-        if (dot > 0) {
-            return level.getModelAliasIndex(token, 0, dot);
-        }
-        final ObjList<IQueryModel> joinModels = level.getJoinModels();
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            final IQueryModel jm = joinModels.getQuick(i);
-            final IQueryModel nested = jm.getNestedModel();
-            if (nested != null ? resolveColumnInChild(token, nested) : jm.getAliasToColumnNameMap().contains(token)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     // Resolves a column referenced by a layer above the aggregate to the scalar
@@ -5170,36 +4732,6 @@ class LateralJoinRewriter implements Mutable {
         return expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
     }
 
-    // Returns the operand X of a conjunct col <= X or col >= X, and of col = X when isEqualityAccepted,
-    // where col is a master-side column of the join at joinIndex whose type has NULL, and X reads no
-    // column, is no compile-time constant and takes one value per execution: a bind variable, now()
-    // or a scalar sub-query, for example; see isRuntimeConstantOperand(). Such a conjunct drops the
-    // rows in which the join NULL-extends its master side only while X does not convert to the NULL
-    // of the column type, which the code generator checks once per execution. Returns null
-    // otherwise, also for a sub-query column of unknown type, which the join may fill with 0.
-    private ExpressionNode runtimeNullCheckOperand(IQueryModel level, ExpressionNode conjunct, int joinIndex, boolean isEqualityAccepted) {
-        final int op = comparisonOp(conjunct.token);
-        if ((op != CMP_LE && op != CMP_GE && (op != CMP_EQ || !isEqualityAccepted)) || conjunct.paramCount != 2) {
-            return null;
-        }
-        final ExpressionNode column;
-        final ExpressionNode other;
-        if (isMasterSideColumn(level, conjunct.lhs, joinIndex)) {
-            column = conjunct.lhs;
-            other = conjunct.rhs;
-        } else if (isMasterSideColumn(level, conjunct.rhs, joinIndex)) {
-            column = conjunct.rhs;
-            other = conjunct.lhs;
-        } else {
-            return null;
-        }
-        final int columnType = resolveColumnType(level, column);
-        if (columnType < 0 || isTypeWithoutNull(columnType) || hasColumnRef(other) || isCompileTimeConstant(other) || !isRuntimeConstantOperand(other)) {
-            return null;
-        }
-        return other;
-    }
-
     // Builds the data source for __qdb_outer_ref__ by cloning the outer model(s)
     // that provide correlated columns. The caller wraps this with DISTINCT and
     // explicit SELECT of only the correlated columns, e.g.:
@@ -5437,6 +4969,24 @@ class LateralJoinRewriter implements Mutable {
         return flags;
     }
 
+    // Resolves a column that a clause of layer reads, a column that the layers below it project, to the
+    // column of the data source layer that they project under its name. Returns null when a layer
+    // computes the column.
+    private static CharSequence resolveToDataSourceLayer(CharSequence column, IQueryModel layer, IQueryModel dataSourceLayer) {
+        for (IQueryModel m = layer.getNestedModel(); m != dataSourceLayer; m = m.getNestedModel()) {
+            final ObjList<QueryColumn> columns = m.getBottomUpColumns();
+            if (columns.size() == 0 || hasBareWildcard(columns)) {
+                continue;
+            }
+            final QueryColumn projected = m.getAliasToColumnMap().get(unqualify(column));
+            if (projected == null || projected.getAst().type != ExpressionNode.LITERAL) {
+                return null;
+            }
+            column = projected.getAst().token;
+        }
+        return column;
+    }
+
     private void scanWhereForOuterRefEqualities(
             ExpressionNode node,
             CharSequence outerRefAlias,
@@ -5450,12 +5000,9 @@ class LateralJoinRewriter implements Mutable {
                 }
                 node = node.lhs;
             } else {
-                if (Chars.equals(node.token, "=")) {
-                    if (isOuterRefToken(node.lhs, outerRefAlias) && isSimpleColumnRef(node.rhs)) {
-                        result.put(node.lhs.token, node.rhs.token);
-                    } else if (isOuterRefToken(node.rhs, outerRefAlias) && isSimpleColumnRef(node.lhs)) {
-                        result.put(node.rhs.token, node.lhs.token);
-                    }
+                final ExpressionNode outerRef = findMappedOuterRefOperand(node, outerRefAlias);
+                if (outerRef != null) {
+                    result.put(outerRef.token, (outerRef == node.lhs ? node.rhs : node.lhs).token);
                 }
                 node = sqlNodeStack.poll();
             }
@@ -5557,25 +5104,26 @@ class LateralJoinRewriter implements Mutable {
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) {
-        ObjList<IQueryModel> joinModels = current.getJoinModels();
-        final int insertPos = outerRefInsertPos(current, outerRefJoinModel, depth);
-        joinModels.add(outerRefJoinModel);
-        for (int si = joinModels.size() - 1; si > insertPos; si--) {
-            joinModels.setQuick(si, joinModels.getQuick(si - 1));
-        }
-        joinModels.setQuick(insertPos, outerRefJoinModel);
-        if (outerRefJoinModel.getAlias() != null) {
-            current.addModelAliasIndex(outerRefJoinModel.getAlias(), insertPos);
-        }
-        for (int si = insertPos + 1, sn = joinModels.size(); si < sn; si++) {
-            IQueryModel shifted = joinModels.getQuick(si);
-            ExpressionNode shiftedAlias = shifted.getAlias() != null ? shifted.getAlias() : shifted.getTableNameExpr();
-            if (shiftedAlias != null) {
-                current.getModelAliasIndexes().put(shiftedAlias.token, si);
-            }
-        }
+        attachOuterRefJoin(
+                current, outerRefJoinModel, outerRefInsertPos(current, depth), 1, null, outerToInnerAlias, depth
+        );
+    }
+
+    // Inserts the outer-ref join into the FROM clause of the layer at insertPos. Its criteria take the
+    // conditions that read the outer row from the INNER joins from firstJoinIndex on and from the
+    // WHERE clause of the layer, followed by tagCriteria, see terminateWithTaggedPrefix().
+    private void attachOuterRefJoin(
+            IQueryModel current,
+            IQueryModel outerRefJoinModel,
+            int insertPos,
+            int firstJoinIndex,
+            ExpressionNode tagCriteria,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            int depth
+    ) {
+        insertJoinModel(current, outerRefJoinModel, insertPos);
         correlatedPreds.clear();
-        extractCorrelatedFromInnerJoins(current, correlatedPreds, outerToInnerAlias, depth);
+        extractCorrelatedFromInnerJoins(current, firstJoinIndex, correlatedPreds, outerToInnerAlias, depth);
         ExpressionNode joinCrit = null;
         for (int j = 0, m = correlatedPreds.size(); j < m; j++) {
             ExpressionNode rewritten = rewriteOuterRefs(
@@ -5598,13 +5146,184 @@ class LateralJoinRewriter implements Mutable {
             }
             current.setWhereClause(conjoin(nonCorrelatedPreds));
         }
+        if (tagCriteria != null) {
+            joinCrit = joinCrit == null ? tagCriteria : createBinaryOp("and", joinCrit, tagCriteria);
+        }
 
         if (joinCrit != null) {
             outerRefJoinModel.setJoinCriteria(joinCrit);
             outerRefJoinModel.setJoinType(IQueryModel.JOIN_INNER);
         }
-        assert outerRefJoinModel.getNestedModel() instanceof QueryModel;
-        sharedModels.add((QueryModel) outerRefJoinModel.getNestedModel());
+        if (outerRefJoinModel.getNestedModel() instanceof QueryModel subquery) {
+            sharedModels.add(subquery);
+        }
+    }
+
+    // Joins the outer-ref join to the data source layer right after its last RIGHT, FULL or SPLICE
+    // join, where it sees only rows that such a join no longer NULL-extends, and returns its index.
+    // The joins up to there read the outer row from the tag of the rows they join: the outer-ref
+    // columns of a copy of the outer-ref join. A correlated sub-query holds a copy of its own, and the
+    // method joins a copy in as a CROSS join ahead of an INNER, LEFT or FULL join that needs the tag
+    // of its master rows while those rows carry none. A join equates the tags of its two sides, and
+    // its rows take the tag of the side it keeps: the master's for INNER and LEFT, the slave's for
+    // RIGHT, and the one that is not NULL for FULL. An ON clause reads the outer row from that tag.
+    // The criteria of the outer-ref join equate its columns with the tag of the rows after the last
+    // such join, after the conditions that terminateHere() gives it. See isTaggedPrefixApplicable().
+    private int terminateWithTaggedPrefix(
+            IQueryModel current,
+            IQueryModel outerRefJoinModel,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            boolean isLeftJoin,
+            IQueryModel localCountModel,
+            boolean isBaseCorrelated,
+            int depth
+    ) throws SqlException {
+        if (tagStackDepth == tagStack.size()) {
+            tagStack.add(new ObjList<>());
+        }
+        // the tag of the rows joined so far, one per outer column in the order of
+        // outerToInnerAlias.keys(), empty while those rows do not read the outer row
+        final ObjList<ExpressionNode> prefixTag = tagStack.getQuick(tagStackDepth++);
+        prefixTag.clear();
+        try {
+            return terminateWithTaggedPrefix0(
+                    current, outerRefJoinModel, outerToInnerAlias, isLeftJoin, localCountModel, isBaseCorrelated, prefixTag, depth
+            );
+        } finally {
+            tagStackDepth--;
+        }
+    }
+
+    private int terminateWithTaggedPrefix0(
+            IQueryModel current,
+            IQueryModel outerRefJoinModel,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            boolean isLeftJoin,
+            IQueryModel localCountModel,
+            boolean isBaseCorrelated,
+            ObjList<ExpressionNode> prefixTag,
+            int depth
+    ) throws SqlException {
+        final ObjList<IQueryModel> joinModels = current.getJoinModels();
+        if (isBaseCorrelated) {
+            // the FROM sub-query of the layer takes a copy of its own, as a correlated sub-query of a
+            // join does: the layer is the first of its own join models
+            pushDownOuterRefsForJoinBranch(
+                    current, current, current.getNestedModel(), outerToInnerAlias, isLeftJoin, localCountModel, outerRefJoinModel, prefixTag, depth
+            );
+            prefixTag.addAll(branchTag);
+        }
+        int lastNullingJoin = lastMasterNullingJoin(joinModels);
+        // the tag of the rows of a FULL join is an expression over the tags of its two sides
+        boolean isTagExpression = false;
+        for (int j = 1; j <= lastNullingJoin; j++) {
+            IQueryModel jm = joinModels.getQuick(j);
+            final IQueryModel nested = jm.getNestedModel();
+            final boolean isNestedCorrelated = nested != null && nested.isCorrelatedAtDepth(depth);
+            final boolean isOnCorrelated = jm.getJoinCriteria() != null && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
+            final int joinType = jm.getJoinType();
+            // a RIGHT or FULL join over tagged rows keeps its slave's rows per outer row
+            if (!isNestedCorrelated && !isOnCorrelated && (prefixTag.size() == 0 || !isRightOrFullJoin(joinType))) {
+                continue;
+            }
+            final boolean isMasterTagRequired = switch (joinType) {
+                case IQueryModel.JOIN_RIGHT_OUTER -> false;
+                case IQueryModel.JOIN_INNER, IQueryModel.JOIN_CROSS -> !isNestedCorrelated;
+                default -> true;
+            };
+            if (isMasterTagRequired && prefixTag.size() == 0) {
+                final IQueryModel copy = cloneOuterRef(outerRefJoinModel);
+                // the rows of a RIGHT or FULL join after the copy take the tag of the side the join
+                // keeps, so their order as written is exact
+                copy.setOuterRefJoinChecked(true);
+                insertJoinModel(current, copy, j);
+                collectCopyTag(copy.getAlias().token, copy.getAlias().token, outerToInnerAlias, prefixTag);
+                j++;
+                lastNullingJoin++;
+            }
+            if (isNestedCorrelated) {
+                pushDownOuterRefsForJoinBranch(
+                        current, jm, nested, outerToInnerAlias, isLeftJoin, localCountModel, outerRefJoinModel, prefixTag, depth
+                );
+            } else if (isRightOrFullJoin(joinType) || (isOnCorrelated && isTagExpression)) {
+                // An ON clause reads the outer row from a column of the tag of the rows it joins, and
+                // the tag of the rows of a FULL join is no column, so a join after it whose ON clause
+                // reads the outer row joins its slave per outer row as well, and reads the slave's tag.
+                jm = wrapWithOuterRefCopy(current, j, outerRefJoinModel, outerToInnerAlias, branchTag);
+                ExpressionNode criteria = jm.getJoinCriteria();
+                for (int t = 0, n = prefixTag.size(); t < n; t++) {
+                    final ExpressionNode eq = createBinaryOp(
+                            "=",
+                            ExpressionNode.deepClone(expressionNodePool, branchTag.getQuick(t)),
+                            ExpressionNode.deepClone(expressionNodePool, prefixTag.getQuick(t))
+                    );
+                    criteria = criteria == null ? eq : createBinaryOp("and", criteria, eq);
+                }
+                jm.setJoinCriteria(criteria);
+            } else {
+                branchTag.clear();
+            }
+            if (isOnCorrelated) {
+                // A tagged slave holds the tag of the master rows that the join matches it to, see the
+                // alignment of pushDownOuterRefsForJoinBranch() and the criteria above, and its tag is a
+                // column even after a FULL join.
+                final ObjList<ExpressionNode> onTag = branchTag.size() > 0 ? branchTag : prefixTag;
+                tagAliasMap.clear();
+                final ObjList<CharSequence> keys = outerToInnerAlias.keys();
+                for (int i = 0, t = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence key = keys.getQuick(i);
+                    if (key != null) {
+                        tagAliasMap.put(key, onTag.getQuick(t++).token);
+                    }
+                }
+                jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), tagAliasMap, depth));
+            }
+            switch (joinType) {
+                case IQueryModel.JOIN_RIGHT_OUTER -> {
+                    prefixTag.clear();
+                    prefixTag.addAll(branchTag);
+                    isTagExpression = false;
+                }
+                case IQueryModel.JOIN_FULL_OUTER -> {
+                    for (int t = 0, n = prefixTag.size(); t < n; t++) {
+                        final ExpressionNode coalesce = expressionNodePool.next().of(ExpressionNode.FUNCTION, "coalesce", 0, 0);
+                        coalesce.paramCount = 2;
+                        coalesce.lhs = prefixTag.getQuick(t);
+                        coalesce.rhs = branchTag.getQuick(t);
+                        prefixTag.setQuick(t, coalesce);
+                    }
+                    isTagExpression = true;
+                }
+                default -> {
+                    if (prefixTag.size() == 0) {
+                        prefixTag.addAll(branchTag);
+                    }
+                }
+            }
+        }
+
+        ExpressionNode tagCriteria = null;
+        final ObjList<CharSequence> keys = outerToInnerAlias.keys();
+        for (int i = 0, t = 0, n = keys.size(); i < n && t < prefixTag.size(); i++) {
+            final CharSequence key = keys.getQuick(i);
+            if (key != null) {
+                final ExpressionNode column = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, outerToInnerAlias.get(key), 0, 0
+                );
+                final ExpressionNode eq = createBinaryOp("=", column, ExpressionNode.deepClone(expressionNodePool, prefixTag.getQuick(t++)));
+                tagCriteria = tagCriteria == null ? eq : createBinaryOp("and", tagCriteria, eq);
+            }
+        }
+        // The first reference to a shared sub-query in the FROM clauses, as the optimiser walks them,
+        // must be the sub-query itself, see SqlOptimiser.rewriteSelectClause(). A copy ahead of the
+        // outer-ref join took it, so the join reads it through a wrapper, which also leaves the
+        // sub-query in place when Pass 3 removes the join.
+        if (outerRefJoinModel.getNestedModel() instanceof QueryModel subquery && sharedModels.contains(subquery)) {
+            outerRefJoinModel.setNestedModel(createSharedRef(subquery));
+        }
+        final int outerRefIndex = lastNullingJoin + 1;
+        attachOuterRefJoin(current, outerRefJoinModel, outerRefIndex, outerRefIndex + 1, tagCriteria, outerToInnerAlias, depth);
+        return outerRefIndex;
     }
 
     private void transferCountTemplates(IQueryModel target, ExpressionNode joinAlias, int base) {
@@ -5753,7 +5472,23 @@ class LateralJoinRewriter implements Mutable {
         while (current != null) {
             ExpressionNode where = current.getWhereClause();
             if (where != null) {
-                scanWhereForOuterRefEqualities(where, outerRefAlias, outerToInnerAlias);
+                if (current == dataSourceLayer) {
+                    scanWhereForOuterRefEqualities(where, outerRefAlias, outerToInnerAlias);
+                } else {
+                    // the WHERE clause of a layer above the data source layer reads the columns that
+                    // the layers below it project, which the rewrite below needs as columns of the
+                    // data source layer
+                    layerEqualities.clear();
+                    scanWhereForOuterRefEqualities(where, outerRefAlias, layerEqualities);
+                    final ObjList<CharSequence> keys = layerEqualities.keys();
+                    for (int k = 0, kn = keys.size(); k < kn; k++) {
+                        final CharSequence key = keys.getQuick(k);
+                        final CharSequence column = resolveToDataSourceLayer(layerEqualities.get(key), current, dataSourceLayer);
+                        if (column != null) {
+                            outerToInnerAlias.put(key, column);
+                        }
+                    }
+                }
             }
             if (current == dataSourceLayer) {
                 break;
@@ -5773,10 +5508,45 @@ class LateralJoinRewriter implements Mutable {
             }
         }
 
-        if (!isAllEqualities && isComplexChain(branchTop, dataSourceLayer, outerRefAlias, outerToInnerAlias)) {
+        // An inner lateral join turns its criteria into a filter after the join. An outer one
+        // evaluates them inside the join, which supports no sub-query there, so a conjunct that
+        // holds one cannot move into its criteria.
+        final boolean isOnInsideJoin = joinModel != null
+                && joinModel.getJoinType() != IQueryModel.JOIN_INNER
+                && joinModel.getJoinType() != IQueryModel.JOIN_CROSS;
+        // A copy whose columns the joins after its sub-query read as a tag stays whole: Pass 3 can
+        // replace those columns only by inner columns that equal them.
+        if (!isAllEqualities
+                && (isComplexChain(branchTop, dataSourceLayer, outerRefAlias, outerToInnerAlias)
+                || (isOnInsideJoin && hasCorrelatedSubQuery(branchTop, dataSourceLayer, joinCrit, outerRefAlias))
+                || isTagSourceOuterRefJoin(outerRefJm))) {
             return;
         }
-        final IQueryModel alignedRightJoin = checkOuterJoinsAfterOuterRef(dataSourceLayer, outerRefJmIndex, outerRefAlias);
+        // With every outer-ref column equal to an inner column, the rewrite below removes the
+        // outer-ref join together with its criteria, and the lateral join enforces only those
+        // equalities. Every other conjunct of the criteria moves into the criteria of the lateral
+        // join, where it reads the outer columns themselves. That holds the rows of a body that only
+        // filters and projects; any other body keeps the outer-ref join, which applies the
+        // conjuncts before its GROUP BY, LIMIT and the like, and so does a conjunct that cannot
+        // move into the criteria of the lateral join.
+        ExpressionNode residualCriteria = null;
+        if (isAllEqualities && joinModel != null && joinCrit != null) {
+            collectResidualConjuncts(joinCrit, outerRefAlias, residualConjuncts);
+            if (residualConjuncts.size() > 0) {
+                if (!isMainOuterRefJoin(outerRefJm)) {
+                    // A copy in a join branch stays: its conjuncts read the outer row of a lateral join
+                    // whose outer-ref join need not be ahead of joinModel, or present at all.
+                    return;
+                }
+                if (isComplexChain(branchTop, dataSourceLayer, outerRefAlias, outerToInnerAlias)
+                        || (isOnInsideJoin && hasSubQuery(joinCrit))) {
+                    return;
+                }
+                residualCriteria = rebuildOnFromOuterRefCriteria(
+                        residualConjuncts, outerRefAlias, outerRefCols, branchTop, dataSourceLayer, lateralAlias
+                );
+            }
+        }
 
         ExpressionNode simpleChainCriteria = null;
         if (!isAllEqualities) {
@@ -5821,9 +5591,6 @@ class LateralJoinRewriter implements Mutable {
             current = current.getNestedModel();
         }
 
-        if (alignedRightJoin != null) {
-            moveAlignmentIntoWhere(dataSourceLayer, alignedRightJoin, outerRefAlias);
-        }
         rewriteOuterRefColumns(dataSourceLayer, outerRefAlias, outerToInnerAlias);
         rewriteOuterRefsInModelClauses(dataSourceLayer, outerToInnerAlias);
         if (levelAboveDS != null) {
@@ -5848,6 +5615,10 @@ class LateralJoinRewriter implements Mutable {
         }
         if (joinModel != null && !isAllEqualities) {
             joinModel.setJoinCriteria(simpleChainCriteria);
+        }
+        if (residualCriteria != null) {
+            final ExpressionNode criteria = joinModel.getJoinCriteria();
+            joinModel.setJoinCriteria(criteria == null ? residualCriteria : createBinaryOp("and", criteria, residualCriteria));
         }
 
         ObjList<QueryColumn> branchTopCols = branchTop.getBottomUpColumns();
@@ -5974,6 +5745,92 @@ class LateralJoinRewriter implements Mutable {
         wrapped.paramCount = 1;
         wrapped.rhs = limit;
         return wrapped;
+    }
+
+    // Replaces the relation at index of the layer by a sub-query that joins it to a copy of the
+    // outer-ref join, so that its rows come once per outer row and carry it: the slave of a RIGHT or
+    // FULL join that terminateWithTaggedPrefix() tags keeps its rows per outer row. The sub-query takes
+    // the relation's name, join type and ON clause, so the clauses of the layer read it as they read
+    // the relation; inside it, the copy is the data source and the relation follows it as a CROSS
+    // join, as it is otherwise. Returns the join model of the sub-query and leaves the copy's columns,
+    // as the layer reads them, in tag, one per outer column in the order of outerToInnerAlias.keys().
+    private IQueryModel wrapWithOuterRefCopy(
+            IQueryModel layer,
+            int index,
+            IQueryModel outerRefJoinModel,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            ObjList<ExpressionNode> tag
+    ) throws SqlException {
+        final IQueryModel relation = layer.getJoinModels().getQuick(index);
+        final ExpressionNode relationAlias = wrapAlias(relation);
+        final ExpressionNode alias;
+        if (relationAlias != null) {
+            alias = ExpressionNode.deepClone(expressionNodePool, relationAlias);
+        } else {
+            // a relation without a name, such as a table function, has columns that the clauses of
+            // the layer read without a qualifier, so any name serves the sub-query, whose wildcard
+            // reads the relation by it
+            final CharacterStoreEntry name = characterStore.newEntry();
+            name.put(RELATION_ALIAS_PREFIX).put(outerRefId++);
+            alias = expressionNodePool.next().of(ExpressionNode.LITERAL, name.toImmutable(), 0, relation.getModelPosition());
+            relation.setAlias(ExpressionNode.deepClone(expressionNodePool, alias));
+        }
+        final IQueryModel copy = cloneOuterRef(outerRefJoinModel);
+        final CharSequence copyAlias = copy.getAlias().token;
+        if (isOuterRefCopyWrapper(relation)) {
+            // A lateral join nested in the body wrapped the relation for its own outer row already.
+            // The sub-query joins the copy of this outer row as well, so that its rows come once per
+            // pair of outer rows; a second sub-query around it would leave out the columns of the
+            // first copy, which its wildcard does not pass on.
+            final IQueryModel select = relation.getNestedModel();
+            final IQueryModel from = select.getNestedModel();
+            final int copyIndex = from.getJoinModels().size();
+            from.getJoinModels().add(copy);
+            registerDataSourceAlias(from, copy, copyIndex);
+            addCopyColumns(select, copyAlias, outerToInnerAlias);
+            collectCopyTag(alias.token, copyAlias, outerToInnerAlias, tag);
+            return relation;
+        }
+
+        // the FROM clause of the sub-query: the copy, and the relation CROSS joined to it
+        final IQueryModel from = queryModelPool.next();
+        from.setNestedModel(copy.getNestedModel());
+        from.setNestedModelIsSubQuery(true);
+        from.setAlias(copy.getAlias());
+        from.addModelAliasIndex(copy.getAlias(), 0);
+        // The sub-query projects the relation's columns, and the copy's, which a wildcard over the
+        // sub-query leaves out, as a wildcard over the lateral body leaves out its outer-ref columns.
+        // The optimiser gives the join model of a sub-query the columns of its projection, which it
+        // resolves against the model below the projection.
+        final IQueryModel wrapper = queryModelPool.next();
+        wrapper.setNestedModel(from);
+        final CharacterStoreEntry wildcard = characterStore.newEntry();
+        wildcard.put(alias.token).put(".*");
+        wrapper.addBottomUpColumn(queryColumnPool.next().of(
+                "*", expressionNodePool.next().of(ExpressionNode.LITERAL, wildcard.toImmutable(), 0, relation.getModelPosition())
+        ));
+        addCopyColumns(wrapper, copyAlias, outerToInnerAlias);
+        wrapper.setOuterRefWildcardExcluded(true);
+
+        final IQueryModel joinModel = queryModelPool.next();
+        joinModel.setAlias(alias);
+        joinModel.addModelAliasIndex(alias, 0);
+        joinModel.setJoinType(relation.getJoinType());
+        joinModel.setJoinCriteria(relation.getJoinCriteria());
+        joinModel.setJoinKeywordPosition(relation.getJoinKeywordPosition());
+        joinModel.setModelPosition(relation.getModelPosition());
+        joinModel.setNestedModel(wrapper);
+        joinModel.setNestedModelIsSubQuery(true);
+
+        relation.setJoinType(IQueryModel.JOIN_CROSS);
+        relation.setJoinCriteria(null);
+        from.getJoinModels().add(relation);
+        registerDataSourceAlias(from, relation, 1);
+        layer.getJoinModels().setQuick(index, joinModel);
+        layer.addModelAliasIndex(alias, index);
+        outerRefCopyWrappers.add(joinModel);
+        collectCopyTag(alias.token, copyAlias, outerToInnerAlias, tag);
+        return joinModel;
     }
 
 }

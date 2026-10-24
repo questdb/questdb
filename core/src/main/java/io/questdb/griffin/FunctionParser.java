@@ -525,18 +525,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                 }
             }
-            final Function function = createFunction(node, mutableArgs, mutableArgPositions);
-            functionStack.push(function);
-            if (sqlCodeGenerator != null) {
-                if (node.paramCount < 3) {
-                    addScalarSubQueryConsumer(node.lhs, function);
-                    addScalarSubQueryConsumer(node.rhs, function);
-                } else {
-                    for (int i = 0, n = node.args.size(); i < n; i++) {
-                        addScalarSubQueryConsumer(node.args.getQuick(i), function);
-                    }
-                }
-            }
+            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
     }
@@ -743,14 +732,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static void putArgType(ObjList<Function> args, int i, SqlException ex) {
         Function arg = args.getQuick(i);
         ex.put(ColumnType.nameOf(arg.getType()));
-    }
-
-    // reports a function that reads a scalar sub-query, so that the code generator can pass it the
-    // value that a lateral NULL check of the same sub-query reads
-    private void addScalarSubQueryConsumer(ExpressionNode arg, Function function) {
-        if (arg != null && arg.type == ExpressionNode.QUERY) {
-            sqlCodeGenerator.addScalarSubQueryConsumer(arg.queryModel, function);
-        }
     }
 
     private Function checkAndCreateFunction(
