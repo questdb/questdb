@@ -5132,6 +5132,20 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * STALE_INDEX_QUERIES[0] over table pt returns {@code expected}, with ts as designated timestamp. A
+     * covering index answers it from the index: no random access, known size.
+     */
+    private void assertFirstDayRowsOfA(String indexDefinition, String expected) throws Exception {
+        final boolean isCovering = indexDefinition.contains("INCLUDE");
+        assertQuery(STALE_INDEX_QUERIES[0])
+                .noLeakCheck()
+                .timestamp("ts")
+                .supportsRandomAccess(!isCovering)
+                .expectSize(isCovering)
+                .returns(expected);
+    }
+
+    /**
      * Non-WAL: the _txn commit switches its record and then fails to msync it, so the commit has
      * landed. rollback(), run when the writer returns to the pool, finds the new index version in the
      * restored _cv: it keeps it and purges the replaced one. The next merge moves the index on, and the
@@ -5141,8 +5155,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final boolean isNanos = "TIMESTAMP_NS".equals(timestampType);
-        // a covering index answers the query from the index: no random access, known size
-        final boolean isCovering = indexDefinition.contains("INCLUDE");
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
         final SymRow[] o3Rows = txnExtendingMergeRows();
         final SymRow[] nextMergeRows = {new SymRow("a", 201, "2024-01-01", "02:30")};
@@ -5156,12 +5168,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             ff.isArmed.set(true);
             assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "could not msync");
             Assert.assertFalse(ff.isArmed.get());
-            assertQuery(STALE_INDEX_QUERIES[0])
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .supportsRandomAccess(!isCovering)
-                    .expectSize(isCovering)
-                    .returns(expectedStaleIndexQueryResult(0, isNanos, SYM_BASE_ROWS, o3Rows));
+            assertFirstDayRowsOfA(indexDefinition, expectedStaleIndexQueryResult(0, isNanos, SYM_BASE_ROWS, o3Rows));
             assertSqlCursors(referenceSql, indexSql);
             Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
             Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
@@ -5181,28 +5188,13 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
             assertOnlyIndexVersion("after the next merge", indexDefinition, 0, "s", nextTxn);
             final String expectedRows = expectedStaleIndexQueryResult(0, isNanos, SYM_BASE_ROWS, o3Rows, nextMergeRows);
-            assertQuery(STALE_INDEX_QUERIES[0])
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .supportsRandomAccess(!isCovering)
-                    .expectSize(isCovering)
-                    .returns(expectedRows);
+            assertFirstDayRowsOfA(indexDefinition, expectedRows);
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            assertQuery(STALE_INDEX_QUERIES[0])
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .supportsRandomAccess(!isCovering)
-                    .expectSize(isCovering)
-                    .returns(expectedRows);
+            assertFirstDayRowsOfA(indexDefinition, expectedRows);
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-            assertQuery(STALE_INDEX_QUERIES[0])
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .supportsRandomAccess(!isCovering)
-                    .expectSize(isCovering)
-                    .returns(expectedRows);
+            assertFirstDayRowsOfA(indexDefinition, expectedRows);
             assertSqlCursors(referenceSql, indexSql);
         });
     }
@@ -5217,8 +5209,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final byte indexType = indexDefinition.contains("POSTING") ? IndexType.POSTING : IndexType.BITMAP;
-        // a covering index answers the query from the index: no random access, known size
-        final boolean isCovering = indexDefinition.contains("INCLUDE");
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
         final String referenceSql = "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'a'";
         final String indexSql = "SELECT s, v, ts FROM pt WHERE s = 'a'";
@@ -5245,12 +5235,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             if (indexType == IndexType.BITMAP) {
                 Assert.assertTrue(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
             }
-            assertQuery(STALE_INDEX_QUERIES[0])
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .supportsRandomAccess(!isCovering)
-                    .expectSize(isCovering)
-                    .returns(expectedRows);
+            assertFirstDayRowsOfA(indexDefinition, expectedRows);
             assertQuery("SELECT count() FROM pt")
                     .noLeakCheck()
                     .expectSize()
@@ -5277,12 +5262,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 purgeJob.run();
             }
             assertOnlyIndexVersion("after VACUUM TABLE", indexDefinition, 0, "s", txnBefore);
-            assertQuery(STALE_INDEX_QUERIES[0])
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .supportsRandomAccess(!isCovering)
-                    .expectSize(isCovering)
-                    .returns(expectedRows);
+            assertFirstDayRowsOfA(indexDefinition, expectedRows);
             assertSqlCursors(referenceSql, indexSql);
         });
     }
