@@ -621,6 +621,18 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testDedupMergeKeyColumnOpenFails() throws Exception {
+        // A WAL commit that merges into a partition dedups on the extra key k, so it reads k from the
+        // partition. Opening k fails: the commit must fail without leaking the merge index the dedup
+        // fills, and the retry must apply the commit.
+        executeWithPool(
+                0,
+                O3FailureTest::testDedupMergeKeyColumnOpenFails0,
+                failToOpenRO("1970-01-01" + Files.SEPARATOR + "k.d")
+        );
+    }
+
+    @Test
     public void testDedupNoopCommitTimestampCloseThrows() throws Exception {
         // A WAL commit whose rows all match rows already in a partition leaves that partition as it is.
         // Releasing the partition's timestamp column throws: the partition must complete exactly once,
@@ -1629,6 +1641,19 @@ public class O3FailureTest extends AbstractO3Test {
                     targetFd.set(fd);
                 }
                 return fd;
+            }
+        };
+    }
+
+    // Fails the first read-only open of the given file of table x once the test arms the fault.
+    private static FilesFacade failToOpenRO(String partitionFile) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isTableXFile(name, partitionFile) && isO3FaultArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
             }
         };
     }
@@ -3447,6 +3472,55 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(engine, compiler, sqlExecutionContext);
+    }
+
+    private static void testDedupMergeKeyColumnOpenFails0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
+    ) throws SqlException {
+        engine.execute(
+                "CREATE TABLE x (ts " + timestampTypeName + ", k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)",
+                sqlExecutionContext
+        );
+        // Five hours apart, two day partitions.
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::INT k, x::INT v FROM long_sequence(10)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        final TableToken tableToken = engine.verifyTableName("x");
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        // The first partition's timestamps with new keys: the commit merges three rows into the partition.
+        isO3FaultArmed.set(true);
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, (x + 100)::INT k, x::INT v FROM long_sequence(3)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        Assert.assertFalse(isO3FaultArmed.get());
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        engine.releaseInactive();
+        engine.execute("ALTER TABLE x RESUME WAL", sqlExecutionContext);
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        assertXCountAndMax(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                """
+                        count
+                        13
+                        """,
+                replaceTimestampSuffix1("""
+                        max
+                        1970-01-02T21:00:00.000000Z
+                        """, timestampTypeName)
+        );
     }
 
     private static void testDedupNoopCommitTimestampCloseThrows0(

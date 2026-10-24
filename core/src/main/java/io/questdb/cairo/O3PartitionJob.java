@@ -5487,6 +5487,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 } else if (tableWriter.isCommitDedupMode()) {
                     final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                    // The catch below frees the merge index, so it owns the buffer before anything can throw.
+                    timestampMergeIndexAddr = tempIndexAddr;
+                    timestampMergeIndexSize = tempIndexSize;
                     final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
                     final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getDbRoot()).concat(tableWriter.getTableToken());
 
@@ -5507,8 +5510,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tempTablePath,
                             tempIndexAddr
                     );
-                    timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-                    timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                    final long dedupIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                    // A failed realloc leaves the buffer as it was: update the size only once it succeeds.
+                    timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, dedupIndexSize, MemoryTag.NATIVE_O3);
+                    timestampMergeIndexSize = dedupIndexSize;
                     final long duplicateCount = mergeRowCount - dedupRows;
                     boolean appendOnly = false;
                     if (duplicateCount > 0) {
