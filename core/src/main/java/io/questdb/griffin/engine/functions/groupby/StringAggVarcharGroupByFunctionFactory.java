@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 
 public class StringAggVarcharGroupByFunctionFactory implements FunctionFactory {
 
@@ -51,6 +52,6 @@ public class StringAggVarcharGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new StringAggVarcharGroupByFunction(args.getQuick(0), args.getQuick(1).getChar(null));
+        return new StringAggVarcharGroupByFunction(args.getQuick(0), new Utf8String(args.getQuick(1).getChar(null)));
     }
 }
