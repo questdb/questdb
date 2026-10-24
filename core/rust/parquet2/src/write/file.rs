@@ -330,20 +330,19 @@ fn write_page_index<W: Write>(
     // emit none: a copied group whose source predates statistics, or a fresh group
     // with an unbounded-max page, would otherwise leave the output with a ColumnIndex
     // on some row groups but not others.
-    let emit_column_index = allow_column_index
-        && (0..row_groups.len()).all(|rg_idx| {
-            row_groups[rg_idx]
-                .columns
-                .iter()
-                .enumerate()
-                .all(|(column_idx, _)| match copied_for(rg_idx, column_idx) {
-                    Some(copied) => copied.column_index.is_some(),
-                    None => page_specs
-                        .get(rg_idx)
-                        .and_then(|columns| columns.get(column_idx))
-                        .is_some_and(|pages| pages_support_column_index(pages)),
-                })
-        });
+    let emit_column_index =
+        allow_column_index
+            && (0..row_groups.len()).all(|rg_idx| {
+                row_groups[rg_idx].columns.iter().enumerate().all(
+                    |(column_idx, _)| match copied_for(rg_idx, column_idx) {
+                        Some(copied) => copied.column_index.is_some(),
+                        None => page_specs
+                            .get(rg_idx)
+                            .and_then(|columns| columns.get(column_idx))
+                            .is_some_and(|pages| pages_support_column_index(pages)),
+                    },
+                )
+            });
 
     if emit_column_index {
         for (rg_idx, group) in row_groups.iter_mut().enumerate() {
@@ -1009,9 +1008,8 @@ impl<W: Write> ParquetFile<W> {
         self.row_groups.push(row_group);
         self.page_specs.push(vec![]);
         self.bloom_bitsets.push(bloom_bitsets);
-        self.copied_page_index.push(
-            copied_page_index.map(|columns| columns.into_iter().map(Some).collect()),
-        );
+        self.copied_page_index
+            .push(copied_page_index.map(|columns| columns.into_iter().map(Some).collect()));
         self.is_insert.push(false);
         Ok(())
     }
