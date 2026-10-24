@@ -2504,9 +2504,11 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // the first merge's txn, and at one above it: every merge must move the index to a name above
         // every earlier one. For both index types, s also starts unindexed, with the index added while
         // partition 2024-01-01 is detached: ATTACH leaves it without index files, and the first append
-        // must build the index under a new version. Some merges fail to msync the _txn file after it
-        // switched its record: the commit landed, and after RESUME WAL it holds as any other merge. The
-        // number of batches is a budget property.
+        // must build the index under a new version. Each start makes pt a WAL or a non-WAL table. Some
+        // merges fail to msync the _txn file after it switched its record: the commit landed. On a WAL
+        // table it holds as any other merge after RESUME WAL; on a non-WAL table the insert fails, and
+        // rollback() must keep the new index version the committed _cv references. The number of batches
+        // is a budget property.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
@@ -2522,8 +2524,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             final int[] attachedMerges = new int[2];
             // appends that build the index missing from the partition re-attached after ADD INDEX
             int healingAppends = 0;
-            // merges whose commit landed although the _txn msync failed, per index type
+            // merges whose commit landed although the _txn msync failed, per index type, WAL and non-WAL
             final int[] landedMsyncFailureMerges = new int[2];
+            final int[] landedNonWalMsyncFailureMerges = new int[2];
             final ColumnTopShape[] shapes = ColumnTopShape.values();
             final String[] indexDefinitions = {"INDEX", "INDEX TYPE POSTING"};
             for (int indexDefinitionIndex = 0; indexDefinitionIndex < indexDefinitions.length; indexDefinitionIndex++) {
@@ -2537,11 +2540,14 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     // the attached partition holds s from row 0, as the ZERO shape does
                     final boolean isAttached = !isIndexAddedWhileDetached && start >= shapes.length;
                     final ColumnTopShape shape = isAttached || isIndexAddedWhileDetached ? ColumnTopShape.ZERO : shapes[start];
-                    final String startName = isIndexAddedWhileDetached ? "ATTACHED_INDEX_ADDED_WHILE_DETACHED" : isAttached ? "ATTACHED" : shape.name();
+                    // the first start is WAL and the second non-WAL, so that each mode sees a failing msync
+                    final boolean isWal = start == 0 || (start != 1 && rnd.nextBoolean());
+                    final String startName = (isIndexAddedWhileDetached ? "ATTACHED_INDEX_ADDED_WHILE_DETACHED" : isAttached ? "ATTACHED" : shape.name())
+                            + (isWal ? " WAL" : " BYPASS WAL");
                     execute("DROP TABLE IF EXISTS pt");
                     execute("DROP TABLE IF EXISTS tw");
                     execute("DROP TABLE IF EXISTS src");
-                    execute("CREATE TABLE pt (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("CREATE TABLE pt (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
                     if (isAttached) {
                         execute("ALTER TABLE pt ADD COLUMN s SYMBOL " + indexDefinition);
                         // the symbols in the order src uses them first, so that they take the keys of the copied s.d
@@ -2565,6 +2571,11 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     execute("INSERT INTO pt (v, ts) SELECT x, '2024-01-02T02:00:00.000000Z'::TIMESTAMP + x * 60_000_000L FROM long_sequence(5)");
                     execute("ALTER TABLE pt ADD COLUMN late DOUBLE");
                     execute("INSERT INTO pt (s, v, ts, late) SELECT 'b', x, '2024-01-02T03:00:00.000000Z'::TIMESTAMP + x * 60_000_000L, x * 1.5 FROM long_sequence(3)");
+                    if (!isWal && !isAttached) {
+                        // a non-WAL table does not convert its active partition: a row on the next day lets
+                        // CONVERT take 2024-01-02, as the attached start's rows on 2024-01-03 do
+                        execute("INSERT INTO pt (v, ts) VALUES (0, '2024-01-03T00:00:00.000000Z')");
+                    }
                     drainWalQueue();
                     // the txn of the first merge, batch 1: after ATTACH, a commit per partition CONVERT takes,
                     // and the append of batch 0
@@ -2615,8 +2626,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             maxTimestamp += rowCount * 1_000_000L;
                         }
                         Assert.assertTrue(maxTimestamp < dayStart + dayMicros);
-                        // the first merge of each index type, and a random quarter of the others
-                        final boolean isMsyncFailing = !isAppend && ((start == 0 && batch == 1) || rnd.nextInt(4) == 0);
+                        // the first merge of the first two starts of each index type, and a random quarter of the others
+                        final boolean isMsyncFailing = !isAppend && ((start <= 1 && batch == 1) || rnd.nextInt(4) == 0);
                         final String context = indexDefinition + ", " + startName + ", batch " + batch + (isAppend ? ", append " : ", merge ")
                                 + (isMsyncFailing ? "with a failing _txn msync " : "") + insert;
                         final boolean isHealingAppend = isIndexAddedWhileDetached && batch == 0;
@@ -2629,21 +2640,34 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                         } else {
                             try (RecordCursorFactory factory = select(indexSql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 ff.isArmed.set(isMsyncFailing);
-                                execute(insert);
+                                if (isMsyncFailing && !isWal) {
+                                    try {
+                                        execute(insert);
+                                        Assert.fail(context + ": the _txn msync must fail");
+                                    } catch (CairoException e) {
+                                        TestUtils.assertContains(context, e.getFlyweightMessage(), "could not msync");
+                                    }
+                                } else {
+                                    execute(insert);
+                                }
                                 execute(insert.toString().replace("INSERT INTO pt ", "INSERT INTO tw "));
                                 drainWalQueue();
                                 if (isMsyncFailing) {
                                     Assert.assertFalse(context, ff.isArmed.get());
-                                    Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
-                                    execute("ALTER TABLE pt RESUME WAL");
-                                    drainWalQueue();
+                                    if (isWal) {
+                                        Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                                        execute("ALTER TABLE pt RESUME WAL");
+                                        drainWalQueue();
+                                        landedMsyncFailureMerges[indexDefinitionIndex]++;
+                                    } else {
+                                        landedNonWalMsyncFailureMerges[indexDefinitionIndex]++;
+                                    }
                                     Assert.assertEquals(context, txnBefore + 1, getTableTxn("pt"));
-                                    landedMsyncFailureMerges[indexDefinitionIndex]++;
                                 }
                                 assertStaleCursor(context, rowsBefore, factory, cursor);
                             }
                         }
-                        Assert.assertFalse(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                        Assert.assertFalse(context, isWal && engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
                         Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
                         if (batch == 1) {
                             Assert.assertEquals(context, firstMergeTxn, txnBefore);
@@ -2699,7 +2723,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             // one per index type
             Assert.assertEquals("appends that build a missing index", 2, healingAppends);
             for (int i = 0; i < indexDefinitions.length; i++) {
-                Assert.assertTrue(indexDefinitions[i] + " merges with a failing _txn msync", landedMsyncFailureMerges[i] > 0);
+                Assert.assertTrue(indexDefinitions[i] + " WAL merges with a failing _txn msync", landedMsyncFailureMerges[i] > 0);
+                Assert.assertTrue(indexDefinitions[i] + " non-WAL merges with a failing _txn msync", landedNonWalMsyncFailureMerges[i] > 0);
             }
         });
     }
@@ -3417,6 +3442,38 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute(symRowsInsert(o3Rows));
             Assert.assertEquals(32, getColumnNameTxn("pt", 0, "s"));
             assertAttachedRows("after the retry", o3Rows);
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexVersionTxnMsyncFailureLands() throws Exception {
+        // Non-WAL: the _txn commit at txn 4 switches its record and then fails to msync it, so the commit
+        // landed with s at version 32, one above the foreign version 31 and not the txn. rollback() must
+        // keep 32, the version the committed _cv references, and purge 31.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        setInPlaceParquetO3Properties();
+        final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
+        final SymRow[] o3Rows = txnExtendingMergeRows();
+        assertMemoryLeak(ff, () -> {
+            createAttachedForeignParquetTable("INDEX", false, 31);
+            ff.isArmed.set(true);
+            try {
+                execute(symRowsInsert(o3Rows));
+                Assert.fail("the _txn msync must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
+            }
+            Assert.assertFalse(ff.isArmed.get());
+            Assert.assertEquals(4, getTableTxn("pt"));
+            Assert.assertEquals(32, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, 32));
+            Assert.assertTrue(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, 32));
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
+            assertOnlyIndexVersion("after the landed commit", "INDEX", 0, "s", 32);
+            assertAttachedRows("after the landed commit", o3Rows);
         });
     }
 
