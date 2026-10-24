@@ -64,6 +64,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class ParquetReplaceCommitTest extends AbstractCairoTest {
+    // replace rows for the columns alterColumnTypesOfBoth() leaves, by name and new type
+    private static final String ALTERED_ROWS = """
+            SELECT
+                (1000 + x)::LONG id,
+                'r' || x v,
+                'n' || x sym,
+                (-x * 1.5)::FLOAT d,
+                (x * 7)::INT s
+            FROM long_sequence(%d)
+            """;
     private static final long DAY1 = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
     private static final int LARGE_ROWS_PER_DAY = 10_000;
     private static final int LARGE_ROW_GROUP_SIZE = 1_000;
@@ -112,6 +122,140 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
             replaceBoth("2024-01-01T08:30:00.000000Z", "2024-01-01T11:30:00.000000Z", "2024-01-01T09:00:00.000000Z");
             assertTwinsEqual();
             Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
+        });
+    }
+
+    @Test
+    public void testAfterAlterColumnTypeDropRewrites() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            alterColumnTypesOfBoth();
+            final long txnBefore = partitionNameTxn("pq", 0);
+            // [07:00, 15:00] covers row group 1 and brings no rows: a DROP in rewrite mode,
+            // which must materialize the converted columns of the row groups it keeps
+            replaceBothFromQuery(ALTERED_ROWS, "2024-01-01T07:00:00.000000Z", "2024-01-01T15:00:00.000000Z");
+            assertTwinsEqual();
+            Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(2, parquetRowGroupCount("pq", 0));
+            Assert.assertEquals(0, parquetUnusedBytes("pq", 0));
+        });
+    }
+
+    @Test
+    public void testAfterAlterColumnTypeFilterMergeRewrites() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            alterColumnTypesOfBoth();
+            final long txnBefore = partitionNameTxn("pq", 0);
+            // removes the 10:00 row of row group 1 and brings no rows
+            replaceBothFromQuery(ALTERED_ROWS, "2024-01-01T08:30:00.000000Z", "2024-01-01T11:30:00.000000Z");
+            assertTwinsEqual();
+            Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertQuery("SELECT count() FROM pq WHERE ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            11
+                            """);
+        });
+    }
+
+    @Test
+    public void testAfterAlterColumnTypeNoopKeepsPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            alterColumnTypesOfBoth();
+            final long txnBefore = partitionNameTxn("pq", 0);
+            final long sizeBefore = parquetFileSize("pq", 0);
+            // the converted columns would force a rewrite, but the window holds no row and
+            // brings none: the partition must stay as it is
+            replaceBothFromQuery(ALTERED_ROWS, "2024-01-01T08:30:00.000000Z", "2024-01-01T09:30:00.000000Z");
+            assertTwinsEqual();
+            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(sizeBefore, parquetFileSize("pq", 0));
+        });
+    }
+
+    @Test
+    public void testAfterAlterColumnTypeRemovesPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            alterColumnTypesOfBoth();
+            replaceBothFromQuery(ALTERED_ROWS, "2024-01-02T00:00:00.000000Z", "2024-01-02T23:59:59.999999Z");
+            assertTwinsEqual();
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('pq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2024-01-01\t12\ttrue
+                            2024-01-03\t12\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testAfterAlterColumnTypeRewritesThenUpdatesInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            alterColumnTypesOfBoth();
+            final long txnBefore = partitionNameTxn("pq", 0);
+            // the parquet file still holds the old types: the merge converts them, and the
+            // pending conversion forces a rewrite that materializes the new types
+            replaceBothFromQuery(
+                    ALTERED_ROWS,
+                    "2024-01-01T08:30:00.000000Z", "2024-01-01T11:30:00.000000Z",
+                    "2024-01-01T09:00:00.000000Z", "2024-01-01T10:30:00.000000Z"
+            );
+            assertTwinsEqual();
+            final long txnAfterRewrite = partitionNameTxn("pq", 0);
+            Assert.assertNotEquals(txnBefore, txnAfterRewrite);
+            // the file now holds the new types, so the next replace updates it in place
+            replaceBothFromQuery(
+                    ALTERED_ROWS,
+                    "2024-01-01T15:00:00.000000Z", "2024-01-01T19:00:00.000000Z",
+                    "2024-01-01T17:00:00.000000Z"
+            );
+            assertTwinsEqual();
+            Assert.assertEquals(txnAfterRewrite, partitionNameTxn("pq", 0));
+            Assert.assertTrue(parquetUnusedBytes("pq", 0) > 0);
+            execute("ALTER TABLE pq CONVERT PARTITION TO NATIVE WHERE ts < '2024-01-03'");
+            drainWalQueue();
+            assertTwinsEqual();
+        });
+    }
+
+    @Test
+    public void testAfterDropColumnRewritesThenUpdatesInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            execute("ALTER TABLE nat DROP COLUMN d");
+            execute("ALTER TABLE pq DROP COLUMN d");
+            execute("ALTER TABLE nat DROP COLUMN s");
+            execute("ALTER TABLE pq DROP COLUMN s");
+            drainWalQueue();
+            final String rows = "SELECT (1000 + x)::INT id, 'r' || x v, 'n' sym FROM long_sequence(%d)";
+            final long txnBefore = partitionNameTxn("pq", 0);
+            // the parquet file still holds d and s: the replace rewrites it without them
+            replaceBothFromQuery(
+                    rows,
+                    "2024-01-01T08:30:00.000000Z", "2024-01-01T11:30:00.000000Z",
+                    "2024-01-01T09:00:00.000000Z", "2024-01-01T10:30:00.000000Z"
+            );
+            assertTwinsEqual();
+            final long txnAfterRewrite = partitionNameTxn("pq", 0);
+            Assert.assertNotEquals(txnBefore, txnAfterRewrite);
+            // a DROP of row group 0 and a gap row: in place now
+            replaceBothFromQuery(
+                    "SELECT (2000 + x)::INT id, 'q' || x v, 'm' sym FROM long_sequence(%d)",
+                    "2024-01-01T00:00:00.000000Z", "2024-01-01T07:00:00.000000Z",
+                    "2024-01-01T07:00:00.000000Z"
+            );
+            assertTwinsEqual();
+            Assert.assertEquals(txnAfterRewrite, partitionNameTxn("pq", 0));
         });
     }
 
@@ -1057,6 +1201,23 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     /**
+     * Changes column types on nat and pq, one conversion of each kind the parquet merge
+     * finishes in Java or Rust: fixed to fixed (id INT to LONG, d DOUBLE to FLOAT), var to
+     * var (v VARCHAR to STRING), symbol to var (sym to VARCHAR) and var to fixed (s STRING to
+     * INT, every value a NULL). nat converts eagerly, pq's parquet files keep the old types.
+     */
+    private static void alterColumnTypesOfBoth() throws Exception {
+        for (String table : new String[]{"nat", "pq"}) {
+            execute("ALTER TABLE " + table + " ALTER COLUMN id TYPE LONG");
+            execute("ALTER TABLE " + table + " ALTER COLUMN d TYPE FLOAT");
+            execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE STRING");
+            execute("ALTER TABLE " + table + " ALTER COLUMN sym TYPE VARCHAR");
+            execute("ALTER TABLE " + table + " ALTER COLUMN s TYPE INT");
+        }
+        drainWalQueue();
+    }
+
+    /**
      * Appends one row per timestamp and commits them as a replace range. Every row
      * sets non-NULL STRING and BINARY values, so a replace that lands on a parquet
      * row group merges non-NULL var-size O3 values into it: {@code s} is "rs" + its
@@ -1225,6 +1386,24 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     private static void replaceBoth(boolean putExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
         appendRows(engine.verifyTableName("nat"), putExtra, rangeLo, rangeHi, rowTs);
         appendRows(engine.verifyTableName("pq"), putExtra, rangeLo, rangeHi, rowTs);
+        drainWalQueue();
+    }
+
+    /**
+     * Commits the same replace range [rangeLo, rangeHi] (inclusive) to nat and pq, with one
+     * row per timestamp from {@code select}, a query whose {@code %d} is the row count. Its
+     * columns map to the tables' by name, so it can follow schema changes.
+     */
+    private static void replaceBothFromQuery(String select, String rangeLo, String rangeHi, String... rowTs) throws Exception {
+        final long[] timestamps = new long[rowTs.length];
+        for (int i = 0; i < rowTs.length; i++) {
+            timestamps[i] = MicrosTimestampDriver.floor(rowTs[i]);
+        }
+        final String sql = String.format(select, rowTs.length);
+        final long lo = MicrosTimestampDriver.floor(rangeLo);
+        final long hi = MicrosTimestampDriver.floor(rangeHi);
+        ReplaceCommitTestUtils.replace(engine, sqlExecutionContext, "nat", sql, lo, hi, timestamps);
+        ReplaceCommitTestUtils.replace(engine, sqlExecutionContext, "pq", sql, lo, hi, timestamps);
         drainWalQueue();
     }
 

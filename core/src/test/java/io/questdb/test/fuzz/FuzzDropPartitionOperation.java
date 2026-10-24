@@ -27,6 +27,7 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.CompiledQuery;
@@ -37,15 +38,17 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    // the unit of cutoffTimestamp
+    private final TimestampDriver timestampDriver;
 
-    public FuzzDropPartitionOperation(long cutoffTimestamp) {
+    public FuzzDropPartitionOperation(long cutoffTimestamp, TimestampDriver timestampDriver) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.timestampDriver = timestampDriver;
     }
 
     @Override
@@ -59,9 +62,9 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s > '%s' AND %s < '%s'",
                     TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName()),
                     tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp - 86_400_000_000L),
+                    FuzzTransactionGenerator.toTimestampLiteral(timestampDriver, cutoffTimestamp - timestampDriver.fromDays(1)),
                     tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp)
+                    FuzzTransactionGenerator.toTimestampLiteral(timestampDriver, cutoffTimestamp)
             );
 
             try {

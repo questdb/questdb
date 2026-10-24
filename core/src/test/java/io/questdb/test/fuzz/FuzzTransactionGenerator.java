@@ -27,23 +27,109 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
-
-import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
+    /**
+     * As the overload that takes a {@link TimestampDriver}, with timestamps in microseconds.
+     */
     public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            Rnd rnd,
+            long minTimestamp,
+            long maxTimestamp,
+            int rowCount,
+            int transactionCount,
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
+            double probabilityOfDataInsert,
+            double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
+            double probabilityOfSetTtl,
+            double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
+            int maxStrLenForStrColumns,
+            String[] symbols,
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat
+    ) {
+        return generateSet(
+                MicrosTimestampDriver.INSTANCE,
+                initialRowCount,
+                sequencerMetadata,
+                tableMetadata,
+                rnd,
+                minTimestamp,
+                maxTimestamp,
+                rowCount,
+                transactionCount,
+                o3,
+                probabilityOfCancelRow,
+                probabilityOfUnassignedColumnValue,
+                probabilityOfAssigningNull,
+                probabilityOfTransactionRollback,
+                probabilityOfAddingNewColumn,
+                probabilityOfRemovingColumn,
+                probabilityOfRenamingColumn,
+                probabilityOfColumnTypeChange,
+                probabilityOfDataInsert,
+                probabilityOfSameTimestamp,
+                probabilityOfDropPartition,
+                probabilityOfConvertPartitionToParquet,
+                probabilityOfConvertPartitionToNative,
+                probabilityOfTruncate,
+                probabilityOfDropTable,
+                probabilityOfSetTtl,
+                replaceInsertProb,
+                probabilityOfSymbolAccessValidation,
+                probabilityOfQuery,
+                maxStrLenForStrColumns,
+                symbols,
+                metaVersion,
+                probabilityOfSetParquetEncoding,
+                probabilityOfAddCoveringIndex,
+                probabilityOfSetTableFormat
+        );
+    }
+
+    /**
+     * Generates a transaction list. {@code timestampDriver} is the unit of {@code minTimestamp},
+     * {@code maxTimestamp} and every timestamp the list holds: a day, a replace window's
+     * padding and the partition cutoffs scale with it.
+     */
+    public static ObjList<FuzzTransaction> generateSet(
+            TimestampDriver timestampDriver,
             long initialRowCount,
             TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
@@ -82,6 +168,7 @@ public class FuzzTransactionGenerator {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
+        final ReplaceWindowPicker replaceWindowPicker = new ReplaceWindowPicker(timestampDriver);
 
         long lastTimestamp = minTimestamp;
 
@@ -240,11 +327,11 @@ public class FuzzTransactionGenerator {
             } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
-                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, timestampDriver, rnd);
             } else if (wantToConvertPartitionToParquet) {
-                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, timestampDriver, rnd);
             } else if (wantToConvertPartitionToNative) {
-                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, timestampDriver, rnd);
             } else if (wantToAddCoveringIndex) {
                 generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
@@ -326,7 +413,8 @@ public class FuzzTransactionGenerator {
                         maxStrLenForStrColumns,
                         symbols,
                         probabilityOfSameTimestamp,
-                        replaceInsert
+                        replaceInsert,
+                        replaceWindowPicker
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
@@ -334,6 +422,15 @@ public class FuzzTransactionGenerator {
         }
 
         return transactionList;
+    }
+
+    /**
+     * A timestamp in the driver's unit as a literal at the unit's full precision.
+     */
+    public static String toTimestampLiteral(TimestampDriver timestampDriver, long timestamp) {
+        final StringSink sink = new StringSink();
+        timestampDriver.append(sink, timestamp);
+        return sink.toString();
     }
 
     private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
@@ -430,14 +527,14 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long lastTimestamp, TimestampDriver timestampDriver, Rnd rnd
     ) {
         long cutoffTimestamp = lastTimestamp;
         if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
+            cutoffTimestamp -= timestampDriver.fromDays(1);
         }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp, timestampDriver));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -446,14 +543,14 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long lastTimestamp, TimestampDriver timestampDriver, Rnd rnd
     ) {
         long cutoffTimestamp = lastTimestamp;
         if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
+            cutoffTimestamp -= timestampDriver.fromDays(1);
         }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp, timestampDriver));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -463,14 +560,14 @@ public class FuzzTransactionGenerator {
 
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long lastTimestamp, TimestampDriver timestampDriver, Rnd rnd
     ) {
         long cutoffTimestamp = lastTimestamp;
         if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
+            cutoffTimestamp -= timestampDriver.fromDays(1);
         }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp, timestampDriver));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -723,7 +820,8 @@ public class FuzzTransactionGenerator {
             int strLen,
             String[] symbols,
             double probabilityOfRowsSameTimestamp,
-            boolean replaceInsert
+            boolean replaceInsert,
+            ReplaceWindowPicker replaceWindowPicker
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
@@ -752,23 +850,28 @@ public class FuzzTransactionGenerator {
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
 
+        int nextWaitBarrierVersion = waitBarrierVersion;
         if (replaceInsert) {
-            minTs = minTs - (long) Math.exp(24);
-            maxTs = maxTs + (long) Math.exp(24);
+            if (minTs > maxTs) {
+                // no rows: anchor the window on the block's range
+                minTs = startTs;
+                maxTs = Math.max(startTs, stopTs);
+            }
             if (!transaction.rollback) {
-                // Add up to 2 partition to the range from each side to make things more interesting
-                transaction.setReplaceRange(minTs, maxTs);
-                return waitBarrierVersion + 1;
+                replaceWindowPicker.pick(rnd, transaction, minTs, maxTs);
+                nextWaitBarrierVersion++;
             } else if (rnd.nextBoolean()) {
                 // Instead of rollback, insert empty replace range
                 transaction.operationList.clear();
                 transaction.rollback = false;
-                transaction.setReplaceRange(minTs, maxTs);
-                return waitBarrierVersion + 1;
+                replaceWindowPicker.pickWide(transaction, minTs, maxTs);
+                nextWaitBarrierVersion++;
             }
         }
-
-        return waitBarrierVersion;
+        if (!transaction.rollback) {
+            replaceWindowPicker.addCommittedRows(transaction);
+        }
+        return nextWaitBarrierVersion;
     }
 
     static RecordMetadata generateDropColumn(
@@ -798,5 +901,153 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    /**
+     * Picks the range of a replace commit, in table timestamp units, one of:
+     * <ul>
+     * <li>a wide window, padded by about 7.4 hours on each side of the commit's rows;</li>
+     * <li>edges on, or one unit next to, the committed rows nearest the commit's rows:
+     * {@code lo} on a row, {@code hi - 1} on a row (the row is replaced) or {@code hi} on a
+     * row (it is not);</li>
+     * <li>a narrow window around the commit's rows;</li>
+     * <li>whole days, with or without the commit's rows;</li>
+     * <li>no rows: a pure delete around the commit's rows, or a narrow window on, or next
+     * to, one committed row.</li>
+     * </ul>
+     * The wide window alone puts no edge on an existing row, never covers whole partitions,
+     * and brings rows nearly always, so the other shapes reach the inclusive and exclusive
+     * edge cases, partition removal and the no-op path. Every window holds the rows the
+     * commit brings, as the WAL requires.
+     */
+    static final class ReplaceWindowPicker {
+        private static final int MAX_TIMESTAMPS = 100_000;
+        private final long day;
+        private final long padding;
+        // a sample of the timestamps committed so far
+        private final LongList timestamps = new LongList();
+        private boolean isSorted = true;
+        private int nextOverwrite;
+
+        ReplaceWindowPicker(TimestampDriver timestampDriver) {
+            day = timestampDriver.fromDays(1);
+            padding = timestampDriver.fromMicros((long) Math.exp(24));
+        }
+
+        void addCommittedRows(FuzzTransaction transaction) {
+            for (int i = 0, n = transaction.operationList.size(); i < n; i++) {
+                if (transaction.operationList.getQuick(i) instanceof FuzzInsertOperation insert) {
+                    if (timestamps.size() < MAX_TIMESTAMPS) {
+                        timestamps.add(insert.getTimestamp());
+                    } else {
+                        timestamps.setQuick(nextOverwrite, insert.getTimestamp());
+                        nextOverwrite = (nextOverwrite + 1) % MAX_TIMESTAMPS;
+                    }
+                    isSorted = false;
+                }
+            }
+        }
+
+        void pick(Rnd rnd, FuzzTransaction transaction, long minTs, long maxTs) {
+            final long lo;
+            final long hi;
+            boolean dropRows = false;
+            switch (rnd.nextInt(10)) {
+                case 0, 1, 2, 3 -> {
+                    pickWide(transaction, minTs, maxTs);
+                    return;
+                }
+                case 4, 5 -> {
+                    lo = snapLo(rnd, minTs);
+                    hi = snapHi(rnd, maxTs);
+                }
+                case 6 -> {
+                    final long margin = padding / 1024 + 1;
+                    lo = minTs - rnd.nextLong(margin);
+                    hi = maxTs + 1 + rnd.nextLong(margin);
+                }
+                case 7 -> {
+                    lo = floorDay(minTs) - rnd.nextInt(2) * day;
+                    hi = floorDay(maxTs) + (1 + rnd.nextInt(2)) * day;
+                    dropRows = rnd.nextBoolean();
+                }
+                case 8 -> {
+                    lo = snapLo(rnd, minTs);
+                    hi = snapHi(rnd, maxTs);
+                    dropRows = true;
+                }
+                default -> {
+                    dropRows = true;
+                    final long anchor = timestamps.size() > 0 ? timestamps.getQuick(rnd.nextInt(timestamps.size())) : minTs;
+                    if (rnd.nextInt(3) == 0) {
+                        // next to the row, not on it
+                        lo = anchor + 1;
+                        hi = lo + 1 + rnd.nextLong(padding / 1024 + 1);
+                    } else {
+                        lo = anchor - rnd.nextLong(3);
+                        hi = anchor + 1 + rnd.nextLong(3);
+                    }
+                }
+            }
+            if (dropRows) {
+                transaction.operationList.clear();
+            }
+            transaction.setReplaceRange(lo, hi);
+        }
+
+        void pickWide(FuzzTransaction transaction, long minTs, long maxTs) {
+            transaction.setReplaceRange(minTs - padding, maxTs + padding);
+        }
+
+        private long floorDay(long ts) {
+            return ts - Math.floorMod(ts, day);
+        }
+
+        private void ensureSorted() {
+            if (!isSorted) {
+                timestamps.sort();
+                isSorted = true;
+            }
+        }
+
+        // hi (exclusive) on the committed row at or after maxTs (the row stays), one past it
+        // (the row is replaced) or two past it; always above maxTs
+        private long snapHi(Rnd rnd, long maxTs) {
+            ensureSorted();
+            int low = 0;
+            int high = timestamps.size();
+            while (low < high) {
+                final int mid = (low + high) >>> 1;
+                if (timestamps.getQuick(mid) < maxTs) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            if (low == timestamps.size() || timestamps.getQuick(low) - maxTs > day) {
+                return maxTs + 1 + rnd.nextLong(3);
+            }
+            return Math.max(timestamps.getQuick(low) + rnd.nextLong(3), maxTs + 1);
+        }
+
+        // lo on the committed row at or before minTs, or one unit either side of it; never
+        // above minTs
+        private long snapLo(Rnd rnd, long minTs) {
+            ensureSorted();
+            int low = 0;
+            int high = timestamps.size();
+            while (low < high) {
+                final int mid = (low + high) >>> 1;
+                if (timestamps.getQuick(mid) <= minTs) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            if (low == 0 || minTs - timestamps.getQuick(low - 1) > day) {
+                return minTs - rnd.nextLong(3);
+            }
+            return Math.min(timestamps.getQuick(low - 1) + rnd.nextLong(3) - 1, minTs);
+        }
     }
 }

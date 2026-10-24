@@ -103,7 +103,8 @@ reuses the committed name:
 Rewrite mode builds the indexes in the new directory under the unchanged name, and needs none of
 this. Keep the worker and the writer on the shared predicate: a column the worker rebuilds but
 `_cv` does not move is read from the stale committed files, and a column `_cv` moves but the
-worker did not build has no files. Pinned by `ParquetInPlaceIndexPinnedReaderTest`.
+worker did not build has no files. Pinned by `ParquetInPlaceIndexPinnedReaderTest`, and under
+concurrent readers and purge jobs by `ParquetInPlaceIndexConcurrentReaderTest`.
 
 **`_cv` invariant.** After any parquet O3 publish (rewrite or in-place), every live column's
 `_cv` top is 0. update.rs `end()` zeroes the file column tops in both modes, and TableWriter's

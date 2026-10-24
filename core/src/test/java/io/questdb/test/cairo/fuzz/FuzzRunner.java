@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
@@ -38,6 +37,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
@@ -67,7 +67,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -137,6 +136,9 @@ public class FuzzRunner {
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
+    // designated timestamp type of the tables createInitialTable*() makes, and the unit of
+    // the timestamps generateTransactions() emits
+    private int timestampType = ColumnType.TIMESTAMP;
     private int transactionCount;
     private double truncateProb;
 
@@ -559,6 +561,7 @@ public class FuzzRunner {
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
+                getTimestampDriver(),
                 initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
@@ -596,13 +599,14 @@ public class FuzzRunner {
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
-        long end = start + partitionCount * Micros.DAY_MICROS;
+        long end = start + partitionCount * getTimestampDriver().fromDays(1);
         return generateTransactions(tableName, rnd, start, end);
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
-        long start = MicrosTimestampDriver.floor("2022-02-24T17");
-        long end = start + partitionCount * Micros.DAY_MICROS;
+        final TimestampDriver timestampDriver = getTimestampDriver();
+        long start = timestampDriver.parseFloorLiteral("2022-02-24T17");
+        long end = start + partitionCount * timestampDriver.fromDays(1);
         return generateTransactions(tableName, rnd, start, end);
     }
 
@@ -628,8 +632,16 @@ public class FuzzRunner {
         return ioFailuresObserved;
     }
 
+    public TimestampDriver getTimestampDriver() {
+        return ColumnType.getTimestampDriver(timestampType);
+    }
+
     public int getTransactionCount() {
         return transactionCount;
+    }
+
+    public boolean isCreateWalAsParquet() {
+        return createWalAsParquet;
     }
 
     public int randomiseStringLengths(Rnd rnd, int maxLen) {
@@ -883,6 +895,14 @@ public class FuzzRunner {
         this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
+    /**
+     * The designated timestamp type of the tables this runner creates in {@code runFuzz}, and
+     * the unit of the timestamps it generates. TIMESTAMP (micros) unless set.
+     */
+    public void setTimestampType(int timestampType) {
+        this.timestampType = timestampType;
+    }
+
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
@@ -958,6 +978,7 @@ public class FuzzRunner {
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
+            final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit 1")
@@ -966,7 +987,7 @@ public class FuzzRunner {
                         .expectSize()
                         .returns(
                                 "ts\n" +
-                                        Micros.toUSecString(reader.getMinTimestamp())
+                                        FuzzTransactionGenerator.toTimestampLiteral(timestampDriver, reader.getMinTimestamp())
                                         + "\n"
                         );
             }
@@ -979,7 +1000,7 @@ public class FuzzRunner {
                         .expectSize()
                         .returns(
                                 "ts\n" +
-                                        Micros.toUSecString(reader.getMaxTimestamp())
+                                        FuzzTransactionGenerator.toTimestampLiteral(timestampDriver, reader.getMaxTimestamp())
                                         + "\n"
                         );
             }
@@ -1264,7 +1285,8 @@ public class FuzzRunner {
                         if (i > 0) {
                             sink.put(" and");
                         }
-                        sink.put(" (ts not between '" + Micros.toUSecString(lo) + "' and '" + Micros.toUSecString(hi) + "')");
+                        sink.put(" (ts not between '").put(FuzzTransactionGenerator.toTimestampLiteral(getTimestampDriver(), lo))
+                                .put("' and '").put(FuzzTransactionGenerator.toTimestampLiteral(getTimestampDriver(), hi)).put("')");
                     }
                 }
             }
@@ -1286,11 +1308,15 @@ public class FuzzRunner {
         TableToken tempTable = engine.getTableTokenIfExists("data_temp");
 
         if (tempTable == null) {
+            // one row a second, in the runner's timestamp type
+            final String tsSequence = timestampType == ColumnType.TIMESTAMP
+                    ? "timestamp_sequence('2022-02-24', 1000000L)"
+                    : "timestamp_sequence('2022-02-24', 1000000L)::" + ColumnType.nameOf(timestampType);
             engine.execute(
                     "create atomic table data_temp as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " " + tsSequence + " ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +

@@ -114,6 +114,44 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicateKeyInCommitFirstIdenticalStillMerges() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // the commit holds id 6 twice: equal values first, a changed d last. Dedup keeps
+            // the last row, so the commit changes the partition
+            assertChangedCommitMerges(
+                    """
+                            SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00'
+                            UNION ALL
+                            SELECT id, ts, v, sym, -1.0, s, bin FROM nat WHERE id = 6
+                            """,
+                    false,
+                    "SELECT d FROM pq WHERE id = 6",
+                    "d\n-1.0\n"
+            );
+            assertQuery("SELECT count() FROM pq WHERE ts IN '2024-01-01'").noLeakCheck().expectSize().noRandomAccess().returns("count\n12\n");
+        });
+    }
+
+    @Test
+    public void testDuplicateKeyInCommitLastIdenticalLeavesPartitionUnchanged() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // the commit holds id 6 twice: a changed d first, equal values last. Dedup keeps
+            // the last row, so every value the commit leaves equals the partition's
+            assertIdenticalCommitIsNoop(
+                    """
+                            SELECT id, ts, v, sym, -1.0, s, bin FROM nat WHERE id = 6
+                            UNION ALL
+                            SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00'
+                            """,
+                    false
+            );
+            assertQuery("SELECT d FROM pq WHERE id = 6").noLeakCheck().returns("d\n9.0\n");
+        });
+    }
+
+    @Test
     public void testGapInsertAfterDeferredRowGroupsInRewriteFlushesThem() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);

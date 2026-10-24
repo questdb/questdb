@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Rnd;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
@@ -67,39 +69,22 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testReplaceOnFormatParquetTable() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setCreateWalAsParquet(true);
-        setFuzzProbabilities(
-                0.01, 0.2, 0.1, 0.01,
-                0.02, 0.02, 0.02, 0,
-                1.0, 0.01, 0.01,
-                0, 0, 0, 0, 0,
-                0.5, 0.05, 0
-        );
-        setFuzzCounts(
-                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
-                20, 10, 200, rnd.nextInt(100), 1
-        );
-        setSmallParquetRowGroups(rnd);
-        runFuzz(rnd);
+        runReplaceOnFormatParquetTable(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testReplaceOnFormatParquetTableNanos() throws Exception {
+        runReplaceOnFormatParquetTable(ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
     public void testReplaceWithParquetConversions() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(
-                0.01, 0.2, 0.1, 0.01,
-                0.02, 0.02, 0.02, 0,
-                1.0, 0.01, 0.01,
-                0.2, 0.02, 0, 0, 0,
-                0.5, 0.05, 0
-        );
-        setFuzzCounts(
-                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
-                20, 10, 200, rnd.nextInt(100), 1
-        );
-        setSmallParquetRowGroups(rnd);
-        runFuzz(rnd);
+        runReplaceWithParquetConversions(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testReplaceWithParquetConversionsNanos() throws Exception {
+        runReplaceWithParquetConversions(ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
@@ -158,11 +143,59 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
-    // Fuzz partitions hold ~100 rows, far below the default parquet row group size, so
+    private void runReplaceOnFormatParquetTable(int timestampType) throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setTimestampType(timestampType);
+        setCreateWalAsParquet(true);
+        setFuzzProbabilities(
+                0.01, 0.2, 0.1, 0.01,
+                0.02, 0.02, 0.02, 0,
+                1.0, 0.01, 0.01,
+                0, 0, 0, 0, 0,
+                0.5, 0.05, 0
+        );
+        setReplaceOnParquetCounts(rnd);
+        setSmallParquetRowGroups(rnd);
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+        runFuzz(rnd);
+        counts.log(LOG, getTestName());
+        // every partition is parquet, so every data commit writes one
+        Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() > 0);
+    }
+
+    private void runReplaceWithParquetConversions(int timestampType) throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setTimestampType(timestampType);
+        setFuzzProbabilities(
+                0.01, 0.2, 0.1, 0.01,
+                0.02, 0.02, 0.02, 0,
+                1.0, 0.01, 0.01,
+                0.2, 0.02, 0, 0, 0,
+                0.5, 0.05, 0
+        );
+        setReplaceOnParquetCounts(rnd);
+        setSmallParquetRowGroups(rnd);
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+        runFuzz(rnd);
+        counts.log(LOG, getTestName());
+    }
+
+    // A few thousand rows over 2 to 4 partitions and up to 200 transactions, half of them
+    // replace commits: cheap, and enough commits per partition to reach in-place merges,
+    // in-place DROPs, no-op windows and partition removals.
+    private void setReplaceOnParquetCounts(Rnd rnd) {
+        setFuzzCounts(
+                rnd.nextBoolean(), 5_000, 50 + rnd.nextInt(150),
+                20, 10, 200, rnd.nextInt(1000), 2 + rnd.nextInt(3)
+        );
+    }
+
+    // Fuzz partitions hold ~1_000 rows, far below the default parquet row group size, so
     // each partition would be a single row group: every replace would rewrite it, and a
     // row group fully covered by a replace window (DROP) could not occur. A few rows per
     // row group spreads replace windows across row groups and exercises in-place merges.
     private void setSmallParquetRowGroups(Rnd rnd) {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5 + rnd.nextInt(30));
+        setRndParquetRewriteGate(rnd);
     }
 }
