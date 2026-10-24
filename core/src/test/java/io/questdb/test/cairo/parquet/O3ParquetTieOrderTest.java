@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.str.LPSZ;
@@ -184,12 +183,7 @@ public class O3ParquetTieOrderTest extends AbstractCairoTest {
                 drainWalQueue();
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
             } else {
-                try {
-                    execute("INSERT INTO pt (v, s, vc, d, ts) VALUES " + o3Row);
-                    Assert.fail("expected the commit to fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
-                }
+                assertExceptionNoLeakCheck("INSERT INTO pt (v, s, vc, d, ts) VALUES " + o3Row, -1, "bulk update failed and will be rolled back");
                 isFailing.set(false);
                 assertPtDayOrder(1, 2, 3, 4, 5, 6, 7, 8);
                 execute("INSERT INTO pt (v, s, vc, d, ts) VALUES " + o3Row);

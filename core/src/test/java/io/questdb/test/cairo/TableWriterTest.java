@@ -3025,12 +3025,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     """;
 
             ff.isArmed.set(true);
-            try {
-                execute(o3Insert);
-                Assert.fail("the _txn commit must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-            }
+            assertExceptionNoLeakCheck(o3Insert, -1, "No space left");
             Assert.assertFalse(ff.isArmed.get());
             // checked before a reader opens: a reader waits for _cv to match _txn
             Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("nt"));

@@ -1313,12 +1313,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 ff.isArmed.set(true);
-                try {
-                    execute(columnTopShapeInsert("pt", o3Rows.toString()));
-                    Assert.fail("the _txn commit must fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-                }
+                assertExceptionNoLeakCheck(columnTopShapeInsert("pt", o3Rows.toString()), -1, "No space left");
                 Assert.assertFalse(ff.isArmed.get());
                 Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("pt"));
                 engine.releaseInactive();
@@ -1375,12 +1370,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 failingKeyFile.set(Utf8s.stringFromUtf8Bytes(IndexFactory.keyFileName(IndexType.BITMAP, path, "s", columnNameTxn)));
             }
             final String o3Insert = columnTopShapeInsert("pt", columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x"));
-            try {
-                execute(o3Insert);
-                Assert.fail("the index rebuild must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
-            }
+            assertExceptionNoLeakCheck(o3Insert, -1, "bulk update failed and will be rolled back");
             Assert.assertEquals(1, failures.get());
             Assert.assertEquals(txnBefore, getTableTxn("pt"));
             Assert.assertEquals(-1, getColumnTop("pt", 0, "s"));
@@ -1903,10 +1893,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             ff.clear();
             isArmed.set(true);
             try {
-                execute(symRowsInsert(SYM_TWO_DAY_MERGE_ROWS));
-                Assert.fail("the commit must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
+                assertExceptionNoLeakCheck(symRowsInsert(SYM_TWO_DAY_MERGE_ROWS), -1, "bulk update failed and will be rolled back");
             } finally {
                 isArmed.set(false);
             }
@@ -1951,12 +1938,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 ff.isArmed.set(true);
-                try {
-                    execute(symRowsInsert(o3Rows));
-                    Assert.fail("the _txn commit must fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-                }
+                assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "No space left");
                 Assert.assertFalse(ff.isArmed.get());
                 // checked before a new reader opens: a reader waits for _cv to match _txn
                 Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("pt"));
@@ -2891,12 +2873,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             oldKeyFileSuffix.set(Files.SEPARATOR + (columnNameTxn > -1 ? "s.k." + columnNameTxn : "s.k"));
             engine.releaseInactive();
             isArmed.set(true);
-            try {
-                execute(symRowsInsert(SYM_MERGE_ROWS[0]));
-                Assert.fail("the housekeeping must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Data has been persisted, but we could not perform housekeeping");
-            }
+            assertExceptionNoLeakCheck(symRowsInsert(SYM_MERGE_ROWS[0]), -1, "Data has been persisted, but we could not perform housekeeping");
             Assert.assertEquals(1, oldKeyFileRemovals.get());
             Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, columnNameTxn));
@@ -3172,10 +3149,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             failingOpenSuffix.set(Files.SEPARATOR + "s.v." + txnBefore);
             failingRemoveSuffix.set(Files.SEPARATOR + "s.k." + txnBefore);
             try {
-                execute(symRowsInsert(SYM_MERGE_ROWS));
-                Assert.fail("the commit must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
+                assertExceptionNoLeakCheck(symRowsInsert(SYM_MERGE_ROWS), -1, "bulk update failed and will be rolled back");
             } finally {
                 failingOpenSuffix.set(null);
                 failingRemoveSuffix.set(null);
@@ -3549,12 +3523,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             createAttachedForeignParquetTable("INDEX", false, 31);
             ff.isArmed.set(true);
-            try {
-                execute(symRowsInsert(o3Rows));
-                Assert.fail("the _txn commit must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-            }
+            assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "No space left");
             Assert.assertFalse(ff.isArmed.get());
             engine.releaseInactive();
             Assert.assertEquals(3, getTableTxn("pt"));
@@ -4210,12 +4179,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 WorkerPoolUtils.setupWriterJobs(pool, engine);
                 pool.start(LOG);
                 isArmed.set(true);
-                try {
-                    execute(symRowsInsert(o3Rows));
-                    Assert.fail("the commit must fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
-                }
+                assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "bulk update failed and will be rolled back");
                 Assert.assertFalse(isArmed.get());
                 Assert.assertEquals(txnBefore, getTableTxn("pt"));
                 Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "s"));
@@ -5617,12 +5581,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 if (!isLegacy) {
                     // the parquet -> native pre-pass of ALTER COLUMN TYPE fails the same way
                     ff.arm(false, "st.d");
-                    try {
-                        execute("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL");
-                        Assert.fail("ALTER COLUMN TYPE must fail");
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
-                    }
+                    assertExceptionNoLeakCheck("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL", -1, "could not open");
                     Assert.assertTrue(ff.hasFired());
                     engine.releaseAllWriters();
                     assertConvertFailureKeptState(table, "failed pre-pass", columnVersion, columns, tops, querySnapshot);

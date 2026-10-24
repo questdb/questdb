@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
@@ -2099,12 +2098,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 drainWalQueue();
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
             } else {
-                try {
-                    execute("INSERT INTO pt (v, ts, c1, c2, c3) VALUES " + o3Values);
-                    Assert.fail("expected the commit to fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
-                }
+                assertExceptionNoLeakCheck("INSERT INTO pt (v, ts, c1, c2, c3) VALUES " + o3Values, -1, "bulk update failed and will be rolled back");
                 isFailing.set(false);
                 assertReaders(topRows(8, 2, -1, null, true), false);
                 execute("INSERT INTO pt (v, ts, c1, c2, c3) VALUES " + o3Values);

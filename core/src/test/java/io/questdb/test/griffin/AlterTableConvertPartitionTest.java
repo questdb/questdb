@@ -1936,12 +1936,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             final String convertSql = "ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'";
 
             ff.arm("st.d", 2);
-            try {
-                execute(convertSql);
-                Assert.fail("pooled writer: the CONVERT must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cannot append data");
-            }
+            assertExceptionNoLeakCheck(convertSql, -1, "cannot append data");
             assertNoSentinelFailureKeptState("pooled writer", ff, vbTop, stTop, columnVersion);
 
             try (TableWriter writer = getWriter("pt")) {
@@ -1962,12 +1957,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertNoSentinelFailureKeptState("async writer", ff, vbTop, stTop, columnVersion);
 
             ff.arm("st.d", 2);
-            try {
-                execute("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL");
-                Assert.fail("ALTER COLUMN TYPE must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cannot append data");
-            }
+            assertExceptionNoLeakCheck("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL", -1, "cannot append data");
             engine.releaseAllWriters();
             assertNoSentinelFailureKeptState("pre-pass", ff, vbTop, stTop, columnVersion);
 
