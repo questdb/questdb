@@ -1371,8 +1371,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append var error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            O3Utils.unmapAndClose(ff, activeFixFd, dstAuxAddr, dstAuxSize);
-            O3Utils.unmapAndClose(ff, activeVarFd, dstDataAddr, dstDataSize);
+            O3Utils.unmapAndCloseQuietly(ff, activeFixFd, dstAuxAddr, dstAuxSize);
+            O3Utils.unmapAndCloseQuietly(ff, activeVarFd, dstDataAddr, dstDataSize);
             freeTimestampIndex(
                     columnCounter,
                     0,
@@ -1910,12 +1910,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     .$(", e=").$(e)
                     .I$();
             if (dstFixSize > 0) {
-                O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+                O3Utils.unmapAndCloseQuietly(ff, dstFixFd, dstFixAddr, dstFixSize);
             } else {
-                O3Utils.unmapAndClose(ff, dstFixFd, 0, 0);
+                O3Utils.unmapAndCloseQuietly(ff, dstFixFd, 0, 0);
             }
-            O3Utils.close(ff, dstKFd);
-            O3Utils.close(ff, dstVFd);
+            O3Utils.closeQuietly(ff, dstKFd);
+            O3Utils.closeQuietly(ff, dstVFd);
             freeTimestampIndex(
                     columnCounter,
                     0,
@@ -2056,8 +2056,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 LOG.error().$("append mid partition error 2 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
-                O3Utils.close(ff, dstFixFd);
-                O3Utils.close(ff, dstVarFd);
+                O3Utils.closeQuietly(ff, dstFixFd);
+                O3Utils.closeQuietly(ff, dstVarFd);
                 freeTimestampIndex(
                         columnCounter,
                         0,
@@ -2128,8 +2128,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 LOG.error().$("append mid partition error 3 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
-                O3Utils.close(ff, dstFixFd);
-                O3Utils.close(ff, dstVarFd);
+                O3Utils.closeQuietly(ff, dstFixFd);
+                O3Utils.closeQuietly(ff, dstVarFd);
                 freeTimestampIndex(
                         columnCounter,
                         0,
@@ -2247,10 +2247,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     .I$();
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
             final FilesFacade ff1 = tableWriter.getFilesFacade();
-            O3Utils.unmapAndClose(ff1, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
-            O3Utils.close(ff1, dstKFd);
-            O3Utils.close(ff1, dstVFd);
+            O3Utils.unmapAndCloseQuietly(ff1, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndCloseQuietly(ff1, dstVarFd, dstVarAddr, dstVarSize);
+            O3Utils.closeQuietly(ff1, dstKFd);
+            O3Utils.closeQuietly(ff1, dstVFd);
             O3CopyJob.closeColumnIdle(columnCounter, timestampMergeIndexAddr, timestampMergeIndexSize, 0, 0, 0, tableWriter);
             throw e;
         }
@@ -2358,7 +2358,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append ts error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            O3Utils.close(ff, dstFixFd);
+            O3Utils.closeQuietly(ff, dstFixFd);
             freeTimestampIndex(
                     columnCounter,
                     0,
@@ -2624,10 +2624,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("merge fix error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.close(ff, dstKFd);
-            O3Utils.close(ff, dstVFd);
+            O3Utils.unmapAndCloseQuietly(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndCloseQuietly(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.closeQuietly(ff, dstKFd);
+            O3Utils.closeQuietly(ff, dstVFd);
             freeTimestampIndex(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -2922,8 +2922,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 LOG.error().$("merge mid partition error 2 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
-                O3Utils.close(ff, srcDataFixFd);
-                O3Utils.close(ff, srcDataVarFd);
+                O3Utils.closeQuietly(ff, srcDataFixFd);
+                O3Utils.closeQuietly(ff, srcDataVarFd);
                 freeTimestampIndex(
                         columnCounter,
                         timestampMergeIndexAddr,

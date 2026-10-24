@@ -1016,9 +1016,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     /**
      * Completes a partition that did not finish: releases what the partition's tasks shared, then
-     * releases the writer. Either release can throw, a double close or a failed munmap, and neither
-     * may keep the other from running or keep the writer waiting for good. The merge index goes
-     * before the writer: once released, the writer moves on and may check memory usage.
+     * releases the writer. It runs only for commits that already failed, the writer's drain loop
+     * among its callers, so its releases are quiet: a release that throws must neither keep the
+     * writer waiting for good nor escape into the drain, where it would skip handing back the
+     * queue slot. The merge index goes before the writer: once released, the writer moves on and
+     * may check memory usage.
      */
     static void closeColumnIdleQuick(
             long timestampMergeIndexAddr,
@@ -1028,13 +1030,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             TableWriter tableWriter
     ) {
-        final FilesFacade ff = tableWriter.getFilesFacade();
         try {
-            try {
-                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-            } finally {
-                O3Utils.close(ff, srcTimestampFd);
-            }
+            O3Utils.unmapAndCloseQuietly(tableWriter.getFilesFacade(), srcTimestampFd, srcTimestampAddr, srcTimestampSize);
         } finally {
             if (timestampMergeIndexAddr != 0) {
                 Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
@@ -1242,14 +1239,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVFd,
             TableWriter tableWriter
     ) {
+        // Runs only for commits that already failed: the releases are quiet, see O3Utils.closeQuietly().
         try {
             final FilesFacade ff = tableWriter.getFilesFacade();
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-            O3Utils.close(ff, dstKFd);
-            O3Utils.close(ff, dstVFd);
+            O3Utils.unmapAndCloseQuietly(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndCloseQuietly(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            O3Utils.unmapAndCloseQuietly(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndCloseQuietly(ff, dstVarFd, dstVarAddr, dstVarSize);
+            O3Utils.closeQuietly(ff, dstKFd);
+            O3Utils.closeQuietly(ff, dstVFd);
         } finally {
             closeColumnIdle(
                     columnCounter,

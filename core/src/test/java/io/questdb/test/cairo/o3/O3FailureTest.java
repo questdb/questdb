@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -78,6 +79,8 @@ import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
 public class O3FailureTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
+    // What the fault facades track before they see their file: unlike -1, no descriptor and no "no descriptor" marker.
+    private static final long NO_FD = Long.MIN_VALUE;
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, int opts) {
@@ -615,6 +618,18 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testDedupNoopCommitTimestampCloseThrows() throws Exception {
+        // A WAL commit whose rows all match rows already in a partition leaves that partition as it is.
+        // Releasing the partition's timestamp column throws: the partition must complete exactly once,
+        // and the commit must fail.
+        executeWithPool(
+                0,
+                O3FailureTest::testDedupNoopCommitTimestampCloseThrows0,
+                failToClose("1970-01-01" + Files.SEPARATOR + "ts.d")
+        );
+    }
+
+    @Test
     public void testFailMergeWalFixIntoLagContended() throws Exception {
         executeWithPool(0, O3FailureTest::testFailMergeWalFixIntoLag0);
     }
@@ -738,6 +753,18 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testFreshParquetPartitionFailsAndMetadataCloseThrows() throws Exception {
+        // Writing a new partition of a parquet table fails after it opened the partition's _pm file,
+        // and closing that file then throws. The partition must still complete, and the commit fail.
+        commitMode = CommitMode.SYNC;
+        executeWithPool(
+                0,
+                O3FailureTest::testFreshParquetPartitionFailsAndMetadataCloseThrows0,
+                failToSyncThenClose(TableUtils.PARQUET_METADATA_FILE_NAME)
+        );
+    }
+
+    @Test
     public void testInsertAsSelectNegativeTimestamp() throws Exception {
         executeWithPool(0, O3FailureTest::testInsertAsSelectNegativeTimestamp0);
     }
@@ -759,12 +786,34 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testMergeColumnFailsAndTimestampCloseThrowsInDrain() throws Exception {
+        // The writer runs the queued tasks itself. Once the first column fails, it discards the rest,
+        // and the last discard completes the partition, where releasing the timestamp column throws.
+        // Nothing may escape the drain: the writer would skip its wait and the queue slot.
+        executeWithoutPool(
+                O3FailureTest::testMergeFailsAndCloseThrows0,
+                failMergeThenTimestampClose("a.d", false, false)
+        );
+    }
+
+    @Test
+    public void testMergeFixColumnFailsAndSourceCloseThrows() throws Exception {
+        // A column fails to map its file in the new partition version, and its error handler then fails
+        // to close its file in the old one. The column must still count down.
+        executeWithPool(
+                0,
+                O3FailureTest::testMergeFailsAndCloseThrows0,
+                failMergeMapThenSourceClose("a.d")
+        );
+    }
+
+    @Test
     public void testMergeFixColumnFailsAndTimestampCloseThrows() throws Exception {
         // The last column fails to open its file in the new partition version, so its error
         // handler completes the partition, and releasing the timestamp column throws.
         executeWithPool(
                 0,
-                O3FailureTest::testMergeFailsAndTimestampCloseThrows0,
+                O3FailureTest::testMergeFailsAndCloseThrows0,
                 failMergeThenTimestampClose("c.d", true, false)
         );
     }
@@ -775,7 +824,7 @@ public class O3FailureTest extends AbstractO3Test {
         // handler completes the partition, and releasing the timestamp column throws.
         executeWithPool(
                 0,
-                O3FailureTest::testMergeFailsAndTimestampCloseThrows0,
+                O3FailureTest::testMergeFailsAndCloseThrows0,
                 failMergeThenTimestampClose("c.d", false, false)
         );
     }
@@ -786,7 +835,7 @@ public class O3FailureTest extends AbstractO3Test {
         // completes at once, and releasing the timestamp column throws.
         executeWithPool(
                 0,
-                O3FailureTest::testMergeFailsAndTimestampCloseThrows0,
+                O3FailureTest::testMergeFailsAndCloseThrows0,
                 failMergeThenTimestampClose(null, true, true)
         );
     }
@@ -1421,6 +1470,46 @@ public class O3FailureTest extends AbstractO3Test {
         );
     }
 
+    // Once the test arms the faults, fails to map the given column file of the new version of table x's first
+    // partition, then makes closing the same file of the old version throw the way a double close does. The
+    // facade closes the descriptor before it throws, so nothing leaks.
+    private static FilesFacade failMergeMapThenSourceClose(String columnFile) {
+        final String newVersionPrefix = Files.SEPARATOR + "x~" + Files.SEPARATOR + "1970-01-01.";
+        final AtomicLong newVersionFd = new AtomicLong(NO_FD);
+        final AtomicLong oldVersionFd = new AtomicLong(NO_FD);
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                if (fd == oldVersionFd.get() && isCloseFaultArmed.compareAndSet(true, false)) {
+                    super.close(fd);
+                    throw new IllegalStateException("fd " + fd + " is already closed!");
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (memoryTag == MemoryTag.MMAP_O3 && fd == newVersionFd.get() && isO3FaultArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (isO3FaultArmed.get()) {
+                    if (Utf8s.containsAscii(name, newVersionPrefix) && Utf8s.endsWithAscii(name, Files.SEPARATOR + columnFile)) {
+                        newVersionFd.compareAndSet(NO_FD, fd);
+                    } else if (isTableXFile(name, "1970-01-01" + Files.SEPARATOR + columnFile)) {
+                        oldVersionFd.compareAndSet(NO_FD, fd);
+                    }
+                }
+                return fd;
+            }
+        };
+    }
+
     // Once the test arms the faults, fails one step of the merge into the first partition of table x:
     // opening the given column file of the old or the new partition version, or creating the new
     // version's directory. Then makes closing the partition's timestamp column throw the way a double
@@ -1433,7 +1522,7 @@ public class O3FailureTest extends AbstractO3Test {
             boolean isFailingPartitionDir
     ) {
         final String newVersionPrefix = Files.SEPARATOR + "x~" + Files.SEPARATOR + "1970-01-01.";
-        final AtomicLong timestampFd = new AtomicLong(-1);
+        final AtomicLong timestampFd = new AtomicLong(NO_FD);
         return new TestFilesFacadeImpl() {
             @Override
             public boolean close(long fd) {
@@ -1459,7 +1548,7 @@ public class O3FailureTest extends AbstractO3Test {
                 }
                 final long fd = super.openRW(name, opts);
                 if (isCloseFaultArmed.get() && isTableXFile(name, "1970-01-01" + Files.SEPARATOR + "ts.d")) {
-                    timestampFd.compareAndSet(-1, fd);
+                    timestampFd.compareAndSet(NO_FD, fd);
                 }
                 return fd;
             }
@@ -1489,7 +1578,7 @@ public class O3FailureTest extends AbstractO3Test {
     // close does: the first descriptor opened for it after arming, which belongs to the merge. The
     // facade closes the descriptor before it throws, so nothing leaks.
     private static FilesFacade failToClose(String partitionFile) {
-        final AtomicLong targetFd = new AtomicLong(-1);
+        final AtomicLong targetFd = new AtomicLong(NO_FD);
         return new TestFilesFacadeImpl() {
             @Override
             public boolean close(long fd) {
@@ -1504,7 +1593,7 @@ public class O3FailureTest extends AbstractO3Test {
             public long openRW(LPSZ name, int opts) {
                 final long fd = super.openRW(name, opts);
                 if (isCloseFaultArmed.get() && isTableXFile(name, partitionFile)) {
-                    targetFd.compareAndSet(-1, fd);
+                    targetFd.compareAndSet(NO_FD, fd);
                 }
                 return fd;
             }
@@ -1515,7 +1604,7 @@ public class O3FailureTest extends AbstractO3Test {
     // append maps the last partition's columns through the descriptors the writer holds, so the
     // facade remembers the descriptor the writer opened most recently under that name.
     private static FilesFacade failToMapO3(String partitionFile) {
-        final AtomicLong targetFd = new AtomicLong(-1);
+        final AtomicLong targetFd = new AtomicLong(NO_FD);
         return new TestFilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
@@ -1549,8 +1638,43 @@ public class O3FailureTest extends AbstractO3Test {
         };
     }
 
+    // Once the test arms the faults, fails to sync the first descriptor opened for the given file of table x,
+    // then makes closing it throw the way a double close does. The facade closes the descriptor before it
+    // throws, so nothing leaks.
+    private static FilesFacade failToSyncThenClose(String fileName) {
+        final AtomicLong targetFd = new AtomicLong(NO_FD);
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                if (fd == targetFd.get() && isCloseFaultArmed.compareAndSet(true, false)) {
+                    super.close(fd);
+                    throw new IllegalStateException("fd " + fd + " is already closed!");
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public void fsync(long fd) {
+                if (fd == targetFd.get() && isO3FaultArmed.compareAndSet(true, false)) {
+                    throw CairoException.critical(0).put("could not fsync [fd=").put(fd).put(']');
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (isO3FaultArmed.get() && isTableXFile(name, Files.SEPARATOR + fileName)) {
+                    targetFd.compareAndSet(NO_FD, fd);
+                }
+                return fd;
+            }
+        };
+    }
+
+    // Matches the files of table x, which lives in x~ or, as a WAL table, in x~ followed by its table id.
     private static boolean isTableXFile(LPSZ name, String partitionFile) {
-        return Utf8s.containsAscii(name, Files.SEPARATOR + "x~" + Files.SEPARATOR) && Utf8s.endsWithAscii(name, partitionFile);
+        return Utf8s.containsAscii(name, Files.SEPARATOR + "x~") && Utf8s.endsWithAscii(name, partitionFile);
     }
 
     private static TestFilesFacadeImpl newIndexFileFaultFF(boolean isKey) {
@@ -3317,6 +3441,55 @@ public class O3FailureTest extends AbstractO3Test {
         assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
+    private static void testDedupNoopCommitTimestampCloseThrows0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
+    ) throws SqlException {
+        engine.execute(
+                "CREATE TABLE x (ts " + timestampTypeName + ", v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)",
+                sqlExecutionContext
+        );
+        // Five hours apart, two day partitions.
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::INT v FROM long_sequence(10)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        final TableToken tableToken = engine.verifyTableName("x");
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        // The rows of the first partition again, unchanged: the commit finds nothing to write there.
+        isCloseFaultArmed.set(true);
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::INT v FROM long_sequence(5)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        Assert.assertFalse(isCloseFaultArmed.get());
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        engine.releaseInactive();
+        engine.execute("ALTER TABLE x RESUME WAL", sqlExecutionContext);
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        assertXCountAndMax(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                """
+                        count
+                        10
+                        """,
+                replaceTimestampSuffix1("""
+                        max
+                        1970-01-02T21:00:00.000000Z
+                        """, timestampTypeName)
+        );
+    }
+
     private static void testFailMergeWalFixIntoLag0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -3565,6 +3738,58 @@ public class O3FailureTest extends AbstractO3Test {
         );
     }
 
+    private static void testFreshParquetPartitionFailsAndMetadataCloseThrows0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
+    ) throws SqlException {
+        engine.execute(
+                "CREATE TABLE x (ts " + timestampTypeName + ", v INT) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL",
+                sqlExecutionContext
+        );
+        // Five hours apart, two day partitions.
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::INT v FROM long_sequence(10)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        final TableToken tableToken = engine.verifyTableName("x");
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        // Hourly rows on the third day: the commit writes that partition as a new parquet file.
+        isO3FaultArmed.set(true);
+        isCloseFaultArmed.set(true);
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(172_800_000_000, 3_600_000_000)::" + timestampTypeName + " ts, x::INT v FROM long_sequence(5)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        // Both faults fired: the write failed, then so did closing the partition's _pm file.
+        Assert.assertFalse(isO3FaultArmed.get());
+        Assert.assertFalse(isCloseFaultArmed.get());
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        engine.releaseInactive();
+        engine.execute("ALTER TABLE x RESUME WAL", sqlExecutionContext);
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        assertXCountAndMax(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                """
+                        count
+                        15
+                        """,
+                replaceTimestampSuffix1("""
+                        max
+                        1970-01-03T04:00:00.000000Z
+                        """, timestampTypeName)
+        );
+    }
+
     private static void testInsertAsSelectNegativeTimestamp0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -3669,7 +3894,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
-    private static void testMergeFailsAndTimestampCloseThrows0(
+    private static void testMergeFailsAndCloseThrows0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,

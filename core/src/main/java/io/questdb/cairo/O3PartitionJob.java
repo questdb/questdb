@@ -6097,11 +6097,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, timestampMin, newPartitionSize, oldPartitionSize, partitionMutates);
 
-        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-        O3Utils.close(ff, srcTimestampFd);
-
-        tableWriter.o3ClockDownPartitionUpdateCount();
-        tableWriter.o3CountDownDoneLatch();
+        // Completes the partition exactly once and never throws: every caller sits inside a try block whose
+        // catch completes the partition too. A release that fails, a double close or a failed munmap, fails
+        // the commit through the error count instead.
+        try {
+            O3Utils.unmapAndClose(ff, srcTimestampFd, srcTimestampAddr, srcTimestampSize);
+        } catch (Throwable th) {
+            LOG.error().$("release error [table=").$(tableWriter.getTableToken())
+                    .$(", e=").$(th)
+                    .I$();
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+        } finally {
+            tableWriter.o3ClockDownPartitionUpdateCount();
+            tableWriter.o3CountDownDoneLatch();
+        }
     }
 
     private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
@@ -6300,9 +6309,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .I$();
             // Close parquetMetaFd before rmdir; on Windows the open _pm file
             // would prevent the partition dir from being removed, leaving an
-            // orphan directory behind. The finally block tolerates -1.
+            // orphan directory behind. The finally block tolerates -1. The close
+            // is quiet: had it thrown, the finally block would close the same
+            // descriptor again and never complete the partition.
             if (parquetMetaFd != -1) {
-                ff.close(parquetMetaFd);
+                O3Utils.closeQuietly(ff, parquetMetaFd);
                 parquetMetaFd = -1;
             }
             if (partitionDirCreated) {
