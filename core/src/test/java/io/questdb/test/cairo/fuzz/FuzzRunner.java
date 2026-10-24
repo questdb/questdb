@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
@@ -67,6 +68,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -136,8 +138,7 @@ public class FuzzRunner {
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
-    // designated timestamp type of the tables createInitialTable*() makes, and the unit of
-    // the timestamps generateTransactions() emits
+    // designated timestamp type of the tables createInitialTable*() makes
     private int timestampType = ColumnType.TIMESTAMP;
     private int transactionCount;
     private double truncateProb;
@@ -552,6 +553,10 @@ public class FuzzRunner {
         return rnd;
     }
 
+    /**
+     * Generates a transaction list for the table. {@code start}, {@code end} and every
+     * timestamp of the list are in the unit of the table's designated timestamp.
+     */
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
             TableRecordMetadata sequencerMetadata,
@@ -561,7 +566,7 @@ public class FuzzRunner {
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
-                getTimestampDriver(),
+                getTableTimestampDriver(tableMetadata),
                 initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
@@ -598,18 +603,31 @@ public class FuzzRunner {
         );
     }
 
+    /**
+     * As {@link #generateTransactions(String, Rnd, long, long)}, over {@code partitionCount}
+     * days from {@code start} (microseconds).
+     */
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
-        long end = start + partitionCount * getTimestampDriver().fromDays(1);
+        long end = start + partitionCount * Micros.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
 
+    /**
+     * As {@link #generateTransactions(String, Rnd, long, long)}, over {@code partitionCount}
+     * days from 2022-02-24T17:00.
+     */
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
-        final TimestampDriver timestampDriver = getTimestampDriver();
-        long start = timestampDriver.parseFloorLiteral("2022-02-24T17");
-        long end = start + partitionCount * timestampDriver.fromDays(1);
+        long start = MicrosTimestampDriver.floor("2022-02-24T17");
+        long end = start + partitionCount * Micros.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
 
+    /**
+     * Generates a transaction list for the table with timestamps in [start, end].
+     * {@code start} and {@code end} are microseconds, whatever the table's timestamp type:
+     * the list's timestamps, windows and cutoffs are in the table's unit, so a TIMESTAMP_NS
+     * table receives the same instants as a TIMESTAMP one.
+     */
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
         // getTableMetadata reloads the table _meta and hits the same transient read timeout as a reader
@@ -617,7 +635,15 @@ public class FuzzRunner {
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
              TableMetadata tableMetadata = openWithRetries(() -> engine.getTableMetadata(tableToken), false)
         ) {
-            return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
+            final TimestampDriver timestampDriver = getTableTimestampDriver(tableMetadata);
+            return generateSet(
+                    rnd,
+                    sequencerMetadata,
+                    tableMetadata,
+                    timestampDriver.fromMicros(start),
+                    timestampDriver.fromMicros(end),
+                    tableName
+            );
         }
     }
 
@@ -896,8 +922,8 @@ public class FuzzRunner {
     }
 
     /**
-     * The designated timestamp type of the tables this runner creates in {@code runFuzz}, and
-     * the unit of the timestamps it generates. TIMESTAMP (micros) unless set.
+     * The designated timestamp type of the tables {@code createInitialTable*()} make, TIMESTAMP
+     * (micros) unless set. Generated timestamps follow each table's own type.
      */
     public void setTimestampType(int timestampType) {
         this.timestampType = timestampType;
@@ -907,6 +933,12 @@ public class FuzzRunner {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
+    }
+
+    // The unit of the table's designated timestamp; micros for a table without one.
+    private static TimestampDriver getTableTimestampDriver(TableMetadata tableMetadata) {
+        final int timestampType = tableMetadata.getTimestampType();
+        return ColumnType.getTimestampDriver(ColumnType.isTimestamp(timestampType) ? timestampType : ColumnType.TIMESTAMP);
     }
 
     private static void reloadPartitions(TableReader rdr1) {
@@ -1361,7 +1393,7 @@ public class FuzzRunner {
                     "create atomic table data_temp as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " timestamp_sequence('2022-02-24'::" + timestampType + ", 1000000L) ts, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +
@@ -1375,9 +1407,11 @@ public class FuzzRunner {
         }
 
         if (engine.getTableTokenIfExists(tableName) == null) {
+            // timestamp_sequence() returns micros whatever its start, and another table may have
+            // made data_temp first, so the cast gives the table the timestamp type asked for
             engine.execute(
                     "create atomic table " + tableName + " as (" +
-                            "select * from data_temp" +
+                            "select c1, c2, ts::" + timestampType + " ts, sym2, c3, c4, c5, rnd_str, bool1 from data_temp" +
                             "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY "
                             + (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL"),
                     sqlExecutionContext

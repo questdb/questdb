@@ -27,7 +27,6 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -44,84 +43,6 @@ import org.junit.Assert;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
-
-    /**
-     * As the overload that takes a {@link TimestampDriver}, with timestamps in microseconds.
-     */
-    public static ObjList<FuzzTransaction> generateSet(
-            long initialRowCount,
-            TableRecordMetadata sequencerMetadata,
-            TableMetadata tableMetadata,
-            Rnd rnd,
-            long minTimestamp,
-            long maxTimestamp,
-            int rowCount,
-            int transactionCount,
-            boolean o3,
-            double probabilityOfCancelRow,
-            double probabilityOfUnassignedColumnValue,
-            double probabilityOfAssigningNull,
-            double probabilityOfTransactionRollback,
-            double probabilityOfAddingNewColumn,
-            double probabilityOfRemovingColumn,
-            double probabilityOfRenamingColumn,
-            double probabilityOfColumnTypeChange,
-            double probabilityOfDataInsert,
-            double probabilityOfSameTimestamp,
-            double probabilityOfDropPartition,
-            double probabilityOfConvertPartitionToParquet,
-            double probabilityOfConvertPartitionToNative,
-            double probabilityOfTruncate,
-            double probabilityOfDropTable,
-            double probabilityOfSetTtl,
-            double replaceInsertProb,
-            double probabilityOfSymbolAccessValidation,
-            double probabilityOfQuery,
-            int maxStrLenForStrColumns,
-            String[] symbols,
-            int metaVersion,
-            double probabilityOfSetParquetEncoding,
-            double probabilityOfAddCoveringIndex,
-            double probabilityOfSetTableFormat
-    ) {
-        return generateSet(
-                MicrosTimestampDriver.INSTANCE,
-                initialRowCount,
-                sequencerMetadata,
-                tableMetadata,
-                rnd,
-                minTimestamp,
-                maxTimestamp,
-                rowCount,
-                transactionCount,
-                o3,
-                probabilityOfCancelRow,
-                probabilityOfUnassignedColumnValue,
-                probabilityOfAssigningNull,
-                probabilityOfTransactionRollback,
-                probabilityOfAddingNewColumn,
-                probabilityOfRemovingColumn,
-                probabilityOfRenamingColumn,
-                probabilityOfColumnTypeChange,
-                probabilityOfDataInsert,
-                probabilityOfSameTimestamp,
-                probabilityOfDropPartition,
-                probabilityOfConvertPartitionToParquet,
-                probabilityOfConvertPartitionToNative,
-                probabilityOfTruncate,
-                probabilityOfDropTable,
-                probabilityOfSetTtl,
-                replaceInsertProb,
-                probabilityOfSymbolAccessValidation,
-                probabilityOfQuery,
-                maxStrLenForStrColumns,
-                symbols,
-                metaVersion,
-                probabilityOfSetParquetEncoding,
-                probabilityOfAddCoveringIndex,
-                probabilityOfSetTableFormat
-        );
-    }
 
     /**
      * Generates a transaction list. {@code timestampDriver} is the unit of {@code minTimestamp},
