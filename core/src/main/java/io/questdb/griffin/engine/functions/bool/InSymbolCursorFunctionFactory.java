@@ -152,6 +152,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
+                    final boolean hasPrevious = previous.size() > 0;
                     sink.clear();
                     while (cursor.hasNext()) {
                         CharSequence value = func.get(record, 0, sink);
@@ -160,8 +161,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                         } else {
                             int toIndex = valueSet.keyIndex(value);
                             if (toIndex > -1) {
-                                int fromIndex = previous.keyIndex(value);
-                                valueSet.addAt(toIndex, fromIndex < 0 ? previous.keyAt(fromIndex) : value);
+                                if (hasPrevious) {
+                                    int fromIndex = previous.keyIndex(value);
+                                    if (fromIndex < 0) {
+                                        value = previous.keyAt(fromIndex);
+                                    }
+                                }
+                                valueSet.addAt(toIndex, value);
                             }
                         }
                     }
