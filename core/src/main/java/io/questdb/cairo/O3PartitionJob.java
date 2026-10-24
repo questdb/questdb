@@ -90,7 +90,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static final int PIECES_STRIDE = 6;
 
 
-    private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    // Not final: tests swap in a guaranteed logger to assert on its messages.
+    private static Log LOG = LogFactory.getLog(O3PartitionJob.class);
     // Bin cap for transaction clustering: the finest bin is a minute, widened when a partition's span
     // needs more bins than this.
     // Per-worker scratch for the composite plan; none of its lists outlive the call.
@@ -906,6 +907,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int commitMode = tableWriter.getConfiguration().getCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
         final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
         partitionPath.of(pathToTable);
         TableUtils.setPathForNativePartition(
                 partitionPath,
@@ -1009,7 +1011,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                 final long o3Rows = action.getO3RowCount();
                 LOG.debug().$("composite action [table=").$safe(tableWriter.getTableToken().getTableName())
-                        .$(", partitionTs=").$ts(partitionTimestamp)
+                        .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
                         .$(", i=").$(i).$('/').$(actionCount)
                         .$(", action=").$(action.type)
                         .$(", pieceIndex=").$(action.pieceIndex)
@@ -2175,6 +2177,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         Path path = Path.getThreadLocal(pathToTable);
         setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
 
@@ -2334,7 +2337,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 if (isRewrite) {
                     LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriter.getTableToken())
-                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", fileSize=").$size(parquetSize)
                             .$(", unusedBytes=").$size(unusedBytes)
                             .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
@@ -2523,13 +2526,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 final int rgSize = (int) rgRowCount;
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
-                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                         .$(", rg=").$(action.rowGroupIndex)
                                         .$(", rgHi=").$(action.rowGroupIndexHi)
                                         .$(", dataRows=").$(rgSize)
                                         .$(", o3Rows=").$(action.o3Hi - action.o3Lo + 1)
-                                        .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
-                                        .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndexHi))
+                                        .$(", rgMin=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
+                                        .$(", rgMax=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndexHi))
                                         .I$();
                                 final long mergeResult = mergeRowGroup(
                                         chunkDescriptor,
@@ -2578,12 +2581,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // Rewrite mode: every row group must be written to the new file.
                                     LOG.info()
                                             .$("parquet copy row group [table=").$(tableWriter.getTableToken())
-                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .$(", rg=").$(action.rowGroupIndex)
                                             .$(", rows=").$(rgSize)
                                             .$(", hasSchemaChange=").$(hasSchemaChange)
-                                            .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
-                                            .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
+                                            .$(", rgMin=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
+                                            .$(", rgMax=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
                                             .I$();
                                     if (hasTypeConvertedColumns || forceFullReencode) {
                                         ParquetRowGroupMaterializer.materialize(
@@ -2614,10 +2617,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             case COPY_O3 -> {
                                 LOG.info()
                                         .$("parquet add row group from o3 [table=").$(tableWriter.getTableToken())
-                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                         .$(", rows=").$(action.o3Hi - action.o3Lo + 1)
-                                        .$(", o3Min=").$ts(Unsafe.getLong(sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES))
-                                        .$(", o3Max=").$ts(Unsafe.getLong(sortedTimestampsAddr + action.o3Hi * TIMESTAMP_MERGE_ENTRY_BYTES))
+                                        .$(", o3Min=").$ts(timestampDriver, Unsafe.getLong(sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES))
+                                        .$(", o3Max=").$ts(timestampDriver, Unsafe.getLong(sortedTimestampsAddr + action.o3Hi * TIMESTAMP_MERGE_ENTRY_BYTES))
                                         .I$();
                                 copyO3ToRowGroup(
                                         ctx,
@@ -2654,7 +2657,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
-                        .$(", partition=").$ts(partitionTimestamp)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", rowGroups=").$(metadataPosition)
                         .$(", fileSize=").$size(newParquetSize)
                         .$(", unusedBytes=").$size(resultUnusedBytes)
@@ -2983,7 +2986,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
             partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
             LOG.info().$("parquet partition compacted off reader snapshot [table=").$(tableToken)
-                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
                     .$(", rowGroups=").$(rowGroupCount)
                     .$(", fileSize=").$size(parquetSize)
                     .$(", newFileSize=").$size(newParquetSize)
@@ -6304,7 +6307,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, parquetFileSize);
         } catch (Throwable th) {
             LOG.error().$("could not write fresh parquet partition [table=").$(tableWriter.getTableToken())
-                    .$(", ts=").$ts(partitionTimestamp)
+                    .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                     .$(", e=").$(th)
                     .I$();
             // Close parquetMetaFd before rmdir; on Windows the open _pm file

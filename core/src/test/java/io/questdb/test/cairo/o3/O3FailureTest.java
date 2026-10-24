@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -42,6 +43,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
@@ -61,6 +63,7 @@ import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -757,11 +760,16 @@ public class O3FailureTest extends AbstractO3Test {
         // Writing a new partition of a parquet table fails after it opened the partition's _pm file,
         // and closing that file then throws. The partition must still complete, and the commit fail.
         commitMode = CommitMode.SYNC;
-        executeWithPool(
-                0,
-                O3FailureTest::testFreshParquetPartitionFailsAndMetadataCloseThrows0,
-                failToSyncThenClose(TableUtils.PARQUET_METADATA_FILE_NAME)
-        );
+        LogFactory.enableGuaranteedLogging(O3PartitionJob.class);
+        try {
+            executeWithPool(
+                    0,
+                    O3FailureTest::testFreshParquetPartitionFailsAndMetadataCloseThrows0,
+                    failToSyncThenClose(TableUtils.PARQUET_METADATA_FILE_NAME)
+            );
+        } finally {
+            LogFactory.disableGuaranteedLogging(O3PartitionJob.class);
+        }
     }
 
     @Test
@@ -3742,8 +3750,11 @@ public class O3FailureTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            String timestampTypeName
+            String ignoredTimestampTypeName
     ) throws SqlException {
+        // Nanoseconds, whichever type the harness picked: the error log has to format them with the
+        // table's timestamp driver. Formatted as microseconds, the third day reads as 1975-06-24.
+        final String timestampTypeName = "TIMESTAMP_NS";
         engine.execute(
                 "CREATE TABLE x (ts " + timestampTypeName + ", v INT) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL",
                 sqlExecutionContext
@@ -3760,11 +3771,18 @@ public class O3FailureTest extends AbstractO3Test {
         // Hourly rows on the third day: the commit writes that partition as a new parquet file.
         isO3FaultArmed.set(true);
         isCloseFaultArmed.set(true);
-        engine.execute(
-                "INSERT INTO x SELECT timestamp_sequence(172_800_000_000, 3_600_000_000)::" + timestampTypeName + " ts, x::INT v FROM long_sequence(5)",
-                sqlExecutionContext
-        );
-        drainWalQueue(engine);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            engine.execute(
+                    "INSERT INTO x SELECT timestamp_sequence(172_800_000_000, 3_600_000_000)::" + timestampTypeName + " ts, x::INT v FROM long_sequence(5)",
+                    sqlExecutionContext
+            );
+            drainWalQueue(engine);
+            capture.waitForRegex("could not write fresh parquet partition \\[table=x~[0-9]+, ts=1970-01-03T00:00:00\\.0+Z");
+        } finally {
+            capture.stop();
+        }
         // Both faults fired: the write failed, then so did closing the partition's _pm file.
         Assert.assertFalse(isO3FaultArmed.get());
         Assert.assertFalse(isCloseFaultArmed.get());
