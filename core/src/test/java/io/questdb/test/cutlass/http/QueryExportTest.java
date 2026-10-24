@@ -217,4 +217,47 @@ public class QueryExportTest extends AbstractCairoTest {
                         }
                 );
     }
+
+    @Test
+    public void testExportTextArrayAnswersBadRequest() throws Exception {
+        getSimpleTester().run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+            // The client never reconnects on its own, so a request that succeeds after the refusal
+            // proves that the server kept the connection open.
+            final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration() {
+                @Override
+                public boolean fixBrokenConnection() {
+                    return false;
+                }
+            });
+            try (TestHttpClient testHttpClient = new TestHttpClient(httpClient)) {
+                testHttpClient.setKeepConnection(true);
+                final String[][] refusals = {
+                        {"SELECT 1 x, '{a,b}'::text[] ta", "ta"},
+                        {"SELECT current_schemas(false) cs", "cs"}
+                };
+                for (String[] refusal : refusals) {
+                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                    req.GET().url("/exp").query("query", refusal[0]);
+                    Assert.assertEquals("400", testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null));
+                    TestUtils.assertEquals(
+                            "{\"query\":\"" + refusal[0] + "\",\"error\":\"[-1] column type not supported [column="
+                                    + refusal[1] + ", type=text[]]\",\"position\":0}",
+                            testHttpClient.sink
+                    );
+                }
+
+                // a NULL projection has no wire kind either, and still exports as an empty cell
+                HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                req.GET().url("/exp").query("query", "SELECT NULL n");
+                Assert.assertEquals("200", testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null));
+                TestUtils.assertEquals(
+                        """
+                                "n"\r
+                                \r
+                                """,
+                        testHttpClient.sink
+                );
+            }
+        });
+    }
 }

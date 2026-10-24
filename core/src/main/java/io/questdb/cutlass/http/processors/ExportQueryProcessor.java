@@ -399,15 +399,19 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     /**
      * Picks the {@link #putValue} arm for a column from its {@link WireKind}, once per export
-     * rather than per cell. LONG128's arm throws, and the export answers 400, since no byte of
-     * the response has gone out yet.
+     * rather than per cell. LONG128 and a type CSV cannot write throw, and the export answers
+     * 400, since no byte of the response has gone out yet.
      */
     private static int csvOpcode(int columnType, CharSequence columnName) {
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
-            // a pseudo tag or VARCHAR_SLICE has no wire kind and renders as an empty cell through
-            // the NULL arm; RECORD keeps its own label on that arm
-            return ColumnType.tagOf(columnType) == ColumnType.RECORD ? ColumnType.RECORD : ColumnType.NULL;
+            // NULL and RECORD have no wire kind and render as an empty cell through the NULL arm;
+            // any other pseudo type (text[], for one) has no CSV form
+            return switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.NULL -> ColumnType.NULL;
+                case ColumnType.RECORD -> ColumnType.RECORD;
+                default -> throw unsupportedColumnType(columnType, columnName);
+            };
         }
         return switch (kind) {
             case BOOLEAN -> ColumnType.BOOLEAN;
@@ -429,8 +433,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case GEOLONG -> ColumnType.GEOLONG;
             case BINARY -> ColumnType.BINARY;
             case UUID -> ColumnType.UUID;
-            case LONG128 -> throw CairoException.nonCritical().put("column type not supported [column=").put(columnName)
-                    .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+            case LONG128 -> throw unsupportedColumnType(columnType, columnName);
             case IPV4 -> ColumnType.IPv4;
             case VARCHAR -> ColumnType.VARCHAR;
             case ARRAY -> ColumnType.ARRAY;
@@ -556,6 +559,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
                 .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
+    }
+
+    private static CairoException unsupportedColumnType(int columnType, CharSequence columnName) {
+        return CairoException.nonCritical().put("column type not supported [column=").put(columnName)
+                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
     }
 
     private void compileParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
@@ -1326,7 +1334,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.NULL:
             case ColumnType.BINARY:
             case ColumnType.RECORD:
-                // an empty cell; csvOpcode() sends the pseudo tags and VARCHAR_SLICE here too
+                // an empty cell
                 break;
             case ColumnType.STRING:
                 putStringOrNull(response, rec.getStrA(columnIndex));
