@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -34,6 +35,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -43,12 +45,14 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
@@ -100,6 +104,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // every table in one tick, on this job's single thread. Charging probes against a per-sweep budget
     // spreads that cost across sweeps; a partition memoized clean is never probed again until it changes.
     private static final int MAX_PROBE_PER_SWEEP = 10_000;
+    // The column name txn of an index file name the sweep cannot classify; such a file is carried as is.
+    private static final long UNKNOWN_COLUMN_NAME_TXN = Long.MIN_VALUE;
     private final long checkInterval;
     private final Clock clock;
     private final CairoConfiguration configuration;
@@ -126,7 +132,21 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final PartitionCompactionRequestQueue.Request request = new PartitionCompactionRequestQueue.Request();
     private final LongList rewriteRanges = new LongList();
     private final Rnd rnd;
-    private final Utf8StringSink sidecarName = new Utf8StringSink();
+    private final StringSink sidecarName = new StringSink();
+    private final PostingIndexUtils.SealedFileVisitor sidecarSealedFileVisitor = new PostingIndexUtils.SealedFileVisitor() {
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            // A cover data file spells COLUMN_NAME_TXN_NONE as 0, so the parsed NONE also stands for a live txn of 0.
+            sidecarFileColumnNameTxn = postingColumnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE && sidecarLiveColumnNameTxn == 0
+                    ? 0
+                    : postingColumnNameTxn;
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            sidecarFileColumnNameTxn = postingColumnNameTxn;
+        }
+    };
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
     private final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
     private final long squashIdleTimeoutMicros;
@@ -158,7 +178,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private long publishedWriterId;
     private long remainingIoBudget;
     private LongHashSet retiringCleanParquetPartitions = new LongHashSet();
+    private ColumnVersionReader sidecarColumnVersionReader;
     private int sidecarDstLen;
+    private long sidecarFileColumnNameTxn;
+    private long sidecarLiveColumnNameTxn;
+    private TableReaderMetadata sidecarMetadata;
+    private long sidecarPartitionTimestamp;
     private int sidecarSrcLen;
     private long sweepDeadline;
     private int sweepDispatchCount;
@@ -394,6 +419,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Whether {@code fileName[kindLo, kindHi)} is the kind of an index file that carries one version per column name
+     * txn and no seal txn: bitmap {@code .k} and {@code .v}, posting {@code .pk} and {@code .pci}.
+     */
+    private static boolean isUnsealedIndexFileKind(CharSequence fileName, int kindLo, int kindHi) {
+        return Chars.equals("k", fileName, kindLo, kindHi)
+                || Chars.equals("v", fileName, kindLo, kindHi)
+                || Chars.equals("pk", fileName, kindLo, kindHi)
+                || Chars.equals("pci", fileName, kindLo, kindHi);
+    }
+
+    /**
      * One long per {@code folders} word, folded in order, so any change to the run - a folder added, dropped,
      * rebuilt under a new name txn, grown, or moved to a new geometry generation - gives a different value. This
      * is the whole identity the sweep tracks a logical partition by.
@@ -404,6 +440,25 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             state = Hash.hashLong128_64(state, folders.getQuick(i));
         }
         return state;
+    }
+
+    /**
+     * The column name txn an unsealed index file name spells after its kind: none for
+     * {@link TableUtils#COLUMN_NAME_TXN_NONE}, otherwise the one remaining dot-free segment.
+     */
+    private static long parseUnsealedIndexFileColumnNameTxn(CharSequence fileName, int kindHi) {
+        final int len = fileName.length();
+        if (kindHi == len) {
+            return TableUtils.COLUMN_NAME_TXN_NONE;
+        }
+        if (kindHi + 1 == len || Chars.indexOf(fileName, kindHi + 1, len, '.') >= 0) {
+            return UNKNOWN_COLUMN_NAME_TXN;
+        }
+        try {
+            return Numbers.parseLong(fileName, kindHi + 1, len);
+        } catch (NumericException e) {
+            return UNKNOWN_COLUMN_NAME_TXN;
+        }
     }
 
     /**
@@ -562,7 +617,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         reader.getTxn()
                 );
             } else {
-                copyParquetPartitionSidecars(path, other);
+                copyParquetPartitionSidecars(
+                        path,
+                        other,
+                        reader.getMetadata(),
+                        reader.getColumnVersionReader(),
+                        partitionTimestamp
+                );
             }
         } catch (Throwable e) {
             if (ff.exists(other.$())) {
@@ -911,16 +972,23 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * One entry of the source partition directory: everything but {@code data.parquet} and {@code _pm} is an index file
-     * and is carried into the staging directory, hard-linked where the file system allows.
+     * and is carried into the staging directory, hard-linked where the file system allows - except an index file of a
+     * column name txn other than the one the snapshot's {@code _cv} names. An in-place update writes the rebuilt index
+     * under a new column name txn beside the committed one, and a pinned reader defers the superseded version's purge
+     * to {@link ColumnPurgeJob}, which targets the source directory; a copy carried into the new directory would be
+     * out of that purge's reach for good.
      */
     private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
         if (!Files.notDots(pUtf8NameZ)) {
             return;
         }
         sidecarName.clear();
-        Utf8s.utf8ZCopy(pUtf8NameZ, sidecarName);
-        if (Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
-                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)) {
+        Utf8s.utf8ToUtf16Z(pUtf8NameZ, sidecarName);
+        if (Chars.equals(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
+                || Chars.equals(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)) {
+            return;
+        }
+        if (type != Files.DT_DIR && isSupersededIndexFile(sidecarName)) {
             return;
         }
         path.trimTo(sidecarSrcLen).concat(pUtf8NameZ).$();
@@ -941,15 +1009,26 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    private void copyParquetPartitionSidecars(Path srcPartitionDir, Path dstPartitionDir) {
+    private void copyParquetPartitionSidecars(
+            Path srcPartitionDir,
+            Path dstPartitionDir,
+            TableReaderMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
         assert srcPartitionDir == path && dstPartitionDir == other;
         sidecarSrcLen = srcPartitionDir.size();
         sidecarDstLen = dstPartitionDir.size();
+        sidecarMetadata = metadata;
+        sidecarColumnVersionReader = columnVersionReader;
+        sidecarPartitionTimestamp = partitionTimestamp;
         try {
             ff.iterateDir(srcPartitionDir.$(), sidecarVisitor);
         } finally {
             srcPartitionDir.trimTo(sidecarSrcLen);
             dstPartitionDir.trimTo(sidecarDstLen);
+            sidecarMetadata = null;
+            sidecarColumnVersionReader = null;
         }
     }
 
@@ -1450,6 +1529,47 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 txReader.getPartitionNameTxn(partitionIndex)
         );
         return ff.isSoftLink(path.$());
+    }
+
+    /**
+     * Whether {@code fileName}, an entry of the source parquet partition directory, is an index file of an indexed
+     * column under a column name txn other than the one the snapshot's {@code _cv} names for that column. A name the
+     * sweep cannot classify does not count as superseded.
+     */
+    private boolean isSupersededIndexFile(CharSequence fileName) {
+        // Column names cannot contain a dot, so the first one ends the column name.
+        final int nameHi = Chars.indexOf(fileName, '.');
+        if (nameHi < 1) {
+            return false;
+        }
+        final int columnIndex = sidecarMetadata.getColumnIndexQuiet(fileName, 0, nameHi);
+        if (columnIndex < 0 || !sidecarMetadata.isColumnIndexed(columnIndex)) {
+            return false;
+        }
+        sidecarLiveColumnNameTxn = sidecarColumnVersionReader.getColumnNameTxn(
+                sidecarPartitionTimestamp,
+                sidecarMetadata.getWriterIndex(columnIndex)
+        );
+        final int len = fileName.length();
+        final int kindLo = nameHi + 1;
+        int kindHi = Chars.indexOf(fileName, kindLo, len, '.');
+        if (kindHi < 0) {
+            kindHi = len;
+        }
+        final long fileColumnNameTxn;
+        if (isUnsealedIndexFileKind(fileName, kindLo, kindHi)) {
+            fileColumnNameTxn = parseUnsealedIndexFileColumnNameTxn(fileName, kindHi);
+        } else {
+            // The sealed posting files, .pv and .pc<N>; the visitor sets sidecarFileColumnNameTxn on a match.
+            sidecarFileColumnNameTxn = UNKNOWN_COLUMN_NAME_TXN;
+            PostingIndexUtils.parseSealedFileName(
+                    fileName,
+                    sidecarMetadata.getColumnName(columnIndex),
+                    sidecarSealedFileVisitor
+            );
+            fileColumnNameTxn = sidecarFileColumnNameTxn;
+        }
+        return fileColumnNameTxn != UNKNOWN_COLUMN_NAME_TXN && fileColumnNameTxn != sidecarLiveColumnNameTxn;
     }
 
     /**

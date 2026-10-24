@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1376,6 +1377,108 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Parses a directory entry name and dispatches to the visitor if it matches
+     * a sealed-file pattern for {@code columnName}.
+     * <p>
+     * Recognised patterns (segment indices use 0-based dot splits):
+     * <ul>
+     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
+     *   <li>{@code <columnName>.pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>} — cover data file</li>
+     * </ul>
+     * Files that do not match (different column, .pk, .pci, partition data, etc.)
+     * are silently ignored.
+     */
+    public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
+        int nameLen = columnName.length();
+        int fileLen = fileName.length();
+        if (fileLen < nameLen + 4) {
+            return;
+        }
+        for (int i = 0; i < nameLen; i++) {
+            if (fileName.charAt(i) != columnName.charAt(i)) {
+                return;
+            }
+        }
+        if (fileName.charAt(nameLen) != '.') {
+            return;
+        }
+        int pos = nameLen + 1;
+        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
+            return;
+        }
+        char kind = fileName.charAt(pos + 1);
+        if (kind != 'v' && kind != 'c') {
+            return;
+        }
+        pos += 2;
+        int includeIdx = -1;
+        if (kind == 'c') {
+            int idxStart = pos;
+            while (pos < fileLen && fileName.charAt(pos) != '.') {
+                char ch = fileName.charAt(pos);
+                if (ch < '0' || ch > '9') {
+                    return;
+                }
+                pos++;
+            }
+            if (pos == idxStart || pos >= fileLen) {
+                return;
+            }
+            try {
+                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
+            } catch (NumericException e) {
+                return;
+            }
+        }
+        if (pos >= fileLen || fileName.charAt(pos) != '.') {
+            return;
+        }
+        pos++;
+
+        if (kind == 'v') {
+            int dot = nextDot(fileName, pos, fileLen);
+            long columnNameTxn;
+            long sealTxn;
+            if (dot < 0) {
+                columnNameTxn = COLUMN_NAME_TXN_NONE;
+                sealTxn = parseTxnSegment(fileName, pos, fileLen);
+            } else {
+                columnNameTxn = parseTxnSegment(fileName, pos, dot);
+                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
+            }
+            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+                return;
+            }
+            visitor.onValueFile(columnNameTxn, sealTxn);
+            return;
+        }
+
+        int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return;
+        }
+        long rawHost = parseTxnSegment(fileName, pos, hostDot);
+        if (rawHost == PARSE_FAIL) {
+            return;
+        }
+        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
+        long coveredColumnNameTxn;
+        long sealTxn;
+        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        if (secondDot < 0) {
+            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
+            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
+        } else {
+            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
+            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
+        }
+        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+            return;
+        }
+        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+    }
+
+    /**
      * Walks the v2 chain via fd-based reads and returns the head entry's
      * {@code SEAL_TXN}. Useful when the caller has just opened the .pk file
      * (e.g. snapshot restore, seal-purge job) and would otherwise pay an
@@ -1676,39 +1779,7 @@ public final class PostingIndexUtils {
             CharSequence columnName,
             long postingColumnNameTxn
     ) {
-        final boolean[] anyFailed = {false};
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
-        if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
-            anyFailed[0] = true;
-        }
-        path.trimTo(pathTrimTo);
-        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
-            @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn != postingColumnNameTxn) {
-                    return;
-                }
-                LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
-
-            @Override
-            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
-                if (fileColumnNameTxn != postingColumnNameTxn) {
-                    return;
-                }
-                LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, fileColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
-        });
-        path.trimTo(pathTrimTo);
-        return anyFailed[0];
+        return new SealedFileRemover().remove(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
     }
 
     public static void scanSealedFiles(
@@ -1720,14 +1791,7 @@ public final class PostingIndexUtils {
     ) {
         path.trimTo(pathTrimTo);
         StringSink fileName = Misc.getThreadLocalSink();
-        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
-                return;
-            }
-            fileName.clear();
-            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-            parseSealedFileName(fileName, columnName, visitor);
-        });
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, visitor));
         path.trimTo(pathTrimTo);
     }
 
@@ -1909,106 +1973,19 @@ public final class PostingIndexUtils {
         return -1;
     }
 
-    /**
-     * Parses a directory entry name and dispatches to the visitor if it matches
-     * a sealed-file pattern for {@code columnName}.
-     * <p>
-     * Recognised patterns (segment indices use 0-based dot splits):
-     * <ul>
-     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
-     *   <li>{@code <columnName>.pc<includeIdx>.<coveredColumnNameTxn>.<sealTxn>} — cover data file</li>
-     * </ul>
-     * Files that do not match (different column, .pk, .pci, partition data, etc.)
-     * are silently ignored.
-     */
-    private static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
-        int nameLen = columnName.length();
-        int fileLen = fileName.length();
-        if (fileLen < nameLen + 4) {
+    private static void parseSealedDirEntry(
+            long pUtf8NameZ,
+            int type,
+            StringSink fileName,
+            CharSequence columnName,
+            SealedFileVisitor visitor
+    ) {
+        if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
             return;
         }
-        for (int i = 0; i < nameLen; i++) {
-            if (fileName.charAt(i) != columnName.charAt(i)) {
-                return;
-            }
-        }
-        if (fileName.charAt(nameLen) != '.') {
-            return;
-        }
-        int pos = nameLen + 1;
-        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
-            return;
-        }
-        char kind = fileName.charAt(pos + 1);
-        if (kind != 'v' && kind != 'c') {
-            return;
-        }
-        pos += 2;
-        int includeIdx = -1;
-        if (kind == 'c') {
-            int idxStart = pos;
-            while (pos < fileLen && fileName.charAt(pos) != '.') {
-                char ch = fileName.charAt(pos);
-                if (ch < '0' || ch > '9') {
-                    return;
-                }
-                pos++;
-            }
-            if (pos == idxStart || pos >= fileLen) {
-                return;
-            }
-            try {
-                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
-            } catch (NumericException e) {
-                return;
-            }
-        }
-        if (pos >= fileLen || fileName.charAt(pos) != '.') {
-            return;
-        }
-        pos++;
-
-        if (kind == 'v') {
-            int dot = nextDot(fileName, pos, fileLen);
-            long columnNameTxn;
-            long sealTxn;
-            if (dot < 0) {
-                columnNameTxn = COLUMN_NAME_TXN_NONE;
-                sealTxn = parseTxnSegment(fileName, pos, fileLen);
-            } else {
-                columnNameTxn = parseTxnSegment(fileName, pos, dot);
-                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
-            }
-            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
-                return;
-            }
-            visitor.onValueFile(columnNameTxn, sealTxn);
-            return;
-        }
-
-        int hostDot = nextDot(fileName, pos, fileLen);
-        if (hostDot < 0) {
-            return;
-        }
-        long rawHost = parseTxnSegment(fileName, pos, hostDot);
-        if (rawHost == PARSE_FAIL) {
-            return;
-        }
-        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
-        long coveredColumnNameTxn;
-        long sealTxn;
-        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
-        if (secondDot < 0) {
-            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
-            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
-        } else {
-            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
-            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
-        }
-        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
-            return;
-        }
-        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+        fileName.clear();
+        Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+        parseSealedFileName(fileName, columnName, visitor);
     }
 
     private static long parseTxnSegment(CharSequence s, int from, int end) {
@@ -2238,6 +2215,83 @@ public final class PostingIndexUtils {
          * Called for each {@code .pv.<postingColumnNameTxn>.<sealTxn>} file.
          */
         void onValueFile(long postingColumnNameTxn, long sealTxn);
+    }
+
+    /**
+     * Reusable, allocation-free form of {@link #removeAllSealedFiles}. Owners on
+     * zero-GC paths, such as the writer's synchronous purge, hold one instance
+     * and call {@link #remove} repeatedly. Not thread-safe; one instance per owner.
+     */
+    public static final class SealedFileRemover implements SealedFileVisitor {
+        private final FindVisitor dirEntryVisitor = this::onDirEntry;
+        private CharSequence columnName;
+        private FilesFacade ff;
+        private StringSink fileName;
+        private boolean isAnyFailed;
+        private Path path;
+        private int pathTrimTo;
+        private long postingColumnNameTxn;
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            if (filePostingColumnNameTxn != postingColumnNameTxn) {
+                return;
+            }
+            LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+            if (!ff.removeQuiet(p) && ff.exists(p)) {
+                isAnyFailed = true;
+            }
+            path.trimTo(pathTrimTo);
+        }
+
+        @Override
+        public void onValueFile(long fileColumnNameTxn, long sealTxn) {
+            if (fileColumnNameTxn != postingColumnNameTxn) {
+                return;
+            }
+            LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, fileColumnNameTxn, sealTxn);
+            if (!ff.removeQuiet(p) && ff.exists(p)) {
+                isAnyFailed = true;
+            }
+            path.trimTo(pathTrimTo);
+        }
+
+        /**
+         * Same contract as {@link #removeAllSealedFiles}.
+         */
+        public boolean remove(
+                FilesFacade ff,
+                Path path,
+                int pathTrimTo,
+                CharSequence columnName,
+                long postingColumnNameTxn
+        ) {
+            this.ff = ff;
+            this.path = path;
+            this.pathTrimTo = pathTrimTo;
+            this.columnName = columnName;
+            this.postingColumnNameTxn = postingColumnNameTxn;
+            this.isAnyFailed = false;
+            try {
+                LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+                if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
+                    isAnyFailed = true;
+                }
+                fileName = Misc.getThreadLocalSink();
+                ff.iterateDir(path.trimTo(pathTrimTo).$(), dirEntryVisitor);
+                return isAnyFailed;
+            } finally {
+                path.trimTo(pathTrimTo);
+                this.ff = null;
+                this.path = null;
+                this.columnName = null;
+                this.fileName = null;
+            }
+        }
+
+        private void onDirEntry(long pUtf8NameZ, int type) {
+            parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, this);
+        }
     }
 
     /**

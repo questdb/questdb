@@ -209,9 +209,15 @@ public class TableWriterSegmentFileCache {
             fds = walFdCache.valueAt(fdCacheKey);
         }
         int initialSize = walMappedColumns.size();
+        // The cached fds go to the column memories in list order. A memory owns its fd from the
+        // moment it takes it, and closes it on a failed map too. Index of the next fd to take.
+        int file = 0;
+        // A var-size column takes its data fd from the list before its aux fd, but hands it to
+        // its data memory only after it read the aux column, which can fail. Until then no
+        // memory owns it.
+        long untakenDataFd = -1;
 
         try {
-            int file = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
@@ -226,6 +232,7 @@ public class TableWriterSegmentFileCache {
 
                         final long dataFd = fds != null ? fds.get(file++) : -1;
                         final long auxFd = fds != null ? fds.get(file++) : -1;
+                        untakenDataFd = dataFd;
 
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
@@ -266,6 +273,7 @@ public class TableWriterSegmentFileCache {
                                 MemoryTag.MMAP_TABLE_WRITER,
                                 CairoConfiguration.O_NONE
                         );
+                        untakenDataFd = -1;
                     } else {
                         MemoryCMOR primary = walColumnMemoryPool.pop();
                         walMappedColumns.add(primary);
@@ -297,9 +305,23 @@ public class TableWriterSegmentFileCache {
                 }
             }
         } catch (Throwable th) {
+            if (fds != null) {
+                // closeWalFiles() drops the cached list without closing it: close the fds no
+                // memory owns, or they leak.
+                final FilesFacade ff = configuration.getFilesFacade();
+                if (untakenDataFd != -1) {
+                    ff.close(untakenDataFd);
+                }
+                for (int i = file, n = fds.size(); i < n; i++) {
+                    ff.close(fds.getQuick(i));
+                }
+            }
             closeWalFiles(true, walSegmentId, initialSize);
             walMappedColumns.setPos(initialSize); // already done by closeWalFiles(); kept for clarity
-            // Avoid double removal/pool push by the finally block when cached FDs were consumed.
+            // closeWalFiles() removed the cache entry and pooled its list: the finally block must
+            // do neither again. A second removeAt() at the same slot would erase whichever
+            // segment's entry the first removal moved into it.
+            fdCacheKey = 0;
             fds = null;
             throw th;
         } finally {
