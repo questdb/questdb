@@ -223,6 +223,19 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             new SymRow("d", 103, "2024-01-01", "06:30"),
             new SymRow("", 104, "2024-01-01", "09:30")
     };
+    // Two parquet partitions for the two-partition tests: 2024-01-01 holds the rows of partition
+    // 2024-01-01 in SYM_BASE_ROWS, 2024-01-02 the same rows with v + 20, and 2024-01-03 keeps
+    // 2024-01-02 from being the last partition, which CONVERT requires.
+    private static final SymRow[] SYM_FIRST_DAY_ROWS = Arrays.copyOf(SYM_BASE_ROWS, 12);
+    private static final SymRow[] SYM_SECOND_DAY_ROWS = Arrays.stream(SYM_FIRST_DAY_ROWS)
+            .map(row -> new SymRow(row.s, row.v + 20, "2024-01-02", row.time))
+            .toArray(SymRow[]::new);
+    private static final SymRow[] SYM_LAST_DAY_ROWS = {new SymRow("a", 99, "2024-01-03", "00:00")};
+    // one row into the 04:30 gap of each of 2024-01-01 and 2024-01-02: both partitions merge
+    private static final SymRow[] SYM_TWO_DAY_MERGE_ROWS = {
+            new SymRow("a", 101, "2024-01-01", "04:30"),
+            new SymRow("a", 121, "2024-01-02", "04:30")
+    };
     // the rows of partition 2024-01-01 in SYM_BASE_ROWS: the partition the attach tests copy from table src
     private static final SymRow[] SYM_ATTACHED_ROWS = Arrays.copyOf(SYM_BASE_ROWS, 12);
     // partition 2024-01-02 of table pt, which attaches 2024-01-01 from table src: its symbols, in the order
@@ -1875,32 +1888,22 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 return super.openRO(name);
             }
         };
-        final SymRow[] firstDayRows = Arrays.copyOf(SYM_BASE_ROWS, 12);
-        final SymRow[] secondDayRows = new SymRow[12];
-        for (int i = 0; i < secondDayRows.length; i++) {
-            secondDayRows[i] = new SymRow(SYM_BASE_ROWS[i].s, SYM_BASE_ROWS[i].v + 20, "2024-01-02", SYM_BASE_ROWS[i].time);
-        }
-        final SymRow[] o3Rows = {
-                new SymRow("a", 101, "2024-01-01", "04:30"),
-                new SymRow("a", 121, "2024-01-02", "04:30")
-        };
-        final SymRow[] lastDayRow = {new SymRow("a", 99, "2024-01-03", "00:00")};
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(symRowsInsert(firstDayRows));
-            execute(symRowsInsert(secondDayRows));
-            execute(symRowsInsert(lastDayRow));
+            execute(symRowsInsert(SYM_FIRST_DAY_ROWS));
+            execute(symRowsInsert(SYM_SECOND_DAY_ROWS));
+            execute(symRowsInsert(SYM_LAST_DAY_ROWS));
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
             final long firstDayColumnNameTxn = getColumnNameTxn("pt", 0, "s");
             final long secondDayColumnNameTxn = getColumnNameTxn("pt", 1, "s");
             final long txnBefore = getTableTxn("pt");
             final String sql = "SELECT s, v, ts FROM pt WHERE s = 'a'";
-            final String rowsBefore = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow);
+            final String rowsBefore = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS);
 
             ff.clear();
             isArmed.set(true);
             try {
-                execute(symRowsInsert(o3Rows));
+                execute(symRowsInsert(SYM_TWO_DAY_MERGE_ROWS));
                 Assert.fail("the commit must fail");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
@@ -1916,13 +1919,13 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             Assert.assertEquals(txnBefore, getTableTxn("pt"));
             assertQuery(sql).noLeakCheck().timestamp("ts").returns(rowsBefore);
 
-            execute(symRowsInsert(o3Rows));
+            execute(symRowsInsert(SYM_TWO_DAY_MERGE_ROWS));
             Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
             Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 1, "s"));
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow, o3Rows));
+                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS, SYM_TWO_DAY_MERGE_ROWS));
         });
     }
 
@@ -2172,21 +2175,11 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
-        final SymRow[] firstDayRows = Arrays.copyOf(SYM_BASE_ROWS, 12);
-        final SymRow[] secondDayRows = new SymRow[12];
-        for (int i = 0; i < secondDayRows.length; i++) {
-            secondDayRows[i] = new SymRow(SYM_BASE_ROWS[i].s, SYM_BASE_ROWS[i].v + 20, "2024-01-02", SYM_BASE_ROWS[i].time);
-        }
-        final SymRow[] lastDayRow = {new SymRow("a", 99, "2024-01-03", "00:00")};
-        final SymRow[] o3Rows = {
-                new SymRow("a", 101, "2024-01-01", "04:30"),
-                new SymRow("a", 121, "2024-01-02", "04:30")
-        };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE pt (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(twoSymbolRowsInsert("pt", firstDayRows));
-            execute(twoSymbolRowsInsert("pt", secondDayRows));
-            execute(twoSymbolRowsInsert("pt", lastDayRow));
+            execute(twoSymbolRowsInsert("pt", SYM_FIRST_DAY_ROWS));
+            execute(twoSymbolRowsInsert("pt", SYM_SECOND_DAY_ROWS));
+            execute(twoSymbolRowsInsert("pt", SYM_LAST_DAY_ROWS));
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
             final long txnBefore = getTableTxn("pt");
             final WorkerPool pool = new TestWorkerPool(2);
@@ -2194,13 +2187,13 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 WorkerPoolUtils.setupWriterJobs(pool, engine);
                 pool.start(LOG);
                 ff.isArmed.set(true);
-                assertExceptionNoLeakCheck(twoSymbolRowsInsert("pt", o3Rows), -1, "could not msync");
+                assertExceptionNoLeakCheck(twoSymbolRowsInsert("pt", SYM_TWO_DAY_MERGE_ROWS), -1, "could not msync");
             } finally {
                 pool.halt();
             }
             Assert.assertFalse(ff.isArmed.get());
             Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
-            final String expectedRows = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow, o3Rows);
+            final String expectedRows = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS, SYM_TWO_DAY_MERGE_ROWS);
             assertQuery("SELECT s, v, ts FROM pt WHERE s = 'a'")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -2309,22 +2302,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         setInPlaceParquetO3Properties();
         final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
-        final SymRow[] firstDayRows = Arrays.copyOf(SYM_BASE_ROWS, 12);
-        final SymRow[] secondDayRows = new SymRow[12];
-        for (int i = 0; i < secondDayRows.length; i++) {
-            secondDayRows[i] = new SymRow(SYM_BASE_ROWS[i].s, SYM_BASE_ROWS[i].v + 20, "2024-01-02", SYM_BASE_ROWS[i].time);
-        }
-        final SymRow[] lastDayRow = {new SymRow("a", 99, "2024-01-03", "00:00")};
-        final SymRow[] o3Rows = {
-                new SymRow("a", 101, "2024-01-01", "04:30"),
-                new SymRow("a", 121, "2024-01-02", "04:30")
-        };
         final String[] columnNames = {"s", "t"};
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE pt (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(twoSymbolRowsInsert("pt", firstDayRows));
-            execute(twoSymbolRowsInsert("pt", secondDayRows));
-            execute(twoSymbolRowsInsert("pt", lastDayRow));
+            execute(twoSymbolRowsInsert("pt", SYM_FIRST_DAY_ROWS));
+            execute(twoSymbolRowsInsert("pt", SYM_SECOND_DAY_ROWS));
+            execute(twoSymbolRowsInsert("pt", SYM_LAST_DAY_ROWS));
             drainWalQueue();
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
             drainWalQueue();
@@ -2339,7 +2322,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
             final long txnBefore = getTableTxn("pt");
             ff.isArmed.set(true);
-            execute(twoSymbolRowsInsert("pt", o3Rows));
+            execute(twoSymbolRowsInsert("pt", SYM_TWO_DAY_MERGE_ROWS));
             drainWalQueue();
             Assert.assertFalse(ff.isArmed.get());
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
@@ -2347,7 +2330,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
-            final String expectedRows = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow, o3Rows);
+            final String expectedRows = symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS, SYM_TWO_DAY_MERGE_ROWS);
             assertQuery("SELECT s, v, ts FROM pt WHERE s = 'a'")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -2360,7 +2343,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
-                    .returns("count\n" + (firstDayRows.length + secondDayRows.length + lastDayRow.length + o3Rows.length) + "\n");
+                    .returns("count\n" + (SYM_FIRST_DAY_ROWS.length + SYM_SECOND_DAY_ROWS.length + SYM_LAST_DAY_ROWS.length + SYM_TWO_DAY_MERGE_ROWS.length) + "\n");
 
             engine.releaseInactive();
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
@@ -3358,21 +3341,15 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // moves to a new index version, the second keeps its version. A stale cursor over both and the
         // native partition 2024-01-03 returns its snapshot.
         setInPlaceParquetO3Properties();
-        final SymRow[] firstDayRows = Arrays.copyOf(SYM_BASE_ROWS, 12);
-        final SymRow[] secondDayRows = new SymRow[12];
-        for (int i = 0; i < secondDayRows.length; i++) {
-            secondDayRows[i] = new SymRow(SYM_BASE_ROWS[i].s, SYM_BASE_ROWS[i].v + 20, "2024-01-02", SYM_BASE_ROWS[i].time);
-        }
-        final SymRow[] lastDayRow = {new SymRow("a", 99, "2024-01-03", "00:00")};
         final SymRow[] o3Rows = {
                 new SymRow("a", 101, "2024-01-01", "04:30"),
                 new SymRow("a", 121, "2024-01-02", "11:30")
         };
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(symRowsInsert(firstDayRows));
-            execute(symRowsInsert(secondDayRows));
-            execute(symRowsInsert(lastDayRow));
+            execute(symRowsInsert(SYM_FIRST_DAY_ROWS));
+            execute(symRowsInsert(SYM_SECOND_DAY_ROWS));
+            execute(symRowsInsert(SYM_LAST_DAY_ROWS));
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
             final long firstDayNameTxn = getParquetPartitionNameTxn("pt", 0);
             final long secondDayNameTxn = getParquetPartitionNameTxn("pt", 1);
@@ -3388,7 +3365,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     execute(symRowsInsert(o3Rows));
                     assertStaleCursor(
                             "two partitions",
-                            symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow),
+                            symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS),
                             factory,
                             cursor
                     );
@@ -3406,7 +3383,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow, o3Rows));
+                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS, o3Rows));
             assertSqlCursors(
                     "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'a'",
                     sql
@@ -3857,24 +3834,16 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // One non-WAL commit, run by a worker pool, merges a row into two attached parquet partitions
         // whose s carries foreign versions 10 and 20. Each moves to its own next name, 11 and 21.
         setInPlaceParquetO3Properties();
-        final SymRow[] secondDayRows = new SymRow[12];
-        for (int i = 0; i < secondDayRows.length; i++) {
-            secondDayRows[i] = new SymRow(SYM_ATTACHED_ROWS[i].s, SYM_ATTACHED_ROWS[i].v + 20, "2024-01-02", SYM_ATTACHED_ROWS[i].time);
-        }
         final SymRow[] thirdDayRows = {
                 new SymRow("a", 91, "2024-01-03", "01:00"),
                 new SymRow("b", 92, "2024-01-03", "02:00"),
                 new SymRow("", 93, "2024-01-03", "03:00"),
                 new SymRow("c", 94, "2024-01-03", "04:00")
         };
-        final SymRow[] o3Rows = {
-                new SymRow("a", 101, "2024-01-01", "04:30"),
-                new SymRow("a", 121, "2024-01-02", "04:30")
-        };
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute(symRowsInsert(SYM_ATTACHED_ROWS).replace("INSERT INTO pt ", "INSERT INTO src "));
-            execute(symRowsInsert(secondDayRows).replace("INSERT INTO pt ", "INSERT INTO src "));
+            execute(symRowsInsert(SYM_SECOND_DAY_ROWS).replace("INSERT INTO pt ", "INSERT INTO src "));
             updateSourceColumnAtTxn(0, 10);
             updateSourceColumnAtTxn(1, 20);
             execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -3895,7 +3864,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 pool.start(LOG);
                 // No cursor stays open across the commit: the pool's purge job would remove versions 10 and
                 // 20 under it, as the purge gate of a version named above the commit's txn is empty (R1-RG).
-                execute(symRowsInsert(o3Rows));
+                execute(symRowsInsert(SYM_TWO_DAY_MERGE_ROWS));
             } finally {
                 pool.halt();
             }
@@ -3904,7 +3873,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, secondDayRows, thirdDayRows, o3Rows));
+                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_SECOND_DAY_ROWS, thirdDayRows, SYM_TWO_DAY_MERGE_ROWS));
             assertIndexMatchesFullScan("s");
             engine.releaseInactive();
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
@@ -4204,12 +4173,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // whose index ADD INDEX built, extends its live index. Opening that live index fails on the first
         // attempt: the failure leaves no file of the new version in 2024-01-01, and the retry builds it.
         setInPlaceParquetO3Properties();
-        final SymRow[] firstDayRows = Arrays.copyOf(SYM_BASE_ROWS, 12);
-        final SymRow[] secondDayRows = new SymRow[12];
-        for (int i = 0; i < secondDayRows.length; i++) {
-            secondDayRows[i] = new SymRow(SYM_BASE_ROWS[i].s, SYM_BASE_ROWS[i].v + 20, "2024-01-02", SYM_BASE_ROWS[i].time);
-        }
-        final SymRow[] lastDayRow = {new SymRow("a", 99, "2024-01-03", "00:00")};
         final SymRow[] o3Rows = {
                 new SymRow("a", 101, "2024-01-01", "11:30"),
                 new SymRow("a", 121, "2024-01-02", "11:30")
@@ -4230,9 +4193,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE pt (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(symRowsInsert(firstDayRows));
-            execute(symRowsInsert(secondDayRows));
-            execute(symRowsInsert(lastDayRow));
+            execute(symRowsInsert(SYM_FIRST_DAY_ROWS));
+            execute(symRowsInsert(SYM_SECOND_DAY_ROWS));
+            execute(symRowsInsert(SYM_LAST_DAY_ROWS));
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
             reattachPartition("2024-01-01", "ALTER TABLE pt ALTER COLUMN s ADD INDEX");
             assertReattachedIndexMissing(0);
@@ -4274,7 +4237,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, firstDayRows, secondDayRows, lastDayRow, o3Rows));
+                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_FIRST_DAY_ROWS, SYM_SECOND_DAY_ROWS, SYM_LAST_DAY_ROWS, o3Rows));
             assertIndexMatchesFullScan("s");
         });
     }
