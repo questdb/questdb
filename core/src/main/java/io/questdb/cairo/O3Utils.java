@@ -91,7 +91,10 @@ public class O3Utils {
     }
 
     static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
-        unmap(ff, dstFixAddr, dstFixSize);
-        close(ff, dstFixFd);
+        try {
+            unmap(ff, dstFixAddr, dstFixSize);
+        } finally {
+            close(ff, dstFixFd);
+        }
     }
 }

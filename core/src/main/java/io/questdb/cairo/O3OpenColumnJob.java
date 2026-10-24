@@ -172,6 +172,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
+    // Counts down a column that failed. The error count goes up first: the count-down can complete
+    // the partition, which releases the writer, and the writer then reads the error count.
     public static void freeTimestampIndex(
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
@@ -180,19 +182,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
-            FilesFacade ff,
             boolean isOom
     ) {
         tableWriter.o3BumpErrorCount(isOom);
-        if (columnCounter.decrementAndGet() == 0) {
-            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-            O3Utils.close(ff, srcTimestampFd);
-            tableWriter.o3ClockDownPartitionUpdateCount();
-            tableWriter.o3CountDownDoneLatch();
-            if (timestampMergeIndexAddr != 0) {
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-            }
-        }
+        O3CopyJob.closeColumnIdle(
+                columnCounter,
+                timestampMergeIndexAddr,
+                timestampMergeIndexSize,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                tableWriter
+        );
     }
 
     public static boolean isOpenColumnModeForAppend(int openColumnMode) {
@@ -1380,7 +1381,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     tableWriter,
-                    ff,
                     CairoException.isCairoOomError(e)
             );
             throw e;
@@ -1501,26 +1501,49 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         } else {
             mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         }
-        final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForNativePartition(
-                pathToOldPartition,
-                tableWriter.getMetadata().getTimestampType(),
-                tableWriter.getPartitionBy(),
-                oldPartitionTimestamp,
-                srcNameTxn
-        );
-        int plen = pathToOldPartition.size();
+        final boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
+        final Path pathToOldPartition;
+        final int plen;
+        final Path pathToNewPartition;
+        final int pplen;
+        try {
+            pathToOldPartition = Path.getThreadLocal(pathToTable);
+            TableUtils.setPathForNativePartition(
+                    pathToOldPartition,
+                    tableWriter.getMetadata().getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    oldPartitionTimestamp,
+                    srcNameTxn
+            );
+            plen = pathToOldPartition.size();
 
-        final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
-        boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
-        TableUtils.setPathForNativePartition(
-                pathToNewPartition,
-                tableWriter.getMetadata().getTimestampType(),
-                tableWriter.getPartitionBy(),
-                partitionTimestamp,
-                partitionAppend ? srcNameTxn : txn
-        );
-        int pplen = pathToNewPartition.size();
+            pathToNewPartition = Path.getThreadLocal2(pathToTable);
+            TableUtils.setPathForNativePartition(
+                    pathToNewPartition,
+                    tableWriter.getMetadata().getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    partitionAppend ? srcNameTxn : txn
+            );
+            pplen = pathToNewPartition.size();
+        } catch (Throwable e) {
+            // Growing a thread-local path buffer can run out of native memory. No branch below owns the
+            // column yet, so its count belongs to this method: without it the partition never completes.
+            LOG.error().$("open column path error [table=").$(tableWriter.getTableToken())
+                    .$(", e=").$(e)
+                    .I$();
+            freeTimestampIndex(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    CairoException.isCairoOomError(e)
+            );
+            throw e;
+        }
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
 
         // append jobs do not set value of part counter, we do it here for those
@@ -1696,8 +1719,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             default:
-                assert false;
-                break;
+                // No branch owns the column, so count it down here: otherwise the partition never completes.
+                freeTimestampIndex(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        false
+                );
+                throw CairoException.critical(0).put("unknown O3 open column mode [mode=").put(openColumnMode).put(']');
         }
     }
 
@@ -1891,7 +1924,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     tableWriter,
-                    ff,
                     CairoException.isCairoOomError(e)
             );
             throw e;
@@ -2007,7 +2039,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff,
                         CairoException.isCairoOomError(e)
                 );
                 throw e;
@@ -2035,7 +2066,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff,
                         CairoException.isCairoOomError(e)
                 );
                 throw e;
@@ -2108,7 +2138,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff,
                         CairoException.isCairoOomError(e)
                 );
                 throw e;
@@ -2222,10 +2251,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
             O3Utils.close(ff1, dstKFd);
             O3Utils.close(ff1, dstVFd);
-            if (columnCounter.decrementAndGet() == 0) {
-                tableWriter.o3ClockDownPartitionUpdateCount();
-                tableWriter.o3CountDownDoneLatch();
-            }
+            O3CopyJob.closeColumnIdle(columnCounter, timestampMergeIndexAddr, timestampMergeIndexSize, 0, 0, 0, tableWriter);
             throw e;
         }
 
@@ -2341,7 +2367,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     tableWriter,
-                    ff,
                     CairoException.isCairoOomError(e)
             );
             throw e;
@@ -2603,14 +2628,16 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.close(ff, dstKFd);
             O3Utils.close(ff, dstVFd);
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-            if (columnCounter.decrementAndGet() == 0) {
-                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                O3Utils.close(ff, srcTimestampFd);
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                tableWriter.o3ClockDownPartitionUpdateCount();
-                tableWriter.o3CountDownDoneLatch();
-            }
+            freeTimestampIndex(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    CairoException.isCairoOomError(e)
+            );
             throw e;
         }
 
@@ -2879,7 +2906,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff,
                         CairoException.isCairoOomError(e)
                 );
                 throw e;
@@ -2906,7 +2932,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff,
                         CairoException.isCairoOomError(e)
                 );
                 throw e;
@@ -2958,12 +2983,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             );
         } else {
             try {
-                if (columnType < 0 && srcTimestampFd > 0) {
-                    // ensure timestamp srcDataFixFd is always negative, we will close it externally
-                    srcDataFixFd = -srcTimestampFd;
-                } else {
-                    srcDataFixFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                }
+                srcDataFixFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 3 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
@@ -2976,7 +2996,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff,
                         CairoException.isCairoOomError(e)
                 );
                 throw e;

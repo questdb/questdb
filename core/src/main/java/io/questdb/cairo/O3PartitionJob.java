@@ -3871,11 +3871,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.error().$("process existing partition error [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
-                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                O3Utils.close(ff, srcTimestampFd);
+                // Record the error before the partition completes: completing it releases the writer, which
+                // then reads the error count.
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                tableWriter.o3ClockDownPartitionUpdateCount();
-                tableWriter.o3CountDownDoneLatch();
+                O3CopyJob.closeColumnIdleQuick(0, 0, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter);
                 throw e;
             }
 
@@ -5675,13 +5674,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         final int columnCount = metadata.getColumnCount();
-        columnCounter.set(compressColumnCount(metadata));
-        int columnsInFlight = columnCount;
+        // Each live column the loop below publishes owns one count of the column counter: its open column
+        // task counts it down, or its own error handler does when publishing it fails. Dropped columns own
+        // none, so the counter and the published tally both cover live columns only.
+        final int liveColumnCount = compressColumnCount(metadata);
+        columnCounter.set(liveColumnCount);
         if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE || openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
             // Partition will be re-written. Jobs will set new column top values but by default they are 0
             Vect.memset(partitionUpdateSinkAddr + PARTITION_SINK_COL_TOP_OFFSET, (long) Long.BYTES * columnCount, 0);
         }
 
+        int columnsPublished = 0;
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
@@ -5728,132 +5731,132 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter = null;
                 }
 
-                try {
-                    final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
-                    if (cursor > -1) {
-                        publishOpenColumnTaskHarmonized(
-                                cursor,
-                                openColumnMode,
-                                pathToTable,
-                                columnName,
-                                columnCounter,
-                                o3Basket.nextPartCounter(),
-                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                timestampMergeIndexAddr,
-                                timestampMergeIndexSize,
-                                srcOooFixAddr,
-                                srcOooVarAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                oooTimestampMin,
-                                partitionTimestamp,
-                                oldPartitionTimestamp,
-                                srcDataTop,
-                                srcDataMax,
-                                srcNameTxn,
-                                txn,
-                                prefixType,
-                                prefixLo,
-                                prefixHi,
-                                mergeType,
-                                mergeDataLo,
-                                mergeDataHi,
-                                mergeOOOLo,
-                                mergeOOOHi,
-                                suffixType,
-                                suffixLo,
-                                suffixHi,
-                                indexBlockCapacity,
-                                srcTimestampFd,
-                                srcTimestampAddr,
-                                srcTimestampSize,
-                                activeFixFd,
-                                activeVarFd,
-                                srcDataNewPartitionSize,
-                                srcDataOldPartitionSize,
-                                o3SplitPartitionSize,
-                                tableWriter,
-                                indexWriter,
-                                partitionUpdateSinkAddr,
-                                i,
-                                columnNameTxn
-                        );
-                    } else {
-                        publishOpenColumnTaskContended(
-                                cursor,
-                                openColumnMode,
-                                pathToTable,
-                                columnName,
-                                columnCounter,
-                                o3Basket.nextPartCounter(),
-                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                timestampMergeIndexAddr,
-                                timestampMergeIndexSize,
-                                srcOooFixAddr,
-                                srcOooVarAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                oooTimestampMin,
-                                partitionTimestamp,
-                                oldPartitionTimestamp,
-                                srcDataTop,
-                                srcDataMax,
-                                srcNameTxn,
-                                txn,
-                                prefixType,
-                                prefixLo,
-                                prefixHi,
-                                mergeType,
-                                mergeDataLo,
-                                mergeDataHi,
-                                mergeOOOLo,
-                                mergeOOOHi,
-                                suffixType,
-                                suffixLo,
-                                suffixHi,
-                                srcTimestampFd,
-                                srcTimestampAddr,
-                                srcTimestampSize,
-                                indexBlockCapacity,
-                                activeFixFd,
-                                activeVarFd,
-                                srcDataNewPartitionSize,
-                                srcDataOldPartitionSize,
-                                o3SplitPartitionSize,
-                                tableWriter,
-                                indexWriter,
-                                partitionUpdateSinkAddr,
-                                i,
-                                columnNameTxn
-                        );
-                    }
-                } catch (Throwable e) {
-                    tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
-                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                            .$(", e=").$(e)
-                            .I$();
-                    columnsInFlight = i + 1;
-                    throw e;
+                final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
+                final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
+
+                // From here on the column counts itself down, whether or not opening it succeeds.
+                columnsPublished++;
+                if (cursor > -1) {
+                    publishOpenColumnTaskHarmonized(
+                            cursor,
+                            openColumnMode,
+                            pathToTable,
+                            columnName,
+                            columnCounter,
+                            o3Basket.nextPartCounter(),
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            partitionTimestamp,
+                            oldPartitionTimestamp,
+                            srcDataTop,
+                            srcDataMax,
+                            srcNameTxn,
+                            txn,
+                            prefixType,
+                            prefixLo,
+                            prefixHi,
+                            mergeType,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            suffixType,
+                            suffixLo,
+                            suffixHi,
+                            indexBlockCapacity,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            activeFixFd,
+                            activeVarFd,
+                            srcDataNewPartitionSize,
+                            srcDataOldPartitionSize,
+                            o3SplitPartitionSize,
+                            tableWriter,
+                            indexWriter,
+                            partitionUpdateSinkAddr,
+                            i,
+                            columnNameTxn
+                    );
+                } else {
+                    publishOpenColumnTaskContended(
+                            cursor,
+                            openColumnMode,
+                            pathToTable,
+                            columnName,
+                            columnCounter,
+                            o3Basket.nextPartCounter(),
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            partitionTimestamp,
+                            oldPartitionTimestamp,
+                            srcDataTop,
+                            srcDataMax,
+                            srcNameTxn,
+                            txn,
+                            prefixType,
+                            prefixLo,
+                            prefixHi,
+                            mergeType,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            suffixType,
+                            suffixLo,
+                            suffixHi,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            indexBlockCapacity,
+                            activeFixFd,
+                            activeVarFd,
+                            srcDataNewPartitionSize,
+                            srcDataOldPartitionSize,
+                            o3SplitPartitionSize,
+                            tableWriter,
+                            indexWriter,
+                            partitionUpdateSinkAddr,
+                            i,
+                            columnNameTxn
+                    );
                 }
             }
-        } finally {
-            final int delta = columnsInFlight - columnCount;
-            LOG.debug().$("idle [delta=").$(delta).I$();
-            if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
-                O3CopyJob.closeColumnIdleQuick(
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter
-                );
-            }
+        } catch (Throwable e) {
+            // Record the error before the partition can complete: completing it releases the writer, which
+            // then reads the error count.
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", e=").$(e)
+                    .I$();
+            O3CopyJob.closeUnpublishedColumns(
+                    columnCounter,
+                    liveColumnCount - columnsPublished,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+            throw e;
         }
+        assert columnsPublished == liveColumnCount;
     }
 
     private static long readRowGroupTimestampBound(
