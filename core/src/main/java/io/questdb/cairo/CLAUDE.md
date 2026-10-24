@@ -115,6 +115,17 @@ in-place branch also moves every rebuilt index column to the new column name txn
 (`versionRebuiltParquetIndexes`, see Index MVCC above); a new in-place publish branch must do
 that too, or readers keep opening the committed index files for the new row layout.
 
+**Column tops on CONVERT TO NATIVE.** `CONVERT PARTITION TO PARQUET` keeps a native column top in
+the file's QuestDB metadata but zeroes a top below the row count in `_cv`. The Rust decoder skips
+every row group that lies whole inside the file's column top, so `produceNativeFromParquet` writes
+nothing for those rows. It counts them, plus the leading NULLs of the first chunk of a no-sentinel
+column (BOOLEAN/BYTE/SHORT/CHAR), and sets that as the native `_cv` top; a column with no chunk
+gets the row count. `restoreIndexFilesAfterParquetToNative` rebuilds the index of a column whose top
+the decode moved instead of linking the parquet partition's files, which index the old top's rows.
+Before this, a top spanning a whole row group (small row groups, a column added mid-partition)
+left `_cv` at 0 over a shorter native file: shifted values, and a read past the file's end.
+Pinned by `AlterTableConvertPartitionTest.testConvertRoundTripColumnTopSpanningRowGroups`.
+
 `hasTypeConvertedColumns` is set when a column maps into the parquet file through its
 `getOriginalWriterIndex()` (the `replacingIndex` chain head), its current writer index
 differs — i.e. it went through `ALTER COLUMN TYPE` — **and** the type stored in the parquet

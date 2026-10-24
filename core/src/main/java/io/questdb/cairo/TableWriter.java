@@ -232,6 +232,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     };
     private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
+    // longs per decoded column in produceNativeFromParquet: aux fd, data fd, data bytes
+    // written, column top, is written
+    private static final int PARQUET_DECODE_COLUMN_SLOTS = 5;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
     private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 1;
@@ -352,6 +355,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final DirectIntList parquetBloomFilterIndexes;
     private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
     private final DirectIntList parquetColumnIdsAndTypes;
+    // table columns whose column top produceNativeFromParquet moved: their index files, built
+    // for the parquet partition's top, must be rebuilt rather than linked
+    private final IntList parquetDecodeMovedTopColumns = new IntList();
     private final IntList parquetDecodedTableColumnIdx = new IntList();
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
@@ -14351,9 +14357,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long produceNativeFromParquet(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
         final int newPartitionDirLen = other.size();
 
-        // packed as [auxFd, dataFd, dataVecBytesWritten]
-        // dataVecBytesWritten is used to adjust offsets in the auxiliary vector
-        final DirectLongList columnFdAndDataSize = getTempDirectLongList(3L * columnCount);
+        // packed as [auxFd, dataFd, dataVecBytesWritten, columnTop, isWritten] per decoded column:
+        // dataVecBytesWritten adjusts offsets in the auxiliary vector; columnTop counts the rows
+        // before the first row the native file holds; isWritten is 1 once a chunk was written
+        final DirectLongList columnFdAndDataSize = getTempDirectLongList(PARQUET_DECODE_COLUMN_SLOTS * columnCount);
 
         final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
         setPathForNativePartition(path.trimTo(pathSize).slash(), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
@@ -14384,6 +14391,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             parquetColumnIdsAndTypes.clear();
+            parquetDecodeMovedTopColumns.clear();
             int decodedColumnCount = 0;
             final int tableColumnCount = this.metadata.getColumnCount();
             parquetDecodedTableColumnIdx.setPos(tableColumnCount);
@@ -14414,6 +14422,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnFdAndDataSize.add(-1); // aux
                 columnFdAndDataSize.add(-1); // data
                 columnFdAndDataSize.add(0);  // data bytes written
+                columnFdAndDataSize.add(0);  // column top
+                columnFdAndDataSize.add(0);  // is written
                 if (ColumnType.isVarSize(tableColumnType)) {
                     final long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
                     columnFdAndDataSize.set(auxIndex, dstAuxFd);
@@ -14454,19 +14464,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
                     long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
 
+                    final long slot = PARQUET_DECODE_COLUMN_SLOTS * columnIndex;
+                    final boolean isFirstWrite = columnFdAndDataSize.get(slot + 4) == 0;
                     if (srcDataSize == 0 && srcAuxSize == 0) {
-                        // Column fully topped (all NULL in this row group). Rust reset the buffers;
-                        // the empty native file with column_top from the column version is correct.
+                        // The decoder skips a row group that lies whole inside the column top the
+                        // file records, and resets the buffers. The native file gets nothing for
+                        // it: its rows join the native column top. The top is a prefix, so a
+                        // skipped row group never follows a written one.
+                        if (!isFirstWrite) {
+                            throw CairoException.critical(0).put("parquet column chunk skipped after data [table=").put(tableToken.getTableName())
+                                    .put(", column=").put(this.metadata.getColumnName(tableColIdx))
+                                    .put(", rowGroup=").put(rowGroupIndex)
+                                    .put(']');
+                        }
+                        columnFdAndDataSize.set(slot + 3, columnFdAndDataSize.get(slot + 3) + rowGroupRowCount);
                         continue;
                     }
+                    columnFdAndDataSize.set(slot + 4, 1);
 
                     if (ColumnType.isVarSize(tableColumnType)) {
                         if (srcAuxSize == 0 && srcDataPtr != 0) {
                             // Fixed->var: Rust decoded as source fixed type (no aux).
                             // Batch-convert fixed data to target var format in Java.
-                            final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
-                            final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
-                            final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
+                            final long dstAuxFd = columnFdAndDataSize.get(slot);
+                            final long dstDataFd = columnFdAndDataSize.get(slot + 1);
+                            final long dataVecBytesWritten = columnFdAndDataSize.get(slot + 2);
                             final ColumnTypeDriver ctd = ColumnType.getDriver(tableColumnType);
                             final long auxSize = ctd.getAuxVectorSize((int) rowGroupRowCount);
                             final long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_DEFAULT);
@@ -14498,7 +14520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                                     long auxWritePtr = auxBuf;
                                     long auxWriteSize = auxSize;
-                                    if (rowGroupIndex > 0) {
+                                    if (!isFirstWrite) {
                                         // Aux entries from convertFixedColumnTo* are relative to
                                         // the start of the local data buffer (offset 0). Shift
                                         // them to be relative to the start of the destination
@@ -14515,7 +14537,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         appendBuffer(dstDataFd, dataBuf, actualDataSize);
                                     }
                                     appendBuffer(dstAuxFd, auxWritePtr, auxWriteSize);
-                                    columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + actualDataSize);
+                                    columnFdAndDataSize.set(slot + 2, dataVecBytesWritten + actualDataSize);
                                 } finally {
                                     if (dataBuf != 0) {
                                         Unsafe.free(dataBuf, dataBufCap, MemoryTag.NATIVE_DEFAULT);
@@ -14527,11 +14549,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         } else {
                             // Same var type, or Symbol->var decoded into target format.
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(tableColumnType);
-                            final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
-                            final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
-                            final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
+                            final long dstAuxFd = columnFdAndDataSize.get(slot);
+                            final long dstDataFd = columnFdAndDataSize.get(slot + 1);
+                            final long dataVecBytesWritten = columnFdAndDataSize.get(slot + 2);
 
-                            if (rowGroupIndex > 0) {
+                            if (!isFirstWrite) {
                                 // Adjust offsets in the auxiliary vector
                                 columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
                                 // Remove the extra entry for string columns
@@ -14542,10 +14564,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             appendBuffer(dstDataFd, srcDataPtr, srcDataSize);
                             appendBuffer(dstAuxFd, srcAuxPtr, srcAuxSize);
-                            columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + srcDataSize);
+                            columnFdAndDataSize.set(slot + 2, dataVecBytesWritten + srcDataSize);
                         }
                     } else {
-                        final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                        final long dstFixFd = columnFdAndDataSize.get(slot + 1);
                         final int srcTag2 = ColumnType.tagOf(parquetColumnType);
                         final int dstTag2 = ColumnType.tagOf(tableColumnType);
 
@@ -14584,16 +14606,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 // it reads as NULL -- matching native, and so a subsequent
                                 // ALTER ... TYPE SYMBOL (which runs after this parquet->native
                                 // pre-pass) sees the column top instead of a literal 0/false.
+                                // Only the first chunk the native file gets can start inside the
+                                // top, after any row groups the decoder skipped.
                                 final long skipBytes = (long) colTopRows * ColumnType.sizeOf(tableColumnType);
                                 if (srcDataSize > skipBytes) {
                                     appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
                                 }
-                                columnVersionWriter.upsertColumnTop(partitionTimestamp, tableColIdx, colTopRows);
+                                columnFdAndDataSize.set(slot + 3, columnFdAndDataSize.get(slot + 3) + colTopRows);
                             } else {
                                 appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
                             }
                         }
                     }
+                }
+            }
+            // The native file of each decoded column starts after its column top: the row groups
+            // the decoder skipped plus, for a no-sentinel column, the leading NULLs of the first
+            // chunk. _cv must say so whatever it held: CONVERT TO PARQUET zeroes a column top
+            // below the row count, and a top that covers whole row groups leaves those rows out
+            // of the native file. A column the file holds no chunk of is NULL throughout.
+            for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
+                final long slot = PARQUET_DECODE_COLUMN_SLOTS * columnIndex;
+                final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
+                final long columnTop = columnFdAndDataSize.get(slot + 4) == 0 ? parquetRowCount : columnFdAndDataSize.get(slot + 3);
+                if (columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx) != columnTop) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, tableColIdx, columnTop);
+                    parquetDecodeMovedTopColumns.add(tableColIdx);
                 }
             }
         } catch (CairoException e) {
@@ -14609,10 +14647,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
-            for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
-                final long dstAuxFd = columnFdAndDataSize.get(3L * i);
+            for (long i = 0, n = columnFdAndDataSize.size() / PARQUET_DECODE_COLUMN_SLOTS; i < n; i++) {
+                final long dstAuxFd = columnFdAndDataSize.get(PARQUET_DECODE_COLUMN_SLOTS * i);
                 ff.close(dstAuxFd);
-                final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                final long dstDataFd = columnFdAndDataSize.get(PARQUET_DECODE_COLUMN_SLOTS * i + 1);
                 ff.close(dstDataFd);
             }
             columnFdAndDataSize.resetCapacity();
@@ -16443,8 +16481,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                // Prefer linking the existing index files
-                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                // Prefer linking the existing index files. They index the parquet partition's
+                // rows from its column top; when the decode moved the top, they would list the
+                // new top's rows a second time, so rebuild instead.
+                if (!parquetDecodeMovedTopColumns.contains(columnIndex)
+                        && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }
@@ -18737,14 +18778,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                       column from row 0, so the decoder produces data
      *                       for every column.  Use {@code false} for
      *                       native→parquet conversion, where the encoder
-     *                       preserves the original column_top.  The Rust
-     *                       decoder skips columns whose
-     *                       column_top >= row_group_size (i.e. all-NULL
-     *                       columns), so only columns with partial data
-     *                       (0 < column_top < partitionRowCount) should be
-     *                       zeroed - those are the ones where the encoder
-     *                       fills the top region with NULLs and the decoder
-     *                       produces all rows.
+     *                       preserves the original column_top in the file.
+     *                       Only columns with partial data
+     *                       (0 < column_top < partitionRowCount) are zeroed.
+     *                       The Rust decoder skips every row group that lies
+     *                       whole inside the file's column_top, so a decode
+     *                       back to native does not produce all rows:
+     *                       produceNativeFromParquet sets the native column
+     *                       top itself.
      */
     private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();

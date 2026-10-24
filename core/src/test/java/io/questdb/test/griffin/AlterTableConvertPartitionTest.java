@@ -126,6 +126,50 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertRoundTripColumnTopSpanningRowGroups() throws Exception {
+        // 4 rows per row group. The columns added after 10 of the partition's 14 rows have a
+        // column top that covers row groups 0 and 1 whole and row group 2 in part. The parquet
+        // decoder skips the two whole row groups, so the native column that CONVERT TO NATIVE
+        // writes starts at row 8, and its column top must say so: CONVERT TO PARQUET zeroes a
+        // column top below the row count in _cv. Before the fix the round trip shifted the
+        // values and a later read mapped the column past its file's end.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            for (String table : new String[]{"nat", "pq"}) {
+                execute("CREATE TABLE " + table + " (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+                execute("ALTER TABLE " + table + " ADD COLUMN sym SYMBOL, i INT, v VARCHAR, s STRING, bl BOOLEAN, sh SHORT, d DOUBLE");
+                execute("ALTER TABLE " + table + " ADD COLUMN isym SYMBOL INDEX");
+                execute("ALTER TABLE " + table + " ADD COLUMN psym SYMBOL INDEX TYPE POSTING");
+                execute("""
+                        INSERT INTO %s (a, ts, sym, i, v, s, bl, sh, d, isym, psym)
+                        SELECT (10 + x)::INT, '2024-01-01T01:00'::TIMESTAMP + x * 60_000_000L, 's' || x, x::INT, 'v' || x, 'str' || x, true, x::SHORT, x * 1.5,
+                            'k' || (x %% 2), 'p' || (x %% 2)
+                        FROM long_sequence(4)
+                        """.formatted(table));
+                // 2024-01-02 keeps 2024-01-01 out of the active partition
+                execute("INSERT INTO " + table + " (a, ts) VALUES (99, '2024-01-02')");
+            }
+            for (int round = 0; round < 2; round++) {
+                execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                assertConvertTwinsEqual();
+                execute("ALTER TABLE pq CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                assertConvertTwinsEqual();
+            }
+            assertQuery("SELECT a, sym, i, v, s, bl, sh, d, isym, psym FROM pq WHERE a BETWEEN 8 AND 12")
+                    .noLeakCheck()
+                    .returns("""
+                            a\tsym\ti\tv\ts\tbl\tsh\td\tisym\tpsym
+                            8\t\tnull\t\t\tfalse\t0\tnull\t\t
+                            9\t\tnull\t\t\tfalse\t0\tnull\t\t
+                            10\t\tnull\t\t\tfalse\t0\tnull\t\t
+                            11\ts1\t1\tv1\tstr1\ttrue\t1\t1.5\tk1\tp1
+                            12\ts2\t2\tv2\tstr2\ttrue\t2\t3.0\tk0\tp0
+                            """);
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
@@ -1384,6 +1428,17 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionExists(tableName, "2024-06-12.6");
             assertPartitionDoesNotExist(tableName, "2024-06-15.3");
         });
+    }
+
+
+    // nat and pq of testConvertRoundTripColumnTopSpanningRowGroups hold the same rows, and the
+    // symbol indexes of pq return the rows its data holds, NULL key included
+    private void assertConvertTwinsEqual() throws Exception {
+        assertSqlCursors("nat", "pq");
+        for (String filter : new String[]{"isym = NULL", "isym = 'k1'", "psym = NULL", "psym = 'p0'"}) {
+            assertSqlCursors("SELECT * FROM nat WHERE " + filter, "SELECT * FROM pq WHERE " + filter);
+        }
+        assertQuery("SELECT * FROM pq WHERE isym = NULL").noLeakCheck().assertsPlanContaining("Index forward scan on: isym");
     }
 
     private void assertPartitionDoesNotExist(String tableName, String partition) {
