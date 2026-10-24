@@ -1016,6 +1016,29 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertIdenticalOnlyWithoutNullDecodesRowGroupOnce() throws Exception {
+        // top 2, 12 rows in row groups of 4: the replay of row 6 alone passes the identity check of row group 1,
+        // which holds no NULL in c1..c3, so the merge loop leaves row group 1 as stored without the key-only merge
+        // prepare that a dedup that drops every O3 row takes: its 9 columns decode once, in the check, and the
+        // partition stays as it is. CHAR: the check does not run, the merge decodes and writes row group 1
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final String partitions = readTxnToString(tableToken, false, true, true, true);
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+            assertDecodedColumnsAndWrittenRows(9, hasNoSentinelType() ? 0 : 4, storedRow(6, 2));
+            if (hasNoSentinelType()) {
+                Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+                Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
+            }
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, -1, null, true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertIdenticalPastTopThenAppendKeepsTop() throws Exception {
         // the replay of row 7, the first row after the top (6): a merge would keep rows 1..6 in place, which
         // ends the top with the prefix; the append keeps it
@@ -1220,6 +1243,58 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             v\tci
+                            9\t9
+                            10\t0
+                            11\t11
+                            """);
+            assertMatchesTwin();
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalCoalescedTieAroundLazyShortNullRewritesRun() throws Exception {
+        // KEYS(ts, v), top 2, 16 rows, row 9 shares the timestamp of row 8 (07:00) across the boundary of row groups 1
+        // and 2, ci changed lazily from INT to SHORT: the file holds INT, and the INT NULL of row 10 in row group 2,
+        // the last row group of the run, reads 0 as SHORT. The replay of rows 8 and 9 merges both row groups as one
+        // run and passes the identity check, the change of row 15 fails the check of row group 3. The run holds a
+        // NULL of a column without NULL in its second row group, which its merge turns into 0, so the merge writes
+        // the run; the check then keeps nothing of row group 3, which the merge prepares after it: 9 + 9 columns in
+        // the check, 9 + 9 in the merge. The commit rewrites the partition, every row of it
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            final String row9 = rowOf(9, tsOf(8), literalOf(9), "9", "'9'", "#s", "9.5m");
+            for (String t : tables()) {
+                createBaseTable(t, "");
+                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 2));
+                addColumns(t);
+                final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (" + UPSERT_COLUMNS + ") VALUES ");
+                for (int v = 3; v <= 16; v++) {
+                    sql.append(v > 3 ? ", " : "").append(v == 9 ? row9 : v == 10 ? lazyShortNullRow10() : storedRow(v, 2));
+                }
+                execute(sql.toString());
+                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            convertToParquet();
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts, v)");
+                execute("ALTER TABLE " + t + " ALTER COLUMN ci TYPE SHORT");
+            }
+            drainWalQueue();
+            assertChunkNullCounts("ci", "2,0,1,0");
+            assertDecodedColumnsAndWrittenRows(
+                    36,
+                    16,
+                    storedRow(8, 2),
+                    row9,
+                    rowOf(15, tsOf(15), o3Literal(), "50", "'50'", "#s", "5.5m")
+            );
+            assertQuery("SELECT v, ci FROM pt WHERE ts IN '" + O3_DAY + "' AND v BETWEEN 8 AND 11 ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tci
+                            8\t8
                             9\t9
                             10\t0
                             11\t11

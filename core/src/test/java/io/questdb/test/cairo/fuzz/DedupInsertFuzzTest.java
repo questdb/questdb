@@ -987,6 +987,23 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return null;
     }
 
+    // The name txn of the partition of the table that starts at partitionLo
+    private long getPartitionNameTxn(String tableName, long partitionLo) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionLo);
+        }
+    }
+
+    // Whether the table has a Parquet partition that starts at partitionLo
+    private boolean isParquetPartition(String tableName, long partitionLo) {
+        try (TableReader reader = getReader(tableName)) {
+            final int partitionIndex = reader.getPartitionIndexByTimestamp(partitionLo);
+            return partitionIndex >= 0
+                    && reader.getPartitionTimestampByIndex(partitionIndex) == partitionLo
+                    && reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET;
+        }
+    }
+
     // The timestamp of a random row of a random Parquet partition that is not the last partition of the table, or
     // LONG_NULL when the table has no such partition
     private long pickRowOfParquetPartitionBeforeLast(Rnd rnd, String tableName) throws SqlException {
@@ -1092,6 +1109,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     // groups of the stored rows, as native materializes the tops, and may leave the row groups of the appended rows
     // as stored. The window covers every stored row of the day, so that no row group under an ended top stays out of
     // the merge. The table must match its twin, also once w changes type to INT, which reads a NULL left in w as NULL.
+    // When the day is a Parquet partition, half the runs append more than three row groups of rows and resend every
+    // appended row but the changed one: whether the append extends the small last row group of the stored rows, whose
+    // merge splits into chunks of at most 1.5 row groups, or adds row groups of its own, a row group of appended rows
+    // only lies before the one of the changed row. Its MERGE reproduces it as stored and holds no NULL, so an update
+    // in place writes fewer rows than the day holds.
     private void replayDayThenChange(Rnd rnd, String tableName, String twinTableName, long dayLo) throws SqlException {
         for (String t : new String[]{tableName, twinTableName}) {
             execute("alter table " + t + " add column w byte", sqlExecutionContext);
@@ -1115,7 +1137,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         if (dayMin == Numbers.LONG_NULL || room < 1) {
             return;
         }
-        final int appendCount = (int) Math.min(1 + rnd.nextInt(64), room);
+        final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+        // whether the merge of the window leaves a row group of appended rows as stored, see above
+        final boolean isUnchangedRowGroupExpected = isParquetPartition(tableName, dayLo) && room > 3L * rowGroupSize && rnd.nextBoolean();
+        final int appendCount = isUnchangedRowGroupExpected
+                ? (int) Math.min(3L * rowGroupSize + 1 + rnd.nextInt(64), room)
+                : (int) Math.min(1 + rnd.nextInt(64), room);
         final long step = Math.max(1, room / (appendCount + 1));
         for (String t : new String[]{tableName, twinTableName}) {
             execute("insert into " + t + " (ts, commit, s, b, w) select (" + dayMax + " + x * " + step + ")::timestamp"
@@ -1124,20 +1151,38 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         final long changedTs = dayMax + appendCount * step;
         // the last row of the window: the last stored row or an appended row before the last one
-        final long windowHi = dayMax + rnd.nextInt(appendCount) * step;
+        final long windowHi = dayMax + (isUnchangedRowGroupExpected ? appendCount - 1 : rnd.nextInt(appendCount)) * step;
         LOG.info().$("replaying a day with a change [table=").$(tableName)
-                .$(", lo=").$ts(dayMin).$(", hi=").$ts(windowHi).$(", changed=").$ts(changedTs).I$();
+                .$(", lo=").$ts(dayMin).$(", hi=").$ts(windowHi).$(", changed=").$ts(changedTs)
+                .$(", appended=").$(appendCount).$(", rowGroupSize=").$(rowGroupSize).I$();
         final long dayRowCount = readLong("select count() from " + tableName + " where " + dayFilter);
+        final long dayNameTxn = getPartitionNameTxn(tableName, dayLo);
+        long writtenRows = 0;
         for (String t : new String[]{tableName, twinTableName}) {
+            final long writtenRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             execute("insert into " + t + " select * from ("
                     + "select ts, commit, s, b, w from " + t + " where ts >= " + dayMin + " and ts <= " + windowHi
                     + " union all select ts, case when commit = 1 then 2 else 1 end commit, s, b, w from " + t
                     + " where ts = " + changedTs + ")");
+            // the tables apply one at a time, so that the rows the table writes count apart from those of the twin
+            drainWalQueue();
+            if (t.equals(tableName)) {
+                writtenRows = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenRowsBefore;
+            }
         }
-        drainWalQueue();
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
         Assert.assertEquals(dayRowCount, readLong("select count() from " + tableName + " where " + dayFilter));
+        // a rewrite, which moves the partition to a new name txn, copies every row group it does not merge
+        if (isUnchangedRowGroupExpected && getPartitionNameTxn(tableName, dayLo) == dayNameTxn) {
+            LOG.info().$("replayed a day in place [table=").$(tableName).$(", writtenRows=").$(writtenRows)
+                    .$(", dayRows=").$(dayRowCount).I$();
+            Assert.assertTrue(
+                    "the merge must leave a row group of appended rows as stored [writtenRows=" + writtenRows
+                            + ", dayRows=" + dayRowCount + ']',
+                    writtenRows < dayRowCount
+            );
+        }
         assertSqlCursors(twinTableName, tableName);
         for (String t : new String[]{tableName, twinTableName}) {
             execute("alter table " + t + " alter column w type int", sqlExecutionContext);
