@@ -216,8 +216,8 @@ public class QwpTudCache implements QuietCloseable {
      * {@link #setSavepoint} took at their first touch in it, keeping the rows of
      * earlier frames; writers it did not touch keep everything. Returns false
      * when earlier frames' rows cannot be kept: the cache is distressed, a
-     * restore failed, or this frame's lookups evicted an entry and discarded its
-     * buffered rows (see evictStaleTud).
+     * restore failed or was refused, or this frame's lookups evicted an entry and
+     * discarded its buffered rows (see evictStaleTud).
      */
     public boolean rollbackToSavepoints(long epoch) {
         if (isDistressed || discardedBufferedRows) {
@@ -231,9 +231,12 @@ public class QwpTudCache implements QuietCloseable {
             }
             try {
                 if (tud.getWriter() instanceof WalWriter walWriter) {
-                    walWriter.rollbackToSavepoint();
+                    if (!walWriter.rollbackToSavepoint()) {
+                        LOG.error().$("no usable savepoint, commit batch lost [table=").$(keys.getQuick(i)).I$();
+                        return false;
+                    }
                 } else {
-                    tud.rollback();
+                    return false;
                 }
             } catch (Throwable th) {
                 LOG.error().$("could not roll back to savepoint [table=").$(keys.getQuick(i)).$(", e=").$(th).I$();

@@ -153,9 +153,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
     // Savepoint inside the open txn (see setSavepoint): the uncommitted row count
-    // and the txn's timestamp bounds when it was taken; -1 = none. Relative to the
-    // txn start, so it survives rollUncommittedToNewSegment, which moves the
-    // uncommitted rows but keeps their order. Any commit or rollback drops it.
+    // and the txn's timestamp bounds when it was taken; -1 = none usable. Relative
+    // to the txn start, so it survives rollUncommittedToNewSegment, which moves
+    // the uncommitted rows but keeps their order. A commit or rollback moves it to
+    // the start of the open txn (0): everything before is committed or gone.
     private long savepointMaxTimestamp;
     private long savepointMinTimestamp;
     private boolean savepointOutOfOrder;
@@ -615,17 +616,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     /**
      * Discards the rows appended since {@link #setSavepoint()} and keeps the rows
-     * before it uncommitted. Without a savepoint in the open transaction -- none
-     * taken, or a commit or rollback since -- rolls back the whole transaction,
-     * which is then exactly what {@link #rollback()} would discard.
+     * before it uncommitted. After a commit or rollback since, the savepoint is
+     * the start of the open transaction, so this rolls the transaction back.
+     * Returns false, changing nothing, when there is no usable savepoint -- none
+     * taken, or one taken while distressed or mid columnar write -- or the writer
+     * is distressed: the caller must then treat the rows as unrecoverable rather
+     * than assume the earlier ones were kept.
      */
-    public void rollbackToSavepoint() {
+    public boolean rollbackToSavepoint() {
         throwIfInColumnarWrite("rollback");
         final long keepRows = savepointRowCount;
-        savepointRowCount = -1;
-        if (keepRows <= 0 || isDistressed() || keepRows > getUncommittedRowCount()) {
+        if (keepRows < 0 || isDistressed() || keepRows > getUncommittedRowCount()) {
+            return false;
+        }
+        if (keepRows == 0) {
             rollback0();
-            return;
+            return true;
         }
         try {
             final long rowCount = currentTxnStartRowNum + keepRows;
@@ -638,6 +644,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             distressed = true;
             throw th;
         }
+        return true;
     }
 
     /**
@@ -678,7 +685,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void rollback0() {
-        savepointRowCount = -1;
+        savepointRowCount = 0;
         try {
             if (!isDistressed() && (inTransaction() || hasDirtyColumns(currentTxnStartRowNum))) {
                 setAppendPosition(currentTxnStartRowNum);
@@ -1802,7 +1809,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void resetDataTxnProperties() {
-        savepointRowCount = -1;
+        savepointRowCount = 0;
         currentTxnStartRowNum = segmentRowCount;
         txnMinTimestamp = Long.MAX_VALUE;
         // Store the max timestamp before resetting for tracking purposes

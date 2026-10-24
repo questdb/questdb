@@ -48,8 +48,8 @@ public class WalWriterSavepointTest extends AbstractCairoTest {
                 w.setSavepoint();
                 w.commit();
                 append(w, 2, "2024-01-01T00:00:02");
-                // The savepoint belonged to the committed txn: roll back this one whole.
-                w.rollbackToSavepoint();
+                // The commit moved the savepoint to the open txn's start: roll it back whole.
+                Assert.assertTrue(w.rollbackToSavepoint());
                 append(w, 3, "2024-01-01T00:00:03");
                 w.commit();
             }
@@ -73,7 +73,7 @@ public class WalWriterSavepointTest extends AbstractCairoTest {
                 // Widens both bounds and turns the txn out of order; all of it must go.
                 append(w, 3, "2024-01-01T00:00:05");
                 append(w, 4, "2024-01-01T00:00:30");
-                w.rollbackToSavepoint();
+                Assert.assertTrue(w.rollbackToSavepoint());
                 w.commit();
             }
             drainWalQueue();
@@ -97,16 +97,36 @@ public class WalWriterSavepointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackToSavepointWithoutOneRollsBackTheTxn() throws Exception {
+    public void testRollbackToSavepointWithoutOneIsRefused() throws Exception {
         assertMemoryLeak(() -> {
             TableToken token = createTable();
             try (WalWriter w = engine.getWalWriter(token)) {
                 append(w, 1, "2024-01-01T00:00:01");
-                w.rollbackToSavepoint();
+                // Never taken: refuse, and change nothing -- a silent full
+                // rollback would drop rows the caller believes it keeps.
+                Assert.assertFalse(w.rollbackToSavepoint());
                 w.commit();
             }
             drainWalQueue();
-            assertQuery("select count() from t").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("count\n0\n");
+            assertQuery("select v from t").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("v\n1\n");
+        });
+    }
+
+    @Test
+    public void testSavepointTakenMidColumnarWriteIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable();
+            try (WalWriter w = engine.getWalWriter(token)) {
+                append(w, 1, "2024-01-01T00:00:01");
+                append(w, 2, "2024-01-01T00:00:02");
+                w.getColumnarRowAppender().beginColumnarWrite(1);
+                w.setSavepoint();
+                w.getColumnarRowAppender().cancelColumnarWrite();
+                Assert.assertFalse(w.rollbackToSavepoint());
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("select v from t").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("v\n1\n2\n");
         });
     }
 
@@ -124,7 +144,7 @@ public class WalWriterSavepointTest extends AbstractCairoTest {
                 row.putLong(0, 3);
                 row.putLong(2, 30);
                 row.append();
-                w.rollbackToSavepoint();
+                Assert.assertTrue(w.rollbackToSavepoint());
                 // The writer keeps working after the restore.
                 row = w.newRow(ts("2024-01-01T00:00:04"));
                 row.putLong(0, 4);
