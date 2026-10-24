@@ -1,0 +1,11 @@
+core/src/main/java/io/questdb/cairo/NnIntTypeDriver.java:67: error: cannot find symbol
+                defineBindVariable,
+                ^
+  symbol:   variable defineBindVariable
+  location: class NnIntTypeDriver
+core/src/main/java/io/questdb/cairo/NnIntTypeDriver.java:69: error: cannot find symbol
+                nullConstant,
+                ^
+  symbol:   variable nullConstant
+  location: class NnIntTypeDriver
+2 errors

@@ -1,0 +1,66 @@
+file	method	form	anchor	n	decision	reason	type
+core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	fixedTargetOpcode	value-test	finalPhysicalDescriptor.Accessoraccessor=PhysicalDescriptor.familyArmOf(driver,"")	1	refused	Parquet conversion	
+core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	unsupportedColumnType	value-test	returnPhysicalDescriptor.noFamilyArm(ColumnType.nameOf(columnType),"")	1	refused	WAL columnar append	
+core/src/main/java/io/questdb/cutlass/line/LineUtils.java	columnKind	value-switch	switch(accessor)	1	refused	ILP column kind: cast error from protocol type	
+core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	value-test	throwPhysicalDescriptor.noFamilyArm(ColumnType.nameOf(columnType),"")	1	refused	QWP WAL append	
+core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	noFamilyArmForColumn	value-test	returnPhysicalDescriptor.noFamilyArm(ColumnType.nameOf(unlike),"")	1	refused	copier conversion	
+core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isFixedSizePrevSlotEligible	value-switch	switch(PhysicalDescriptor.familyArmOf(driver,""))	1	refused	SAMPLE BY FILL(PREV)	
+core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	memoized	value-switch	switch(PhysicalDescriptor.familyArmOf(driver,""))	1	refused	memoized virtual column	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	checkSnapshotFamilyArm	value-test	PhysicalDescriptor.familyArmOf(driver,"")	1	refused	COPY bind snapshot	
+core/src/main/java/io/questdb/griffin/engine/functions/bool/BetweenTimestampFunctionFactory.java	newInstance	value-test	throwPhysicalDescriptor.noFamilyArm(driver.getTypeName(),"")	1	refused	between	
+core/src/main/java/io/questdb/griffin/engine/functions/eq/EqDoubleFunctionFactory.java	dispatchUnaryFunc	value-switch	switch(PhysicalDescriptor.familyArmOf(driver,""))	1	refused	= NULL	
+core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillRecordCursorFactory.java	initPrevCacheSlots	value-test	throwPhysicalDescriptor.noFamilyArm(ColumnType.nameOf(fixedPrevTypeTags.getQuick(i)),"")	1	refused	SAMPLE BY FILL(PREV)	
+core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillValueRecordCursorFactory.java	createPlaceHolderFunction	value-test	finalPhysicalDescriptor.Accessoraccessor=PhysicalDescriptor.familyArmOf(driver,"")	1	refused	SAMPLE BY FILL(value)	
+core/src/main/java/io/questdb/griffin/engine/groupby/SampleByInterpolateRecordCursorFactory.java	SampleByInterpolateRecordCursorFactory	value-test	throwPhysicalDescriptor.noFamilyArm(driver.getTypeName(),"")	1	refused	SAMPLE BY FILL(LINEAR)	
+core/src/main/c/share/converters.cpp	Java_io_questdb_griffin_ConvertersNative_fixedToFixed	c-switch	switch(pack_column_types(srcColumnType,dstColumnType))	1	test	kit:storage.alter	
+core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java	getLoader	tag-switch	switch(ColumnType.tagOf(type))	1	test	kit:storage.alter	
+core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java	LiveViewWindow	value-test	this.anchorOpcode=PhysicalDescriptor.accessorOpcodeOf(anchorValueType)	1	test	kit:lv.window_anchor	
+core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java	isAnchorType	value-switch	switch(driver.getAccessor())	1	test	kit:lv.window_anchor	
+core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isLatestOnKeyType	value-switch	switch(driver.getAccessor())	1	test	kit:sql.latest_by_key	
+core/src/main/java/io/questdb/griffin/SubsampleValidator.java	validatePositionTargetOrThrow	value-test	if(!ColumnType.isIntegral(tag))	1	test	kit:sql.subsample_stride	
+core/src/main/java/io/questdb/griffin/WhereClauseParser.java	isKeyColumnType	value-switch	switch(driver.getAccessor())	1	test	kit:sql.where_key	
+core/src/main/java/io/questdb/griffin/WhereClauseParser.java	resolveScalarBound	value-test	if(!ColumnType.isIntegral(bound.getType()))	1	test	kit:sql.where_bound_const	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setArray0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setBoolean0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setByte0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setChar0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setDate0	tag-switch	switch(ColumnType.tagOf(functionType))	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setDouble0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setFloat0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setInt0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setLong0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setLong2560	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setShort0	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setStr0	tag-switch	switch(ColumnType.tagOf(type))	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setTimestamp0	tag-switch	switch(ColumnType.tagOf(functionType))	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setUuid	tag-switch	switch(functionType)	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setVarchar0	tag-switch	switch(ColumnType.tagOf(functionType))	1	test	kit:sql.bind_value	
+core/src/main/java/io/questdb/griffin/engine/functions/window/CadenceFunctionFactory.java	newInstance0	value-test	if(!ColumnType.isIntegral(strideTypeTag))	1	test	kit:sql.subsample_stride	
+core/src/main/java/io/questdb/griffin/engine/functions/window/UniformFunctionFactory.java	newInstance	value-test	if(!ColumnType.isIntegral(targetTypeTag))	1	test	kit:sql.subsample_target	
+core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillNullRecordCursorFactory.java	createPlaceHolderFunction	value-switch	switch(driver.getAccessor())	1	test	kit:sql.fill_null	
+core/src/main/java/io/questdb/cairo/ColumnType.java	getDriver	tag-table	VAR_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	getDriver	tag-table	TypeDrivers.get(tag)	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	nameOf	tag-table	PSEUDO_TAG[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	nameOf	tag-table	PSEUDO_TAG_NAME[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	pow2SizeOf	tag-table	POW2_SIZE[tagOf(columnType)]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	sizeOfTag	tag-table	SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	pseudoTag	tag-table	PSEUDO_TAG[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	pseudoTag	tag-table	PSEUDO_TAG_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	pseudoTag	tag-table	PSEUDO_TAG_POW2_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	pseudoTag	tag-table	PSEUDO_TAG_NAME[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	PSEUDO_TAG[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	PSEUDO_TAG_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	POW2_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	PSEUDO_TAG_POW2_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	TypeDrivers.get(tag)	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	SIZE[tag]	2	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	POW2_SIZE[tag]	2	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	FIXED_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/ColumnType.java	<init>	tag-table	VAR_SIZE[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/PhysicalDescriptor.java	accessorOpcodeOf	tag-table	ACCESSOR[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/PhysicalDescriptor.java	familyArmOpcodeOf	tag-table	FAMILY_ARM[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/PhysicalDescriptor.java	<init>	tag-table	ACCESSOR[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/PhysicalDescriptor.java	<init>	tag-table	FAMILY_ARM[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/WireKind.java	of	tag-table	BY_TAG[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	
+core/src/main/java/io/questdb/cairo/WireKind.java	<init>	tag-table	BY_TAG[tag]	1	no-change	a table filled in a loop from the type drivers (or the pseudo-tag facts) on first use: a new tag gets its entry from its type driver	

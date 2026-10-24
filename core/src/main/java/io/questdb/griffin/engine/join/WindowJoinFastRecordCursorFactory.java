@@ -195,7 +195,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 for (int i = 0; i < groupByCount; i++) {
                     var func = groupByFunctions.getQuick(i);
                     var funcArg = func.getComputeBatchArg();
-                    var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
+                    var funcArgType = GroupByColumnSink.argTag(func.getComputeBatchArgType());
                     int index = findFunctionWithSameArg(groupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
                     if (index == -1) {
                         groupByFunctionArgs.add(funcArg);

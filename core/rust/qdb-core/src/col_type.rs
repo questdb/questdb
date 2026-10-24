@@ -29,6 +29,81 @@ use std::num::NonZeroI32;
 
 pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
 
+/// How storage moves a column's values: a fixed width, or a var-size layout whose values live in a
+/// data vector addressed through an aux vector. Mirrors Java's `PhysicalDescriptor.Movement`; it
+/// says nothing about NULL.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnMovement {
+    W1,
+    W2,
+    W4,
+    W8,
+    W16,
+    W32,
+    Var,
+}
+
+/// How a column type represents NULL, as far as native code needs it; mirrors Java's
+/// `TypeDriver.getNullPolicy()` for the stored types. `None` for the types where every bit pattern
+/// is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as default values; `Sentinel`
+/// for every other type, which keeps its NULL in a reserved value.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnNullPolicy {
+    None,
+    Sentinel,
+}
+
+/// The arithmetic tier of a column type: width, integer or floating-point representation, and
+/// signedness. The mirror of the Java type drivers' `PhysicalDescriptor.Arithmetic`. `Wide` is a
+/// 16- or 32-byte value with comparators of its own; `None` has no arithmetic order (symbol keys,
+/// var-size values).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnArithmetic {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    F32,
+    F64,
+    Wide,
+    None,
+}
+
+impl ColumnArithmetic {
+    /// Whether values of this tier are unsigned integers, which compare as unsigned.
+    pub const fn is_unsigned_int(self) -> bool {
+        match self {
+            ColumnArithmetic::U8 | ColumnArithmetic::U16 | ColumnArithmetic::U32 => true,
+            ColumnArithmetic::I8
+            | ColumnArithmetic::I16
+            | ColumnArithmetic::I32
+            | ColumnArithmetic::I64
+            | ColumnArithmetic::F32
+            | ColumnArithmetic::F64
+            | ColumnArithmetic::Wide
+            | ColumnArithmetic::None => false,
+        }
+    }
+}
+
+impl ColumnMovement {
+    /// The value width in bytes, or None for a var-size layout.
+    pub const fn size(self) -> Option<usize> {
+        match self {
+            ColumnMovement::W1 => Some(1),
+            ColumnMovement::W2 => Some(2),
+            ColumnMovement::W4 => Some(4),
+            ColumnMovement::W8 => Some(8),
+            ColumnMovement::W16 => Some(16),
+            ColumnMovement::W32 => Some(32),
+            ColumnMovement::Var => None,
+        }
+    }
+}
+
 // Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -63,6 +138,7 @@ pub enum ColumnTypeTag {
     Decimal128 = 32,
     Decimal256 = 33,
     VarcharSlice = 40,
+    // type-registration: rust tag (see utils/type-probe/README.md)
 }
 
 impl ColumnTypeTag {
@@ -109,36 +185,128 @@ impl ColumnTypeTag {
     /// If the type is var size, returns None.
     /// N.B. Symbol columns are _also_ considered fixed size.
     pub const fn fixed_size(self) -> Option<usize> {
+        self.movement().size()
+    }
+
+    /// How storage moves this tag's values; `fixed_size()` reads the width from it.
+    pub const fn movement(self) -> ColumnMovement {
         match self {
             ColumnTypeTag::Boolean
             | ColumnTypeTag::GeoByte
             | ColumnTypeTag::Byte
-            | ColumnTypeTag::Decimal8 => Some(1),
+            | ColumnTypeTag::Decimal8 => ColumnMovement::W1,
 
             ColumnTypeTag::Short
             | ColumnTypeTag::GeoShort
             | ColumnTypeTag::Char
-            | ColumnTypeTag::Decimal16 => Some(2),
+            | ColumnTypeTag::Decimal16 => ColumnMovement::W2,
 
             ColumnTypeTag::Float
             | ColumnTypeTag::Int
             | ColumnTypeTag::IPv4
             | ColumnTypeTag::GeoInt
             | ColumnTypeTag::Symbol
-            | ColumnTypeTag::Decimal32 => Some(4),
+            | ColumnTypeTag::Decimal32 => ColumnMovement::W4,
 
             ColumnTypeTag::Double
             | ColumnTypeTag::Long
             | ColumnTypeTag::Date
             | ColumnTypeTag::GeoLong
             | ColumnTypeTag::Timestamp
-            | ColumnTypeTag::Decimal64 => Some(8),
+            | ColumnTypeTag::Decimal64 => ColumnMovement::W8,
 
-            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => Some(16),
+            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => {
+                ColumnMovement::W16
+            }
 
-            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
+            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => ColumnMovement::W32,
 
-            _ => None,
+            ColumnTypeTag::String
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::VarcharSlice => ColumnMovement::Var,
+        }
+    }
+
+    /// How this tag represents NULL; the Parquet read and write paths key on it.
+    pub const fn null_policy(self) -> ColumnNullPolicy {
+        match self {
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Char => ColumnNullPolicy::None,
+
+            ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Float
+            | ColumnTypeTag::Double
+            | ColumnTypeTag::String
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Long256
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::GeoInt
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Uuid
+            | ColumnTypeTag::Long128
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::Decimal8
+            | ColumnTypeTag::Decimal16
+            | ColumnTypeTag::Decimal32
+            | ColumnTypeTag::Decimal64
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256
+            | ColumnTypeTag::VarcharSlice => ColumnNullPolicy::Sentinel,
+        }
+    }
+
+    /// The arithmetic tier of this tag: how its values compute, compare and sort. Every tag has
+    /// an arm, so a new tag stops the build here; the Parquet pruning decides unsigned
+    /// comparison from it.
+    pub const fn arithmetic(self) -> ColumnArithmetic {
+        match self {
+            ColumnTypeTag::Byte | ColumnTypeTag::GeoByte | ColumnTypeTag::Decimal8 => {
+                ColumnArithmetic::I8
+            }
+
+            ColumnTypeTag::Short | ColumnTypeTag::GeoShort | ColumnTypeTag::Decimal16 => {
+                ColumnArithmetic::I16
+            }
+
+            ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::Decimal32 => {
+                ColumnArithmetic::I32
+            }
+
+            ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Decimal64 => ColumnArithmetic::I64,
+
+            ColumnTypeTag::Boolean => ColumnArithmetic::U8,
+            ColumnTypeTag::Char => ColumnArithmetic::U16,
+            ColumnTypeTag::IPv4 => ColumnArithmetic::U32,
+            ColumnTypeTag::Float => ColumnArithmetic::F32,
+            ColumnTypeTag::Double => ColumnArithmetic::F64,
+
+            ColumnTypeTag::Long256
+            | ColumnTypeTag::Uuid
+            | ColumnTypeTag::Long128
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256 => ColumnArithmetic::Wide,
+
+            ColumnTypeTag::String
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::VarcharSlice => ColumnArithmetic::None,
         }
     }
 
@@ -618,6 +786,84 @@ mod tests {
         assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
         assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
         assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
+    }
+
+    #[test]
+    fn test_unsigned_arithmetic_tiers() {
+        // as the Java type drivers answer: BOOLEAN is U8, CHAR U16 and IPv4 U32; every other
+        // tag is signed, floating-point, wide or has no arithmetic order
+        for tag in ColumnTypeTag::VALUES {
+            let expected = matches!(
+                tag,
+                ColumnTypeTag::Boolean | ColumnTypeTag::Char | ColumnTypeTag::IPv4
+            );
+            assert_eq!(tag.arithmetic().is_unsigned_int(), expected, "{tag:?}");
+        }
+        assert_eq!(ColumnTypeTag::IPv4.arithmetic(), ColumnArithmetic::U32);
+        assert_eq!(ColumnTypeTag::Char.arithmetic(), ColumnArithmetic::U16);
+        assert_eq!(ColumnTypeTag::Int.arithmetic(), ColumnArithmetic::I32);
+    }
+
+    #[test]
+    fn test_null_policy() {
+        // the types Java maps to NullPolicy.NONE; every other tag is Sentinel
+        for tag in ColumnTypeTag::VALUES {
+            let expected = if matches!(
+                tag,
+                ColumnTypeTag::Boolean
+                    | ColumnTypeTag::Byte
+                    | ColumnTypeTag::Short
+                    | ColumnTypeTag::Char
+            ) {
+                ColumnNullPolicy::None
+            } else {
+                ColumnNullPolicy::Sentinel
+            };
+            assert_eq!(tag.null_policy(), expected, "{}", tag.name());
+        }
+    }
+
+    #[test]
+    fn test_fixed_size_matches_listed_widths() {
+        // each tag's width, listed independently of movement()
+        let expected = |tag: ColumnTypeTag| -> Option<usize> {
+            match tag {
+                ColumnTypeTag::Boolean
+                | ColumnTypeTag::GeoByte
+                | ColumnTypeTag::Byte
+                | ColumnTypeTag::Decimal8 => Some(1),
+                ColumnTypeTag::Short
+                | ColumnTypeTag::GeoShort
+                | ColumnTypeTag::Char
+                | ColumnTypeTag::Decimal16 => Some(2),
+                ColumnTypeTag::Float
+                | ColumnTypeTag::Int
+                | ColumnTypeTag::IPv4
+                | ColumnTypeTag::GeoInt
+                | ColumnTypeTag::Symbol
+                | ColumnTypeTag::Decimal32 => Some(4),
+                ColumnTypeTag::Double
+                | ColumnTypeTag::Long
+                | ColumnTypeTag::Date
+                | ColumnTypeTag::GeoLong
+                | ColumnTypeTag::Timestamp
+                | ColumnTypeTag::Decimal64 => Some(8),
+                ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => {
+                    Some(16)
+                }
+                ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
+                _ => None,
+            }
+        };
+        for tag in ColumnTypeTag::VALUES {
+            assert_eq!(tag.fixed_size(), expected(tag), "{}", tag.name());
+            assert_eq!(
+                tag.is_var_size(),
+                tag.movement() == ColumnMovement::Var,
+                "{}",
+                tag.name()
+            );
+        }
     }
 
     #[test]

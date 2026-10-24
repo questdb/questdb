@@ -24,12 +24,15 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class QueryExportTest extends AbstractCairoTest {
@@ -125,6 +128,51 @@ public class QueryExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExportLong128AnswersBadRequest() throws Exception {
+        getSimpleTester().run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (k VARCHAR, v LONG128)");
+            engine.execute("INSERT INTO t VALUES ('a', to_long128(1, 2)), ('b', to_long128(3, 4))");
+
+            // The client never reconnects on its own, so a request that succeeds after the refusal
+            // proves that the server kept the connection open.
+            final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration() {
+                @Override
+                public boolean fixBrokenConnection() {
+                    return false;
+                }
+            });
+            try (TestHttpClient testHttpClient = new TestHttpClient(httpClient)) {
+                testHttpClient.setKeepConnection(true);
+                // CSV is the default format, and fmt=csv names it
+                for (String format : new String[]{null, "csv"}) {
+                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                    req.GET().url("/exp").query("query", "SELECT k, v FROM t");
+                    if (format != null) {
+                        req.query("fmt", format);
+                    }
+                    Assert.assertEquals("400", testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null));
+                    TestUtils.assertEquals(
+                            "{\"query\":\"SELECT k, v FROM t\",\"error\":\"[-1] column type not supported [column=v, type=LONG128]\",\"position\":0}",
+                            testHttpClient.sink
+                    );
+                }
+
+                HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                req.GET().url("/exp").query("query", "SELECT k FROM t");
+                Assert.assertEquals("200", testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null));
+                TestUtils.assertEquals(
+                        """
+                                "k"\r
+                                "a"\r
+                                "b"\r
+                                """,
+                        testHttpClient.sink
+                );
+            }
+        });
+    }
+
+    @Test
     public void testExportParquetFuzzDisabled() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
@@ -168,5 +216,48 @@ public class QueryExportTest extends AbstractCairoTest {
                             }
                         }
                 );
+    }
+
+    @Test
+    public void testExportTextArrayAnswersBadRequest() throws Exception {
+        getSimpleTester().run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+            // The client never reconnects on its own, so a request that succeeds after the refusal
+            // proves that the server kept the connection open.
+            final HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration() {
+                @Override
+                public boolean fixBrokenConnection() {
+                    return false;
+                }
+            });
+            try (TestHttpClient testHttpClient = new TestHttpClient(httpClient)) {
+                testHttpClient.setKeepConnection(true);
+                final String[][] refusals = {
+                        {"SELECT 1 x, '{a,b}'::text[] ta", "ta"},
+                        {"SELECT current_schemas(false) cs", "cs"}
+                };
+                for (String[] refusal : refusals) {
+                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                    req.GET().url("/exp").query("query", refusal[0]);
+                    Assert.assertEquals("400", testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null));
+                    TestUtils.assertEquals(
+                            "{\"query\":\"" + refusal[0] + "\",\"error\":\"[-1] column type not supported [column="
+                                    + refusal[1] + ", type=text[]]\",\"position\":0}",
+                            testHttpClient.sink
+                    );
+                }
+
+                // a NULL projection has no wire kind either, and still exports as an empty cell
+                HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                req.GET().url("/exp").query("query", "SELECT NULL n");
+                Assert.assertEquals("200", testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null));
+                TestUtils.assertEquals(
+                        """
+                                "n"\r
+                                \r
+                                """,
+                        testHttpClient.sink
+                );
+            }
+        });
     }
 }

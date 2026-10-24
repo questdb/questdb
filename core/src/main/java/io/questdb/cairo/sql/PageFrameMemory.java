@@ -24,8 +24,10 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.NullPolicy;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
@@ -121,6 +123,14 @@ public interface PageFrameMemory {
      * Returns row ID offset used to compute real row IDs.
      */
     long getRowIdOffset();
+
+    /**
+     * Returns the NULL policy of the stored source column for a fixed-to-var type-cast
+     * column (a non-negative {@link #getSourceColumnType(int)}), read from the Parquet
+     * file's per-column accessor; null for any other column.
+     */
+    @Nullable
+    NullPolicy getSourceColumnNullPolicy(int columnIndex);
 
     /**
      * Returns the source column type tag for a type-cast column, or -1 if

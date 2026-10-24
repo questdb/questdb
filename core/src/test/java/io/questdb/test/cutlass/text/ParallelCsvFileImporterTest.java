@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
@@ -859,6 +860,27 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         Assert.fail();
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "cannot import text into BINARY column [index=3]");
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testImportFileFailsWhenImportingTextIntoDoubleArrayColumn() throws Exception {
+        executeWithPool(
+                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    execute(compiler, "CREATE TABLE tab36a (ts TIMESTAMP, line STRING, d DOUBLE, description DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY;", sqlExecutionContext);
+
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                        importer.of("tab36a", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                        Assert.fail();
+                    } catch (Exception e) {
+                        TestUtils.assertContains(e.getMessage(), "no adapter for type [id=" + ColumnType.encodeArrayType(ColumnType.DOUBLE, 1) + ", name=DOUBLE[]]");
+                    }
+                    // the failed import released the table's writer
+                    try (TableWriter writer = engine.getWriter(engine.verifyTableName("tab36a"), "test")) {
+                        Assert.assertEquals(0, writer.size());
                     }
                 }
         );
@@ -2161,7 +2183,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                             false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
                                             false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
                                             false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
-                                            false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
                                             true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
                                             """ //date format discovery is flawed
                                     //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values

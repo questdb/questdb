@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
@@ -99,6 +100,20 @@ public class GroupByColumnSink implements Mutable {
         return ptr;
     }
 
+    /**
+     * The tag {@link #put} and {@link #putAt} switch on for a batch argument of this type: the
+     * opcode of its accessor family ({@link PhysicalDescriptor.Accessor#opcode()}), or the type's
+     * own tag when it has none. Known inconsistency: for STRING, SYMBOL, VARCHAR, LONG256, BINARY,
+     * ARRAY, INTERVAL, VARCHAR_SLICE and the pseudo types both methods append nothing and do not
+     * fail.
+     */
+    public static short argTag(int argType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(argType);
+        // a type without an accessor family (a pseudo type, VARCHAR_SLICE) keeps its tag, which
+        // put() and putAt() have no arm for
+        return accessor != null ? accessor.opcode() : ColumnType.tagOf(argType);
+    }
+
     public void put(Record record, Function function, short argType) {
         switch (argType) {
             case ColumnType.BYTE:
@@ -169,6 +184,15 @@ public class GroupByColumnSink implements Mutable {
                 function.getDecimal256(record, decimal256);
                 putDecimal256();
                 break;
+            case ColumnType.UNDEFINED, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.LONG256, ColumnType.BINARY,
+                 ColumnType.CURSOR, ColumnType.VAR_ARG, ColumnType.RECORD, ColumnType.GEOHASH, ColumnType.VARCHAR,
+                 ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
+                 ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
+                 ColumnType.NULL:
+                // the sink appends nothing for these types; see argTag()
+                break;
+            default:
+                throw noArm(argType);
         }
     }
 
@@ -242,6 +266,15 @@ public class GroupByColumnSink implements Mutable {
                 function.getDecimal256(record, decimal256);
                 putDecimal256At(index);
                 break;
+            case ColumnType.UNDEFINED, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.LONG256, ColumnType.BINARY,
+                 ColumnType.CURSOR, ColumnType.VAR_ARG, ColumnType.RECORD, ColumnType.GEOHASH, ColumnType.VARCHAR,
+                 ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
+                 ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
+                 ColumnType.NULL:
+                // the sink writes nothing for these types; see argTag()
+                break;
+            default:
+                throw noArm(argType);
         }
     }
 
@@ -299,6 +332,14 @@ public class GroupByColumnSink implements Mutable {
 
     public long startAddress() {
         return ptr + HEADER_SIZE;
+    }
+
+    /**
+     * Thrown for a tag that {@link #argTag} returns but neither {@link #put} nor {@link #putAt}
+     * lists: a new accessor family needs an arm in both.
+     */
+    private static IllegalStateException noArm(short argType) {
+        return new IllegalStateException("no column sink arm [type=" + ColumnType.nameOf(argType) + "]");
     }
 
     private void putByte(byte value) {

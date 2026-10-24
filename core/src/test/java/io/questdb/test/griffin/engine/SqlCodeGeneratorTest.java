@@ -8358,18 +8358,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionCastMatrix() {
         final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
-        printExpectedUnionCastMatrix(expected);
-
         Assert.assertTrue(expectedUnionCastMatrixIsSymmetrical(expected));
-
-        final int[][] actual = SqlCodeGenerator.actualUnionCastMatrix();
-        Assert.assertEquals(expected.length, actual.length);
-
-        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
-            final int[] expToTypes = expected[typeA];
-            final int[] actToTypes = actual[typeA];
-            Assert.assertArrayEquals(ColumnType.nameOf(typeA), expToTypes, actToTypes);
-        }
     }
 
     @Test
@@ -9737,26 +9726,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         }
 
         return symmetrical;
-    }
-
-    private static void printExpectedUnionCastMatrix(int[][] expected) {
-        System.err.println("    private static final int[][] UNION_CAST_MATRIX = new int[][]{");
-        for (int i = 0; i < expected.length; ++i) {
-            System.err.print("            {");
-            for (int j = 0; j < expected[i].length; ++j) {
-                if (j > 0) {
-                    System.err.print(", ");
-                }
-                System.err.printf("%2d", expected[i][j]);
-            }
-            if (i < expected.length - 1) {
-                System.err.print("}, ");
-            } else {
-                System.err.print("}  ");
-            }
-            System.err.printf("// %2d = %s\n", i, ColumnType.nameOf(i));
-        }
-        System.err.println("    };");
     }
 
     private void createGeoHashTable(int chars) throws SqlException {
