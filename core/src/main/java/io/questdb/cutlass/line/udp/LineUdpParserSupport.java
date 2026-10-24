@@ -114,6 +114,14 @@ public class LineUdpParserSupport {
     }
 
     /**
+     * Tells whether a field value is one of the spellings ILP over TCP parses as an infinite float:
+     * Numbers.parseDouble() takes Infinity, case-sensitive, with an optional sign.
+     */
+    public static boolean isInfinity(CharSequence value) {
+        return Chars.equals(value, "Infinity") || Chars.equals(value, "-Infinity") || Chars.equals(value, "+Infinity");
+    }
+
+    /**
      * Tells whether a quoted string field holds a LONG256 in the form ILP over TCP stores from a
      * string: 0x and an even count of hex digits, at most 64, between the quotes, as
      * {@link Numbers#extractLong256(CharSequence, Long256Acceptor)} takes it.
@@ -251,12 +259,6 @@ public class LineUdpParserSupport {
         } else {
             putNullValue(row, columnIndex, columnType);
         }
-    }
-
-    // the spellings ILP over TCP parses as a float: Numbers.parseDouble() takes Infinity,
-    // case-sensitive, with an optional sign
-    private static boolean isInfinity(CharSequence value) {
-        return Chars.equals(value, "Infinity") || Chars.equals(value, "-Infinity") || Chars.equals(value, "+Infinity");
     }
 
     private static boolean isTrue(CharSequence value) {

@@ -177,6 +177,31 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
     }
 
     @Test
+    public void testInfinityFieldStoredInSymbolColumn() throws Exception {
+        // earlier versions typed an Infinity field as SYMBOL, so a column may be SYMBOL; the field is
+        // a float now and still goes into that column as text, with the line's other columns
+        testColumnType(
+                ColumnType.SYMBOL,
+                """
+                        column\tlocation\ttimestamp
+                        Infinity\tsp052w\t1970-01-01T00:00:01.000000Z
+                        -Infinity\tsp052w\t1970-01-01T00:00:02.000000Z
+                        """,
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Double.POSITIVE_INFINITY)
+                            .field(locationColumnName, "sp052w")
+                            .$(1_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, Double.NEGATIVE_INFINITY)
+                            .field(locationColumnName, "sp052w")
+                            .$(2_000_000_000);
+                    sender.flush();
+                }
+        );
+    }
+
+    @Test
     public void testInfinityIsAFloatField() {
         // the spellings ILP over TCP parses as a float: Infinity, case-sensitive, with an
         // optional sign

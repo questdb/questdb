@@ -474,8 +474,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             columnTypeTag == ColumnType.LONG256 && LineUdpParserSupport.isLong256String(value) ||
                             isForField &&
                                     (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
-                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
-                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT;
+                    // an Infinity spelling, which earlier versions typed as SYMBOL, still goes into a
+                    // SYMBOL column as text; the float type follows the configured default
+                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT
+                            || columnTypeTag == ColumnType.SYMBOL && LineUdpParserSupport.isInfinity(value);
+                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT
+                            || columnTypeTag == ColumnType.SYMBOL && LineUdpParserSupport.isInfinity(value);
                     case ColumnType.SYMBOL -> columnTypeTag == ColumnType.SYMBOL;
                     case ColumnType.LONG256 -> columnTypeTag == ColumnType.LONG256;
                     case ColumnType.TIMESTAMP -> columnTypeTag == ColumnType.TIMESTAMP;
