@@ -1026,6 +1026,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         FilesFacade testFf = new TestFilesFacadeImpl() {
             @Override
+            public boolean allocate(long fd, long allocatedSize, long size) {
+                // production grows files by range; keep this facade's allocate(fd, size) hook on that path
+                return allocate(fd, size);
+            }
+
+            @Override
             public boolean allocate(long fd, long size) {
                 if (tracking.get() && fd == trackedKeyFd[0]) {
                     allocateCount.incrementAndGet();

@@ -305,7 +305,13 @@ public final class TableUtils {
      * Use it for files that are appended to later.
      */
     public static void allocateDiskSpaceAligned(FilesFacade ff, long fd, long size) {
-        if (ff.length(fd) < size && !ff.allocate(fd, alignedSize(size))) {
+        // Allocate only the growth. posix_fallocate from offset 0 costs time in proportion to the
+        // whole file (tmpfs walks every page, XFS opens a transaction per extent, ext4 journals
+        // the inode), and MemoryCMARWImpl extends append files one segment at a time: with the
+        // 4 KiB segment of a small file this ran once per ~100 one-row WAL txns over a txn log
+        // that was tens of MB, and ingest fell ~60% over the first few million rows.
+        long allocated = ff.length(fd);
+        if (allocated < size && !ff.allocate(fd, allocated, alignedSize(size))) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
@@ -314,7 +320,8 @@ public final class TableUtils {
      * Grows the file to exactly {@code size} bytes if it is shorter. Use it for small files that never grow.
      */
     public static void allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long size) {
-        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
+        long allocated = ff.length(fd);
+        if (allocated < size && !ff.allocate(fd, allocated, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
