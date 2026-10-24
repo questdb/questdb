@@ -2755,10 +2755,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testDeferredFramesNotAckedUntilCommit() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                // 20 deferred frames -- more than the server's original ACK_BATCH_SIZE
-                // of 8. Before the deferred-ack fix, cumulative OK acks flowed
-                // mid-group and the store-and-forward client trimmed slots
-                // whose rows the server could still roll back.
+                // 20 deferred frames, flushed one at a time. Before the deferred-ack
+                // fix, cumulative OK acks flowed mid-group and the store-and-forward
+                // client trimmed slots whose rows the server could still roll back.
+                // The ack batch threshold is not what exposes that: each flush lands
+                // in its own receive pass, and the server flushes any pending ack
+                // when a pass drains, so one frame advancing the watermark is enough.
                 sender.setDeferCommit(true);
                 for (int i = 0; i < 20; i++) {
                     sender.table("defer_no_ack")
