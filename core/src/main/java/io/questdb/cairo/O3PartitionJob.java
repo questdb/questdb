@@ -2470,6 +2470,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // break isAllCopied): leave the partition as it is.
                         isReplaceNoop = true;
                         resultMinTimestamp = O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, 0);
+                        O3ParquetCounters.onReplaceNoop();
                         LOG.info().$("parquet replace commit leaves partition unchanged [table=").$(tableWriter.getTableToken())
                                 .$(", partition=").$ts(partitionTimestamp)
                                 .I$();
@@ -2477,6 +2478,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     if (isAllDropped) {
                         isReplaceRemoval = true;
+                        O3ParquetCounters.onReplaceRemoval();
                         LOG.info().$("parquet replace commit removes partition [table=").$(tableWriter.getTableToken())
                                 .$(", partition=").$ts(partitionTimestamp)
                                 .I$();
@@ -2867,6 +2869,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         .$(", rows=").$(droppedRows)
                                         .$(", inPlace=").$(!isRewrite)
                                         .I$();
+                                O3ParquetCounters.onDrop(!isRewrite);
                                 removedRowCount += droppedRows;
                                 // replace only; deferral is dedup only, so nothing is pending
                                 assert pendingCopyRowGroups == 0;
@@ -2898,6 +2901,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isRewrite = false;
                         removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
                     }
+                    O3ParquetCounters.onDedupIdentical();
                     LOG.info().$("parquet dedup commit identical to partition, partition unchanged [table=").$(tableWriter.getTableToken())
                             .$(", partition=").$ts(partitionTimestamp)
                             .I$();
@@ -2910,6 +2914,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 newParquetSize = partitionUpdater.updateFileMetadata();
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
+                O3ParquetCounters.onPartitionWritten(isRewrite);
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
                         .$(", partition=").$ts(partitionTimestamp)

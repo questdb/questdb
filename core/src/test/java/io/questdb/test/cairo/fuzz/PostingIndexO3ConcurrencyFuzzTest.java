@@ -148,9 +148,17 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(true, 300_000, 300, 20, 10, 1000, 50_000, 12);
         setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
+        // The follow-up list targets a partition of about 100_000 rows: at the default row group
+        // size it is one row group and every replace rewrites it, so the in-place index rebuild
+        // under a new column name txn (versionRebuiltParquetIndexes, the deferred purge) never runs.
+        setRndParquetO3Properties(rnd, 1_000, 20_000);
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
         runFuzz(rnd, (tableNameNoWal, tableNameWal, tableNameWalParallel) ->
                 prepareReplaceOnParquetList(rnd, tableNameNoWal, tableNameWal, tableNameWalParallel)
         );
+        counts.log(LOG, getTestName());
+        // the follow-up list writes into a parquet partition's day on both WAL tables
+        Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() > 0);
     }
 
     @Test

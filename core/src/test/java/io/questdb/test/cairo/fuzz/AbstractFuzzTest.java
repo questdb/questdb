@@ -517,6 +517,46 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Draws the parquet O3 rewrite gate (dead-bytes ratio and absolute max) for the run, one of:
+     * the shipped defaults; low thresholds (ratio 0.1-0.5, max 4-64 KiB) that send most merges
+     * to rewrite mode; or no dead-bytes rewrite at all, so every merge that can update in place
+     * does, and only a single row group, a schema change or a boundary tie forces a rewrite.
+     * Without the third mode a fuzz test whose commits re-encode a large share of a partition
+     * crosses the projected-dead-bytes gate on nearly every commit and never runs in place.
+     */
+    protected void setRndParquetRewriteGate(Rnd rnd) {
+        switch (rnd.nextInt(3)) {
+            case 0 -> LOG.info().$("parquet rewrite gate: defaults").$();
+            case 1 -> {
+                final double ratio = 0.1 + rnd.nextDouble() * 0.4;
+                final long maxBytes = 4096 + rnd.nextLong(60_000);
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(ratio));
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, maxBytes);
+                LOG.info().$("parquet rewrite gate: low [ratio=").$(ratio).$(", maxBytes=").$(maxBytes).I$();
+            }
+            default -> {
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+                LOG.info().$("parquet rewrite gate: never on dead bytes").$();
+            }
+        }
+    }
+
+    /**
+     * A parquet row group size small enough that the partitions of a fuzz run with a few
+     * thousand rows each hold several row groups, plus a random rewrite gate. A partition
+     * with one row group always rewrites, so at the default row group size (100_000) none of
+     * the in-place machinery runs: no in-place DROP, no filter-only MERGE in update mode, no
+     * index versioning under a new column name txn.
+     */
+    protected void setRndParquetO3Properties(Rnd rnd, int minRowGroupSize, int maxRowGroupSize) {
+        final int rowGroupSize = minRowGroupSize + rnd.nextInt(maxRowGroupSize - minRowGroupSize + 1);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+        LOG.info().$("parquet row group size: ").$(rowGroupSize).$();
+        setRndParquetRewriteGate(rnd);
+    }
+
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb

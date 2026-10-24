@@ -27,6 +27,7 @@ package io.questdb.test.cairo.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -35,6 +36,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -52,10 +54,12 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -741,6 +745,54 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemovedPartitionDirFaultLeavesItToPurgeJob() throws Exception {
+        // The replace covers every row of 2024-01-02, so the commit removes that parquet
+        // partition. Removing its directory after the commit fails once: the table must not
+        // see the partition, and the async partition purge removes the directory.
+        final AtomicReference<String> pqDir = new AtomicReference<>();
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicInteger faults = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean unlinkOrRemove(Path path, Log log) {
+                final String dir = pqDir.get();
+                if (armed.get()
+                        && dir != null
+                        && Utf8s.containsAscii(path, dir)
+                        && Utf8s.containsAscii(path, "2024-01-02")
+                        && armed.compareAndSet(true, false)) {
+                    faults.incrementAndGet();
+                    return false;
+                }
+                return super.unlinkOrRemove(path, log);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createTwins(false);
+            pqDir.set(engine.verifyTableName("pq").getDirName());
+            armed.set(true);
+            replaceBoth("2024-01-02T00:00:00.000000Z", "2024-01-02T23:59:59.999999Z");
+            Assert.assertEquals("fault must fire exactly once", 1, faults.get());
+            assertTwinsEqual();
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('pq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2024-01-01\t12\ttrue
+                            2024-01-03\t12\tfalse
+                            """);
+            Assert.assertTrue("the directory stays until the purge", partitionDirCount("pq", "2024-01-02") > 0);
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertEquals("the purge must remove the directory", 0, partitionDirCount("pq", "2024-01-02"));
+            assertTwinsEqual();
+        });
+    }
+
+    @Test
     public void testRemovesWholeParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
@@ -856,6 +908,37 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                             id\tts\tv\tsym\td
                             1\t2024-01-02T05:00:00.000000Z\ta\ts1\t1.5
                             """);
+        });
+    }
+
+    @Test
+    public void testRewriteFaultRemovesNewDirectoryThenConverges() throws Exception {
+        // At the default row group size each parquet partition is one row group, so a
+        // replace inside it rewrites the file into a new txn-named directory. The new
+        // data.parquet opens read-only, so the rewrite's first write fails: the job must
+        // remove the new directory and publish nothing, and the retry after RESUME WAL
+        // must converge.
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicInteger faults = new AtomicInteger();
+        assertMemoryLeak(readOnlyParquetOnce(armed, faults), () -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, (String) null);
+            createTwins(false);
+            Assert.assertEquals(1, parquetRowGroupCount("pq", 0));
+            final long txnBefore = partitionNameTxn("pq", 0);
+            final long sizeBefore = parquetFileSize("pq", 0);
+            final int dirsBefore = partitionDirCount("pq", "2024-01-01");
+            armed.set(true);
+            replaceBoth("2024-01-01T08:30:00.000000Z", "2024-01-01T11:30:00.000000Z", "2024-01-01T09:00:00.000000Z");
+            Assert.assertEquals("fault must fire exactly once", 1, faults.get());
+            Assert.assertTrue("pq must suspend", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
+            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(sizeBefore, parquetFileSize("pq", 0));
+            Assert.assertEquals("the failed rewrite must remove its directory", dirsBefore, partitionDirCount("pq", "2024-01-01"));
+
+            execute("ALTER TABLE pq RESUME WAL");
+            drainWalQueue();
+            assertTwinsEqual();
+            Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
         });
     }
 
@@ -1075,6 +1158,21 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Counts the table's directories for a day (the day and its txn-named versions).
+     */
+    private static int partitionDirCount(String table, String day) {
+        final String[] names = new File(configuration.getDbRoot().toString(), engine.verifyTableName(table).getDirName()).list();
+        Assert.assertNotNull(names);
+        int count = 0;
+        for (String name : names) {
+            if (name.startsWith(day)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static long partitionNameTxn(String table, int partitionIndex) {
         try (TableReader reader = engine.getReader(table)) {
             return reader.getTxFile().getPartitionNameTxn(partitionIndex);
@@ -1089,8 +1187,10 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
 
     /**
      * The first data.parquet opened read-write while armed is handed a read-only fd
-     * instead, so the O3 job's first write to it fails. The fault fires once and
-     * disarms, so the rollback's own openRW of data.parquet still succeeds.
+     * instead, so the O3 job's first write to it fails. The fd bypasses the fd cache:
+     * the job detaches it for the Rust writer, and a cached fd cannot be detached, which
+     * would fail the open instead of the write. The fault fires once and disarms, so the
+     * rollback's own openRW of data.parquet still succeeds.
      */
     private static FilesFacade readOnlyParquetOnce(AtomicBoolean armed, AtomicInteger faults) {
         return new TestFilesFacadeImpl() {
@@ -1100,7 +1200,7 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                     faults.incrementAndGet();
                     final long rwFd = super.openRW(name, opts);
                     super.close(rwFd);
-                    return super.openRO(name);
+                    return super.openRONoCache(name);
                 }
                 return super.openRW(name, opts);
             }

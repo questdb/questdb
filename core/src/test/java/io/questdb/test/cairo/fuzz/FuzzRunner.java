@@ -58,7 +58,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -116,6 +115,7 @@ public class FuzzRunner {
     private int fuzzRowCount;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
+    private int ioFailuresObserved;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -320,6 +320,7 @@ public class FuzzRunner {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
+                        ioFailuresObserved++;
                         LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         writer = Misc.free(writer);
 
@@ -355,6 +356,7 @@ public class FuzzRunner {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
+                        ioFailuresObserved++;
                         LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         rdr1 = Misc.free(rdr1);
                         rdr2 = Misc.free(rdr2);
@@ -428,6 +430,60 @@ public class FuzzRunner {
         executeCoveringIndexOps(transactions, tableName);
         drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+    }
+
+    /**
+     * Applies the transactions to a WAL table with one IO failure planted in the WAL apply: the
+     * {@code failAfterCalls}-th file system call the apply makes fails. Unlike
+     * {@link #applyNonWal}, which plants failures only into the non-WAL oracle, this faults the
+     * table under test, for example a parquet O3 merge or replace commit. A failure suspends the
+     * table, or a retry absorbs it. Either way the method then resumes WAL and finishes the
+     * apply without failures, and asserts that the table is not suspended. The engine must run
+     * on {@link #getFileFacade()}. Pass {@code Integer.MAX_VALUE} to apply without a failure.
+     *
+     * @return the number of file system calls the armed apply made, to size the next failure
+     */
+    public long applyWalWithIoFailure(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd, int failAfterCalls) {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        applyToWal(transactions, tableName, 1, applyRnd);
+        Assert.assertSame("the engine must run on the failure facade", ff, engine.getConfiguration().getFilesFacade());
+        ff.clearFailures();
+        ff.setToFailAfter(failAfterCalls);
+        final long calls;
+        final boolean isFired;
+        try {
+            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
+                final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+                //noinspection StatementWithEmptyBody
+                while (walApplyJob.run() || checkWalTransactionsJob.run()) {
+                }
+            }
+        } finally {
+            calls = (long) failAfterCalls - ff.getOsCallsCount();
+            isFired = ff.failureGenerated() > 0;
+            ff.clearFailures();
+        }
+        final boolean isSuspended = engine.getTableSequencerAPI().isSuspended(tableToken);
+        if (isFired) {
+            ioFailuresObserved++;
+            LOG.info().$("expected IO failure observed on WAL apply [table=").$(tableToken)
+                    .$(", failAfterCalls=").$(failAfterCalls)
+                    .$(", suspended=").$(isSuspended)
+                    .I$();
+        }
+        if (isSuspended) {
+            Assert.assertTrue("table suspended without an injected IO failure", isFired);
+            try {
+                engine.execute("ALTER TABLE \"" + tableToken.getTableName() + "\" RESUME WAL", sqlExecutionContext);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        drainWalQueue(applyRnd, tableName);
+        executeCoveringIndexOps(transactions, tableName);
+        drainWalQueue(applyRnd, tableName);
+        Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        return calls;
     }
 
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
@@ -561,8 +617,15 @@ public class FuzzRunner {
         }
     }
 
-    public FilesFacade getFileFacade() {
+    public FailureFileFacade getFileFacade() {
         return ff;
+    }
+
+    /**
+     * The IO failures this runner planted that fired, on the non-WAL oracle and on WAL apply.
+     */
+    public int getIoFailuresObserved() {
+        return ioFailuresObserved;
     }
 
     public int getTransactionCount() {
