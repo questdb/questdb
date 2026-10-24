@@ -52,10 +52,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.canProjectMetadata;
 
 /**
- * Page frame cursor for parallel read_parquet() SQL function.
+ * Page frame cursor for parallel read_parquet() SQL function. Each frame covers one row group.
+ * In descending order, the cursor yields row groups from the last to the first; the consumer
+ * reverses the rows within each frame, as it does for a backward scan over a native table.
  */
 public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetPageFrameCursor.class);
@@ -71,6 +74,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private long fd = -1;
     private long fileSize = 0;
     private long filterBufEnd;
+    private boolean isDescending;
     private boolean isFilterListPrepared;
     private long rowCount;
     private int rowGroupCount;
@@ -99,7 +103,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        counter.add(rowCount - frame.partitionHi);
+        // Rows not yet returned: those above the last frame in ascending order, below it in descending.
+        counter.add(isDescending ? frame.partitionLo : rowCount - frame.partitionHi);
     }
 
     @Override
@@ -149,18 +154,51 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next(long skipTarget) {
+        return isDescending ? nextDescending() : nextAscending();
+    }
+
+    public void of(LPSZ path, SqlExecutionContext executionContext, int order) throws SqlException {
+        this.isDescending = order == ORDER_DESC;
+        of(path, executionContext);
+    }
+
+    @Override
+    public long size() {
+        return rowCount;
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
+    }
+
+    @Override
+    public void toTop() {
+        frame.clear();
+        if (isDescending) {
+            frame.rowGroupIndex = rowGroupCount;
+            frame.partitionLo = rowCount;
+            frame.partitionHi = rowCount;
+        }
+    }
+
+    private boolean canSkipRowGroup(int rowGroupIndex) {
+        return isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
+                rowGroupIndex,
+                decoder,
+                filterList,
+                filterBufEnd
+        );
+    }
+
+    private @Nullable PageFrame nextAscending() {
         while (true) {
             final int rowGroupIndex = ++frame.rowGroupIndex;
             if (rowGroupIndex >= rowGroupCount) {
                 return null;
             }
 
-            if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
-                    rowGroupIndex,
-                    decoder,
-                    filterList,
-                    filterBufEnd
-            )) {
+            if (canSkipRowGroup(rowGroupIndex)) {
                 frame.partitionHi += decoder.metadata().getRowGroupSize(rowGroupIndex);
                 continue;
             }
@@ -172,7 +210,26 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
     }
 
-    public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
+    private @Nullable PageFrame nextDescending() {
+        while (true) {
+            final int rowGroupIndex = --frame.rowGroupIndex;
+            if (rowGroupIndex < 0) {
+                return null;
+            }
+
+            if (canSkipRowGroup(rowGroupIndex)) {
+                frame.partitionLo -= decoder.metadata().getRowGroupSize(rowGroupIndex);
+                continue;
+            }
+
+            frame.rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
+            frame.partitionHi = frame.partitionLo;
+            frame.partitionLo = frame.partitionLo - frame.rowGroupSize;
+            return frame;
+        }
+    }
+
+    private void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
         // Reopen the file, it could have changed
         this.fd = TableUtils.openRO(ff, path, LOG);
         this.fileSize = ff.length(fd);
@@ -206,21 +263,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         toTop();
-    }
-
-    @Override
-    public long size() {
-        return rowCount;
-    }
-
-    @Override
-    public boolean supportsSizeCalculation() {
-        return true;
-    }
-
-    @Override
-    public void toTop() {
-        frame.clear();
     }
 
     private class ReadParquetPageFrame implements PageFrame, Mutable {
