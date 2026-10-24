@@ -1003,6 +1003,22 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         context.switchProtocol();
     }
 
+    private static boolean isCommitBatchCandidate(long payload, int length) {
+        return length >= QwpConstants.HEADER_SIZE
+                && length <= COMMIT_BATCH_MAX_FRAME_BYTES
+                && (Unsafe.getByte(payload + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_DEFER_COMMIT) == 0
+                && !QwpMessageHeader.isDurableAckPoll(payload, length);
+    }
+
+    private static boolean isJoinableToCommitBatch(QwpIngressProcessorState state, int length) {
+        // Durable-ack mode maps each message to the seqTxn that covers it; keep
+        // it on one commit per frame.
+        return !state.isDurableAckEnabled()
+                && length <= COMMIT_BATCH_MAX_FRAME_BYTES
+                && state.getCommitBatchFrames() + 1 < COMMIT_BATCH_MAX_FRAMES
+                && state.getCommitBatchBytes() + length <= COMMIT_BATCH_MAX_BYTES;
+    }
+
     private static byte[] precomputeBadRequestResponse(String reason) {
         byte[] reasonBytes = reason.getBytes(StandardCharsets.US_ASCII);
         byte[] contentLengthBytes = Integer.toString(reasonBytes.length).getBytes(StandardCharsets.US_ASCII);
@@ -1054,6 +1070,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .put(" does not fit send buffer [required=").put(requiredSize)
                 .put(", available=").put(bufferSize)
                 .put(']');
+    }
+
+    private static byte responseStatusOf(QwpIngressProcessorState state) {
+        return switch (state.getStatus()) {
+            case PARSE_ERROR -> STATUS_PARSE_ERROR;
+            case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;
+            case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
+            case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
+            case DICTIONARY_GAP -> STATUS_DICTIONARY_GAP;
+            default -> STATUS_WRITE_ERROR;
+        };
     }
 
     /**
@@ -1630,19 +1657,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // The commit batch this frame follows, if any. Its rows sit uncommitted in
         // the writers; whatever this frame does, they end up committed (and the
         // watermark may pass them) or lost (and the watermark is pinned below them).
-        final boolean batchPending = state.isCommitBatchPending();
+        final boolean isBatchPending = state.isCommitBatchPending();
         final long batchFirstSeq = state.getFirstCommitBatchSequence();
         final long batchLastSeq = state.getLastCommitBatchSequence();
-        boolean batched = false;
+        boolean isBatched = false;
         // Set when a commit that covered the batch failed: nothing from
         // batchFirstSeq on is committed, so that frame -- the one the client
         // replays first -- is the one to NACK, and a deterministic failure keeps
         // striking it. This frame is refused behind it.
-        boolean batchCommitFailed = false;
+        boolean isBatchCommitFailed = false;
         // A failure in this frame must drop only this frame's rows: frame by
         // frame, the batch would already be committed and acked, and the
         // client's poison detector strikes the frame a NACK names.
-        state.armCommitBatchSavepoints(batchPending);
+        state.armCommitBatchSavepoints(isBatchPending);
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
@@ -1651,7 +1678,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             // Process the QWP v1 message
             state.processMessage();
-            final boolean processed = state.isOk();
+            final boolean isProcessed = state.isOk();
 
             if (state.isOk() && !deferCommit) {
                 // Capture BEFORE commit(): a successful commitAll() clears the
@@ -1661,7 +1688,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // (and, in durable-ack mode, seqTxn tracking) all hinge on the
                 // ack that covers this group-closing sequence.
                 closesDeferredGroup = state.hasUncommittedDeferredRows();
-                if (batchPending && !state.isFrameJoinableToCommitBatch()) {
+                if (isBatchPending && !state.isFrameJoinableToCommitBatch()) {
                     // This frame wrote to a table the batch does not hold. A commit
                     // never spans tables -- one writer's commit is all or nothing,
                     // commitAll goes table by table -- so commit the batch's table on
@@ -1671,26 +1698,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         state.resetCommitBatch();
                         state.setHighestProcessedSequence(batchLastSeq);
                     } else {
-                        batchCommitFailed = true;
+                        isBatchCommitFailed = true;
                     }
                 }
                 if (state.isOk()) {
                     if (state.isFrameJoinableToCommitBatch()
                             && !closesDeferredGroup
                             && !state.isRoleChangeClosePending()
-                            && canJoinCommitBatch(state, length)) {
+                            && isJoinableToCommitBatch(state, length)) {
                         state.addToCommitBatch(seq, length);
-                        batched = true;
+                        isBatched = true;
                     } else {
                         // A batch still pending here holds this frame's table only.
-                        final boolean coversBatch = state.isCommitBatchPending();
+                        final boolean isBatchCovered = state.isCommitBatchPending();
                         state.commit();
-                        if (coversBatch) {
+                        if (isBatchCovered) {
                             if (state.isOk()) {
                                 state.resetCommitBatch();
                                 state.setHighestProcessedSequence(batchLastSeq);
                             } else {
-                                batchCommitFailed = true;
+                                isBatchCommitFailed = true;
                             }
                         }
                     }
@@ -1734,7 +1761,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         .$(", error=").$safe(errorMessage).I$();
                 responseStatus = responseStatusOf(state);
             }
-            if (batchPending && !processed) {
+            if (isBatchPending && !isProcessed) {
                 // This frame failed before any commit: keep the batch's rows,
                 // drop this frame's, commit the batch -- the wire then carries
                 // exactly what one-commit-per-frame would: an ack through the
@@ -1749,7 +1776,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     } else {
                         // The batch's own commit failed, not this frame: report
                         // that at the batch's first frame.
-                        batchCommitFailed = true;
+                        isBatchCommitFailed = true;
                         errorMessage = state.getErrorText();
                         responseStatus = state.isOk() ? STATUS_INTERNAL_ERROR : responseStatusOf(state);
                     }
@@ -1762,7 +1789,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     state.markSequenceUnresolved(batchFirstSeq);
                 }
             }
-            if (batchCommitFailed) {
+            if (isBatchCommitFailed) {
                 LOG.error().$("WebSocket commit batch failed [fd=").$(context.getFd())
                         .$(", firstSeq=").$(batchFirstSeq)
                         .$(", seq=").$(seq)
@@ -1776,11 +1803,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             responseStatus = STATUS_INTERNAL_ERROR;
             errorMessage = e.getMessage();
-            if (batchPending && state.isCommitBatchPending()) {
+            if (isBatchPending && state.isCommitBatchPending()) {
                 state.markSequenceUnresolved(batchFirstSeq);
             }
         } finally {
-            if ((deferCommit || batched) && state.isOk()) {
+            if ((deferCommit || isBatched) && state.isOk()) {
                 // Preserve WAL state for the next message in the deferred batch
                 state.clearMessageState();
             } else {
@@ -1807,7 +1834,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         // Send response using cumulative ACK strategy
-        if (responseStatus == STATUS_OK && batched) {
+        if (responseStatus == STATUS_OK && isBatched) {
             // Withheld until the batch commits: at the end of this receive pass,
             // at the batch bounds, or before a frame that cannot join it.
             return;
@@ -1855,35 +1882,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
             }
         } else {
-            rejectFrame(context, state, batchCommitFailed ? batchFirstSeq : seq, responseStatus, errorMessage);
+            rejectFrame(context, state, isBatchCommitFailed ? batchFirstSeq : seq, responseStatus, errorMessage);
         }
-    }
-
-    private static byte responseStatusOf(QwpIngressProcessorState state) {
-        return switch (state.getStatus()) {
-            case PARSE_ERROR -> STATUS_PARSE_ERROR;
-            case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;
-            case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
-            case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
-            case DICTIONARY_GAP -> STATUS_DICTIONARY_GAP;
-            default -> STATUS_WRITE_ERROR;
-        };
-    }
-
-    private static boolean canJoinCommitBatch(QwpIngressProcessorState state, int length) {
-        // Durable-ack mode maps each message to the seqTxn that covers it; keep
-        // it on one commit per frame.
-        return !state.isDurableAckEnabled()
-                && length <= COMMIT_BATCH_MAX_FRAME_BYTES
-                && state.getCommitBatchFrames() + 1 < COMMIT_BATCH_MAX_FRAMES
-                && state.getCommitBatchBytes() + length <= COMMIT_BATCH_MAX_BYTES;
-    }
-
-    private static boolean isCommitBatchCandidate(long payload, int length) {
-        return length >= QwpConstants.HEADER_SIZE
-                && length <= COMMIT_BATCH_MAX_FRAME_BYTES
-                && (Unsafe.getByte(payload + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_DEFER_COMMIT) == 0
-                && !QwpMessageHeader.isDurableAckPoll(payload, length);
     }
 
     /**
@@ -1904,7 +1904,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return true;
         }
         state.markSequenceUnresolved(firstSeq);
-        final boolean roleChangeClose = state.isRoleChangeClosePending();
+        final boolean isRoleChangeClose = state.isRoleChangeClosePending();
         final String errorMessage = state.getErrorText();
         final byte status = state.isOk() ? STATUS_INTERNAL_ERROR : responseStatusOf(state);
         LOG.error().$("WebSocket commit batch failed [fd=").$(context.getFd())
@@ -1913,7 +1913,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .$(", error=").$safe(errorMessage).I$();
         // Rolls back what the failed commit left and forgets the batch.
         state.clear();
-        if (roleChangeClose) {
+        if (isRoleChangeClose) {
             roleChangeCloseWithUploadGrace(context, state, errorMessage);
         } else {
             rejectFrame(context, state, firstSeq, status, errorMessage);

@@ -341,21 +341,6 @@ public final class TableUtils {
         return allocateDiskSpace(ff, fd, allocatedHi, size, size);
     }
 
-    private static long allocateDiskSpace(FilesFacade ff, long fd, long allocatedHi, long size, long allocateTo) {
-        final long length = ff.length(fd);
-        if (length < 0) {
-            throw CairoException.critical(ff.errno()).put("could not read file size [fd=").put(fd).put(']');
-        }
-        if (length >= size) {
-            return allocatedHi;
-        }
-        // Below min(allocatedHi, length) the file was backed by this caller; a shrink since leaves no holes.
-        if (!ff.allocate(fd, Math.min(allocatedHi, length), allocateTo)) {
-            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
-        }
-        return allocateTo;
-    }
-
     public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
         // Metadata Format Minor Version field is 2 shorts:
         // - Low short is a checksum that changes with every update to _meta
@@ -3158,6 +3143,21 @@ public final class TableUtils {
                 }
             }
         }
+    }
+
+    private static long allocateDiskSpace(FilesFacade ff, long fd, long allocatedHi, long size, long allocateTo) {
+        final long length = ff.length(fd);
+        if (length < 0) {
+            throw CairoException.critical(ff.errno()).put("could not read file size [fd=").put(fd).put(']');
+        }
+        if (length >= size) {
+            return allocatedHi;
+        }
+        // Below min(allocatedHi, length) the file was backed by this caller; a shrink since leaves no holes.
+        if (!ff.allocate(fd, Math.min(allocatedHi, length), allocateTo)) {
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+        return allocateTo;
     }
 
     private static int exists(FilesFacade ff, Path path) {

@@ -968,7 +968,7 @@ public class QwpWalAppender implements QuietCloseable {
         resolvedSchema = null;
         // Not cached: array columns resolve against each block's data, and a
         // deferred missing column (-1) is created later.
-        boolean cacheable = schema != null;
+        boolean isCacheable = schema != null;
 
         // Phase 1: Resolve column indices and create missing columns
         int timestampColumnInBlock = -1;
@@ -1052,7 +1052,7 @@ public class QwpWalAppender implements QuietCloseable {
             }
             columnIndexMap[i] = columnWriterIndex;
             columnTypeMap[i] = columnType;
-            cacheable &= colType != TYPE_DOUBLE_ARRAY && columnWriterIndex >= 0;
+            isCacheable &= colType != TYPE_DOUBLE_ARRAY && columnWriterIndex >= 0;
         }
 
         // A concurrent ALTER TABLE (e.g., ALTER COLUMN TYPE) can change the
@@ -1061,7 +1061,7 @@ public class QwpWalAppender implements QuietCloseable {
         if (writer.getMetadataVersion() != metadataVersion) {
             throw MetadataChangedException.INSTANCE;
         }
-        if (cacheable) {
+        if (isCacheable) {
             resolvedSchema = schema;
             resolvedWriter = writer;
             resolvedMetadataVersion = metadataVersion;

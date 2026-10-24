@@ -159,7 +159,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // the start of the open txn (0): everything before is committed or gone.
     private long savepointMaxTimestamp;
     private long savepointMinTimestamp;
-    private boolean savepointOutOfOrder;
+    private boolean isSavepointOutOfOrder;
     private long savepointRowCount = -1;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
@@ -639,7 +639,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             segmentRowCount = rowCount;
             txnMinTimestamp = savepointMinTimestamp;
             txnMaxTimestamp = savepointMaxTimestamp;
-            txnOutOfOrder = savepointOutOfOrder;
+            txnOutOfOrder = isSavepointOutOfOrder;
         } catch (Throwable th) {
             distressed = true;
             throw th;
@@ -660,7 +660,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         savepointRowCount = getUncommittedRowCount();
         savepointMinTimestamp = txnMinTimestamp;
         savepointMaxTimestamp = txnMaxTimestamp;
-        savepointOutOfOrder = txnOutOfOrder;
+        isSavepointOutOfOrder = txnOutOfOrder;
     }
 
     protected final void cleanupBeforeClose() {

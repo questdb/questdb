@@ -79,7 +79,7 @@ public class QwpTableBlockCursor implements Mutable {
     // True from of() until clear(). The message cursor clears this cursor when a
     // message starts and again before each table block; the second clear of an
     // untouched cursor walked every column cursor for nothing.
-    private boolean dirty;
+    private boolean isDirty;
     // Cached null flags per column for current row (avoids megamorphic isNull() calls)
     private boolean[] columnNullFlags = new boolean[16];
     // Delta symbol dictionary support
@@ -110,21 +110,12 @@ public class QwpTableBlockCursor implements Mutable {
         this.tableHeader = new QwpTableHeader(maxRowsPerTable);
     }
 
-    private static boolean sameBytes(long address, byte[] bytes, int len) {
-        for (int i = 0; i < len; i++) {
-            if (Unsafe.getByte(address + i) != bytes[i]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     @Override
     public void clear() {
-        if (!dirty) {
+        if (!isDirty) {
             return;
         }
-        dirty = false;
+        isDirty = false;
         tableHeader.reset();
         parseResult.clear();
         rowCount = 0;
@@ -351,7 +342,7 @@ public class QwpTableBlockCursor implements Mutable {
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
-        this.dirty = true;
+        this.isDirty = true;
         this.gorillaEnabled = gorillaEnabled;
         this.connectionSymbolDict = connectionSymbolDict;
         this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;
@@ -368,7 +359,7 @@ public class QwpTableBlockCursor implements Mutable {
         if (cachedSchema != null
                 && columnCount == cachedSchemaColumnCount
                 && dataLength - offset >= cachedSchemaLen
-                && sameBytes(dataAddress + offset, cachedSchemaBytes, cachedSchemaLen)) {
+                && isSameBytes(dataAddress + offset, cachedSchemaBytes, cachedSchemaLen)) {
             schema = cachedSchema;
             offset += cachedSchemaLen;
         } else {
@@ -461,6 +452,15 @@ public class QwpTableBlockCursor implements Mutable {
                 timestampCursor.releaseCachedResources();
             }
         }
+    }
+
+    private static boolean isSameBytes(long address, byte[] bytes, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Unsafe.getByte(address + i) != bytes[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void ensureColumnCursorCapacity(int capacity) {

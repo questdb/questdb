@@ -80,7 +80,7 @@ public class QwpTudCache implements QuietCloseable {
     // Set when a lookup evicted an entry and discarded its uncommitted rows. With
     // a QWP commit batch pending those rows belong to earlier frames, which then
     // cannot be acknowledged. See rollbackToSavepoints.
-    private boolean discardedBufferedRows;
+    private boolean hasDiscardedBufferedRows;
     private final Telemetry<TelemetryTask> telemetry;
     private volatile int cachedTableCount;
     // Optional callback mirroring commitAll(consumer)'s: invoked after a
@@ -207,11 +207,6 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Commits all cached tables. Aborts on the first non-dropped-table commit
-     * failure, leaving the remaining tables uncommitted. Suitable for callers
-     * that propagate the error to the client (e.g. HTTP/WebSocket).
-     */
-    /**
      * Restores the writers the current frame touched to the savepoints
      * {@link #setSavepoint} took at their first touch in it, keeping the rows of
      * earlier frames; writers it did not touch keep everything. Returns false
@@ -220,7 +215,7 @@ public class QwpTudCache implements QuietCloseable {
      * discarded its buffered rows (see evictStaleTud).
      */
     public boolean rollbackToSavepoints(long epoch) {
-        if (isDistressed || discardedBufferedRows) {
+        if (isDistressed || hasDiscardedBufferedRows) {
             return false;
         }
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
@@ -252,7 +247,7 @@ public class QwpTudCache implements QuietCloseable {
      * frame's discard, so {@link #rollbackToSavepoints} judges this frame alone.
      */
     public void resetDiscardedBufferedRows() {
-        discardedBufferedRows = false;
+        hasDiscardedBufferedRows = false;
     }
 
     /**
@@ -281,7 +276,7 @@ public class QwpTudCache implements QuietCloseable {
         if (keyIndex > -1 || tableUpdateDetails.valueAt(keyIndex) != tud) {
             return;
         }
-        final boolean hadBufferedRows = !tud.isFirstRow();
+        final boolean hasBufferedRows = !tud.isFirstRow();
         try {
             if (!tud.isDropped()) {
                 tud.commit(false);
@@ -295,7 +290,7 @@ public class QwpTudCache implements QuietCloseable {
             tud.setIsDropped();
         }
         if (tud.isDropped()) {
-            final CairoException discarded = hadBufferedRows
+            final CairoException discarded = hasBufferedRows
                     ? CairoException.nonCritical().put("dropped table discarded buffered rows, cannot acknowledge: ").put(tableName)
                     : null;
             tableUpdateDetails.removeAt(keyIndex);
@@ -307,6 +302,11 @@ public class QwpTudCache implements QuietCloseable {
         }
     }
 
+    /**
+     * Commits all cached tables. Aborts on the first non-dropped-table commit
+     * failure, leaving the remaining tables uncommitted. Suitable for callers
+     * that propagate the error to the client (e.g. HTTP/WebSocket).
+     */
     public void commitAll() throws Throwable {
         commitAll(null);
     }
@@ -643,7 +643,7 @@ public class QwpTudCache implements QuietCloseable {
                     // the QWP layer refuses the frame (the deferred-ack clamp
                     // holds; the client replays). The next lookup acquires a
                     // fresh writer from the pool.
-                    discardedBufferedRows |= !tud.isFirstRow();
+                    hasDiscardedBufferedRows |= !tud.isFirstRow();
                     tableUpdateDetails.removeAt(key);
                     cachedTableCount = tableUpdateDetails.size();
                     Misc.free(tud, th);
@@ -762,6 +762,22 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
+     * A data commit of our own is one sequencer txn with no structure change in
+     * it. applyPendingStructureChanges() gates on the sequencer's seqTxn, so
+     * without this every message on a connection re-ran goActive() -- the
+     * sequencer read lock, the metadata change log lookup and two token lookups
+     * -- for a txn this connection wrote itself (6% of the ingress fiber at one
+     * row per message). Only the exact single-step case is taken: any interleaved
+     * txn by another writer may be structural and keeps the full check.
+     */
+    private static void advanceStructureCheckGate(WalTableUpdateDetails tud) {
+        final long seqTxn = tud.getLastSeqTxn();
+        if (seqTxn > 0 && seqTxn == tud.getLastStructureCheckSeqTxn() + 1) {
+            tud.setLastStructureCheckSeqTxn(seqTxn);
+        }
+    }
+
+    /**
      * Hands the consumer every seqTxn advance this connection has produced for
      * {@code tud} that it has not already seen.
      * <p>
@@ -826,22 +842,6 @@ public class QwpTudCache implements QuietCloseable {
      * in depth for a future caller that does not distress the cache, not a recovery that
      * runs today.
      */
-    /**
-     * A data commit of our own is one sequencer txn with no structure change in
-     * it. applyPendingStructureChanges() gates on the sequencer's seqTxn, so
-     * without this every message on a connection re-ran goActive() -- the
-     * sequencer read lock, the metadata change log lookup and two token lookups
-     * -- for a txn this connection wrote itself (6% of the ingress fiber at one
-     * row per message). Only the exact single-step case is taken: any interleaved
-     * txn by another writer may be structural and keeps the full check.
-     */
-    private static void advanceStructureCheckGate(WalTableUpdateDetails tud) {
-        final long seqTxn = tud.getLastSeqTxn();
-        if (seqTxn > 0 && seqTxn == tud.getLastStructureCheckSeqTxn() + 1) {
-            tud.setLastStructureCheckSeqTxn(seqTxn);
-        }
-    }
-
     private static void reportCommittedTxn(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) {
         if (consumer == null || tud.isDropped()) {
             return;
@@ -1032,7 +1032,7 @@ public class QwpTudCache implements QuietCloseable {
         // rejects instead of acknowledging them; the UDP receiver has no ack and
         // simply drops the datagram.
         if (hadBufferedRows && !isSalvaged) {
-            discardedBufferedRows = true;
+            hasDiscardedBufferedRows = true;
             throw CairoException.nonCritical()
                     .put(isRenamed ? "renamed" : "dropped")
                     .put(" table discarded buffered rows, cannot acknowledge: ")

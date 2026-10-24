@@ -531,9 +531,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * savepoint in each writer at its first touch, so a failure can drop only
      * this frame's rows; otherwise none are taken.
      */
-    public void armCommitBatchSavepoints(boolean batchPending) {
-        savepointEpoch = batchPending ? ++savepointEpochCounter : 0;
-        if (batchPending) {
+    public void armCommitBatchSavepoints(boolean isBatchPending) {
+        savepointEpoch = isBatchPending ? ++savepointEpochCounter : 0;
+        if (isBatchPending) {
             tudCache.resetDiscardedBufferedRows();
         }
     }
