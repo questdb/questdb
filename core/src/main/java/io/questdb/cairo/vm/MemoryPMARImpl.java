@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
@@ -40,6 +41,11 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
+    // How far this object's own page mappings backed allocatedFd; see
+    // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
+    // while fd == allocatedFd (fds are unique per open).
+    private long allocatedFd = -1;
+    private long allocatedHi;
     private long fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
@@ -101,7 +107,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     public long mapPage(int page) {
         // set page to "not mapped" in case mapping fails
-        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
+        final long size = getExtendSegmentSize();
+        final long offset = pageOffset(page);
+        assert fd != -1;
+        assert offset % Files.PAGE_SIZE == 0;
+        allocatedHi = TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedFd == fd ? allocatedHi : 0, size + offset);
+        allocatedFd = fd;
+        final long address = TableUtils.mapRWNoAlloc(ff, fd, size, offset, memoryTag);
         mappedPage = page;
         ff.madvise(address, getExtendSegmentSize(), madviseOpts);
         return address;
