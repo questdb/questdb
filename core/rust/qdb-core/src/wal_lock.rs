@@ -593,6 +593,19 @@ mod tests {
         SegmentId::new(id)
     }
 
+    // Reports whether a writer waits behind the purge lock of the given WAL.
+    fn has_next_writer(lock_manager: &WalLock, table_dir_name: &str, wal_id: WalId) -> bool {
+        let key = WalLockKey(lock_manager.get_table_id(table_dir_name), wal_id);
+        lock_manager.entries.get(&key).is_some_and(|entry| {
+            matches!(
+                *entry,
+                WalEntry::PurgeExclusive {
+                    next_writer: Some(_)
+                }
+            )
+        })
+    }
+
     #[test]
     fn test_writer_lock_unlock() {
         let lock_manager = WalLock::new();
@@ -1217,11 +1230,21 @@ mod tests {
 
         lock_manager.lock_for_purge("0", wal_id(0)).unwrap();
         let lm = Arc::clone(&lock_manager);
-        let _first_writer = thread::spawn(move || {
+        let first_writer = thread::spawn(move || {
             lm.lock_for_write("0", wal_id(0), seg_id(0)).unwrap();
         });
 
-        thread::sleep(Duration::from_millis(5)); // Ensure first writer is waiting
+        // Wait for the first writer to queue behind the purge. A fixed sleep is
+        // not enough: if this thread got there first, it would queue itself and
+        // block forever, since nothing releases the purge before the assertions.
+        while !has_next_writer(&lock_manager, "0", wal_id(0)) {
+            assert!(
+                !first_writer.is_finished(),
+                "first writer exited without queueing behind the purge"
+            );
+            thread::yield_now();
+        }
+
         let result = lock_manager.lock_for_write("0", wal_id(0), seg_id(1));
         assert!(matches!(
             result,
@@ -1231,5 +1254,14 @@ mod tests {
         assert!(err_msg.contains("cannot acquire writer lock: already exists"));
         assert!(err_msg.contains("dir_name=0"));
         assert!(err_msg.contains("wal_id=0"));
+
+        // Releasing the purge hands the WAL to the first writer, with its own
+        // min segment rather than the rejected writer's.
+        lock_manager.unlock_purge("0", wal_id(0)).unwrap();
+        first_writer.join().unwrap();
+        assert!(lock_manager.is_segment_locked("0", wal_id(0), seg_id(0)));
+
+        lock_manager.unlock_write("0", wal_id(0)).unwrap();
+        assert!(!lock_manager.is_locked("0", wal_id(0)));
     }
 }

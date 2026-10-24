@@ -7328,20 +7328,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // record the distinct sealTxns. With the fix, only the live sealTxn
             // appears; without it, the ghost sealTxn would also appear because
             // the visitor would have hardlinked it.
+            final long newColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("new_sym"));
+                newColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex);
+            }
             final LongList dstSealTxns = new LongList();
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").slash();
                 int plen = path.size();
-                PostingIndexUtils.scanSealedFiles(ff, path, plen, "new_sym",
+                PostingIndexUtils.scanSealedFiles(ff, path, plen, "new_sym", newColumnNameTxn,
                         new PostingIndexUtils.SealedFileVisitor() {
                             @Override
-                            public void onCoverDataFile(int includeIdx, long postingColumnNameTxn,
-                                                        long coveredColumnNameTxn, long sealTxn) {
+                            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
                                 dstSealTxns.add(sealTxn);
                             }
 
                             @Override
-                            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                            public void onValueFile(long sealTxn) {
                                 // .pv files are not the subject of this test.
                             }
                         });

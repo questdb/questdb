@@ -46,7 +46,7 @@ use parquet_format_safe::thrift::protocol::{TCompactInputProtocol, TCompactOutpu
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
     Encoding as ThriftEncoding, OffsetIndex, PageEncodingStats, PageHeader, PageType, RowGroup,
-    Type,
+    Statistics, Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use qdb_parquet_meta::convert::resolve_column_id;
@@ -137,6 +137,13 @@ pub struct ParquetUpdater {
     /// Keying by id rather than by partition position guarantees end() looks up
     /// the right column even if the partition layout drifts across calls.
     written_ascii: RapidHashMap<i32, bool>,
+    /// Column top of each column of the old file's QDB metadata, keyed by parquet field_id.
+    old_column_tops: RapidHashMap<i32, usize>,
+    /// Row count of the old file, the top of a column the old file lacks.
+    old_row_count: usize,
+    /// The update keeps a column top below this row count: the rows below it keep their
+    /// position and values. 0 (the default) zeroes every top.
+    column_top_row_limit: usize,
     parquet_meta_fd: Option<File>,
     parquet_meta_file_size: u64,
     // The append base: the `_pm` offset-0 header (the reader's getFileSize()),
@@ -323,11 +330,12 @@ impl ParquetUpdater {
         // them for the new groups iff the source carries any chunk statistics.
         // Read that from the statistics, not the page index. ADD COLUMN raw-copies
         // the data columns (keeping their stats) without a ColumnIndex and
-        // backfills a stats-less null column, so a file can legitimately carry
-        // statistics with no index; hence `any`, not `all` (the null column has
-        // none). ColumnIndex uniformity is a separate decision, gated by
-        // source_column_indexed in end(). A rewrite keeps the runtime config; an
-        // empty source has nothing to match.
+        // backfills a null column whose statistics hold only its null_count, or
+        // nothing when the rewrite writes no statistics, so a file can
+        // legitimately carry statistics with no index; hence `any`, not `all`
+        // (the null column may have none). ColumnIndex uniformity is a separate
+        // decision, gated by source_column_indexed in end(). A rewrite keeps the
+        // runtime config; an empty source has nothing to match.
         let write_statistics = if is_rewrite || metadata.row_groups.is_empty() {
             write_statistics
         } else {
@@ -347,28 +355,16 @@ impl ParquetUpdater {
         // scanned, and the scan downgrades them to `false` on the first
         // non-ASCII entry.
         let mut varchar_all_ascii: RapidHashMap<i32, bool> = RapidHashMap::default();
-        if let Some(old_qdb) = metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-            })
-            .map(|raw| QdbMeta::deserialize(raw))
-            .transpose()?
-        {
-            let schema_cols = metadata.schema_descr.columns();
-            for (i, col) in old_qdb.schema.iter().enumerate() {
-                if col.column_type.tag() != ColumnTypeTag::Varchar {
-                    continue;
-                }
-                if let Some(field_id) = schema_cols
-                    .get(i)
-                    .and_then(|c| c.base_type.get_field_info().id)
-                {
-                    varchar_all_ascii.insert(field_id, col.ascii == Some(true));
-                }
+        let schema_cols = metadata.schema_descr.columns();
+        for (i, col) in source_qdb_meta.schema.iter().enumerate() {
+            if col.column_type.tag() != ColumnTypeTag::Varchar {
+                continue;
+            }
+            if let Some(field_id) = schema_cols
+                .get(i)
+                .and_then(|c| c.base_type.get_field_info().id)
+            {
+                varchar_all_ascii.insert(field_id, col.ascii == Some(true));
             }
         }
 
@@ -384,20 +380,7 @@ impl ParquetUpdater {
             (pf, 0u64)
         } else {
             // Update mode: append to existing file.
-            // The upfront guard already validated QDB metadata exists and parses,
-            // so unwrap_or(0) only covers the default for missing unused_bytes field.
-            let accumulated_unused_bytes = metadata
-                .key_value_metadata
-                .as_ref()
-                .and_then(|kvs| {
-                    kvs.iter()
-                        .find(|kv| kv.key == QDB_META_KEY)
-                        .and_then(|kv| kv.value.as_ref())
-                })
-                .map(|raw| QdbMeta::deserialize(raw))
-                .transpose()?
-                .map(|m| m.unused_bytes)
-                .unwrap_or(0);
+            let accumulated_unused_bytes = source_qdb_meta.unused_bytes;
 
             // Seek writer to end of file so new data is appended after existing content.
             // The reader and writer are separate fds; reading metadata only moves the reader cursor.
@@ -421,29 +404,30 @@ impl ParquetUpdater {
         // QdbMetaCol with the parquet field_id from the corresponding old schema
         // field at the same position. Entries without a known ascii flag are
         // omitted (track_ascii treats the absence as "no signal").
-        let old_ascii: RapidHashMap<i32, bool> = file_metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-                    .and_then(|v| QdbMeta::deserialize(v).ok())
+        let old_fields = file_metadata.schema_descr.fields();
+        let old_ascii: RapidHashMap<i32, bool> = source_qdb_meta
+            .schema
+            .iter()
+            .zip(old_fields.iter())
+            .filter_map(|(col, field)| {
+                field
+                    .get_field_info()
+                    .id
+                    .and_then(|id| col.ascii.map(|a| (id, a)))
             })
-            .map(|m| {
-                let old_fields = file_metadata.schema_descr.fields();
-                m.schema
-                    .iter()
-                    .zip(old_fields.iter())
-                    .filter_map(|(col, field)| {
-                        field
-                            .get_field_info()
-                            .id
-                            .and_then(|id| col.ascii.map(|a| (id, a)))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .collect();
+
+        let old_column_tops: RapidHashMap<i32, usize> = source_qdb_meta
+            .schema
+            .iter()
+            .zip(old_fields.iter())
+            .filter_map(|(col, field)| field.get_field_info().id.map(|id| (id, col.column_top)))
+            .collect();
+        let old_row_count = file_metadata
+            .row_groups
+            .iter()
+            .map(|rg| rg.num_rows())
+            .sum();
 
         Ok(ParquetUpdater {
             allocator,
@@ -468,6 +452,9 @@ impl ParquetUpdater {
             target_col_id_to_pos: None,
             old_ascii,
             written_ascii: RapidHashMap::default(),
+            old_column_tops,
+            old_row_count,
+            column_top_row_limit: 0,
             parquet_meta_fd,
             parquet_meta_file_size,
             append_base,
@@ -547,10 +534,77 @@ impl ParquetUpdater {
         }
     }
 
+    /// Sets the row count below which the update keeps the old column tops: the caller
+    /// guarantees that the rows below it keep their position and values in the output.
+    /// `end()` writes a top below the limit to the file, and each re-encoded row group
+    /// starting below it encodes the top rows of a BOOLEAN, BYTE, SHORT or CHAR column as
+    /// NULL definition levels. Other types carry the NULL sentinel in their top rows.
+    pub fn set_column_top_row_limit(&mut self, limit: usize) {
+        self.column_top_row_limit = limit;
+    }
+
+    /// The top that the output keeps for the column: its old top (the old row count for a
+    /// column the old file lacks) when it is below the limit, 0 otherwise.
+    fn kept_column_top(&self, column_id: i32) -> usize {
+        let top = self
+            .old_column_tops
+            .get(&column_id)
+            .copied()
+            .unwrap_or(self.old_row_count);
+        if top < self.column_top_row_limit {
+            top
+        } else {
+            0
+        }
+    }
+
+    /// Returns a copy of the partition whose BOOLEAN, BYTE, SHORT and CHAR columns start
+    /// with the rows of the kept top that fall into it, as a column top, for a row group
+    /// that starts at output row `row_offset`. Returns `None` when no column needs it.
+    fn with_kept_column_tops(
+        &self,
+        partition: &Partition,
+        row_offset: usize,
+    ) -> ParquetResult<Option<Partition>> {
+        if row_offset >= self.column_top_row_limit {
+            return Ok(None);
+        }
+        let mut columns: Option<Vec<Column>> = None;
+        for (i, col) in partition.columns.iter().enumerate() {
+            let value_size = match col.data_type.tag() {
+                ColumnTypeTag::Boolean | ColumnTypeTag::Byte => 1,
+                ColumnTypeTag::Short | ColumnTypeTag::Char => 2,
+                _ => continue,
+            };
+            let top = self
+                .kept_column_top(col.id)
+                .saturating_sub(row_offset)
+                .min(col.row_count);
+            if top <= col.column_top {
+                continue;
+            }
+            let skipped_bytes = (top - col.column_top) * value_size;
+            let primary_data = col.primary_data.get(skipped_bytes..).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "column {} has {} bytes, fewer than its top of {} rows",
+                    col.name,
+                    col.primary_data.len(),
+                    top
+                )
+            })?;
+            let columns = columns.get_or_insert_with(|| partition.columns.clone());
+            columns[i].column_top = top;
+            columns[i].primary_data = primary_data;
+        }
+        Ok(columns.map(|columns| Partition { table: partition.table.clone(), columns }))
+    }
+
     pub fn replace_row_group(
         &mut self,
         partition: &Partition,
         row_group_id: i32,
+        row_offset: usize,
     ) -> ParquetResult<()> {
         let aligned = self.align_columns_to_schema(partition)?;
         let partition = aligned.as_ref().unwrap_or(partition);
@@ -562,6 +616,8 @@ impl ParquetUpdater {
             .first()
             .ok_or_else(|| fmt_err!(InvalidLayout, "replace_row_group: partition has no columns"))?
             .row_count;
+        let topped = self.with_kept_column_tops(partition, row_offset)?;
+        let partition = topped.as_ref().unwrap_or(partition);
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
             partition,
@@ -622,7 +678,12 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
+    pub fn insert_row_group(
+        &mut self,
+        partition: &Partition,
+        position: i32,
+        row_offset: usize,
+    ) -> ParquetResult<()> {
         let aligned = self.align_columns_to_schema(partition)?;
         let partition = aligned.as_ref().unwrap_or(partition);
         self.track_ascii(partition);
@@ -633,6 +694,8 @@ impl ParquetUpdater {
             .first()
             .ok_or_else(|| fmt_err!(InvalidLayout, "insert_row_group: partition has no columns"))?
             .row_count;
+        let topped = self.with_kept_column_tops(partition, row_offset)?;
+        let partition = topped.as_ref().unwrap_or(partition);
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
             partition,
@@ -867,6 +930,13 @@ impl ParquetUpdater {
     /// chunks for columns that are missing from the old schema but present in
     /// the target schema. `null_columns` contains `(target_schema_position,
     /// column_type)` pairs for each column that needs a null chunk.
+    ///
+    /// A missing column's top is the old row count. When the output does not keep
+    /// it (see `kept_column_top()`), a BOOLEAN, BYTE, SHORT or CHAR column gets a
+    /// chunk of 0/false values instead: these types have no NULL sentinel, the
+    /// native merge materializes an ended top as 0/false, and the null chunk would
+    /// read NULL through its definition levels and null count after a change to a
+    /// type with NULL.
     pub fn copy_row_group_with_null_columns(
         &mut self,
         rg_index: i32,
@@ -986,8 +1056,30 @@ impl ParquetUpdater {
             })?;
 
             let col_offset = null_chunk_offset_base + null_bytes_buf.len() as u64;
-            let (chunk_bytes, thrift_col) =
-                generate_null_column_chunk_bytes(field, col_type, row_count, col_offset)?;
+            let field_info = field.get_field_info();
+            // the target schema declares these types Optional, see column_type_to_parquet_type()
+            let is_ended_top = is_no_null_sentinel_type(col_type)
+                && field_info
+                    .id
+                    .is_some_and(|id| self.kept_column_top(id) == 0);
+            let write_statistics = self.parquet_file.options().write_statistics;
+            let (chunk_bytes, thrift_col) = if is_ended_top {
+                generate_zero_column_chunk_bytes(
+                    field,
+                    col_type,
+                    row_count,
+                    col_offset,
+                    write_statistics,
+                )?
+            } else {
+                generate_null_column_chunk_bytes(
+                    field,
+                    col_type,
+                    row_count,
+                    col_offset,
+                    write_statistics,
+                )?
+            };
             null_bytes_buf.extend_from_slice(&chunk_bytes);
             merged_cols[target_pos] = Some(thrift_col);
         }
@@ -1241,7 +1333,14 @@ impl ParquetUpdater {
 
         // Encode only changed columns. Their temporary schema is deliberately
         // narrow, so the encoder's CPU and working set scale with the number of
-        // changes rather than with the full table width.
+        // changes rather than with the full table width. The rewrite moves no
+        // row: the row group starts where the source row group starts.
+        let row_offset = self.file_metadata.row_groups[..rg_idx]
+            .iter()
+            .map(|rg| rg.num_rows())
+            .sum();
+        let topped = self.with_kept_column_tops(partition, row_offset)?;
+        let partition = topped.as_ref().unwrap_or(partition);
         let (changed_schema, _) =
             to_parquet_schema(partition, self.raw_array_encoding, -1, SeqTxn::UNSET)?;
         let changed_bloom_columns: HashSet<usize> = changed_target_positions
@@ -1325,13 +1424,27 @@ impl ParquetUpdater {
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
         // Build updated QDB metadata with unused_bytes and pass it as KV metadata.
         // When a target schema was set (ADD/DROP COLUMN), use the pre-built
-        // target_qdb_meta which already has the correct column list with
-        // column_top=0. Otherwise fall back to the old file's QDB metadata.
+        // target_qdb_meta which already has the correct column list.
+        // Otherwise fall back to the old file's QDB metadata.
+        //
+        // After an O3 merge, row group sizes change, so an old column_top
+        // may cover rows that the merge moved or replaced. The decoder
+        // uses column_top together with the *new* row group sizes to skip
+        // the row groups below the top and to read the leading NULLs of a
+        // BOOLEAN, BYTE, SHORT or CHAR column, which have no NULL sentinel.
+        // A top at or past the first changed row would hide real rows, so
+        // the file keeps a top only below column_top_row_limit, the rows
+        // that keep their position and values; kept_column_top() zeroes
+        // the others. The re-encoded row groups below a kept top encode its
+        // rows as NULLs (with_kept_column_tops), copied row groups keep
+        // their NULL definition levels, and the merged rows past the limit
+        // carry the NULLs the merge wrote for them.
         let mut qdb_meta = if let Some(mut target) = self.target_qdb_meta.take() {
             // Apply tracked ASCII flags from written row groups, keyed by field_id.
             let target_fields = self.parquet_file.schema().fields();
             for (i, col) in target.schema.iter_mut().enumerate() {
                 if let Some(field_id) = target_fields.get(i).and_then(|f| f.get_field_info().id) {
+                    col.column_top = self.kept_column_top(field_id);
                     if let Some(&written) = self.written_ascii.get(&field_id) {
                         col.ascii = Some(written);
                     }
@@ -1351,20 +1464,6 @@ impl ParquetUpdater {
                 })
                 .unwrap_or_else(|| QdbMeta::new(0));
 
-            // After an O3 merge, row group sizes change but the file-level
-            // column_top values remain stale from the original file. The
-            // decoder uses column_top together with the *new* accumulated row
-            // group sizes to decide whether a row group is entirely before the
-            // column top and can be skipped (returning null ptr). Stale
-            // column_top values may cause the decoder to incorrectly skip row
-            // groups that now contain actual data (from merged O3 rows).
-            //
-            // All merged/inserted row groups already embed null sentinels in
-            // their data with column_top=0, and copied row groups preserve
-            // their original null definitions in the page data. Zeroing the
-            // file-level column_top is therefore safe: the decoder will read
-            // the (null) pages instead of skipping them, which is correct
-            // albeit slightly less optimal.
             // Update the ASCII flag from the actual data written in
             // inserted/replaced row groups. For a full rewrite, the
             // written_ascii value is the final answer. For an in-place
@@ -1373,8 +1472,8 @@ impl ParquetUpdater {
             // keyed by parquet field_id, so look up by id (not position).
             let existing_fields = self.parquet_file.schema().fields();
             for (i, col) in meta.schema.iter_mut().enumerate() {
-                col.column_top = 0;
                 let field_id = existing_fields.get(i).and_then(|f| f.get_field_info().id);
+                col.column_top = field_id.map_or(0, |id| self.kept_column_top(id));
                 if let Some(id) = field_id {
                     if let Some(&written) = self.written_ascii.get(&id) {
                         if self.is_rewrite {
@@ -2015,6 +2114,13 @@ fn build_raw_row_group(
 /// includes both repetition and definition levels with correct bit widths
 /// matching the nested schema, and the leaf physical type and full path.
 ///
+/// With `write_statistics`, an Optional chunk carries `null_count = row_count`
+/// and no min/max, the statistics the encoder writes for a row group inside a
+/// column top. The `_pm` decoder reads a chunk's leading NULLs from that count,
+/// and for BOOLEAN, BYTE, SHORT and CHAR, which have no NULL sentinel, the count
+/// is the only way it tells the column top rows from 0/false. A Required chunk
+/// holds real zero values and carries no statistics.
+///
 /// Returns `(raw_page_bytes, thrift_column_chunk)` where `raw_page_bytes`
 /// must be written at `file_offset` in the output file, and the thrift
 /// metadata references that offset.
@@ -2023,6 +2129,7 @@ fn generate_null_column_chunk_bytes(
     column_type: ColumnType,
     row_count: usize,
     file_offset: u64,
+    write_statistics: bool,
 ) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
     let field_info = parquet_field.get_field_info();
     let is_required = field_info.repetition == Repetition::Required;
@@ -2163,7 +2270,20 @@ fn generate_null_column_chunk_bytes(
         data_page_offset,
         index_page_offset: None,
         dictionary_page_offset: dict_page_offset,
-        statistics: None,
+        statistics: if write_statistics && !is_required {
+            Some(Statistics {
+                max: None,
+                min: None,
+                null_count: Some(row_count as i64),
+                distinct_count: None,
+                max_value: None,
+                min_value: None,
+                is_max_value_exact: None,
+                is_min_value_exact: None,
+            })
+        } else {
+            None
+        },
         encoding_stats: Some(encoding_stats),
         bloom_filter_offset: None,
         bloom_filter_length: None,
@@ -2182,6 +2302,211 @@ fn generate_null_column_chunk_bytes(
     };
 
     Ok((chunk_bytes, column_chunk))
+}
+
+/// Whether the type has no NULL sentinel: BOOLEAN, BYTE, SHORT and CHAR read a NULL
+/// only through the definition levels of their chunks.
+fn is_no_null_sentinel_type(column_type: ColumnType) -> bool {
+    matches!(
+        column_type.tag(),
+        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
+    )
+}
+
+/// Generates the raw bytes and thrift `ColumnChunk` of an Optional BOOLEAN, BYTE,
+/// SHORT or CHAR column chunk whose rows all hold 0/false, as the encoder writes a
+/// materialized column top. The size does not grow with the row count: the
+/// definition levels are one RLE run of 1s, a BOOLEAN stores its values as one RLE
+/// run of false, the other types (INT32 in Parquet) as a dictionary of the single
+/// value 0 and one RLE run of RLE_DICTIONARY indices. With `write_statistics` the
+/// chunk carries `null_count = 0` and min = max = 0.
+fn generate_zero_column_chunk_bytes(
+    parquet_field: &ParquetType,
+    column_type: ColumnType,
+    row_count: usize,
+    file_offset: u64,
+    write_statistics: bool,
+) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
+    let is_boolean = column_type.tag() == ColumnTypeTag::Boolean;
+    let (path, max_rep_level, max_def_level, (thrift_type, _type_length)) =
+        collect_leaf_info(parquet_field);
+    if !is_no_null_sentinel_type(column_type) || max_rep_level != 0 || max_def_level != 1 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "cannot generate a zero chunk for column type {:?} with max rep level {} and max def level {}",
+            column_type,
+            max_rep_level,
+            max_def_level
+        ));
+    }
+
+    // Definition levels: every row is defined.
+    let def_levels = rle_run(row_count, 1);
+    let mut page_data = Vec::with_capacity(2 * (4 + def_levels.len()));
+    page_data.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+    page_data.extend_from_slice(&def_levels);
+    if is_boolean {
+        // RLE-encoded booleans of DataPageV1 carry a 4-byte length prefix.
+        let values = rle_run(row_count, 0);
+        page_data.extend_from_slice(&(values.len() as u32).to_le_bytes());
+        page_data.extend_from_slice(&values);
+    } else {
+        // Dictionary indices of bit width 1, one RLE run of entry 0. Readers such as arrow
+        // read no value from indices of bit width 0.
+        page_data.push(0x01);
+        page_data.extend_from_slice(&rle_run(row_count, 0));
+    }
+
+    let mut chunk_bytes = Vec::new();
+    let dict_page_offset = if is_boolean {
+        None
+    } else {
+        let dict_values = 0i32.to_le_bytes();
+        let dict_header = PageHeader {
+            type_: PageType::DICTIONARY_PAGE,
+            uncompressed_page_size: dict_values.len() as i32,
+            compressed_page_size: dict_values.len() as i32,
+            crc: None,
+            data_page_header: None,
+            index_page_header: None,
+            dictionary_page_header: Some(DictionaryPageHeader {
+                num_values: 1,
+                encoding: ThriftEncoding::PLAIN,
+                is_sorted: None,
+            }),
+            data_page_header_v2: None,
+        };
+        write_page_header(
+            &dict_header,
+            &mut chunk_bytes,
+            "zero column dictionary page",
+        )?;
+        chunk_bytes.extend_from_slice(&dict_values);
+        Some(file_offset as i64)
+    };
+
+    let data_encoding = if is_boolean {
+        ThriftEncoding::RLE
+    } else {
+        ThriftEncoding::RLE_DICTIONARY
+    };
+    let data_page_header = PageHeader {
+        type_: PageType::DATA_PAGE,
+        uncompressed_page_size: page_data.len() as i32,
+        compressed_page_size: page_data.len() as i32,
+        crc: None,
+        data_page_header: Some(DataPageHeader {
+            num_values: row_count as i32,
+            encoding: data_encoding,
+            definition_level_encoding: ThriftEncoding::RLE,
+            repetition_level_encoding: ThriftEncoding::RLE,
+            statistics: None,
+        }),
+        index_page_header: None,
+        dictionary_page_header: None,
+        data_page_header_v2: None,
+    };
+    let data_page_offset = file_offset as i64 + chunk_bytes.len() as i64;
+    write_page_header(&data_page_header, &mut chunk_bytes, "zero column data page")?;
+    chunk_bytes.extend_from_slice(&page_data);
+    let total_size = chunk_bytes.len() as i64;
+
+    let (encodings, encoding_stats) = if is_boolean {
+        (
+            vec![ThriftEncoding::RLE],
+            vec![PageEncodingStats {
+                page_type: PageType::DATA_PAGE,
+                encoding: ThriftEncoding::RLE,
+                count: 1,
+            }],
+        )
+    } else {
+        (
+            vec![
+                ThriftEncoding::PLAIN,
+                ThriftEncoding::RLE_DICTIONARY,
+                ThriftEncoding::RLE,
+            ],
+            vec![
+                PageEncodingStats {
+                    page_type: PageType::DICTIONARY_PAGE,
+                    encoding: ThriftEncoding::PLAIN,
+                    count: 1,
+                },
+                PageEncodingStats {
+                    page_type: PageType::DATA_PAGE,
+                    encoding: ThriftEncoding::RLE_DICTIONARY,
+                    count: 1,
+                },
+            ],
+        )
+    };
+    // the plain encoding of the value 0: one byte for a BOOLEAN, an INT32 for the others
+    let zero_value = if is_boolean {
+        vec![0u8]
+    } else {
+        0i32.to_le_bytes().to_vec()
+    };
+    let metadata = ColumnMetaData {
+        type_: thrift_type,
+        encodings,
+        path_in_schema: path,
+        codec: CompressionCodec::UNCOMPRESSED,
+        num_values: row_count as i64,
+        total_uncompressed_size: total_size,
+        total_compressed_size: total_size,
+        key_value_metadata: None,
+        data_page_offset,
+        index_page_offset: None,
+        dictionary_page_offset: dict_page_offset,
+        statistics: write_statistics.then(|| Statistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: Some(zero_value.clone()),
+            min_value: Some(zero_value),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        }),
+        encoding_stats: Some(encoding_stats),
+        bloom_filter_offset: None,
+        bloom_filter_length: None,
+    };
+    let column_chunk = ColumnChunk {
+        file_path: None,
+        file_offset: file_offset as i64 + total_size,
+        meta_data: Some(metadata),
+        offset_index_offset: None,
+        offset_index_length: None,
+        column_index_offset: None,
+        column_index_length: None,
+        crypto_metadata: None,
+        encrypted_column_metadata: None,
+    };
+    Ok((chunk_bytes, column_chunk))
+}
+
+fn write_page_header(header: &PageHeader, out: &mut Vec<u8>, what: &str) -> ParquetResult<()> {
+    let mut protocol = TCompactOutputProtocol::new(out);
+    header.write_to_out_protocol(&mut protocol).map_err(|e| {
+        ParquetError::with_descr(
+            ParquetErrorReason::Parquet2(parquet2::error::Error::oos(e.to_string())),
+            format!("Failed to serialize {what} header"),
+        )
+    })?;
+    Ok(())
+}
+
+/// One RLE run of `count` copies of `value`, of a bit width of at most 8: the
+/// header `count << 1` as a varint, then the value in one byte.
+fn rle_run(count: usize, value: u8) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(11);
+    let mut varint_buf = [0u8; 10];
+    let varint_len = uleb128::encode((count << 1) as u64, &mut varint_buf);
+    buf.extend_from_slice(&varint_buf[..varint_len]);
+    buf.push(value);
+    buf
 }
 
 /// Collects the full root-to-leaf path for `path_in_schema` and computes
@@ -2237,14 +2562,7 @@ fn generate_optional_null_page(row_count: usize, max_rep_level: i16) -> Vec<u8> 
     // followed by ceil(bit_width / 8) zero bytes for the value.  Since the
     // value is 0 regardless of bit_width, one 0x00 byte suffices for any
     // bit_width in [1, 8].
-    let rle_all_zeros = {
-        let mut buf = Vec::with_capacity(8);
-        let mut varint_buf = [0u8; 10];
-        let varint_len = uleb128::encode((row_count << 1) as u64, &mut varint_buf);
-        buf.extend_from_slice(&varint_buf[..varint_len]);
-        buf.push(0x00); // value byte: all zeros
-        buf
-    };
+    let rle_all_zeros = rle_run(row_count, 0);
 
     let rle_section_len = rle_all_zeros.len() as u32;
     // Estimate: optional rep + def sections.
@@ -2902,13 +3220,19 @@ mod tests {
         let (int_schema, _) = to_parquet_schema(&int_partition, false, -1, SeqTxn::UNSET)?;
         let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1, SeqTxn::UNSET)?;
 
-        let (_, int_chunk) =
-            super::generate_null_column_chunk_bytes(&int_schema.fields()[0], int_type, 10, 100)?;
+        let (_, int_chunk) = super::generate_null_column_chunk_bytes(
+            &int_schema.fields()[0],
+            int_type,
+            10,
+            100,
+            true,
+        )?;
         let (_, symbol_chunk) = super::generate_null_column_chunk_bytes(
             &symbol_schema.fields()[0],
             symbol_type,
             10,
             200,
+            true,
         )?;
 
         assert_eq!(
@@ -2934,6 +3258,457 @@ mod tests {
                 },
             ])
         );
+        Ok(())
+    }
+
+    fn null_chunk_statistics(
+        field: &super::ParquetType,
+        column_type: ColumnType,
+        row_count: usize,
+        write_statistics: bool,
+    ) -> Result<Option<parquet_format_safe::Statistics>, Box<dyn Error>> {
+        let (_, chunk) = super::generate_null_column_chunk_bytes(
+            field,
+            column_type,
+            row_count,
+            100,
+            write_statistics,
+        )?;
+        Ok(chunk.meta_data.expect("chunk metadata").statistics)
+    }
+
+    #[test]
+    fn generate_null_column_chunk_bytes_writes_null_count() -> Result<(), Box<dyn Error>> {
+        use crate::parquet_write::schema::column_type_to_parquet_type;
+        use qdb_core::col_type::encode_array_type;
+
+        let only_null_count = |row_count: usize| parquet_format_safe::Statistics {
+            max: None,
+            min: None,
+            null_count: Some(row_count as i64),
+            distinct_count: None,
+            max_value: None,
+            min_value: None,
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        };
+        let column_types = [
+            ColumnTypeTag::Int.into_type(),
+            ColumnTypeTag::Boolean.into_type(),
+            ColumnTypeTag::Byte.into_type(),
+            ColumnTypeTag::Short.into_type(),
+            ColumnTypeTag::Char.into_type(),
+            ColumnTypeTag::Symbol.into_type(),
+            ColumnTypeTag::Varchar.into_type(),
+            encode_array_type(ColumnTypeTag::Double, 1)?,
+        ];
+        for column_type in column_types {
+            let field = column_type_to_parquet_type(1, "n", column_type, false, false)?;
+            assert_eq!(
+                field.get_field_info().repetition,
+                super::Repetition::Optional
+            );
+            // one row, and more rows than one RLE run of definition levels holds
+            for row_count in [1usize, 100_000] {
+                assert_eq!(
+                    null_chunk_statistics(&field, column_type, row_count, true)?,
+                    Some(only_null_count(row_count)),
+                    "{column_type:?} rows {row_count}"
+                );
+                assert_eq!(
+                    null_chunk_statistics(&field, column_type, row_count, false)?,
+                    None,
+                    "{column_type:?} rows {row_count} without statistics"
+                );
+            }
+        }
+
+        // a Required BYTE field (files from versions that wrote the no-sentinel types as
+        // Required) holds real zero values: no NULL to count
+        let required_field = super::ParquetType::try_from_primitive(
+            "n".to_string(),
+            parquet2::schema::types::PhysicalType::Int32,
+            super::Repetition::Required,
+            None,
+            None,
+            Some(1),
+        )?;
+        let byte_type = ColumnTypeTag::Byte.into_type();
+        assert_eq!(
+            null_chunk_statistics(&required_field, byte_type, 10, true)?,
+            None
+        );
+
+        // the encoder writes the same statistics for a row group inside a column top: the
+        // BOOLEAN, BYTE, SHORT, CHAR and INT columns of a source with top 8, row groups of 4
+        let (src, _) = write_topped_source([8; 5])?;
+        let md = read_footer(&src)?;
+        for (i, (_, _, tag)) in TOPPED_TAGS.iter().enumerate() {
+            let col = i + 1;
+            assert_eq!(
+                null_chunk_statistics(&md.schema_descr.fields()[col], tag.into_type(), 4, true)?,
+                Some(chunk_statistics(&md, 0, col)),
+                "{tag:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Rewrites a 4-row [ts(id=0), val(id=1)] source into [ts, val, added(id=2)] with
+    /// `copy_row_group_with_null_columns()` and returns the `_pm` column chunk of `added`.
+    /// The limit keeps the top of `added`: the copy writes the null chunk.
+    fn null_column_pm_chunk(
+        added: ColumnType,
+        write_statistics: bool,
+    ) -> Result<qdb_parquet_meta::ColumnChunkRaw, Box<dyn Error>> {
+        Ok(added_column_chunk(added, write_statistics, usize::MAX, 4)?.0)
+    }
+
+    /// Rewrites a file of `row_count` rows (ts, val) with the column `added`, id 2, that the
+    /// file lacks, under the column top row limit; returns the `_pm` chunk of the added
+    /// column in row group 0, its footer chunk and the output file.
+    fn added_column_chunk(
+        added: ColumnType,
+        write_statistics: bool,
+        limit: usize,
+        row_count: usize,
+    ) -> Result<
+        (
+            qdb_parquet_meta::ColumnChunkRaw,
+            parquet2::metadata::ColumnChunkMetaData,
+            NamedTempFile,
+        ),
+        Box<dyn Error>,
+    > {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use std::io::Read as _;
+
+        let ts: &'static [i64] = Box::leak(
+            (1..=row_count as i64)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let val: &'static [i32] = Box::leak(
+            (1..=row_count as i32)
+                .map(|v| v * 10)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(write_statistics)
+            .finish(Partition {
+                table: "t".to_string(),
+                columns: vec![
+                    make_designated_ts_with_id(0, "ts", ts),
+                    make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), val),
+                ],
+            })?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            None,
+            write_statistics,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        updater.set_column_top_row_limit(limit);
+        updater.set_target_schema(&Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts[..1]),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val[..1]),
+                make_column_with_id(2, "added", added, &[0u8]),
+            ],
+        })?;
+        updater.copy_row_group_with_null_columns(0, &[(2, added)])?;
+        updater.end(None)?;
+
+        let pm_size = updater.result_parquet_meta_size();
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64)?;
+        let pm_chunk = *reader.row_group(0)?.column_chunk(2)?;
+        let footer_chunk = read_footer(&out)?.row_groups[0].columns()[2].clone();
+        Ok((pm_chunk, footer_chunk, out))
+    }
+
+    /// Decodes column `name` of `file` with the arrow reader, as INT64; None for NULL.
+    fn read_column_as_i64(
+        file: &NamedTempFile,
+        name: &str,
+    ) -> Result<Vec<Option<i64>>, Box<dyn Error>> {
+        let bytes = std::fs::read(file.path())?;
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes))?.build()?;
+        let mut out = Vec::new();
+        for batch in reader {
+            let batch = batch?;
+            let column = batch.column_by_name(name).expect("column");
+            let column = arrow::compute::cast(column, &arrow::datatypes::DataType::Int64)?;
+            out.extend(
+                column
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int64Array>()
+                    .expect("Int64Array")
+                    .iter(),
+            );
+        }
+        Ok(out)
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_writes_zero_chunk_for_ended_top(
+    ) -> Result<(), Box<dyn Error>> {
+        // the added column's top, the 4 rows of the file, is not below the limit 2: a BOOLEAN,
+        // BYTE, SHORT or CHAR column gets 0/false in every row, with no NULL, as the native merge
+        // materializes an ended top. A type with a NULL sentinel keeps the null chunk
+        use crate::parquet_metadata::types::StatFlags;
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+        ] {
+            let (chunk, footer_chunk, out) = added_column_chunk(tag.into_type(), true, 2, 4)?;
+            let flags = StatFlags(chunk.stat_flags);
+            assert!(flags.has_null_count(), "{tag:?}");
+            assert_eq!(chunk.num_values, 4, "{tag:?}");
+            assert_eq!(chunk.null_count, 0, "{tag:?}");
+            assert!(flags.has_min_stat() && flags.has_max_stat(), "{tag:?}");
+            let statistics = footer_chunk
+                .column_chunk()
+                .meta_data
+                .as_ref()
+                .and_then(|m| m.statistics.clone())
+                .expect("statistics");
+            let zero = if tag == ColumnTypeTag::Boolean {
+                vec![0u8]
+            } else {
+                0i32.to_le_bytes().to_vec()
+            };
+            assert_eq!(statistics.null_count, Some(0), "{tag:?}");
+            assert_eq!(statistics.min_value, Some(zero.clone()), "{tag:?}");
+            assert_eq!(statistics.max_value, Some(zero), "{tag:?}");
+            assert_eq!(
+                read_column_as_i64(&out, "added")?,
+                vec![Some(0); 4],
+                "{tag:?}"
+            );
+            assert_eq!(
+                footer_column_tops(&read_footer(&out)?),
+                vec![0, 0, 0],
+                "{tag:?}"
+            );
+
+            // statistics off: no null count, the values read 0 all the same
+            let (chunk, _, out) = added_column_chunk(tag.into_type(), false, 2, 4)?;
+            assert!(!StatFlags(chunk.stat_flags).has_null_count(), "{tag:?}");
+            assert_eq!(
+                read_column_as_i64(&out, "added")?,
+                vec![Some(0); 4],
+                "{tag:?}"
+            );
+        }
+        let (chunk, _, out) = added_column_chunk(ColumnTypeTag::Int.into_type(), true, 2, 4)?;
+        assert_eq!(chunk.null_count, 4);
+        assert_eq!(read_column_as_i64(&out, "added")?, vec![None; 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_keeps_null_chunk_of_kept_top() -> Result<(), Box<dyn Error>>
+    {
+        // a limit past the 4 rows keeps the added column's top: NULL rows, footer top 4
+        for tag in [ColumnTypeTag::Boolean, ColumnTypeTag::Byte] {
+            let (chunk, _, out) = added_column_chunk(tag.into_type(), true, 5, 4)?;
+            assert_eq!(chunk.null_count, 4, "{tag:?}");
+            assert_eq!(read_column_as_i64(&out, "added")?, vec![None; 4], "{tag:?}");
+            assert_eq!(
+                footer_column_tops(&read_footer(&out)?),
+                vec![0, 0, 4],
+                "{tag:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn zero_chunk_size_does_not_grow_with_row_count() -> Result<(), Box<dyn Error>> {
+        // a dictionary of one value with RLE indices, or one RLE run of booleans, and one
+        // RLE run of definition levels: 100_000 rows take a few bytes more than 4 rows, the
+        // varints of the run lengths
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+        ] {
+            let (_, small, _) = added_column_chunk(tag.into_type(), true, 0, 4)?;
+            let (_, large, out) = added_column_chunk(tag.into_type(), true, 0, 100_000)?;
+            let small_size = small.compressed_size();
+            let large_size = large.compressed_size();
+            assert!(
+                large_size < 100,
+                "{tag:?} zero chunk of 100_000 rows takes {large_size} bytes"
+            );
+            assert!(
+                large_size - small_size <= 8,
+                "{tag:?}: {small_size} -> {large_size}"
+            );
+            let values = read_column_as_i64(&out, "added")?;
+            assert_eq!(values.len(), 100_000);
+            assert!(values.iter().all(|v| *v == Some(0)), "{tag:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generate_zero_column_chunk_bytes_rejects_types_with_null_sentinel() {
+        use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
+        use parquet2::schema::Repetition;
+        let optional_int = ParquetType::from_physical("i".to_string(), PhysicalType::Int32);
+        let required_int = ParquetType::PrimitiveType(PrimitiveType {
+            field_info: parquet2::schema::types::FieldInfo {
+                name: "b".to_string(),
+                repetition: Repetition::Required,
+                id: Some(2),
+            },
+            logical_type: None,
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        });
+        let repeated = ParquetType::PrimitiveType(PrimitiveType {
+            field_info: parquet2::schema::types::FieldInfo {
+                name: "element".to_string(),
+                repetition: Repetition::Repeated,
+                id: None,
+            },
+            logical_type: None,
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        });
+        let nested = ParquetType::from_group(
+            "b".to_string(),
+            Repetition::Optional,
+            None,
+            None,
+            vec![repeated],
+            Some(2),
+        );
+        // a type with a NULL sentinel, a Required field (no definition levels) and a nested one
+        for (field, column_type, levels) in [
+            (
+                &optional_int,
+                ColumnTypeTag::Int.into_type(),
+                "max rep level 0 and max def level 1",
+            ),
+            (
+                &required_int,
+                ColumnTypeTag::Byte.into_type(),
+                "max rep level 0 and max def level 0",
+            ),
+            (
+                &nested,
+                ColumnTypeTag::Byte.into_type(),
+                "max rep level 1 and max def level 2",
+            ),
+        ] {
+            let err = super::generate_zero_column_chunk_bytes(field, column_type, 4, 0, true)
+                .expect_err("an error");
+            assert!(
+                err.to_string().contains(&format!(
+                    "cannot generate a zero chunk for column type {column_type:?} with {levels}"
+                )),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_rejects_chunk_the_field_cannot_hold(
+    ) -> Result<(), Box<dyn Error>> {
+        // position 0 is the designated timestamp, Required: a BYTE whose top ends cannot get the
+        // Optional zero chunk, an INT cannot get the Required zero page of the null chunk
+        use crate::allocator::TestAllocatorState;
+        let ts = [1i64, 2, 3, 4];
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?).finish(Partition {
+            table: "t".to_string(),
+            columns: vec![make_designated_ts_with_id(0, "ts", &ts)],
+        })?;
+        let src_len = src.as_file().metadata()?.len();
+        let alloc = TestAllocatorState::new();
+        for (column_type, expected) in [
+            (
+                ColumnTypeTag::Byte.into_type(),
+                "cannot generate a zero chunk",
+            ),
+            (
+                ColumnTypeTag::Int.into_type(),
+                "cannot generate null chunk for Required column type",
+            ),
+        ] {
+            let out = NamedTempFile::new()?;
+            let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+            updater.set_target_schema(&Partition {
+                table: "t".to_string(),
+                columns: vec![make_designated_ts_with_id(0, "ts", &ts[..1])],
+            })?;
+            let err = updater
+                .copy_row_group_with_null_columns(0, &[(0, column_type)])
+                .expect_err("an error");
+            assert!(err.to_string().contains(expected), "{column_type:?}: {err}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_writes_pm_null_count() -> Result<(), Box<dyn Error>> {
+        // every row of the null chunk is a definition-level NULL: the _pm decoder reads the chunk
+        // as all NULL (null_count == num_values) and its rows as the leading NULLs of a column top
+        use crate::parquet_metadata::types::StatFlags;
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Varchar,
+        ] {
+            let chunk = null_column_pm_chunk(tag.into_type(), true)?;
+            assert!(
+                StatFlags(chunk.stat_flags).has_null_count(),
+                "{tag:?} null chunk has a null count"
+            );
+            assert_eq!(chunk.num_values, 4, "{tag:?}");
+            assert_eq!(chunk.null_count, 4, "{tag:?}");
+            assert!(!StatFlags(chunk.stat_flags).has_min_stat(), "{tag:?}");
+            assert!(!StatFlags(chunk.stat_flags).has_max_stat(), "{tag:?}");
+
+            // statistics off: no chunk of the file carries a null count
+            let chunk = null_column_pm_chunk(tag.into_type(), false)?;
+            assert!(
+                !StatFlags(chunk.stat_flags).has_null_count(),
+                "{tag:?} null chunk without statistics"
+            );
+        }
         Ok(())
     }
 
@@ -3140,7 +3915,7 @@ mod tests {
                 SeqTxn::UNSET,                  // seq_txn
             )?;
 
-            updater.insert_row_group(&new_partition, 1)?;
+            updater.insert_row_group(&new_partition, 1, 0)?;
             updater.end(None)?;
 
             // Read back metadata and check the appended row group (index 1).
@@ -3202,7 +3977,7 @@ mod tests {
                 SeqTxn::UNSET,
             )?;
 
-            updater.insert_row_group(&new_partition, 1)?;
+            updater.insert_row_group(&new_partition, 1, 0)?;
             updater.end(None)?;
 
             let verify_file = tmp.reopen()?;
@@ -3268,7 +4043,7 @@ mod tests {
         )?;
 
         // Append a second row group, then re-read the footer.
-        updater.insert_row_group(&new_partition, 1)?;
+        updater.insert_row_group(&new_partition, 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -3361,7 +4136,7 @@ mod tests {
             ],
         };
         updater.copy_row_group(0)?;
-        updater.insert_row_group(&o3, 1)?;
+        updater.insert_row_group(&o3, 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -3470,10 +4245,10 @@ mod tests {
         let (ts, a, b) = ([1i64, 2, 3], [11i32, 21, 31], [101i32, 201, 301]);
         let replaced = ts_a_b_partition([2, 0, 1], &ts, &a, &b);
         assert!(updater.align_columns_to_schema(&replaced)?.is_some());
-        updater.replace_row_group(&replaced, 0)?;
+        updater.replace_row_group(&replaced, 0, 0)?;
 
         let (ts, a, b) = ([5i64, 6], [50i32, 60], [500i32, 600]);
-        updater.insert_row_group(&ts_a_b_partition([1, 2, 0], &ts, &a, &b), 1)?;
+        updater.insert_row_group(&ts_a_b_partition([1, 2, 0], &ts, &a, &b), 1, 3)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -3753,7 +4528,7 @@ mod tests {
             SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // raw-copied: source index rebased
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?; // fresh
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?; // fresh
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -3877,7 +4652,7 @@ mod tests {
             -1,
             SeqTxn::UNSET,
         )?;
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -3945,7 +4720,7 @@ mod tests {
             SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // source has no index -> not indexable
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4011,7 +4786,7 @@ mod tests {
             -1,
             SeqTxn::UNSET,
         )?;
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4075,7 +4850,7 @@ mod tests {
             SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // source has an OffsetIndex but no ColumnIndex
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4154,7 +4929,7 @@ mod tests {
             SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // copied group has an OffsetIndex but no ColumnIndex
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4232,7 +5007,7 @@ mod tests {
             -1,
             SeqTxn::UNSET,
         )?;
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4293,7 +5068,7 @@ mod tests {
             -1,
             SeqTxn::UNSET,
         )?;
-        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4440,7 +5215,7 @@ mod tests {
             -1, // existing_parquet_file_size
             SeqTxn::UNSET,
         )?;
-        updater.insert_row_group(&app_partition, 1)?;
+        updater.insert_row_group(&app_partition, 1, 0)?;
         updater.end(None)?;
 
         let mut bytes = Vec::new();
@@ -4580,7 +5355,7 @@ mod tests {
             -1,
             SeqTxn::UNSET,
         )?;
-        updater.insert_row_group(&app, 1)?;
+        updater.insert_row_group(&app, 1, 0)?;
         updater.end(None)?;
 
         // 4. The appended group must carry footer chunk statistics: the writer
@@ -5144,7 +5919,7 @@ mod tests {
         let extra = [5i8, 6, 7, 8];
         let extra_col = make_column("b", ColumnTypeTag::Byte.into_type(), &extra);
         let extra_partition = Partition { table: "t".to_string(), columns: vec![extra_col] };
-        updater.insert_row_group(&extra_partition, 0)?;
+        updater.insert_row_group(&extra_partition, 0, 0)?;
         updater.end(None)?;
 
         // The rewritten file's schema must be Optional for BYTE, regardless
@@ -5316,7 +6091,7 @@ mod tests {
             ],
         };
         updater.copy_row_group(0)?; // copied group: must stay without sorting cols
-        updater.insert_row_group(&o3, 1)?; // fresh group: also without sorting cols
+        updater.insert_row_group(&o3, 1, 0)?; // fresh group: also without sorting cols
         updater.end(None)?;
 
         // 4. Neither row group declares sorting columns, and they agree.
@@ -5413,7 +6188,7 @@ mod tests {
             ],
         };
         updater.copy_row_group(0)?; // copied group: must keep sorting cols
-        updater.insert_row_group(&o3, 1)?; // fresh group: written with sorting cols
+        updater.insert_row_group(&o3, 1, 0)?; // fresh group: written with sorting cols
         updater.end(None)?;
 
         // 4. Every row group must declare identical sorting columns, so Mig941 /
@@ -5528,7 +6303,7 @@ mod tests {
                 make_column_with_id(2, "added", added, &o3_added),
             ],
         };
-        updater.insert_row_group(&o3, 1)?;
+        updater.insert_row_group(&o3, 1, 0)?;
         updater.end(None)?;
 
         // Both row groups must declare the dense TARGET timestamp position (0),
@@ -5621,7 +6396,7 @@ mod tests {
             ],
         };
         updater.copy_row_group(0)?;
-        updater.insert_row_group(&o3, 1)?;
+        updater.insert_row_group(&o3, 1, 0)?;
         updater.end(None)?;
 
         // 4. Every row group must declare the dense designated-timestamp index
@@ -5707,7 +6482,7 @@ mod tests {
                 make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
             ],
         };
-        updater.insert_row_group(&o3, 1)?;
+        updater.insert_row_group(&o3, 1, 0)?;
         updater.end(None)?;
 
         // The footer now conflicts: cached group keeps 1, appended group carries 0.
@@ -5797,9 +6572,9 @@ mod tests {
         //   freshA | copied rg0 | freshB | copied rg1
         // freshA has 3 rows vs rg0's 2, so the two copied groups land at
         // different shifts -> distinct, non-zero offset_delta per copied group.
-        updater.insert_row_group(&ts_val_partition(&[1, 2, 3], &[1, 2, 3]), 0)?;
+        updater.insert_row_group(&ts_val_partition(&[1, 2, 3], &[1, 2, 3]), 0, 0)?;
         updater.copy_row_group(0)?;
-        updater.insert_row_group(&ts_val_partition(&[25, 26], &[250, 260]), 2)?;
+        updater.insert_row_group(&ts_val_partition(&[25, 26], &[250, 260]), 2, 0)?;
         updater.copy_row_group(1)?;
         updater.end(None)?;
 
@@ -6047,6 +6822,991 @@ mod tests {
             bloom_b,
             "target col 1 must not carry b's bloom"
         );
+        Ok(())
+    }
+
+    /// Columns of the kept-column-top tests: the designated timestamp (id 0), then
+    /// BOOLEAN, BYTE, SHORT, CHAR (ids 1..4) and INT (id 5), a type with a NULL sentinel.
+    const TOPPED_TAGS: [(i32, &str, ColumnTypeTag); 5] = [
+        (1, "o", ColumnTypeTag::Boolean),
+        (2, "b", ColumnTypeTag::Byte),
+        (3, "s", ColumnTypeTag::Short),
+        (4, "c", ColumnTypeTag::Char),
+        (5, "i", ColumnTypeTag::Int),
+    ];
+
+    /// A column of `row_count` rows whose first `top` rows are its column top; row `r`
+    /// past the top holds `value_of(r)` in the width of the type.
+    fn topped_column(
+        id: i32,
+        name: &'static str,
+        tag: ColumnTypeTag,
+        top: usize,
+        row_count: usize,
+        value_of: impl Fn(usize) -> i64,
+    ) -> Column {
+        let size = match tag {
+            ColumnTypeTag::Boolean | ColumnTypeTag::Byte => 1,
+            ColumnTypeTag::Short | ColumnTypeTag::Char => 2,
+            _ => 4,
+        };
+        let mut data = Vec::with_capacity((row_count - top) * size);
+        for row in top..row_count {
+            data.extend_from_slice(&value_of(row).to_le_bytes()[..size]);
+        }
+        let data: &'static [u8] = Box::leak(data.into_boxed_slice());
+        Column::from_raw_data(
+            id,
+            name,
+            tag.into_type().code(),
+            top as i64,
+            row_count,
+            data.as_ptr(),
+            data.len(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    /// Timestamps `ts` and the five TOPPED_TAGS columns, each with column top `tops[i]`;
+    /// row `r` past a top holds `value_of(r)`.
+    fn topped_partition(ts: &[i64], tops: [usize; 5], value_of: fn(usize) -> i64) -> Partition {
+        let ts: &'static [i64] = Box::leak(ts.to_vec().into_boxed_slice());
+        let mut columns = vec![make_designated_ts_with_id(0, "ts", ts)];
+        for (i, (id, name, tag)) in TOPPED_TAGS.iter().enumerate() {
+            columns.push(topped_column(*id, name, *tag, tops[i], ts.len(), value_of));
+        }
+        Partition { table: "t".to_string(), columns }
+    }
+
+    /// Writes 8 rows (ts 10..80) in row groups of 4 with the given column tops.
+    fn write_topped_source(tops: [usize; 5]) -> Result<(NamedTempFile, u64), Box<dyn Error>> {
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_row_group_size(Some(4))
+            .finish(topped_partition(
+                &[10, 20, 30, 40, 50, 60, 70, 80],
+                tops,
+                |row| row as i64 + 1,
+            ))?;
+        let len = src.as_file().metadata()?.len();
+        Ok((src, len))
+    }
+
+    /// Opens an updater over `src`: in place when `out` is None, a rewrite into `out` otherwise.
+    fn open_topped_updater(
+        alloc: &crate::allocator::TestAllocatorState,
+        src: &NamedTempFile,
+        src_len: u64,
+        out: Option<&NamedTempFile>,
+    ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+        let (writer, write_file_size) = match out {
+            Some(out) => (out.reopen()?, 0),
+            None => (src.reopen()?, src_len),
+        };
+        Ok(super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            writer,
+            write_file_size,
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?)
+    }
+
+    fn read_footer(
+        file: &NamedTempFile,
+    ) -> Result<parquet2::metadata::FileMetaData, Box<dyn Error>> {
+        let f = file.reopen()?;
+        let len = f.metadata()?.len();
+        Ok(read_metadata_with_size(&mut &f, len)?)
+    }
+
+    /// The column tops of the footer's QDB metadata, in schema order.
+    fn footer_column_tops(md: &parquet2::metadata::FileMetaData) -> Vec<usize> {
+        use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+        let raw = md
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| kvs.iter().find(|kv| kv.key == QDB_META_KEY))
+            .and_then(|kv| kv.value.as_ref())
+            .expect("qdb meta");
+        QdbMeta::deserialize(raw)
+            .unwrap()
+            .schema
+            .iter()
+            .map(|c| c.column_top)
+            .collect()
+    }
+
+    fn chunk_statistics(
+        md: &parquet2::metadata::FileMetaData,
+        rg: usize,
+        col: usize,
+    ) -> parquet_format_safe::Statistics {
+        md.row_groups[rg].columns()[col]
+            .column_chunk()
+            .meta_data
+            .as_ref()
+            .and_then(|m| m.statistics.clone())
+            .expect("chunk statistics")
+    }
+
+    /// null_count of the BOOLEAN, BYTE, SHORT, CHAR and INT chunks of row group `rg`.
+    fn topped_null_counts(md: &parquet2::metadata::FileMetaData, rg: usize) -> Vec<i64> {
+        (1..=5)
+            .map(|col| chunk_statistics(md, rg, col).null_count.unwrap())
+            .collect()
+    }
+
+    /// Appends one row group after the 8 rows of a source with top 2 and returns the
+    /// footer tops; `limit` None leaves the updater's default.
+    fn append_with_limit(limit: Option<usize>) -> Result<Vec<usize>, Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2; 5])?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
+        if let Some(limit) = limit {
+            updater.set_column_top_row_limit(limit);
+        }
+        updater.insert_row_group(&topped_partition(&[90], [0; 5], |_| 9), 2, 8)?;
+        updater.end(None)?;
+        let md = read_footer(&src)?;
+        // the appended row group starts past the limit: no NULLs
+        assert_eq!(topped_null_counts(&md, 2), vec![0; 5]);
+        Ok(footer_column_tops(&md))
+    }
+
+    #[test]
+    fn end_keeps_column_top_below_limit() -> Result<(), Box<dyn Error>> {
+        assert_eq!(append_with_limit(Some(3))?, vec![0, 2, 2, 2, 2, 2]);
+        Ok(())
+    }
+
+    #[test]
+    fn end_zeroes_column_top_at_limit() -> Result<(), Box<dyn Error>> {
+        assert_eq!(append_with_limit(Some(2))?, vec![0; 6]);
+        Ok(())
+    }
+
+    #[test]
+    fn end_keeps_all_tops_with_max_limit() -> Result<(), Box<dyn Error>> {
+        assert_eq!(append_with_limit(Some(usize::MAX))?, vec![0, 2, 2, 2, 2, 2]);
+        Ok(())
+    }
+
+    #[test]
+    fn default_limit_zeroes_tops() -> Result<(), Box<dyn Error>> {
+        assert_eq!(append_with_limit(None)?, vec![0; 6]);
+        Ok(())
+    }
+
+    #[test]
+    fn target_schema_tops_follow_old_tops_by_column_id() -> Result<(), Box<dyn Error>> {
+        // the target schema moves INT (id 5, top 4) first and adds INT id 9, absent from
+        // the old file: its top is the old row count
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2, 2, 2, 2, 4])?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(usize::MAX);
+        let source = topped_partition(&[0], [0; 5], |_| 0);
+        let mut target_columns = vec![source.columns[0], source.columns[5]];
+        target_columns.extend_from_slice(&source.columns[1..5]);
+        target_columns.push(make_column_with_id(
+            9,
+            "n",
+            ColumnTypeTag::Int.into_type(),
+            &[0i32],
+        ));
+        updater
+            .set_target_schema(&Partition { table: "t".to_string(), columns: target_columns })?;
+        let null_columns = [(6, ColumnTypeTag::Int.into_type())];
+        updater.copy_row_group_with_null_columns(0, &null_columns)?;
+        updater.copy_row_group_with_null_columns(1, &null_columns)?;
+        updater.end(None)?;
+        assert_eq!(
+            footer_column_tops(&read_footer(&out)?),
+            vec![0, 4, 2, 2, 2, 2, 8]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn target_schema_absent_column_top_is_old_row_count() -> Result<(), Box<dyn Error>> {
+        // a limit at the old row count keeps the tops below it, not the absent column's
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2; 5])?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(8);
+        let mut target = topped_partition(&[0], [0; 5], |_| 0);
+        target.columns.push(make_column_with_id(
+            9,
+            "n",
+            ColumnTypeTag::Byte.into_type(),
+            &[0i8],
+        ));
+        updater.set_target_schema(&target)?;
+        let null_columns = [(6, ColumnTypeTag::Byte.into_type())];
+        updater.copy_row_group_with_null_columns(0, &null_columns)?;
+        updater.copy_row_group_with_null_columns(1, &null_columns)?;
+        updater.end(None)?;
+        assert_eq!(
+            footer_column_tops(&read_footer(&out)?),
+            vec![0, 2, 2, 2, 2, 2, 0]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replace_row_group_encodes_kept_top_as_nulls() -> Result<(), Box<dyn Error>> {
+        // a merge after the top in row group 0: rows 0..2 keep their place (limit 3). The
+        // merged rows 0, 1 of BOOLEAN, BYTE, SHORT and CHAR hold 0, of INT a real 100.
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2; 5])?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
+        updater.set_column_top_row_limit(3);
+        let merged = topped_partition(&[10, 20, 30, 35, 40], [0; 5], |row| match row {
+            0 | 1 => 100,
+            row => 5 + row as i64,
+        });
+        let mut merged = merged;
+        for col in merged.columns.iter_mut().skip(1).take(4) {
+            // the no-sentinel columns of the merged rows below the top hold 0
+            let mut data = col.primary_data.to_vec();
+            let size = data.len() / 5;
+            data[..2 * size].fill(0);
+            col.primary_data = Box::leak(data.into_boxed_slice());
+        }
+        updater.replace_row_group(&merged, 0, 0)?;
+        updater.end(None)?;
+        let md = read_footer(&src)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 2, 2, 2, 2, 2]);
+        // replace() appends the new row group and puts it first in the footer
+        assert_eq!(md.row_groups[0].num_rows(), 5);
+        assert_eq!(topped_null_counts(&md, 0), vec![2, 2, 2, 2, 0]);
+        // the BYTE values after the top are unchanged: 7, 8, 9
+        let byte_stats = chunk_statistics(&md, 0, 2);
+        assert_eq!(byte_stats.min_value, Some(7i32.to_le_bytes().to_vec()));
+        assert_eq!(byte_stats.max_value, Some(9i32.to_le_bytes().to_vec()));
+        // INT keeps its real values: the top applies to no-sentinel types only
+        let int_stats = chunk_statistics(&md, 0, 5);
+        assert_eq!(int_stats.max_value, Some(100i32.to_le_bytes().to_vec()));
+        Ok(())
+    }
+
+    #[test]
+    fn insert_row_group_in_place_encodes_kept_top_as_nulls() -> Result<(), Box<dyn Error>> {
+        // top 6 runs into row group 1; the merge splits rows 0..6 into a replaced row group
+        // of 4 rows and an inserted one from row 4: the inserted chunk starts with 2 NULLs
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([6; 5])?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
+        updater.set_column_top_row_limit(7);
+        updater.replace_row_group(&topped_partition(&[10, 20, 30, 40], [0; 5], |_| 0), 0, 0)?;
+        updater.insert_row_group(
+            &topped_partition(&[50, 60, 70], [0; 5], |row| if row < 2 { 0 } else { 3 }),
+            1,
+            4,
+        )?;
+        updater.end(None)?;
+        let md = read_footer(&src)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 6, 6, 6, 6, 6]);
+        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 0]);
+        assert_eq!(topped_null_counts(&md, 1), vec![2, 2, 2, 2, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn insert_row_group_rewrite_uses_row_offset() -> Result<(), Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2; 5])?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(3);
+        updater.insert_row_group(&topped_partition(&[10, 20, 30, 35], [0; 5], |_| 1), 0, 0)?;
+        updater.copy_row_group(1)?;
+        updater.insert_row_group(&topped_partition(&[90, 95], [0; 5], |_| 1), 2, 8)?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 2, 2, 2, 2, 2]);
+        assert_eq!(topped_null_counts(&md, 0), vec![2, 2, 2, 2, 0]);
+        assert_eq!(topped_null_counts(&md, 2), vec![0; 5]);
+        Ok(())
+    }
+
+    #[test]
+    fn rewrite_row_group_columns_keeps_top_of_retyped_column() -> Result<(), Box<dyn Error>> {
+        // the hybrid rewrite re-encodes BYTE only; its row groups start where the source
+        // ones do, so the top (6) covers row group 0 and rows 4, 5 of row group 1
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([6; 5])?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(usize::MAX);
+        updater.set_target_schema(&topped_partition(&[0], [0; 5], |_| 0))?;
+        for (rg, values) in [[0i8, 0, 0, 0], [0, 0, 7, 8]].iter().enumerate() {
+            let byte = make_column_with_id(2, "b", ColumnTypeTag::Byte.into_type(), values);
+            updater.rewrite_row_group_columns(
+                rg as i32,
+                &Partition { table: "t".to_string(), columns: vec![byte] },
+            )?;
+        }
+        // the kept top adds no encoded chunk
+        assert_eq!(updater.hybrid_encoded_column_chunks, 2);
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 6, 6, 6, 6, 6]);
+        assert_eq!(chunk_statistics(&md, 0, 2).null_count, Some(4));
+        assert_eq!(chunk_statistics(&md, 1, 2).null_count, Some(2));
+        assert_eq!(
+            chunk_statistics(&md, 1, 2).min_value,
+            Some(7i32.to_le_bytes().to_vec())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn with_kept_column_tops_borrows_when_no_column_needs_a_top() -> Result<(), Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([6; 5])?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
+        updater.set_column_top_row_limit(7);
+        let partition = topped_partition(&[10, 20, 30, 40], [0; 5], |row| row as i64);
+        // at or past the limit, or past the kept top: no copy
+        assert!(updater.with_kept_column_tops(&partition, 7)?.is_none());
+        assert!(updater.with_kept_column_tops(&partition, 6)?.is_none());
+        // a type with a NULL sentinel: no copy
+        let int_only = Partition {
+            table: "t".to_string(),
+            columns: vec![partition.columns[5]],
+        };
+        assert!(updater.with_kept_column_tops(&int_only, 0)?.is_none());
+
+        // row group from row 4: rows 4, 5 of the top; a column that already has a top of
+        // 1 skips one more value
+        let mut partition = partition;
+        partition.columns[2] = topped_column(2, "b", ColumnTypeTag::Byte, 1, 4, |row| row as i64);
+        let topped = updater
+            .with_kept_column_tops(&partition, 4)?
+            .expect("a copy");
+        for (i, col) in topped.columns.iter().enumerate() {
+            let expected_top = if (1..=4).contains(&i) { 2 } else { 0 };
+            assert_eq!(col.column_top, expected_top, "column {i}");
+        }
+        assert_eq!(topped.columns[2].primary_data, &[2u8, 3]);
+        assert_eq!(topped.columns[3].primary_data, &[2u8, 0, 3, 0]);
+        assert_eq!(topped.columns[5].primary_data.len(), 16);
+        Ok(())
+    }
+
+    #[test]
+    fn with_kept_column_tops_rejects_short_data() -> Result<(), Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([6; 5])?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
+        updater.set_column_top_row_limit(7);
+        let mut byte = make_column_with_id(2, "b", ColumnTypeTag::Byte.into_type(), &[1i8]);
+        byte.row_count = 4;
+        let Err(err) = updater.with_kept_column_tops(
+            &Partition { table: "t".to_string(), columns: vec![byte] },
+            0,
+        ) else {
+            panic!("expected an error");
+        };
+        assert!(
+            err.to_string()
+                .contains("column b has 1 bytes, fewer than its top of 4 rows"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    /// The schema of the QDB metadata tests: ts (id 0), VARCHAR ids 3, 5, 7 and INT id 9.
+    fn qdb_meta_source_schema() -> Result<super::SchemaDescriptor, Box<dyn Error>> {
+        let empty_column = |id: i32, name: &'static str, tag: ColumnTypeTag| {
+            Column::from_raw_data(
+                id,
+                name,
+                tag.into_type().code(),
+                0,
+                0,
+                null(),
+                0,
+                null(),
+                0,
+                null(),
+                0,
+                false,
+                false,
+                0,
+            )
+            .unwrap()
+        };
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &[]),
+                empty_column(3, "ascii_vc", ColumnTypeTag::Varchar),
+                empty_column(5, "utf8_vc", ColumnTypeTag::Varchar),
+                empty_column(7, "unknown_vc", ColumnTypeTag::Varchar),
+                empty_column(9, "i", ColumnTypeTag::Int),
+            ],
+        };
+        Ok(to_parquet_schema(&partition, false, -1, SeqTxn::UNSET)?.0)
+    }
+
+    /// Writes a zero-row file of `schema` whose footer carries `qdb_meta_value` under the
+    /// QDB metadata key, or no key-value metadata when it is None.
+    fn write_qdb_meta_source(
+        schema: super::SchemaDescriptor,
+        qdb_meta_value: Option<String>,
+    ) -> Result<(NamedTempFile, u64), Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::QDB_META_KEY;
+
+        let src = NamedTempFile::new()?;
+        let mut pf = ParquetFile::with_sorting_columns(
+            src.reopen()?,
+            schema,
+            write::WriteOptions {
+                write_statistics: true,
+                version: Version::V1,
+                bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            },
+            Some("test".to_string()),
+            None,
+        );
+        pf.end(qdb_meta_value.map(|value| {
+            vec![parquet2::metadata::KeyValue { key: QDB_META_KEY.to_string(), value: Some(value) }]
+        }))?;
+        let src_len = src.as_file().metadata()?.len();
+        Ok((src, src_len))
+    }
+
+    /// The updater seeds its per-column state of the old file from the QDB metadata
+    /// of the source footer, keyed by parquet field_id.
+    #[test]
+    fn new_seeds_old_column_state_from_source_qdb_meta() -> Result<(), Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
+        use std::collections::HashMap;
+
+        let meta_col = |tag: ColumnTypeTag, column_top: usize, ascii: Option<bool>| QdbMetaCol {
+            column_type: tag.into_type(),
+            column_top,
+            format: None,
+            ascii,
+            id: None,
+        };
+        let mut qdb_meta = QdbMeta::new(5);
+        qdb_meta.unused_bytes = 1_234;
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Timestamp, 0, None));
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 2, Some(true)));
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 0, Some(false)));
+        qdb_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 4, None));
+        qdb_meta.schema.push(meta_col(ColumnTypeTag::Int, 6, None));
+        let (src, src_len) =
+            write_qdb_meta_source(qdb_meta_source_schema()?, Some(qdb_meta.serialize()?))?;
+
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let rewrite_out = NamedTempFile::new()?;
+        // in place the updater continues the footer's unused bytes; a rewrite starts a new file
+        for (out, expected_unused_bytes) in [(None, 1_234u64), (Some(&rewrite_out), 0)] {
+            let updater = open_topped_updater(&alloc, &src, src_len, out)?;
+            // VARCHAR only: Some(true) is all ASCII, Some(false) and None are not
+            assert_eq!(
+                updater
+                    .varchar_all_ascii
+                    .into_iter()
+                    .collect::<HashMap<_, _>>(),
+                HashMap::from([(3, true), (5, false), (7, false)])
+            );
+            // columns without a known ascii flag are absent
+            assert_eq!(
+                updater.old_ascii.into_iter().collect::<HashMap<_, _>>(),
+                HashMap::from([(3, true), (5, false)])
+            );
+            assert_eq!(
+                updater
+                    .old_column_tops
+                    .into_iter()
+                    .collect::<HashMap<_, _>>(),
+                HashMap::from([(0, 0), (3, 2), (5, 0), (7, 4), (9, 6)])
+            );
+            assert_eq!(updater.accumulated_unused_bytes, expected_unused_bytes);
+        }
+
+        // a parquet schema without field ids (not written by QuestDB): the maps are keyed by
+        // field_id, so no column is seeded
+        let no_id_field = |name: &str, physical_type, repetition| {
+            super::ParquetType::try_from_primitive(
+                name.to_string(),
+                physical_type,
+                repetition,
+                None,
+                None,
+                None,
+            )
+        };
+        let no_id_schema = super::SchemaDescriptor::new(
+            "t".to_string(),
+            vec![
+                no_id_field(
+                    "ts",
+                    parquet2::schema::types::PhysicalType::Int64,
+                    super::Repetition::Required,
+                )?,
+                no_id_field(
+                    "vc",
+                    parquet2::schema::types::PhysicalType::ByteArray,
+                    super::Repetition::Optional,
+                )?,
+            ],
+        );
+        let mut no_id_meta = QdbMeta::new(2);
+        no_id_meta.unused_bytes = 77;
+        no_id_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Timestamp, 0, None));
+        no_id_meta
+            .schema
+            .push(meta_col(ColumnTypeTag::Varchar, 3, Some(true)));
+        let (src, src_len) = write_qdb_meta_source(no_id_schema, Some(no_id_meta.serialize()?))?;
+        for (out, expected_unused_bytes) in [(None, 77u64), (Some(&rewrite_out), 0)] {
+            let updater = open_topped_updater(&alloc, &src, src_len, out)?;
+            assert!(updater.varchar_all_ascii.is_empty());
+            assert!(updater.old_ascii.is_empty());
+            assert!(updater.old_column_tops.is_empty());
+            assert_eq!(updater.accumulated_unused_bytes, expected_unused_bytes);
+        }
+        Ok(())
+    }
+
+    /// `ParquetUpdater::new` rejects a source footer whose QDB metadata is missing, does not
+    /// parse, or describes a different number of columns than the parquet schema.
+    #[test]
+    fn new_rejects_source_without_valid_qdb_meta() -> Result<(), Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
+
+        let mut four_columns = QdbMeta::new(4);
+        for tag in [
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Varchar,
+        ] {
+            four_columns.schema.push(QdbMetaCol {
+                column_type: tag.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+                id: None,
+            });
+        }
+        let cases = [
+            (
+                None,
+                "parquet file lacks 'questdb' metadata key; O3 merge requires files written by QuestDB",
+            ),
+            (
+                Some(r#"{"version":1"#.to_string()),
+                "could not parse questdb metadata: EOF while parsing an object at line 1 column 12",
+            ),
+            (
+                Some(r#"{"version":2,"schema":[]}"#.to_string()),
+                "unsupported questdb metadata version: 2",
+            ),
+            (
+                Some(four_columns.serialize()?),
+                "QuestDB metadata schema has 4 columns but parquet schema has 5",
+            ),
+        ];
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let rewrite_out = NamedTempFile::new()?;
+        for (qdb_meta_value, expected) in cases {
+            let (src, src_len) = write_qdb_meta_source(qdb_meta_source_schema()?, qdb_meta_value)?;
+            for out in [None, Some(&rewrite_out)] {
+                let Err(err) = open_topped_updater(&alloc, &src, src_len, out) else {
+                    panic!("expected an error: {expected}");
+                };
+                assert_eq!(err.to_string(), expected);
+            }
+        }
+        Ok(())
+    }
+
+    /// Builds a parquet file and its `_pm` with row groups of 4 rows: [ts(id=0), val(id=1),
+    /// added(id=2)]. `added` is a column the source file lacks; `tops` gives the column top of
+    /// each row group in it, the leading rows that hold NULL. A row group with a top of 4 gets
+    /// the backfilled NULL chunk of `copy_row_group_with_null_columns()`, as an O3 merge copies
+    /// it; one with a smaller top is re-encoded, as an O3 merge re-encodes it, with the top
+    /// followed by `values[top..]`.
+    #[allow(clippy::type_complexity)]
+    fn build_added_column_layout<T: Copy>(
+        added: ColumnType,
+        values: &[T; 4],
+        tops: &[usize],
+    ) -> Result<(Vec<u8>, Vec<u8>, u64), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use std::io::Read as _;
+
+        let rows = tops.len() * 4;
+        let ts: Vec<i64> = (1..=rows as i64).collect();
+        let val: Vec<i32> = (1..=rows as i32).map(|v| v * 10).collect();
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(true)
+            .with_row_group_size(Some(4))
+            .finish(Partition {
+                table: "t".to_string(),
+                columns: vec![
+                    make_designated_ts_with_id(0, "ts", &ts),
+                    make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                ],
+            })?;
+        let src_len = src.as_file().metadata()?.len();
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        updater.set_target_schema(&Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_column_with_id(2, "added", added, &values[..1]),
+            ],
+        })?;
+        for (rg, &top) in tops.iter().enumerate() {
+            assert!(top <= 4, "top {top} exceeds the row group size 4");
+            if top == 4 {
+                // the null chunk of a top the output keeps: under the default limit 0 the copy
+                // ends the top and writes 0/false
+                updater.set_column_top_row_limit(usize::MAX);
+                updater.copy_row_group_with_null_columns(rg as i32, &[(2, added)])?;
+                updater.set_column_top_row_limit(0);
+            } else {
+                let lo = rg * 4;
+                let added_values = &values[top..];
+                updater.replace_row_group(
+                    &Partition {
+                        table: "t".to_string(),
+                        columns: vec![
+                            make_designated_ts_with_id(0, "ts", &ts[lo..lo + 4]),
+                            make_column_with_id(
+                                1,
+                                "val",
+                                ColumnTypeTag::Int.into_type(),
+                                &val[lo..lo + 4],
+                            ),
+                            Column::from_raw_data(
+                                2,
+                                "added",
+                                added.code(),
+                                top as i64,
+                                4,
+                                added_values.as_ptr() as *const u8,
+                                std::mem::size_of_val(added_values),
+                                null(),
+                                0,
+                                null(),
+                                0,
+                                false,
+                                false,
+                                0,
+                            )?,
+                        ],
+                    },
+                    rg as i32,
+                    lo,
+                )?;
+            }
+        }
+        updater.end(None)?;
+        let pm_size = updater.result_parquet_meta_size() as u64;
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let mut parquet_bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut parquet_bytes)?;
+        Ok((parquet_bytes, pm_bytes, pm_size))
+    }
+
+    /// Decodes row groups `0..tops.len()` of `added` (the file of
+    /// [`build_added_column_layout`]) as `target` in one range decode, and asserts that the
+    /// buffer equals the row groups decoded one by one and laid end to end, and that the
+    /// surfaced column top is `expected_column_top`. An all-NULL row group that
+    /// decode_row_group returns empty (the fast path) stands for `null_bytes` per row, as the
+    /// O3 merge fills it.
+    #[allow(clippy::too_many_arguments)]
+    fn assert_range_decode_equals_per_group_decodes(
+        added: ColumnType,
+        parquet_bytes: &[u8],
+        pm_bytes: &[u8],
+        pm_size: u64,
+        tops: &[usize],
+        target: ColumnType,
+        null_bytes: &[u8],
+        expected_column_top: usize,
+    ) -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use crate::parquet_read::parquet_meta_decode::{
+            decode_row_group, decode_row_group_range, ColumnChunkSource,
+        };
+        use crate::parquet_read::{DecodeContext, RowGroupBuffers};
+
+        let alloc = TestAllocatorState::new();
+        let reader = ParquetMetaReader::from_file_size(pm_bytes, pm_size)?;
+        let col_pairs = [(2i32, target)];
+        let mut expected = Vec::new();
+        for rg in 0..tops.len() {
+            let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), parquet_bytes.len() as u64);
+            let mut bufs = RowGroupBuffers::new(alloc.allocator());
+            decode_row_group(
+                &mut ctx,
+                &mut bufs,
+                ColumnChunkSource::File(parquet_bytes),
+                &reader,
+                &col_pairs,
+                rg,
+                0,
+                4,
+            )?;
+            let data = bufs.column_buffers()[0].data_vec.as_slice();
+            if data.is_empty() {
+                for _ in 0..4 {
+                    expected.extend_from_slice(null_bytes);
+                }
+            } else {
+                expected.extend_from_slice(data);
+            }
+        }
+        let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), parquet_bytes.len() as u64);
+        let mut bufs = RowGroupBuffers::new(alloc.allocator());
+        let decoded = decode_row_group_range(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::File(parquet_bytes),
+            &reader,
+            &col_pairs,
+            0,
+            tops.len() - 1,
+        )?;
+        assert_eq!(decoded, tops.len() * 4);
+        let chunk = &bufs.column_buffers()[0];
+        assert_eq!(
+            chunk.data_vec.as_slice(),
+            expected.as_slice(),
+            "{added:?} -> {target:?}, tops {tops:?}"
+        );
+        assert_eq!(
+            chunk.column_top, expected_column_top,
+            "{added:?} -> {target:?}, tops {tops:?}"
+        );
+        Ok(())
+    }
+
+    /// The targets of a lazy conversion of `source`, a type without a NULL sentinel, with the
+    /// bytes of the target NULL. SHORT and BYTE have no NULL either: the O3 merge fills 0, and
+    /// nothing stamps.
+    fn no_sentinel_targets(source: ColumnTypeTag) -> Vec<(ColumnType, Vec<u8>)> {
+        use qdb_core::col_type::{nulls, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+        let int_null = nulls::INT.to_le_bytes().to_vec();
+        let long_null = nulls::LONG.to_le_bytes().to_vec();
+        let mut targets = vec![
+            (ColumnTypeTag::Int.into_type(), int_null),
+            (ColumnTypeTag::Long.into_type(), long_null.clone()),
+            (ColumnTypeTag::Date.into_type(), long_null.clone()),
+            (ColumnTypeTag::Timestamp.into_type(), long_null.clone()),
+            (
+                ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG),
+                long_null,
+            ),
+            (
+                ColumnTypeTag::Float.into_type(),
+                nulls::FLOAT.to_le_bytes().to_vec(),
+            ),
+            (
+                ColumnTypeTag::Double.into_type(),
+                nulls::DOUBLE.to_le_bytes().to_vec(),
+            ),
+        ];
+        if source != ColumnTypeTag::Boolean {
+            let mut decimal256_null = nulls::DECIMAL256[0].to_le_bytes().to_vec();
+            decimal256_null.extend_from_slice(&nulls::DECIMAL256[1].to_le_bytes());
+            for (precision, scale, null_bytes) in [
+                (2, 0, nulls::DECIMAL8.to_le_bytes().to_vec()),
+                (4, 1, nulls::DECIMAL16.to_le_bytes().to_vec()),
+                (9, 2, nulls::DECIMAL32.to_le_bytes().to_vec()),
+                (18, 2, nulls::DECIMAL64.to_le_bytes().to_vec()),
+                (38, 4, nulls::DECIMAL128.to_le_bytes().to_vec()),
+                (76, 4, decimal256_null),
+            ] {
+                targets.push((
+                    ColumnType::new_decimal(precision, scale).unwrap(),
+                    null_bytes,
+                ));
+            }
+            targets.push((ColumnTypeTag::Short.into_type(), vec![0u8; 2]));
+            targets.push((ColumnTypeTag::Byte.into_type(), vec![0u8]));
+        }
+        targets
+    }
+
+    /// Builds the file of [`build_added_column_layout`] for `source` with the values that
+    /// [`no_sentinel_targets`] decode: 0, a positive value and the extremes of the type.
+    #[allow(clippy::type_complexity)]
+    fn build_no_sentinel_layout(
+        source: ColumnTypeTag,
+        tops: &[usize],
+    ) -> Result<(Vec<u8>, Vec<u8>, u64), Box<dyn Error>> {
+        match source {
+            ColumnTypeTag::Byte => {
+                build_added_column_layout(source.into_type(), &[0i8, 5, i8::MIN, i8::MAX], tops)
+            }
+            ColumnTypeTag::Short => {
+                build_added_column_layout(source.into_type(), &[0i16, 5, i16::MIN, i16::MAX], tops)
+            }
+            _ => build_added_column_layout(source.into_type(), &[1u8, 0, 1, 1], tops),
+        }
+    }
+
+    /// A run of row groups decoded into one buffer must equal the row groups decoded one by
+    /// one and laid end to end, for a column added after the file was written and lazily
+    /// converted from a type without a NULL sentinel. Java reads the surfaced column top as
+    /// one leading block of NULLs: the top rows from row 0 up to the first row with a value.
+    #[test]
+    fn decode_row_group_range_equals_per_group_decodes() -> Result<(), Box<dyn Error>> {
+        // (tops of the row groups, column top Java reads)
+        let layouts: [(&[usize], usize); 10] = [
+            (&[0, 4], 0),
+            (&[4, 0], 4),
+            (&[4, 4], 8),
+            (&[0, 0], 0),
+            (&[0, 4, 4], 0),
+            (&[4, 0, 4], 4),
+            (&[0, 3, 4], 0),
+            (&[2, 4], 2),
+            (&[4, 2, 0], 6),
+            (&[1, 0, 2, 4], 1),
+        ];
+        for source in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Boolean,
+        ] {
+            for (tops, column_top) in layouts {
+                let (pq, pm, pm_size) = build_no_sentinel_layout(source, tops)?;
+                for (target, null_bytes) in no_sentinel_targets(source) {
+                    assert_range_decode_equals_per_group_decodes(
+                        source.into_type(),
+                        &pq,
+                        &pm,
+                        pm_size,
+                        tops,
+                        target,
+                        &null_bytes,
+                        column_top,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`decode_row_group_range_equals_per_group_decodes`] over random runs of 2 to 6 row
+    /// groups, each holding values, a partial top or only its top, with a random source and
+    /// target. The seed is printed.
+    #[test]
+    fn decode_row_group_range_matches_per_group_decodes_fuzz() -> Result<(), Box<dyn Error>> {
+        use rand::rngs::StdRng;
+        use rand::{RngExt, SeedableRng};
+
+        let seed: u64 = rand::rng().random();
+        println!("decode_row_group_range_matches_per_group_decodes_fuzz seed: {seed}");
+        let mut rng = StdRng::seed_from_u64(seed);
+        let sources = [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Boolean,
+        ];
+        for _ in 0..40 {
+            let source = sources[rng.random_range(0..sources.len())];
+            let tops: Vec<usize> = (0..rng.random_range(2..=6))
+                .map(|_| match rng.random_range(0..3) {
+                    0 => 0,
+                    1 => rng.random_range(1..4),
+                    _ => 4,
+                })
+                .collect();
+            // the leading block: the tops of the row groups that hold only their top, and
+            // the top of the first row group that holds a value
+            let mut column_top = 0;
+            for &top in &tops {
+                column_top += top;
+                if top < 4 {
+                    break;
+                }
+            }
+            let (pq, pm, pm_size) = build_no_sentinel_layout(source, &tops)?;
+            let targets = no_sentinel_targets(source);
+            let (target, null_bytes) = &targets[rng.random_range(0..targets.len())];
+            assert_range_decode_equals_per_group_decodes(
+                source.into_type(),
+                &pq,
+                &pm,
+                pm_size,
+                &tops,
+                *target,
+                null_bytes,
+                column_top,
+            )
+            .map_err(|e| format!("seed {seed}: {e}"))?;
+        }
         Ok(())
     }
 }

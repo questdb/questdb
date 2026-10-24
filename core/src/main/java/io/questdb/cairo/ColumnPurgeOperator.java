@@ -43,6 +43,7 @@ import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.function.ObjIntConsumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
@@ -62,7 +63,14 @@ public class ColumnPurgeOperator implements Closeable {
      * so it leaves the file alone and retries the note later.
      */
     private static final long GEOMETRY_GENERATION_UNREADABLE = Long.MAX_VALUE;
+    private static final int INVALID_TABLE_ID = Integer.MIN_VALUE;
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
+    // openScoreboardAndTxn() results
+    private static final int TABLE_STATE_LIVE = 0;
+    private static final int TABLE_STATE_REFUSED = 1;
+    private static final int TABLE_STATE_RETRY = 2;
+    // DROP PARTITION, ATTACH, DETACH or TRUNCATE changed the truncate version after the purge was queued
+    private static final int TABLE_STATE_TRUNCATE_REFUSED = 3;
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -286,6 +294,12 @@ public class ColumnPurgeOperator implements Closeable {
                 return true;
             }
             if (IndexType.isPosting(indexType)) {
+                // removeAllSealedFiles() and its callers go on after the .pci fails to go, so the .pci
+                // can outlive the .pk and every sealed file of its instance
+                path.trimTo(pathTrimToPartition);
+                if (ff.exists(PostingIndexUtils.coverInfoFileName(path, columnName, columnVersion))) {
+                    return true;
+                }
                 path.trimTo(pathTrimToPartition);
                 long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                         ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
@@ -304,8 +318,10 @@ public class ColumnPurgeOperator implements Closeable {
                     // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
                     // the purge is not complete and must retry, otherwise
                     // the caller's "files all gone" shortcut leaks them.
-                    sealedPostingFileScanProbe.of(columnVersion);
-                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
+                    // With the .pci and .pk probes above, this covers every
+                    // file removeAllSealedFiles() and the .pk removal take.
+                    sealedPostingFileScanProbe.clear();
+                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion, sealedPostingFileScanProbe);
                     if (sealedPostingFileScanProbe.hasMatch()) {
                         return true;
                     }
@@ -327,7 +343,7 @@ public class ColumnPurgeOperator implements Closeable {
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
-    private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
+    private int openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
                 txnScoreboard = Misc.free(txnScoreboard);
@@ -338,11 +354,19 @@ public class ColumnPurgeOperator implements Closeable {
                 boolean tableChanged = updatedTableToken == null || updatedTableToken.getTableId() != task.getTableId();
                 if (!tableChanged) {
                     int tableId = readTableId(path);
+                    if (tableId == INVALID_TABLE_ID) {
+                        // The registry still lists the table under the id of the task, so _meta is missing
+                        // only for now: TableWriter renames _meta to _meta.prev before it renames _meta.swp
+                        // to _meta, and non-WAL DROP and RENAME remove the directory before the registry
+                        // forgets the table. The next run reads the id again.
+                        LOG.info().$("cannot read table id, will retry [path=").$(path.trimTo(pathTableLen)).I$();
+                        return TABLE_STATE_RETRY;
+                    }
                     tableChanged = tableId != task.getTableId();
                 }
                 if (tableChanged) {
                     LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
-                    return false;
+                    return TABLE_STATE_REFUSED;
                 }
 
                 path.trimTo(pathTableLen).concat(TXN_FILE_NAME);
@@ -350,11 +374,13 @@ public class ColumnPurgeOperator implements Closeable {
                 txReader.unsafeLoadAll();
                 if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
-                    return false;
+                    return TABLE_STATE_TRUNCATE_REFUSED;
                 }
-                return true;
+                return TABLE_STATE_LIVE;
             default:
-                return false;
+                // VACUUM_TABLE takes the scoreboard and the txn of its reader, and purge0() does not call here
+                assert false : "scoreboard use mode " + scoreboardUseMode;
+                return TABLE_STATE_REFUSED;
         }
     }
 
@@ -385,7 +411,14 @@ public class ColumnPurgeOperator implements Closeable {
                             continue;
                         }
                         if (setupScoreboard) {
-                            if (!openScoreboardAndTxn(task)) {
+                            final int tableState = openScoreboardAndTxn(task);
+                            if (tableState == TABLE_STATE_RETRY) {
+                                // setupScoreboard stays true, so the next entry checks the table again
+                                allDone = false;
+                                continue;
+                            }
+                            if (tableState != TABLE_STATE_LIVE) {
+                                // the table changed or a truncate overlaps the purge: leave the file alone
                                 completedRowIds.add(updateRowId);
                                 continue;
                             }
@@ -492,9 +525,21 @@ public class ColumnPurgeOperator implements Closeable {
                         // may not exist, including the entire table. Setting up
                         // scoreboard ahead of checking file existence would fail in those
                         // cases.
-                        if (!openScoreboardAndTxn(task)) {
+                        final int tableState = openScoreboardAndTxn(task);
+                        if (tableState == TABLE_STATE_RETRY) {
+                            // setupScoreboard stays true, so the next entry checks the table again
+                            allDone = false;
+                            continue;
+                        }
+                        if (tableState == TABLE_STATE_REFUSED || tableState == TABLE_STATE_TRUNCATE_REFUSED) {
                             // the current table state precludes us from purging its columns
                             // nothing to do here
+                            if (tableState == TABLE_STATE_TRUNCATE_REFUSED) {
+                                final ObjIntConsumer<ColumnPurgeTask> listener = engine.getConfiguration().getColumnPurgeTruncateRefusalListener();
+                                if (listener != null) {
+                                    listener.accept(task, i);
+                                }
+                            }
                             completedRowIds.add(updateRowId);
                             continue;
                         }
@@ -511,8 +556,15 @@ public class ColumnPurgeOperator implements Closeable {
                             path.trimTo(pathTableLen);
                         }
                         pathTrimToPartition = path.size();
-                        TableUtils.dFile(path, columnName, columnVersion);
                         setupScoreboard = false;
+                    }
+
+                    // the existence probe and openScoreboardAndTxn() move path off the column file
+                    path.trimTo(pathTrimToPartition);
+                    if (isSymbolRootFiles) {
+                        TableUtils.charFileName(path, columnName, columnVersion);
+                    } else {
+                        TableUtils.dFile(path, columnName, columnVersion);
                     }
 
                     if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
@@ -619,7 +671,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private int readTableId(Path path) {
-        final int INVALID_TABLE_ID = Integer.MIN_VALUE;
         long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;
@@ -704,37 +755,31 @@ public class ColumnPurgeOperator implements Closeable {
 
     /**
      * Reusable {@link PostingIndexUtils.SealedFileVisitor} that flags
-     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) for a target
-     * columnVersion exists in the scanned partition. Stateful but
-     * non-allocating: callers call {@link #of(long)} to reset state for
-     * a new probe, run {@link PostingIndexUtils#scanSealedFiles}, then
-     * read {@link #hasMatch()}.
+     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) of the column
+     * version {@link PostingIndexUtils#scanSealedFiles} scans exists in the
+     * scanned partition. Stateful but non-allocating: callers call
+     * {@link #clear()} to reset state for a new probe, run
+     * {@link PostingIndexUtils#scanSealedFiles}, then read {@link #hasMatch()}.
      */
     private static final class SealedPostingFileScanProbe implements PostingIndexUtils.SealedFileVisitor {
-        private long columnVersion;
         private boolean hasMatch;
+
+        public void clear() {
+            hasMatch = false;
+        }
 
         public boolean hasMatch() {
             return hasMatch;
         }
 
-        public void of(long columnVersion) {
-            this.columnVersion = columnVersion;
-            this.hasMatch = false;
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            hasMatch = true;
         }
 
         @Override
-        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
-                hasMatch = true;
-            }
-        }
-
-        @Override
-        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
-                hasMatch = true;
-            }
+        public void onValueFile(long sealTxn) {
+            hasMatch = true;
         }
     }
 

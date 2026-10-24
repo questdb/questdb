@@ -381,6 +381,35 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalMaterializedViewKeepsTtl() throws Exception {
+        // REBASE resets the metadata version of the cloned _meta. The TTL that an ALTER set, taking
+        // the metadata version above zero, must survive the reset.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h) PARTITION BY DAY");
+            execute("INSERT INTO base_price VALUES ('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h SET TTL 2 DAYS");
+            drainWalAndMatViewQueues();
+
+            final String expectedDdl = """
+                    ddl
+                    CREATE MATERIALIZED VIEW 'price_1h' WITH BASE 'base_price' REFRESH IMMEDIATE AS (
+                    SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h
+                    ) PARTITION BY DAY TTL 2 DAYS;
+                    """;
+            assertQuery("SHOW CREATE MATERIALIZED VIEW price_1h").noLeakCheck().noRandomAccess().returns(expectedDdl);
+
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            execute("ALTER MATERIALIZED VIEW price_1h REBASE WAL");
+            drainWalQueue();
+
+            assertQuery("SHOW CREATE MATERIALIZED VIEW price_1h").noLeakCheck().noRandomAccess().returns(expectedDdl);
+        });
+    }
+
+    @Test
     public void testSuspendedMatViewFullRefreshNotInvalidatedWhenWriteDenied() throws Exception {
         // With cairo.wal.apply.suspended.write.denied=true, CairoEngine.getWalWriter refuses a hard-suspended
         // view with CairoException.tableSuspended. REFRESH ... FULL on such a view must skip, not invalidate.

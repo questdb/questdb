@@ -55,8 +55,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Server-side dedup is required: when an SF sender reconnects (or is
  * replaced by a fresh sender pointed at the same {@code sf_dir}) it is free
  * to resend any frame whose ACK was lost in the bounce. The target table is
- * created with {@code DEDUP UPSERT KEYS(ts, id)} so that those replays
- * collapse into the original row.
+ * created with {@code DEDUP UPSERT KEYS(ts, id)} or {@code DEDUP SKIP KEYS(ts, id)},
+ * a random pick, so that those replays collapse into the original row. A replay
+ * carries the same column values as the original row, so both modes leave the
+ * same table content.
  *
  * <p>The implementation under test (cursor SF on the {@code vi_sf} branch
  * of {@code java-questdb-client}) provides:
@@ -105,6 +107,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
     // does not override these, so the actual buffers are this size.
     private static final int RECV_BUFFER_SIZE = 131_072;
     private static final int SEND_BUFFER_SIZE = 131_072;
+    private String dedupMode;
     private int recvChunk;
     private int sendChunk;
 
@@ -119,8 +122,10 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // the buffer is effectively no fragmentation.
         recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
         sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
         LOG.info().$("QwpIngressServerRestartFuzzTest fragmentation recvChunk=").$(recvChunk)
-                .$(", sendChunk=").$(sendChunk).$();
+                .$(", sendChunk=").$(sendChunk)
+                .$(", dedupMode=").$(dedupMode).$();
     }
 
     @Test
@@ -586,7 +591,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                             + "tag SYMBOL, "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
-                            + "DEDUP UPSERT KEYS(ts, id)"
+                            + "DEDUP " + dedupMode + " KEYS(ts, id)"
             );
         } catch (Exception e) {
             throw new AssertionError("failed to create target table", e);

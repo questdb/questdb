@@ -187,7 +187,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public boolean enableDeduplicationWithUpsertKeys() {
+    public boolean enableDeduplication() {
         boolean isSubsetOfOldKeys = true;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             isSubsetOfOldKeys &= isDedupKey(columnIndex);

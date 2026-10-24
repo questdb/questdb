@@ -393,6 +393,38 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 }
 
+fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
+    usize::try_from(row_offset)
+        .map_err(|_| fmt_err!(InvalidLayout, "negative row_offset: {}", row_offset))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setColumnTopRowLimit(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    limit: jlong,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.setColumnTopRowLimit");
+        return err.into_cairo_exception().throw(env);
+    }
+    match usize::try_from(limit) {
+        Ok(limit) => {
+            // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+            // Single-threaded JNI access guarantees no aliasing.
+            unsafe { &mut *updater }.set_column_top_row_limit(limit);
+        }
+        Err(_) => {
+            let mut err = fmt_err!(InvalidLayout, "negative column top row limit: {}", limit);
+            err.add_context("error in PartitionUpdater.setColumnTopRowLimit");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateRowGroup(
     mut env: JNIEnv,
@@ -401,6 +433,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     table_name_len: u32,
     table_name_ptr: *const u8,
     row_group_id: jint,
+    row_offset: jlong,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -432,7 +465,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.replace_row_group(&partition, row_group_id)
+        parquet_updater.replace_row_group(&partition, row_group_id, row_offset_from(row_offset)?)
     };
 
     match update() {
@@ -461,6 +494,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     table_name_len: u32,
     table_name_ptr: *const u8,
     position: jint,
+    row_offset: jlong,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -489,7 +523,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.insert_row_group(&partition, position)
+        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)
     };
 
     match insert() {
@@ -2364,6 +2398,13 @@ mod validation_tests {
             ),
             "column count must not be negative",
         );
+    }
+
+    #[test]
+    fn negative_row_offset_is_rejected() {
+        assert_eq!(row_offset_from(0).unwrap(), 0);
+        assert_eq!(row_offset_from(i64::MAX).unwrap(), i64::MAX as usize);
+        assert_error_contains(row_offset_from(-1), "negative row_offset: -1");
     }
 }
 

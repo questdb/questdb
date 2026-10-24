@@ -7,12 +7,15 @@ use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
 };
-use crate::parquet_read::row_groups::{plan_decode_conversion, post_convert, DecodeAs};
+use crate::parquet_read::row_groups::{
+    plan_decode_conversion, post_convert, post_convert_with_top_rows, DecodeAs,
+};
 use crate::parquet_read::{DecodeContext, RowGroupBuffers, VarcharSliceBufGuard};
 use parquet2::compression::Compression;
 use parquet2::metadata::Descriptor;
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use std::ops::Range;
 
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 
@@ -445,10 +448,13 @@ pub fn decode_row_group(
 /// it. Each column resets its buffer on the first group of the run and appends the rest;
 /// the var-size sinks write absolute data_vec offsets, so appended chunks stay consistent
 /// without offset fixup. The all-null-chunk fast path is intentionally NOT taken here so
-/// that every group contributes its full row count to the concatenation. Column-top rows
-/// (def-level-0 nulls for a column added after the partition was written) are counted
-/// across the groups so post_convert stamps the target NULL sentinel over a converted
-/// no-in-band-sentinel source, exactly as decode_row_group does per group.
+/// that every group contributes its full row count to the concatenation. Each group's
+/// column-top rows (def-level-0 nulls of a column added after the group was written) start
+/// at that group's first row of the concatenation, so post_convert stamps the target NULL
+/// sentinel over a converted no-in-band-sentinel source at each group's own offset, and the
+/// result equals the per-group decode_row_group results laid end to end. An earlier group
+/// that an O3 merge rewrote holds values where a later group still holds its top, so the
+/// tops of a run are not one leading block in general.
 pub fn decode_row_group_range(
     ctx: &mut DecodeContext,
     row_group_bufs: &mut RowGroupBuffers,
@@ -492,6 +498,12 @@ pub fn decode_row_group_range(
     row_group_bufs.ensure_n_columns(col_pairs.len())?;
 
     let mut total = 0usize;
+    // The column-top rows of each group, at the group's offset in the concatenation. A
+    // no-in-band-sentinel source (Boolean/Byte/Short/Char) cannot carry them in the
+    // decoded values, so post_convert stamps the target NULL sentinel over them --
+    // matching decode_row_group's per-group handling. The tops of consecutive groups
+    // merge into one range when the earlier group is all top. Each column reuses the list.
+    let mut top_rows: Vec<Range<usize>> = Vec::new();
     for (dest_col_idx, &(column_idx, to_column_type)) in col_pairs.iter().enumerate() {
         // Column type, name and descriptor are invariant across the row groups in
         // the range, so build them once per column rather than once per row group.
@@ -503,16 +515,18 @@ pub fn decode_row_group_range(
         )?;
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
         let mut col_decoded = 0usize;
-        // Column-top rows (leading def-level-0 nulls for a column added after the partition
-        // was written) sit at the front of the concatenated range. A no-in-band-sentinel
-        // source (Boolean/Byte/Short/Char) cannot carry them in the decoded values, so
-        // accumulate their count across the groups and let post_convert stamp the target
-        // NULL sentinel over them -- matching decode_row_group's per-group handling.
-        let mut leading_nulls = 0usize;
+        top_rows.clear();
         for rg in row_group_lo_idx..=row_group_hi_idx {
             let rg_block = parquet_meta_reader.row_group(rg)?;
             let chunk = prepare_chunk(&rg_block, column_idx as usize)?;
-            leading_nulls += window_leading_nulls(chunk.col_top, 0, chunk.num_values as usize);
+            let rg_top = window_leading_nulls(chunk.col_top, 0, chunk.num_values as usize);
+            if rg_top > 0 {
+                let rows = col_decoded..col_decoded + rg_top;
+                match top_rows.last_mut() {
+                    Some(prev) if prev.end == rows.start => prev.end = rows.end,
+                    _ => top_rows.push(rows),
+                }
+            }
 
             let chunk_data = source.chunk_data(
                 dest_col_idx,
@@ -541,14 +555,18 @@ pub fn decode_row_group_range(
         // DecodeAs::Source conversion (e.g. INT->LONG stays i32 here, decimal narrowing
         // keeps the source width, DATE<->TIMESTAMP stays unscaled); finish the conversion
         // in place exactly as decode_row_group does, so the O3 merge sees target-typed
-        // buffers rather than raw source bytes. `leading_nulls` (accumulated across the
-        // range above) stamps the target NULL sentinel over the column-top prefix for a
-        // no-in-band-sentinel source, and is surfaced to Java for fixed->var conversions.
-        column_chunk_bufs.column_top = leading_nulls;
-        post_convert(
+        // buffers rather than raw source bytes. `top_rows` stamps the target NULL sentinel
+        // over each group's column top for a no-in-band-sentinel source. Java reads one
+        // leading count for fixed->var conversions, so it gets the leading block only: a
+        // top that starts after a row holding a value is not leading.
+        column_chunk_bufs.column_top = match top_rows.first() {
+            Some(rows) if rows.start == 0 => rows.end,
+            _ => 0,
+        };
+        post_convert_with_top_rows(
             meta.original_column_type,
             to_column_type,
-            leading_nulls,
+            &top_rows,
             column_chunk_bufs,
         )?;
 

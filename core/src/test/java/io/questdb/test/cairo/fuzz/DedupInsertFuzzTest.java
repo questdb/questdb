@@ -32,7 +32,9 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -46,7 +48,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
@@ -56,6 +60,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.fuzz.DuplicateFuzzInsertOperation;
+import io.questdb.test.fuzz.FuzzAddColumnOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
@@ -74,6 +79,7 @@ import java.util.stream.Collectors;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
+    private static final String NULL_SYMBOL_VALUE = "nullSymbolValue_unlikely_to_be_generated_by_random";
 
     @Test
     public void testDedupWithRandomShiftAndStep() throws Exception {
@@ -81,11 +87,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps();
             boolean createAsParquet = rnd.nextBoolean();
             boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            boolean isSkipMode = rnd.nextBoolean();
 
             String tableName = getTestName();
-            createEmptyTable(tableName, "DEDUP upsert keys(ts, commit)", createAsParquet);
+            createEmptyTable(tableName, "DEDUP " + dedupModeSql(rnd.nextBoolean()) + " keys(ts, commit)", createAsParquet);
             execute("alter table " + tableName + " dedup disable");
-            execute("alter table " + tableName + " dedup enable upsert keys(ts)");
+            execute("alter table " + tableName + " dedup enable " + dedupModeSql(isSkipMode) + " keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             try {
@@ -103,6 +110,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 );
                 applyWal(transactions, tableName, 1, rnd);
                 maybeConvertToParquet(tableName, convertToParquet);
+                ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, false);
                 transactions.clear();
 
                 double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
@@ -123,8 +131,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         rnd
                 );
 
-                applyWal(transactions, tableName, 1, rnd);
-                validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL);
+                splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+                CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts", false, isSkipMode, transactions, firstBatchKeys);
+                validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
             } finally {
                 Misc.freeObjListAndClear(transactions);
             }
@@ -137,16 +146,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps();
             boolean createAsParquet = rnd.nextBoolean();
             boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            boolean isSkipMode = rnd.nextBoolean();
 
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s symbol) " +
                             " , index(s) timestamp(ts) partition by DAY " + (createAsParquet ? "FORMAT PARQUET " : "") + "WAL "
-                            + " DEDUP UPSERT KEYS(ts, s)"
+                            + " DEDUP " + dedupModeSql(isSkipMode) + " KEYS(ts, s)"
             );
 
-            runDedupWithShiftAndStep(rnd, tableName, ColumnType.SYMBOL, convertToParquet);
+            runDedupWithShiftAndStep(rnd, tableName, ColumnType.SYMBOL, convertToParquet, isSkipMode);
         });
     }
 
@@ -154,15 +164,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
+            boolean createAsParquet = rnd.nextBoolean();
+            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
 
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
-                            " timestamp(ts) partition by DAY WAL "
-                            + " DEDUP UPSERT KEYS(ts)"
+                            " timestamp(ts) partition by DAY " + (createAsParquet ? "FORMAT PARQUET " : "") + "WAL "
+                            + " DEDUP " + dedupModeSql(rnd.nextBoolean()) + " KEYS(ts)"
             );
-            testDedupWithRandomShiftAndStepAndColumnTops(rnd, ColumnType.SYMBOL, tableName);
+            testDedupWithRandomShiftAndStepAndColumnTops(rnd, ColumnType.SYMBOL, tableName, convertToParquet);
         });
     }
 
@@ -172,33 +184,35 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps();
             boolean createAsParquet = rnd.nextBoolean();
             boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            boolean isSkipMode = rnd.nextBoolean();
 
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s varchar) " +
                             " timestamp(ts) partition by DAY " + (createAsParquet ? "FORMAT PARQUET " : "") + "WAL "
-                            + " DEDUP UPSERT KEYS(ts, s)"
+                            + " DEDUP " + dedupModeSql(isSkipMode) + " KEYS(ts, s)"
             );
 
-            runDedupWithShiftAndStep(rnd, tableName, ColumnType.VARCHAR, convertToParquet);
+            runDedupWithShiftAndStep(rnd, tableName, ColumnType.VARCHAR, convertToParquet, isSkipMode);
         });
     }
 
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKeyAndColumnTops() throws Exception {
-        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
+            boolean createAsParquet = rnd.nextBoolean();
+            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
 
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
-                            " timestamp(ts) partition by DAY WAL "
-                            + " DEDUP UPSERT KEYS(ts)"
+                            " timestamp(ts) partition by DAY " + (createAsParquet ? "FORMAT PARQUET " : "") + "WAL "
+                            + " DEDUP " + dedupModeSql(rnd.nextBoolean()) + " KEYS(ts)"
             );
-            testDedupWithRandomShiftAndStepAndColumnTops(rnd, ColumnType.VARCHAR, tableName);
+            testDedupWithRandomShiftAndStepAndColumnTops(rnd, ColumnType.VARCHAR, tableName, convertToParquet);
         });
     }
 
@@ -229,8 +243,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 );
                 applyWal(transactions, tableName, 1, rnd);
                 maybeConvertToParquet(tableName, convertToParquet);
-                execute("alter table " + tableName + " dedup upsert keys(ts)");
+                boolean isSkipMode = rnd.nextBoolean();
+                execute("alter table " + tableName + " dedup " + dedupModeSql(isSkipMode) + " keys(ts)");
 
+                ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, false);
                 transactions.clear();
 
                 double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
@@ -251,8 +267,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         rnd
                 );
 
-                applyWal(transactions, tableName, 1, rnd);
-                validateNoTimestampDuplicates(tableName, from, delta, count, null, initialDuplicates, ColumnType.NULL);
+                splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+                CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts", false, isSkipMode, transactions, firstBatchKeys);
+                // SKIP keeps all pre-existing duplicates of a key, UPSERT replaces them with one row
+                validateNoTimestampDuplicates(tableName, from, delta, count, null, initialDuplicates, ColumnType.NULL, oracle);
             } finally {
                 Misc.freeObjListAndClear(transactions);
             }
@@ -261,79 +279,31 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftWithColumnTop() throws Exception {
-        assertMemoryLeak(() -> {
-            ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean();
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
-
-            String tableName = getTestName();
-            createEmptyTable(tableName, "DEDUP upsert keys(ts)", createAsParquet);
-
-            long initialDelta = Micros.MINUTE_MICROS * 15;
-            int initialCount = 2 * 24 * 5;
-            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
-            generateInsertsTransactions(
-                    transactions,
-                    1,
-                    parseFloorPartialTimestamp("2020-02-24T04:30"),
-                    initialDelta,
-                    initialCount,
-                    1 + rnd.nextInt(1),
-                    null,
-                    rnd
-            );
-
-            int strLen = 4 + rnd.nextInt(20);
-            String[] symbols = generateSymbols(rnd, 20, strLen, tableName);
-
-            applyWal(transactions, tableName, 1, rnd);
-            transactions.clear();
-
-            execute("alter table " + tableName + " add s symbol index", sqlExecutionContext);
-
-            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
-            long delta = (long) (initialDelta * deltaMultiplier);
-            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
-            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
-            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
-            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
-
-            generateInsertsTransactions(
-                    transactions,
-                    2,
-                    from,
-                    delta,
-                    count,
-                    rowsWithSameTimestamp,
-                    symbols,
-                    rnd
-            );
-
-            maybeConvertToParquet(tableName, convertToParquet);
-            applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL);
-        });
+        runDedupWithRandomShiftWithColumnTop(false);
     }
+
+    @Test
+    public void testDedupWithRandomShiftWithColumnTopParquet() throws Exception {
+        // every seed replays stored rows into a Parquet partition that is not the last one, then appends to it
+        runDedupWithRandomShiftWithColumnTop(true);
+    }
+
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
         Rnd rnd = generateRandomAndProps();
         boolean createAsParquet = rnd.nextBoolean();
         boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
-        boolean parquet = createAsParquet || convertToParquet;
-        setCreateWalAsParquet(createAsParquet);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                // TODO(eugene): table column manipulation is not yet supported for Parquet
-                parquet ? 0 : 0.1 * rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
                 0,
-                parquet ? 0 : rnd.nextDouble(),
+                rnd.nextDouble(),
                 0.0,
-                parquet ? 0 : rnd.nextDouble(),
+                rnd.nextDouble(),
                 0.5,
                 0.0,
                 0.1 * rnd.nextDouble(),
@@ -354,7 +324,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, -1, convertToParquet);
+        runFuzzWithRandomColsDedup(rnd, -1, createAsParquet, convertToParquet, rnd.nextBoolean());
     }
 
     @Test
@@ -393,7 +363,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, -1, false);
+        // a replace commit replaces its range in either dedup mode, the other commits deduplicate
+        runFuzzWithRandomColsDedup(rnd, -1, false, false, rnd.nextBoolean());
     }
 
     @Test
@@ -401,20 +372,16 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandomAndProps();
         boolean createAsParquet = rnd.nextBoolean();
         boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
-        boolean parquet = createAsParquet || convertToParquet;
-        setCreateWalAsParquet(createAsParquet);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-
-                // TODO(eugene): table column manipulation is not yet supported for Parquet
-                parquet ? 0 : 0.2 * rnd.nextDouble(),
+                0.2 * rnd.nextDouble(),
                 0,
-                parquet ? 0 : rnd.nextDouble(),
+                rnd.nextDouble(),
                 0.0,
-                parquet ? 0 : rnd.nextDouble(),
+                rnd.nextDouble(),
                 0.5,
                 0.0,
                 0.1 * rnd.nextDouble(),
@@ -435,13 +402,16 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, 1, convertToParquet);
+        runFuzzWithRandomColsDedup(rnd, 1, createAsParquet, convertToParquet, rnd.nextBoolean());
     }
 
     @Test
     public void testRandomDedupRepeat() throws Exception {
-        // TODO(eugene): update the parquet partition with a missed column (e.g. column top) is not yet implemented
         Rnd rnd = generateRandomAndProps();
+        // The table does not start as FORMAT PARQUET: in that format, the commit that follows an O3
+        // commit into the table emptied by TRUNCATE trips the last partition assertion in
+        // TableWriter.processWalCommit(), with or without dedup.
+        boolean convertToParquet = rnd.nextBoolean();
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
@@ -453,11 +423,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
-                0.0,
-                0.1 * rnd.nextDouble(),
                 // This test does not support Drop Partition operations,
                 // it is not trivial to build the result set of data to assert against with drop partitions
-                0,
+                0.0,
+                0.1 * rnd.nextDouble(),
+                // uniqueInserts() makes the drop recreate the table with the same dedup key and mode
+                0.25,
                 0.4,
                 0.0,
                 0
@@ -474,64 +445,180 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        runFuzzWithRepeatDedup(rnd);
+        runFuzzWithRepeatDedup(rnd, convertToParquet, rnd.nextBoolean());
     }
 
-    private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes) {
+    @Test
+    public void testSkipDuplicatesOfLastInsertCommitBeforeColumnAdd() throws Exception {
+        // FuzzInsertOperation draws the values of a row for the columns the table has, so after a column add
+        // the copies of the last insert commit would get other dedup key values
+        assertSkipDuplicatesOfLastInsertCommit(new FuzzAddColumnOperation("new_col", ColumnType.INT, false, 256, false), false);
+    }
+
+    @Test
+    public void testSkipDuplicatesOfLastInsertCommitBeforeTruncate() throws Exception {
+        // after a truncate, the copies of the last insert commit would land in an empty table
+        assertSkipDuplicatesOfLastInsertCommit(new FuzzTruncateTableOperation(), true);
+    }
+
+    // Collects the dedup keys of the stable inserts, see dedupKey().
+    private static ObjHashSet<String> collectDedupKeys(ObjList<FuzzTransaction> transactions, boolean isSymbolKey) {
+        ObjHashSet<String> keys = new ObjHashSet<>();
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            ObjList<FuzzTransactionOperation> operations = transactions.getQuick(i).operationList;
+            for (int j = 0, m = operations.size(); j < m; j++) {
+                if (operations.getQuick(j) instanceof FuzzStableInsertOperation insert) {
+                    keys.add(dedupKey(insert.getTimestamp(), isSymbolKey ? insert.getSymbol() : null));
+                }
+            }
+        }
+        return keys;
+    }
+
+    // Identifies a row by the dedup key: ts, or ts and the s column. A row added before
+    // the s column exists has null in it.
+    private static String dedupKey(long timestamp, CharSequence symbol) {
+        return timestamp + "|" + (symbol != null ? symbol : NULL_SYMBOL_VALUE);
+    }
+
+    private static String dedupModeSql(boolean isSkipMode) {
+        return isSkipMode ? "SKIP" : "UPSERT";
+    }
+
+    private static boolean hasInsertCommit(ObjList<FuzzTransaction> transactions) {
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            if (isInsertCommit(transactions.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A committed batch of inserts, which addDuplicates() can repeat in a duplicate commit
+    private static boolean isInsertCommit(FuzzTransaction transaction) {
+        return !transaction.rollback && transaction.operationList.size() > 1 && !transaction.hasReplaceRange();
+    }
+
+    // Whether the table has a live BOOLEAN, BYTE or SHORT column, the types without a NULL value
+    private static boolean hasNoSentinelColumn(TableToken tableToken) {
+        try (TableReader reader = getReader(tableToken)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE || columnType == ColumnType.SHORT) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // When every re-inserted row is a duplicate, SKIP leaves native and Parquet partitions as they are. UPSERT
+    // keeps a native partition only after it checks that the new rows carry the values the partition has. The
+    // Parquet merge makes that check only for tables with a BOOLEAN, BYTE or SHORT column, the types whose
+    // column tops a merge would turn into 0/false: without such a column, an UPSERT O3 merge into a Parquet
+    // partition writes the file even when the new rows equal the stored ones, so only native partitions must
+    // keep their name txn.
+    private static String readPartitionsToString(TableToken tableToken, boolean isUnchangedParquet) {
+        final String partitions = readTxnToString(tableToken, false, true, true, false);
+        return isUnchangedParquet ? partitions : partitions.replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
+    }
+
+    private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes, boolean isSkipMode) {
         int duplicateCommits = rnd.nextInt(transactions.size());
 
         IntHashSet upsertKeyIndexesMap = new IntHashSet();
         upsertKeyIndexesMap.addAll(upsertKeyIndexes);
+        int lastInsertIndex = -1;
+        // the position after the last insert commit and the duplicate commit the loop puts after it
+        int lastInsertEnd = -1;
 
         for (int i = 0; i < transactions.size(); i++) {
             FuzzTransaction transaction = transactions.getQuick(i);
-            if (transaction.rollback
-                    || transaction.operationList.size() <= 1
-                    || transaction.hasReplaceRange()
-            ) {
+            if (!isInsertCommit(transaction)) {
                 continue;
             }
+            lastInsertIndex = i;
 
             if (duplicateCommits > 0 && rnd.nextInt(duplicateCommits) > (transactions.size() - i - duplicateCommits)) {
-                // Add a duplicate commit
-                FuzzTransaction duplicateTrans = new FuzzTransaction();
-                duplicateTrans.waitAllDone = transaction.waitAllDone;
-                duplicateTrans.reopenTable = transaction.reopenTable;
-                duplicateTrans.rollback = false;
-                duplicateTrans.structureVersion = transaction.structureVersion;
-                duplicateTrans.waitBarrierVersion = transaction.waitBarrierVersion;
-
-                ObjList<FuzzTransactionOperation> txnList = transaction.operationList;
-                int dupCount = rnd.nextInt(txnList.size() - 1) + 1;
-
-                ObjList<FuzzTransactionOperation> newTxnList = duplicateTrans.operationList;
-                int generateNonIdenticalCount = rnd.nextInt(2);
-
-                for (int t = 0, n = txnList.size(); t < n && dupCount > 0; t++) {
-                    if (dupCount + rnd.nextInt(n - t) > (n - t - dupCount)) {
-                        // Add a duplicate operation
-                        FuzzInsertOperation operation = (FuzzInsertOperation) txnList.getQuick(t);
-
-                        // Generate only 1 non-identical record, compares will have work harder to find 1 record only
-                        boolean generatedNonIdentical = generateNonIdenticalCount > 0 && rnd.nextBoolean();
-                        FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap, !generatedNonIdentical);
-                        if (generatedNonIdentical) {
-                            generateNonIdenticalCount--;
-                        }
-
-                        newTxnList.add(dup);
-                        dupCount--;
-                    }
-                }
-
-                if (newTxnList.size() > 0) {
-                    shuffle(newTxnList, rnd);
+                FuzzTransaction duplicateTrans = newDuplicateCommit(transaction, rnd, upsertKeyIndexesMap, isSkipMode);
+                if (duplicateTrans != null) {
                     transactions.insert(i + 1, 1, duplicateTrans);
                     i++;
                 }
                 duplicateCommits--;
             }
+            lastInsertEnd = i + 1;
         }
+
+        if (isSkipMode && lastInsertIndex > -1) {
+            // Whatever the loop added, a commit re-sends the keys of the last insert commit with other values,
+            // which the table must not take. The commit goes right after the last insert commit and its duplicates:
+            // after a later column change the copies would get other dedup key values, and after a truncate or a
+            // replace commit the originals would be gone.
+            FuzzTransaction duplicateTrans = newDuplicateCommit(transactions.getQuick(lastInsertIndex), rnd, upsertKeyIndexesMap, true);
+            if (duplicateTrans != null) {
+                transactions.insert(lastInsertEnd, 1, duplicateTrans);
+            }
+        }
+    }
+
+    // Writes the second batch to the WAL in two runs with an ALTER between them that re-enables the dedup in a
+    // random mode. The WAL is applied after all of it is written, so the apply job meets the mode switch in the
+    // middle of one pass, possibly with rows of the first run still in the O3 lag.
+    private CommitOracle applyWithDedupModeSwitch(
+            Rnd rnd,
+            String tableName,
+            String dedupKeys,
+            boolean isSymbolKey,
+            boolean isSkipMode,
+            ObjList<FuzzTransaction> transactions,
+            ObjHashSet<String> firstBatchKeys
+    ) throws SqlException {
+        return applyWithDedupModeSwitch(rnd, tableName, null, null, dedupKeys, isSymbolKey, isSkipMode, transactions, firstBatchKeys);
+    }
+
+    // twinTableName (null: none) takes the same commits with the same mode switch, after tableName
+    private CommitOracle applyWithDedupModeSwitch(
+            Rnd rnd,
+            String tableName,
+            String twinTableName,
+            Rnd twinRnd,
+            String dedupKeys,
+            boolean isSymbolKey,
+            boolean isSkipMode,
+            ObjList<FuzzTransaction> transactions,
+            ObjHashSet<String> firstBatchKeys
+    ) throws SqlException {
+        int switchIndex = rnd.nextInt(transactions.size() + 1);
+        boolean isSkipAfterSwitch = rnd.nextBoolean();
+        ObjList<FuzzTransaction> beforeSwitch = new ObjList<>();
+        beforeSwitch.addAll(transactions, 0, switchIndex);
+        ObjList<FuzzTransaction> afterSwitch = new ObjList<>();
+        afterSwitch.addAll(transactions, switchIndex, transactions.size());
+
+        LOG.info().$("switching dedup mode [table=").$(tableName)
+                .$(", from=").$(dedupModeSql(isSkipMode))
+                .$(", to=").$(dedupModeSql(isSkipAfterSwitch))
+                .$(", afterTransactions=").$(switchIndex)
+                .$(", transactions=").$(transactions.size())
+                .I$();
+        fuzzer.applyToWal(beforeSwitch, tableName, 1, rnd);
+        execute("alter table " + tableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
+        applyWal(afterSwitch, tableName, 1, rnd);
+        if (twinTableName != null) {
+            fuzzer.applyToWal(beforeSwitch, twinTableName, 1, twinRnd);
+            execute("alter table " + twinTableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
+            applyWal(afterSwitch, twinTableName, 1, twinRnd);
+        }
+
+        return new CommitOracle(
+                firstBatchKeys,
+                collectDedupKeys(beforeSwitch, isSymbolKey),
+                isSkipMode,
+                collectDedupKeys(afterSwitch, isSymbolKey),
+                isSkipAfterSwitch
+        );
     }
 
     private void assertAllSymbolsSet(
@@ -548,10 +635,78 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // Changes the BYTE column b of the table and of its native twin to SYMBOL, which reads the rows below a
+    // column top as NULL and a materialized top as 0, then compares the tables
+    private void assertByteColumnTopMatchesTwin(String tableName, String twinTableName) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " alter column b type symbol", sqlExecutionContext);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(twinTableName)));
+        assertSqlCursors(twinTableName, tableName);
+    }
+
+    // addDuplicates() writes the copies of the last insert commit of a SKIP run before the transaction that follows
+    // that commit, so SKIP drops them all
+    private void assertSkipDuplicatesOfLastInsertCommit(FuzzTransactionOperation laterOperation, boolean isTruncate) throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableDefinition = " (ts TIMESTAMP, k LONG, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+            execute("CREATE TABLE originals" + tableDefinition);
+            execute("CREATE TABLE skip_dedup" + tableDefinition + " DEDUP SKIP KEYS(ts, k)");
+
+            final Rnd rnd = generateRandomAndProps();
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            try {
+                final FuzzTransaction insertCommit = new FuzzTransaction();
+                final long timestamp = MicrosTimestampDriver.floor("2022-02-24");
+                for (int i = 0; i < 100; i++) {
+                    insertCommit.operationList.add(new FuzzInsertOperation(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            timestamp + i * Micros.SECOND_MICROS,
+                            0,
+                            0,
+                            0,
+                            10,
+                            new String[0]
+                    ));
+                }
+                transactions.add(insertCommit);
+                applyWal(transactions, "originals", 1, rnd);
+
+                final FuzzTransaction laterTransaction = new FuzzTransaction();
+                laterTransaction.operationList.add(laterOperation);
+                laterTransaction.waitAllDone = true;
+                transactions.add(laterTransaction);
+
+                final IntList dedupKeyIndexes = new IntList();
+                dedupKeyIndexes.add(0);
+                dedupKeyIndexes.add(1);
+                addDuplicates(transactions, rnd, dedupKeyIndexes, true);
+                applyWal(transactions, "skip_dedup", 1, rnd);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
+
+            if (isTruncate) {
+                assertQuery("SELECT count() FROM skip_dedup")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
+            } else {
+                // SKIP keeps the original rows and drops every copy
+                assertSqlCursors("SELECT ts, k, v FROM originals", "SELECT ts, k, v FROM skip_dedup");
+            }
+        });
+    }
+
     private void assertSqlCursorsNoDups(
             String tableNameNoWal,
             ObjList<CharSequence> upsertKeyNames,
-            String tableNameWal
+            String tableNameWal,
+            boolean isSkipMode
     ) throws SqlException {
         Log log = LOG;
         // Define where clause for debugging
@@ -566,7 +721,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)
                 ) {
                     try (
-                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames);
+                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames, isSkipMode);
                             RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
                     ) {
                         try {
@@ -626,9 +781,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 , sqlExecutionContext);
     }
 
-    private ObjList<FuzzTransaction> duplicateInserts(ObjList<FuzzTransaction> transactions, Rnd rnd) {
+    // Adds rows that repeat the timestamp, the dedup key, of an insert with random values in the other columns.
+    // UPSERT keeps the row written last, so a duplicate goes before its original: earlier in the same transaction
+    // or into the previous insert transaction. SKIP keeps the row written first, so a duplicate goes after its
+    // original: later in the same transaction or into the next insert transaction. Either way, the table must end
+    // up with the original rows.
+    private ObjList<FuzzTransaction> duplicateInserts(ObjList<FuzzTransaction> transactions, Rnd rnd, boolean isSkipMode) {
         ObjList<FuzzTransaction> result = new ObjList<>();
         FuzzTransaction prevInsertTrans = null;
+        ObjList<FuzzTransactionOperation> nextInsertDuplicates = new ObjList<>();
 
         for (int i = 0; i < transactions.size(); i++) {
             FuzzTransaction transaction = transactions.getQuick(i);
@@ -636,26 +797,36 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             if (!transaction.rollback && transaction.operationList.size() > 1) {
                 int size = transaction.operationList.size();
                 FuzzTransaction duplicateTrans = new FuzzTransaction();
+                // SKIP: the originals of these duplicates are in the previous insert transaction
+                duplicateTrans.operationList.addAll(nextInsertDuplicates);
+                nextInsertDuplicates.clear();
                 for (int op = 0; op < size; op++) {
                     int dupStep = Math.max(2, transaction.operationList.size() / (1 + rnd.nextInt(10)));
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(op);
-                    if (operation instanceof FuzzInsertOperation insertOperation) {
-                        if (op % dupStep == 1) {
-                            FuzzInsertOperation duplicate = new FuzzInsertOperation(
-                                    rnd.nextLong(),
-                                    rnd.nextLong(),
-                                    insertOperation.getTimestamp(),
-                                    rnd.nextDouble(),
-                                    rnd.nextDouble(),
-                                    rnd.nextDouble(),
-                                    insertOperation.getStrLen(),
-                                    insertOperation.getSymbols()
-                            );
-                            if (prevInsertTrans != null && rnd.nextBoolean()) {
-                                prevInsertTrans.operationList.add(duplicate);
+                    if (operation instanceof FuzzInsertOperation insertOperation && op % dupStep == 1) {
+                        FuzzInsertOperation duplicate = new FuzzInsertOperation(
+                                rnd.nextLong(),
+                                rnd.nextLong(),
+                                insertOperation.getTimestamp(),
+                                rnd.nextDouble(),
+                                rnd.nextDouble(),
+                                rnd.nextDouble(),
+                                insertOperation.getStrLen(),
+                                insertOperation.getSymbols()
+                        );
+                        if (isSkipMode) {
+                            duplicateTrans.operationList.add(operation);
+                            if (rnd.nextBoolean()) {
+                                nextInsertDuplicates.add(duplicate);
                             } else {
                                 duplicateTrans.operationList.add(duplicate);
                             }
+                            continue;
+                        }
+                        if (prevInsertTrans != null && rnd.nextBoolean()) {
+                            prevInsertTrans.operationList.add(duplicate);
+                        } else {
+                            duplicateTrans.operationList.add(duplicate);
                         }
                     }
                     duplicateTrans.operationList.add(operation);
@@ -669,11 +840,20 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     var operation = transaction.operationList.getQuick(0);
                     if (operation instanceof FuzzDropCreateTableOperation || operation instanceof FuzzTruncateTableOperation
                             || operation instanceof FuzzDropPartitionOperation) {
+                        // the operation removes the originals, their duplicates must not land in an empty range
                         prevInsertTrans = null;
+                        Misc.freeObjListAndClear(nextInsertDuplicates);
                     }
                 }
                 result.add(transaction);
             }
+        }
+
+        if (nextInsertDuplicates.size() > 0) {
+            // SKIP: the duplicates of the last insert transaction go into a commit of their own
+            FuzzTransaction duplicateTrans = new FuzzTransaction();
+            duplicateTrans.operationList.addAll(nextInsertDuplicates);
+            result.add(duplicateTrans);
         }
         return result;
     }
@@ -759,6 +939,96 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // Returns a commit that repeats the dedup keys of some rows of the transaction, or null when it picks none.
+    // The commit has to follow the transaction with no column change in between, see DuplicateFuzzInsertOperation.
+    private FuzzTransaction newDuplicateCommit(
+            FuzzTransaction transaction,
+            Rnd rnd,
+            IntHashSet upsertKeyIndexesMap,
+            boolean isSkipMode
+    ) {
+        FuzzTransaction duplicateTrans = new FuzzTransaction();
+        duplicateTrans.waitAllDone = transaction.waitAllDone;
+        duplicateTrans.reopenTable = transaction.reopenTable;
+        duplicateTrans.rollback = false;
+        duplicateTrans.structureVersion = transaction.structureVersion;
+        duplicateTrans.waitBarrierVersion = transaction.waitBarrierVersion;
+
+        ObjList<FuzzTransactionOperation> txnList = transaction.operationList;
+        int dupCount = rnd.nextInt(txnList.size() - 1) + 1;
+
+        ObjList<FuzzTransactionOperation> newTxnList = duplicateTrans.operationList;
+        int generateNonIdenticalCount = rnd.nextInt(2);
+
+        for (int t = 0, n = txnList.size(); t < n && dupCount > 0; t++) {
+            if (dupCount + rnd.nextInt(n - t) > (n - t - dupCount)) {
+                // Add a duplicate operation
+                FuzzInsertOperation operation = (FuzzInsertOperation) txnList.getQuick(t);
+
+                // UPSERT: at most 1 row of the commit differs from its original, so the check whether the commit
+                // carries the values the partition has must find that row. SKIP keeps the row written first, so
+                // there every duplicate that writes a column outside the dedup keys differs from its original, and
+                // the table must keep the original values.
+                boolean generatedNonIdentical = isSkipMode || (generateNonIdenticalCount > 0 && rnd.nextBoolean());
+                FuzzInsertOperation dup = new DuplicateFuzzInsertOperation(operation, upsertKeyIndexesMap, !generatedNonIdentical);
+                if (generatedNonIdentical) {
+                    generateNonIdenticalCount--;
+                }
+
+                newTxnList.add(dup);
+                dupCount--;
+            }
+        }
+
+        if (newTxnList.size() > 0) {
+            shuffle(newTxnList, rnd);
+            return duplicateTrans;
+        }
+        return null;
+    }
+
+    // The timestamp of a random row of a random Parquet partition that is not the last partition of the table, or
+    // LONG_NULL when the table has no such partition
+    private long pickRowOfParquetPartitionBeforeLast(Rnd rnd, String tableName) throws SqlException {
+        final LongList parquetPartitionTimestamps = new LongList();
+        final LongList parquetPartitionRowCounts = new LongList();
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount() - 1; i < n; i++) {
+                if (reader.getPartitionFormat(i) == PartitionFormat.PARQUET && reader.getPartitionRowCount(i) > 0) {
+                    parquetPartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
+                    parquetPartitionRowCounts.add(reader.getPartitionRowCount(i));
+                }
+            }
+        }
+        if (parquetPartitionTimestamps.size() == 0) {
+            return Numbers.LONG_NULL;
+        }
+        final int partition = rnd.nextInt(parquetPartitionTimestamps.size());
+        final long partitionLo = parquetPartitionTimestamps.getQuick(partition);
+        final long row = rnd.nextLong(parquetPartitionRowCounts.getQuick(partition));
+        try (
+                RecordCursorFactory factory = select("select ts from " + tableName + " where ts >= " + partitionLo + " and ts < " + (partitionLo + Micros.DAY_MICROS));
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            for (long r = 0; cursor.hasNext(); r++) {
+                if (r == row) {
+                    return cursor.getRecord().getTimestamp(0);
+                }
+            }
+        }
+        throw new AssertionError("partition has fewer rows than its row count [partition=" + partitionLo + ", row=" + row + ']');
+    }
+
+    private long readLong(String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
     private CharSequence readStrValue(Record rec, int colType) {
         return switch (colType) {
             case ColumnType.SYMBOL -> rec.getSymA(2);
@@ -768,13 +1038,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         };
     }
 
-    private void reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
+    // Copies rows of the reference table, which has every written row, into the dedup table. UPSERT keeps the
+    // last copy of a key, which is the row the table already has. SKIP drops every copy, including those that
+    // differ from the kept row outside the dedup keys. Either way, no native partition gets rewritten, and with
+    // SKIP no Parquet partition either.
+    private void reinsertWrittenRows(
+            Rnd rnd,
+            String tableNameDedup,
+            String tableNameReference,
+            String timestampColumnName,
+            boolean isSkipMode
+    ) throws SqlException {
         execute("ALTER TABLE \"" + tableNameDedup + "\" SQUASH PARTITIONS", sqlExecutionContext);
         drainWalQueue();
 
-        LOG.info().$("Re-inserting same data into table ").$(tableNameDedup).$();
+        LOG.info().$("Re-inserting written rows into table ").$(tableNameDedup).$();
         TableToken tt = engine.verifyTableName(tableNameDedup);
-        String partitions = readTxnToString(tt, false, true, true, false);
+        final boolean isUnchangedParquet = isSkipMode || hasNoSentinelColumn(tt);
+        String partitions = readPartitionsToString(tt, isUnchangedParquet);
         int inserts = 2 + rnd.nextInt(10);
         long minTs, maxTs;
         try (TableReader reader = getReader(tableNameDedup)) {
@@ -790,21 +1071,176 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long fromTs = minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
             long toTs = (long) (fromTs + Micros.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
 
+            // no LIMIT: it could cut the rows of one key and leave UPSERT with a row that is not the last
             String insertSql = "insert into " + tableNameDedup +
-                    " select * from " + tableNameDedup +
-                    " where " + timestampColumnName + " >= " + fromTs + " and ts < " + toTs
-                    + " LIMIT 100000";
+                    " select * from " + tableNameReference +
+                    " where " + timestampColumnName + " >= " + fromTs + " and ts < " + toTs;
 
             execute(insertSql);
         }
         drainWalQueue();
 
         Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
-        String partitionsAfter = readTxnToString(tt, false, true, true, false);
+        String partitionsAfter = readPartitionsToString(tt, isUnchangedParquet);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
     }
 
-    private void runDedupWithShiftAndStep(Rnd rnd, String tableName, int colType, boolean convertToParquet) {
+    // Switches the table and its native twin to UPSERT and resends stored rows unchanged, as an at-least-once
+    // client does after a reconnect: first rows of a random interval, which every partition keeps as it is, then
+    // the rows of a day up to its last row together with a new row 1us after it, which appends to the partition of
+    // that day. The rows of the first batch hold NULL in s and b, as their column tops read. When the table has a
+    // Parquet partition before the last one, the interval starts at a row of such a partition, and the append goes
+    // into it: an identical replay leaves the Parquet file as it is and the append keeps the top of b.
+    private void replayStoredRows(Rnd rnd, String tableName, String twinTableName, boolean isParquetReplayExpected) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " dedup upsert keys(ts)", sqlExecutionContext);
+        }
+        drainWalQueue();
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final TableToken twinToken = engine.verifyTableName(twinTableName);
+        final long minTs, maxTs;
+        try (TableReader reader = getReader(tableName)) {
+            if (reader.size() == 0) {
+                return;
+            }
+            minTs = reader.getMinTimestamp();
+            maxTs = reader.getMaxTimestamp();
+        }
+
+        final long parquetRowTs = pickRowOfParquetPartitionBeforeLast(rnd, tableName);
+        Assert.assertTrue(
+                "no Parquet partition before the last one to replay into",
+                !isParquetReplayExpected || parquetRowTs != Numbers.LONG_NULL
+        );
+        final long replayLo = parquetRowTs != Numbers.LONG_NULL
+                ? parquetRowTs
+                : minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
+        final long replayHi = replayLo + rnd.nextLong(Micros.DAY_MICROS);
+        LOG.info().$("replaying stored rows [table=").$(tableName).$(", lo=").$ts(replayLo).$(", hi=").$ts(replayHi).I$();
+        final String replayCountSql = "select count() from " + tableName + " where ts >= " + replayLo + " and ts <= " + replayHi;
+        final long replayRowCount = readLong(replayCountSql);
+        Assert.assertTrue(
+                "the replay must resend rows of the Parquet partition",
+                parquetRowTs == Numbers.LONG_NULL || replayRowCount > 0
+        );
+        final String partitions = readTxnToString(tableToken, false, true, true, true);
+        final String twinPartitions = readTxnToString(twinToken, false, true, true, true);
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("insert into " + t + " select * from " + t + " where ts >= " + replayLo + " and ts <= " + replayHi);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        Assert.assertEquals(twinPartitions, readTxnToString(twinToken, false, true, true, true));
+        Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+        Assert.assertEquals(replayRowCount, readLong(replayCountSql));
+
+        // the last row of the day of replayLo, the new row goes 1us after it when that is still the same day
+        final long dayLo = Micros.floorDD(replayLo);
+        long dayMax = Long.MIN_VALUE;
+        try (
+                RecordCursorFactory factory = select("select max(ts) from " + tableName + " where ts >= " + dayLo + " and ts < " + (dayLo + Micros.DAY_MICROS));
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            if (cursor.hasNext()) {
+                dayMax = cursor.getRecord().getTimestamp(0);
+            }
+        }
+        final boolean isAppend = dayMax != Numbers.LONG_NULL && dayMax != Long.MIN_VALUE && dayMax + 1 < dayLo + Micros.DAY_MICROS;
+        Assert.assertTrue("the Parquet partition must take the append", parquetRowTs == Numbers.LONG_NULL || isAppend);
+        if (isAppend) {
+            final long appendLo = Math.max(dayLo, dayMax - rnd.nextLong(Micros.DAY_MICROS));
+            LOG.info().$("replaying stored rows with an append [table=").$(tableName).$(", lo=").$ts(appendLo).$(", dayMax=").$ts(dayMax).I$();
+            for (String t : new String[]{tableName, twinTableName}) {
+                execute("insert into " + t + " select * from ("
+                        + "select ts, commit, s, b from " + t + " where ts >= " + appendLo + " and ts <= " + dayMax
+                        + " union all select ts + 1 ts, commit, s, b from " + t + " where ts = " + dayMax + ")");
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        }
+    }
+
+    private void runDedupWithRandomShiftWithColumnTop(boolean isParquetForced) throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<FuzzTransaction> transactions = new ObjList<>();
+            Rnd rnd = generateRandomAndProps();
+            boolean createAsParquet = rnd.nextBoolean() || isParquetForced;
+            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+
+            boolean isSkipMode = rnd.nextBoolean();
+
+            String tableName = getTestName();
+            createEmptyTable(tableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", createAsParquet);
+            // the native twin takes the same commits, see assertByteColumnTopMatchesTwin()
+            String twinTableName = tableName + "_native";
+            createEmptyTable(twinTableName, "DEDUP " + dedupModeSql(isSkipMode) + " keys(ts)", false);
+            Rnd twinRnd = new Rnd();
+
+            long initialDelta = Micros.MINUTE_MICROS * 15;
+            int initialCount = 2 * 24 * 5;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+            generateInsertsTransactions(
+                    transactions,
+                    1,
+                    parseFloorPartialTimestamp("2020-02-24T04:30"),
+                    initialDelta,
+                    initialCount,
+                    1 + rnd.nextInt(1),
+                    null,
+                    rnd
+            );
+
+            int strLen = 4 + rnd.nextInt(20);
+            String[] symbols = generateSymbols(rnd, 20, strLen, tableName);
+
+            applyWal(transactions, tableName, 1, rnd);
+            applyWal(transactions, twinTableName, 1, twinRnd);
+            ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, false);
+            transactions.clear();
+
+            for (String t : new String[]{tableName, twinTableName}) {
+                execute("alter table " + t + " add s symbol index", sqlExecutionContext);
+                // a column without a NULL value: the rows of the first batch read NULL only through its top
+                execute("alter table " + t + " add b byte", sqlExecutionContext);
+            }
+
+            double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
+            long delta = (long) (initialDelta * deltaMultiplier);
+            long shift = (-100 + rnd.nextLong((long) (initialCount / deltaMultiplier + 150))) * delta;
+            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
+            int count = rnd.nextInt((int) (initialCount / deltaMultiplier + 1) * 2);
+            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+
+            generateInsertsTransactions(
+                    transactions,
+                    2,
+                    from,
+                    delta,
+                    count,
+                    rowsWithSameTimestamp,
+                    symbols,
+                    rnd
+            );
+
+            maybeConvertToParquet(tableName, convertToParquet);
+            splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+            // ts is the only dedup key, the rows of one timestamp differ in the s column
+            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, twinTableName, twinRnd, "ts", false, isSkipMode, transactions, firstBatchKeys);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
+            replayStoredRows(rnd, tableName, twinTableName, createAsParquet);
+            assertByteColumnTopMatchesTwin(tableName, twinTableName);
+        });
+    }
+
+    private void runDedupWithShiftAndStep(
+            Rnd rnd,
+            String tableName,
+            int colType,
+            boolean convertToParquet,
+            boolean isSkipMode
+    ) throws SqlException {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         try {
             long initialDelta = Micros.MINUTE_MICROS * 15;
@@ -838,6 +1274,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             applyWal(transactions, tableName, 1, rnd);
             maybeConvertToParquet(tableName, convertToParquet);
 
+            ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, true);
             transactions.clear();
             long shift = rnd.nextLong(4 * 24 * 5) * Micros.MINUTE_MICROS * 15 +
                     rnd.nextLong(15) * Micros.MINUTE_MICROS;
@@ -859,21 +1296,30 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
-            applyWal(transactions, tableName, 1, rnd);
+            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts, s", true, isSkipMode, transactions, firstBatchKeys);
 
-            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, colType);
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, colType, oracle);
         } finally {
             Misc.freeObjListAndClear(transactions);
         }
     }
 
-    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys, boolean convertToParquet) throws Exception {
+    private void runFuzzWithRandomColsDedup(
+            Rnd rnd,
+            int dedupKeys,
+            boolean createAsParquet,
+            boolean convertToParquet,
+            boolean isSkipMode
+    ) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
+            // The reference table stays native, see DedupCursor
+            setCreateWalAsParquet(false);
             fuzzer.createInitialTableWal(tableNameWalNoDedup);
+            setCreateWalAsParquet(createAsParquet);
             fuzzer.createInitialTableWal(tableNameDedup);
             maybeConvertToParquet(tableNameDedup, convertToParquet);
 
@@ -901,20 +1347,27 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     long start = MicrosTimestampDriver.floor("2022-02-24T23:59:59");
                     long end = start + 2 * Micros.SECOND_MICROS;
                     transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
+                    // without an insert commit, the run writes no duplicates for the dedup to resolve
+                    for (int attempt = 0; attempt < 10 && !hasInsertCommit(transactions); attempt++) {
+                        Misc.freeObjListAndClear(transactions);
+                        transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
+                    }
                     comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
                 }
                 String alterStatement = String.format(
-                        "alter table %s dedup upsert keys(%s)",
+                        "alter table %s dedup %s keys(%s)",
                         tableNameDedup,
+                        dedupModeSql(isSkipMode),
                         comaSeparatedUpsertCols
                 );
+                LOG.info().$("enabling dedup: ").$(alterStatement).$();
                 execute(alterStatement);
 
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 try {
-                    addDuplicates(transactions, rnd, upsertKeyIndexes);
+                    addDuplicates(transactions, rnd, upsertKeyIndexes, isSkipMode);
                     applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
                     applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
@@ -929,22 +1382,27 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     assertSqlCursorsNoDups(
                             tableNameWalNoDedup,
                             upsertKeyNames,
-                            tableNameDedup
+                            tableNameDedup,
+                            isSkipMode
                     );
 
                     fuzzer.assertCounts(tableNameDedup, timestampColumnName);
                     fuzzer.assertStringColDensity(tableNameDedup);
 
-                    // Re-insert exactly same data, random intervals to the table with dedup enabled
-                    reinsertSameData(
+                    // Re-insert every written row of random intervals, duplicates included, into the table with
+                    // dedup enabled. The rows go in commit order, so the dedup must keep the same rows as before.
+                    reinsertWrittenRows(
                             rnd,
                             tableNameDedup,
-                            timestampColumnName
+                            tableNameWalNoDedup,
+                            timestampColumnName,
+                            isSkipMode
                     );
                     assertSqlCursorsNoDups(
                             tableNameWalNoDedup,
                             upsertKeyNames,
-                            tableNameDedup
+                            tableNameDedup,
+                            isSkipMode
                     );
 
                 } finally {
@@ -956,13 +1414,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private void runFuzzWithRepeatDedup(Rnd rnd) throws Exception {
+    private void runFuzzWithRepeatDedup(Rnd rnd, boolean convertToParquet, boolean isSkipMode) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 
             TableToken dedupTt = fuzzer.createInitialTableWal(tableNameDedup);
+            maybeConvertToParquet(tableNameDedup, convertToParquet);
             fuzzer.createInitialTableNonWal(tableNameNoWal, null);
 
             String timestampColumnName;
@@ -981,16 +1440,18 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     initialMaxTs = reader.getMaxTimestamp();
                 }
 
-                transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, 1000000L);
+                final int dedupMode = isSkipMode ? TableUtils.DEDUP_MODE_SKIP : TableUtils.DEDUP_MODE_UPSERT;
+                transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, 1000000L, dedupMode);
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 try {
                     fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
 
-                    ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
+                    ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd, isSkipMode);
                     try {
-                        execute("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
+                        LOG.info().$("enabling dedup [table=").$(tableNameDedup).$(", mode=").$(dedupModeSql(isSkipMode)).I$();
+                        execute("alter table " + tableNameDedup + " dedup " + dedupModeSql(isSkipMode) + " keys(ts)", sqlExecutionContext);
                         applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                         String limit = "";
@@ -1047,7 +1508,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         operationList.setQuick(j, tmp);
     }
 
-    private void testDedupWithRandomShiftAndStepAndColumnTops(Rnd rnd, short columType, String tableName) throws SqlException {
+    private void testDedupWithRandomShiftAndStepAndColumnTops(
+            Rnd rnd,
+            short columType,
+            String tableName,
+            boolean convertToParquet
+    ) throws SqlException {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         try {
             long initialDelta = Micros.MINUTE_MICROS * 15;
@@ -1072,10 +1538,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
             applyWal(transactions, tableName, 1, rnd);
+            // Parquet partitions miss the s column, which the dedup compares as a column top
+            maybeConvertToParquet(tableName, convertToParquet);
 
             LOG.info().$("adding S column after ").$ts(maxTimestamp).$();
             execute("alter table " + tableName + " add column s " + ColumnType.nameOf(columType));
-            execute("alter table " + tableName + " dedup upsert keys(ts, s)");
+            boolean isSkipMode = rnd.nextBoolean();
+            execute("alter table " + tableName + " dedup " + dedupModeSql(isSkipMode) + " keys(ts, s)");
 
             int rndCount = rnd.nextInt(10);
             int strLen = 4 + rnd.nextInt(20);
@@ -1107,6 +1576,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             splitTransactionInserts(transactions, transactionCount, rnd);
             applyWal(transactions, tableName, 1, rnd);
 
+            // the rows added before the s column have null in it
+            ObjHashSet<String> firstBatchKeys = collectDedupKeys(transactions, true);
             transactions.clear();
             long shift = (startCount > 0 ? rnd.nextLong(startCount) : 0) * Micros.MINUTE_MICROS * 15 +
                     rnd.nextLong(15) * Micros.MINUTE_MICROS;
@@ -1133,8 +1604,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             splitTransactionInserts(transactions, transactionCount, rnd);
 
             // adding rows with commit = 2 from=2020-02-25T10:29:00.000000Z, to=2020-02-26T10:29:00.000000Z
-            applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, columType);
+            CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts, s", true, isSkipMode, transactions, firstBatchKeys);
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, columType, oracle);
         } finally {
             Misc.freeObjListAndClear(transactions);
         }
@@ -1168,7 +1639,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return sink.toString();
     }
 
-    private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions, long minTs, long maxTs, long step) {
+    private ObjList<FuzzTransaction> uniqueInserts(
+            ObjList<FuzzTransaction> transactions,
+            long minTs,
+            long maxTs,
+            long step,
+            int dedupMode
+    ) {
         ObjList<FuzzTransaction> uniqueTransactions = new ObjList<>();
         LongHashSet uniqueTimestamps = new LongHashSet();
 
@@ -1189,7 +1666,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         }
                     } else {
                         if (operation instanceof FuzzDropCreateTableOperation) {
-                            ((FuzzDropCreateTableOperation) operation).setDedupEnable(true);
+                            ((FuzzDropCreateTableOperation) operation).setDedupEnable(true, dedupMode);
                         }
                         unique.operationList.add(operation);
                     }
@@ -1210,7 +1687,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long commit2Count,
             String[] symbols,
             int existingDups,
-            int colType
+            int colType,
+            CommitOracle oracle
     ) {
         LOG.info().$("Validating no timestamp duplicates [from=").$ts(fromTimestamp)
                 .$(", delta=").$(delta)
@@ -1222,14 +1700,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         boolean started = false;
         ObjIntHashMap<CharSequence> symbolSet = new ObjIntHashMap<>();
-        String nullSymbolValue = "nullSymbolValue_unlikely_to_be_generated_by_random";
         boolean[] foundSymbols = null;
         if (symbols != null) {
             for (int i = 0; i < symbols.length; i++) {
                 if (symbols[i] != null) {
                     symbolSet.put(symbols[i], i);
                 } else {
-                    symbolSet.put(nullSymbolValue, i);
+                    symbolSet.put(NULL_SYMBOL_VALUE, i);
                 }
             }
             foundSymbols = new boolean[symbols.length];
@@ -1261,6 +1738,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                     // Until first failure
                     if (fail == null && timestamp < toTimestamp && timestamp >= fromTimestamp) {
+                        CharSequence keySymbol = null;
                         if (symbols != null) {
                             if (timestamp > lastTimestamp && lastTimestamp >= fromTimestamp) {
                                 // New timestamp, check all symbols were set
@@ -1269,8 +1747,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             }
                             CharSequence sym = readStrValue(rec, colType);
                             if (sym == null) {
-                                sym = nullSymbolValue;
+                                sym = NULL_SYMBOL_VALUE;
                             }
+                            keySymbol = sym;
                             int symbolIndex = symbolSet.get(sym);
                             if (symbolIndex < 0) {
                                 Assert.fail("Unknown symbol found: timestamp " + Micros.toUSecString(timestamp) + ", symbol '" + sym + "'");
@@ -1298,7 +1777,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         }
 
                         if ((timestamp - fromTimestamp) % delta == 0) {
-                            Assert.assertEquals("expected commit at timestamp " + Micros.toUSecString(timestamp), 2, commit);
+                            // a SKIP commit must not overwrite a row that has the same dedup key and a different commit
+                            String key = dedupKey(timestamp, keySymbol);
+                            Assert.assertEquals(
+                                    "expected commit at timestamp " + Micros.toUSecString(timestamp) + ", key " + key,
+                                    oracle.expectedCommit(key),
+                                    commit
+                            );
                         }
 
                         Assert.assertTrue("commit must be 1 or 2", commit > 0);
@@ -1323,9 +1808,35 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // Predicts the commit column of the row that the dedup keeps for a key. The first batch writes commit=1 rows,
+    // the second batch writes commit=2 rows in two runs with a dedup mode switch between them. UPSERT replaces
+    // the existing row, SKIP keeps it and drops the new one. So the row of a run in UPSERT mode that wrote the
+    // key survives. Without one, the first batch row survives, and without that, the row the second batch wrote
+    // first.
+    private record CommitOracle(
+            ObjHashSet<String> firstBatchKeys,
+            ObjHashSet<String> beforeSwitchKeys,
+            boolean isSkipBeforeSwitch,
+            ObjHashSet<String> afterSwitchKeys,
+            boolean isSkipAfterSwitch
+    ) {
+        int expectedCommit(String key) {
+            if ((!isSkipAfterSwitch && afterSwitchKeys.contains(key)) || (!isSkipBeforeSwitch && beforeSwitchKeys.contains(key))) {
+                return 2;
+            }
+            return firstBatchKeys.contains(key) ? 1 : 2;
+        }
+    }
+
+    // Deduplicates the rows of a reference table that has no dedup: keeps the first (SKIP) or the last (UPSERT)
+    // row of each dedup key, in the order the reference table returns the rows of one timestamp. That order is
+    // the commit order only when the reference table is native. A Parquet O3 merge without dedup puts a new row
+    // that lands on a row group boundary timestamp before the existing rows of the next row group.
     private static class DedupCursor implements RecordCursor {
 
         private final StringSink currentRecordKeys = new StringSink();
+        // SKIP keeps the first row of each duplicate group, UPSERT keeps the last one
+        private final boolean isKeepFirst;
         private final IntList keyColumns = new IntList();
         private final ObjHashSet<String> keyProcessed = new ObjHashSet<>();
         private final RecordMetadata metadata;
@@ -1335,15 +1846,20 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         private final IntList skipRecords = new IntList();
         ObjList<String> recordKeys = new ObjList<>();
         private long lastTimestamp = -1;
+        // records of the previous timestamp group, after the last record dispatched from it, which the
+        // inner cursor still has to skip; it is non-zero only when the last record of a group is a dropped duplicate
+        private int skipCarry;
         private int timestampColIndex = -1;
 
         public DedupCursor(
                 RecordMetadata cursorMetadata,
                 RecordCursor innerCursor,
                 RecordCursor previewCursor,
-                ObjList<CharSequence> keyColumnNames
+                ObjList<CharSequence> keyColumnNames,
+                boolean isKeepFirst
         ) {
             this.recordCursor = innerCursor;
+            this.isKeepFirst = isKeepFirst;
             this.metadata = cursorMetadata;
             this.nextRecCursor = previewCursor;
 
@@ -1385,23 +1901,34 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 if (currentTs != lastTimestamp) {
                     lastTimestamp = currentTs;
 
-                    // unleash the last records for each key
-                    for (int i = recordKeys.size() - 1; i > -1; i--) {
-                        if (keyProcessed.add(recordKeys.get(i))) {
-                            skipRecords.add(i);
+                    // unleash the first or the last records for each key, in ascending position order
+                    if (isKeepFirst) {
+                        for (int i = 0, n = recordKeys.size(); i < n; i++) {
+                            if (keyProcessed.add(recordKeys.get(i))) {
+                                skipRecords.add(i);
+                            }
                         }
+                    } else {
+                        for (int i = recordKeys.size() - 1; i > -1; i--) {
+                            if (keyProcessed.add(recordKeys.get(i))) {
+                                skipRecords.add(i);
+                            }
+                        }
+                        reverse(skipRecords);
                     }
+                    final int groupSize = recordKeys.size();
                     recordKeys.clear();
                     keyProcessed.clear();
 
-                    // find differences between indexes in skipRecords
-                    reverse(skipRecords);
-                    int last = -1;
+                    // find differences between indexes in skipRecords, the inner cursor sits on the record
+                    // before the group, minus the records left over from the previous group
+                    int last = -1 - skipCarry;
                     for (int i = 0; i < skipRecords.size(); i++) {
                         int val = skipRecords.get(i);
                         skipRecords.set(i, val - last);
                         last = val;
                     }
+                    skipCarry = groupSize - 1 - last;
 
                     // reverse skip records for easier removal from the end
                     reverse(skipRecords);
@@ -1448,6 +1975,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             currentRecordKeys.clear();
             skipRecords.clear();
             recordKeys.clear();
+            skipCarry = 0;
         }
 
         private boolean dispatchRecordsWithOffsets() {

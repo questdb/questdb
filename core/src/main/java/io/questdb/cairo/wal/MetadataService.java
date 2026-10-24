@@ -151,13 +151,15 @@ public interface MetadataService {
     void dropIndex(@NotNull CharSequence columnName);
 
     /**
-     * Enables deduplication with the given upsert keys.
+     * Enables deduplication with the given dedup keys and dedup mode.
      *
-     * @return returns true when dedup was already enabled on the table and the new upsert keys
-     * are a subset of the previous upsert keys. Implementations that don't have access
+     * @param columnsIndexes writer indexes of the dedup key columns, must include the designated timestamp
+     * @param dedupMode      {@code TableUtils.DEDUP_MODE_UPSERT} or {@code TableUtils.DEDUP_MODE_SKIP}
+     * @return returns true when dedup was already enabled on the table and the new dedup keys
+     * are a subset of the previous dedup keys. Implementations that don't have access
      * to the table metadata always return false.
      */
-    boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+    boolean enableDeduplication(LongList columnsIndexes, int dedupMode);
 
     void forceRemovePartitions(LongList partitionTimestamps);
 

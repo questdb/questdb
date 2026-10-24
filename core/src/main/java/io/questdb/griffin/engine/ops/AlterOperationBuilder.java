@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -175,11 +176,24 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken) {
-        this.command = SET_DEDUP_ENABLE;
+    /**
+     * Starts building ALTER TABLE DEDUP ENABLE, follow it up with {@link #setDedupKeyFlag(int)} calls.
+     * The UPSERT mode keeps the SET_DEDUP_ENABLE encoding, which versions that predate the dedup mode
+     * can apply. Other modes need SET_DEDUP_ENABLE_WITH_MODE.
+     *
+     * @param dedupMode {@code TableUtils.DEDUP_MODE_UPSERT} or {@code TableUtils.DEDUP_MODE_SKIP}
+     */
+    public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken, int dedupMode) {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableToken.getTableId();
+        if (dedupMode == TableUtils.DEDUP_MODE_UPSERT) {
+            this.command = SET_DEDUP_ENABLE;
+        } else {
+            this.command = SET_DEDUP_ENABLE_WITH_MODE;
+            // the mode goes first, the dedup key writer indexes follow
+            this.extraInfo.add(dedupMode);
+        }
         return this;
     }
 

@@ -19,7 +19,8 @@ stop and ask which was intended. If neither is supplied, ask for one.
 
 > Harness note: this skill runs inside **pi**. Use `bash` for read-only `gh`, `git`,
 > `rg`, `grep`, and `find` commands, `read` for files, and fresh-context `reviewer`
-> agents through `subagent(...)`. Do not edit files or push.
+> agents through `subagent(...)`. Do not edit files or push. Build and run tests
+> only in the scratch worktree of Step 2.6, never in the user's working tree.
 
 ## Review mindset
 
@@ -131,14 +132,21 @@ is the most valuable part of this skill.
 
 **Skipped in `--range` mode** — a local range has no PR metadata. State that it was skipped and continue at Step 2.4.
 
-Check against CLAUDE.md conventions:
-- Title follows Conventional Commits: `type(scope): description`
-- Description repeats the verb and explains user impact
-- If fixing an issue, `Fixes #NNN` is at the top of the body
-- Tone is level-headed and analytical, with no superlatives or bold emphasis on numbers
-- Body is short: one short paragraph per fix (symptom, cause, change), breaking changes stated plainly. Flag a test plan section, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists) and boilerplate Trade-offs sections. Never ask the author to add such material to the body
-- Labels match the PR scope (SQL, Performance, Core, etc.)
-- Bundled related fixes are allowed; do not demand a split
+Check the title, body and labels against CLAUDE.md "Git & PR Conventions". Read the title as a QuestDB user scanning the release notes, who never sees the code, and the body as a reviewer who has not opened the diff yet.
+
+- **Type.** A change users can see (query results, SQL, configuration, error messages, wire or on-disk format, anything breaking) takes `feat`, `fix` or `perf`. Flag a technical type (`chore`, `ci`, `test`, `build`, `refactor`, `style`) on such a change and name what users see.
+- **User-facing title** (`feat`, `fix`, `perf`, `docs`). Would that user understand it and see what they gain? Flag class and method names, internal mechanisms and jargon, and a title that describes the code change instead of its effect. The description repeats the verb.
+- **Technical title.** Technical terms are fine, but the title alone must make the reason for the change obvious. Flag a title that only says what changed.
+- **Body.** Short bullets, one per net effect against the base branch, at most 15 words each, with `Fixes #NNN` on the bullet for that issue. Flag:
+  - a bullet that describes a code change instead of its effect;
+  - an effect of the diff that no bullet states, above all a regression or a breaking change;
+  - a bullet the diff does not support;
+  - a change made for speed, or one on a data path, without its JMH table;
+  - anything else: a test plan, coverage, fuzz seeds, a walkthrough, narrative, selling, a boilerplate Trade-offs section, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists). Never ask the author to add such material to the body.
+- **Labels** match the title (`perf(sql)` gets SQL and Performance).
+- Bundled related fixes are allowed; do not demand a split.
+
+Write the replacement for every problem: a ready-to-paste title, rewritten bullets. Finish the body check once the review knows what the diff does, and report the result in the **Title and description** section of Step 4.
 
 ## Step 2.4: Submodule provenance (mandatory at every level)
 
@@ -247,6 +255,42 @@ Build a coverage table with one row per behavioral change: every changed symbol 
 - **Dimensions:** applicable happy, error, NULL, boundary, concurrency, and resource-cleanup dimensions, each covered / uncovered / N-A with a reason.
 - **Disposition rationale:** why the row is `COVERED`, `CRITICAL GAP`, `MODERATE GAP`, `ACCEPTED GAP`, or `EXEMPT`.
 
+**Measure the map.** A search shows which tests might reach a change, not which lines they run. Once the Test column is filled, run `ci/diff_coverage.py` (CLAUDE.md "Measuring coverage locally") at the reviewed revision, unless the change touches no production Java or Rust source. Build and run only in a scratch worktree, never in the user's working tree, which may hold other work and its own build. Keep dots out of the worktree's path: `Os.loadLib` splits a library path at its first dot, so tests cannot start under such a path.
+
+```bash
+REPO=$(git rev-parse --show-toplevel)
+TMP=$(mktemp -d /tmp/review-pr-XXXXXX)
+WT="$TMP/src"
+# REV is the reviewed revision:
+#   PR:           git fetch origin "pull/<number>/head" "<baseRefName>"; REV=<headRefOid>
+#   range:        REV=<head>
+#   working tree: REV=$(git stash create); REV=${REV:-HEAD}
+#                 (a snapshot of the tracked changes; once the worktree exists,
+#                 copy the change's untracked files from Step 1 into it)
+git worktree add --detach "$WT" "$REV"
+cd "$WT"
+python3 "$REPO/ci/diff_coverage.py" --base "$(git merge-base "$BASE" "$REV")" \
+  --tests '<test classes the change adds or changes, plus those the map cites>' \
+  --ignore-test-failures --json "$TMP/coverage.json"
+```
+
+The script runs from `$REPO` because the reviewed revision may predate it. If the change adds no test and the map cites none, skip the run: no test runs any changed line. If the script cannot run for another reason (exit code 2, such as a missing client jar or Rust toolchain), install nothing: keep the static map and state in the report that coverage was not measured and why. A build error or a failing test at the reviewed revision is a Step 3b candidate. Remove the worktree when the review ends: `git worktree remove --force "$WT"`.
+
+Then apply the result to the map:
+
+- Each changed line, branch or condition that never ran belongs to an `UNTESTED` row; add a row where the map has none.
+- A `COVERED` row whose lines never ran is `UNTESTED`: its test does not reach the change.
+- **Grade never-run code by its exposure, not its line count.** Code that never ran may be wrong today, not only after a later regression. Assume it does not do what it says (the guard lets the bad value through, the cleanup keeps the resource, the conversion returns the wrong number) and trace what a user would get:
+  - **What it controls:** rows returned or written, on-disk state, which path runs, a release or rollback, a permission check, or only message text and logging.
+  - **Loud or silent:** an exception gets noticed; a wrong value, a lost row or a swallowed error does not.
+  - **Reach:** the supported operation that gets there, and how often: routine SQL, a rare configuration, or only a fault.
+  - **Blast radius:** one query, the table on disk, replicas and backups, or the whole process (a Rust panic aborts the JVM).
+  - **Containment:** an assertion, validation or checksum downstream that would catch the mistake.
+
+  Silent wrong or lost data, corruption, a security failure, or a crash or hang on a reachable path makes a Critical gap when it meets the bar below; a loud, bounded failure makes a Moderate gap. Error and cleanup paths are the code most often never run, and a mistake there tends to hide the failure or leave state half-written, so rarity alone never makes them low exposure: disks fill and connections drop in production. One hunk can hold both grades: in a guard that rejects an oversized `RANGE`, a wrong count in the error message is cosmetic, but a guard that lets the range through can let `(int) steps + 1` wrap, so the join silently uses too few offsets.
+- When the exposure is Critical, reach the code with a probe test in the scratch worktree before you classify it, with the expected result worked out independently. If the code already does the wrong thing, that is a functional defect, admitted on the probe's evidence, not a coverage gap. Either way, the finding carries the probe as the test to add.
+- Never-run lines are never private. The Coverage map section lists those that become no finding, each with the reason its exposure is low. Only a line proven unreachable and guarded by an assertion is exempt.
+
 Rows with no effective test are marked **UNTESTED**, then classified by evidence rather than category:
 
 - **Critical gap (blocking):** only when the changed path and affected population are supported and reachable, a credible regression would cause a material Critical consequence (data loss/corruption, security failure, outage/hang, compatibility break, unbounded resource loss, or similarly material operator harm), existing controls do not contain that risk, and the row passes Step 3b. The label "bug fix", "public API", "user-visible", "concurrency", or "security" never makes a gap Critical by itself.
@@ -263,7 +307,7 @@ Run this step with the `subagent` tool using fresh-context `reviewer` agents. Se
 Every selected agent receives:
 1. The PR or local-range diff
 2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list)
-3. The test coverage map from Step 2.6
+3. The test coverage map from Step 2.6, with the path of its coverage report
 
 The diff plus surface map can be large — write them to a shared file (e.g., under a temp/chain dir) and point each task at it via its `reads`/task text, rather than pasting the whole payload into every task. Agents 10 and 11 are deliberate exceptions and receive reduced context (see their entries).
 
@@ -326,11 +370,11 @@ that amplifies an otherwise-acceptable cost.
 
 **Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths. When the diff adds or changes a native allocation site, also apply the "Per-query memory tracker integration" checklist below: confirm large, unbounded, data-scaled allocators are wired into the per-query `MemoryTracker` and bounded / process-lived ones are deliberately left out, that malloc and its matching free charge the same tracker, and that newly wired sites have breach / success / leak-loop tests.
 
-**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. For each missing cross-context test, add an `UNTESTED` Step 2.6 row; do not predetermine its severity or publication. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines (boundary comparisons, error handling, null checks, off-by-one candidates) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line; classify it under Step 2.6 and publish it only after Step 3b admission. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `assertSql(...)`/`assertPlanNoLeakCheck(...)`/`getPlan(...)`/`TestUtils.assertSql(...)` is Critical; any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.** Test *efficacy* (whether tests actually exercise the change and could fail) and test-*code* quality are handled by Agents 12-14 — here, focus only on whether coverage exists for every new or changed path.
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. For each missing cross-context test, add an `UNTESTED` Step 2.6 row; do not predetermine its severity or publication. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines that ran (boundary comparisons, error handling, null checks, off-by-one candidates; lines that never ran are gaps already) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line; classify it under Step 2.6 and publish it only after Step 3b admission. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `assertSql(...)`/`assertPlanNoLeakCheck(...)`/`getPlan(...)`/`TestUtils.assertSql(...)` is Critical; any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.** Test *efficacy* (whether tests actually exercise the change and could fail) and test-*code* quality are handled by Agents 12-14 — here, focus only on whether coverage exists for every new or changed path.
 
 **Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies. **Also check for unclosed LOG statements**: QuestDB logging uses a builder pattern (`LOG.info().$("msg").$()`) and every chain MUST end with `.$()` or `.I$()`. A missing close holds a ring buffer slot forever, causing other log producer threads to busy-wait in `nextBully()`, and the log consumer `logging_0` thread cannot progress either. Also watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf16Sink`, not `LogRecord`, breaking the chain. Also flag throw-capable expressions inside LOG chains (`LOG.info().$(func()).$()`): arguments are evaluated after the ring slot is acquired, so a throwing `func()` unwinds past the terminator and leaks the slot; the call must be hoisted into a local before the chain starts.
 
-**Agent 7 — PR metadata & conventions:** Title format, description quality, commit messages, labels, SQL style in tests.
+**Agent 7 — Conventions:** Commit messages and SQL style in tests. The parent checks the title, body and labels in Step 2.
 
 **Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`,
 `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release
@@ -469,7 +513,7 @@ After a candidate satisfies this admission schema, apply the domain-specific che
    difference between IO amplification that hits every row and a few hundred nanoseconds spent once per SQL
    compilation. Sub-optimal algorithm choice is always reportable; whether it *blocks* is decided by the magnitude.
 9. **For cross-context findings (Agent 9)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
-10. **For test-efficacy candidates (Agents 12, 14)**: re-read the cited assertion in full context and confirm it can fail for the claimed regression. For “would pass without the fix” claims, use a scratch `git worktree` (never the primary working tree): run the new test at the reviewed revision, then revert the production hunks (`git checkout <base> -- <files>`) and run it again. Admission requires green-on-head and red-without-fix artifacts. If the environment cannot build or run the test, omit the candidate and record the validation limitation privately; do not fall back to confident reasoning. The same rule applies to every dynamic Critical candidate: execute the claimed trigger and attach the observed output, or omit it.
+10. **For test-efficacy candidates (Agents 12, 14)**: re-read the cited assertion in full context and confirm it can fail for the claimed regression. For “would pass without the fix” claims, use a scratch `git worktree` made as in Step 2.6 (never the primary working tree): run the new test at the reviewed revision, then revert the production hunks (`git checkout <base> -- <files>`) and run it again. Admission requires green-on-head and red-without-fix artifacts. If the environment cannot build or run the test, omit the candidate and record the validation limitation privately; do not fall back to confident reasoning. The same rule applies to every dynamic Critical candidate: execute the claimed trigger and attach the observed output, or omit it.
 11. **For coverage-gap candidates (UNTESTED rows from 2.6)**: verify the recorded test search and failure-link analysis, then try to falsify the risk with existing indirect assertions, guards, type/compile guarantees, constrained inputs, downstream validation, or operational controls. Establish supported reachability, an affected population, a credible regression mode, and its material consequence before assigning Critical. Evaluate the least fragile meaningful test and concrete alternatives. Reject bare "simple", "urgent", "hard to test", or "covered indirectly" claims; test-feasibility evidence counts only when it names the proposed observation seam, why it is invasive/unstable, and why cheaper stable alternatives do not work. A Critical gap may be counterfactual about whether the code is currently wrong, but never about reachability or impact. Test difficulty does not downgrade an independently proved functional defect.
 12. **For test-code-quality findings (Agent 13)**: confirm a flagged reflective access really has a non-reflective alternative (some QuestDB internals genuinely require reflection in tests) before reporting it. Confirm a "reinvented helper" finding by actually locating the helper with `rg` and checking its signature fits the test's need.
 13. **For "swallowed exception → silent wrong results / leak / corrupt state" claims**: a `catch` block is defensive coding, not evidence that anything throws. Before reporting, name **all three** of:
@@ -833,6 +877,9 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 
 Do not inflate and do not deflate. Filing a real user-visible defect as Moderate is a review failure; so is filing a bounded compile-time micro-cost as Critical. Where two readings are defensible, pick the one you can evidence.
 
+### Title and description
+Open the report with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict.
+
 ### Critical
 Blocking issues introduced or exposed by this PR, ordered worst user impact first. Each must include:
 - The three summary lines (**Problem** / **Net impact** / **Evidence**) before anything else
@@ -874,7 +921,7 @@ Report each as a ready-to-file issue draft, so it can move to GitHub without re-
 Offer to file them; do not file anything without being asked. Their count and severity sit outside the finding-proportionality budget and outside every gate in the Summary. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, it belongs under Critical, and you state that argument explicitly.
 
 ### Coverage map
-State the test-gate result and the number of **admitted** coverage gaps only. Render admitted gap rows with their recorded search and failure link. Do not expose counts for omitted candidates or private UNTESTED rows; keep the full Step 2.6 matrix private unless the user asks to see it.
+State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, then list the never-run lines that became no finding, each with the reason its exposure is low. Do not expose counts for omitted candidates or private UNTESTED rows; keep the full Step 2.6 matrix private unless the user asks to see it.
 
 ### Summary
 - **Verdict**, exactly one of:

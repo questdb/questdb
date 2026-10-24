@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -114,6 +115,13 @@ public final class TableUtils {
      * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
      */
     public static final String COMPACTING_DIR_MARKER = ".compacting";
+    // Dedup modes, stored in the _meta header at META_OFFSET_DEDUP_MODE. The mode matters only when
+    // deduplication is enabled, i.e. when the designated timestamp is a dedup key.
+    // SKIP: a new row is discarded when a row with the same dedup key values already exists,
+    // the earliest write wins.
+    public static final int DEDUP_MODE_SKIP = 1;
+    // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
+    public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -126,7 +134,8 @@ public final class TableUtils {
     public static final int MAX_SYMBOL_NULL_SCAN_ROWS = 1 << 20;
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    public static final short META_FORMAT_MINOR_VERSION_DEDUP_MODE = 3;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -151,6 +160,7 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    public static final long META_OFFSET_DEDUP_MODE = META_OFFSET_TABLE_FORMAT + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -2359,6 +2369,8 @@ public final class TableUtils {
                     -1,
                     seqTxn
             );
+            // every row keeps its position: the output keeps every column top of the source
+            partitionUpdater.setColumnTopRowLimit(Long.MAX_VALUE);
 
             final int columnCount = metadata.getColumnCount();
             ParquetRowGroupMaterializer.setTargetSchema(
@@ -2863,6 +2875,34 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
+    /**
+     * Overwrites the metadata version of an existing _meta file in place, e.g. when the table gets a fresh
+     * sequencer. The Metadata Format Minor Version field holds a checksum of the metadata version and the
+     * column count, and readers trust the header fields it gates (TTL, table format, dedup mode, Parquet
+     * encoding config) only while the checksum matches, see {@code isMetaFormatAtLeast()}. Writing the
+     * version alone would make readers fall back to the defaults of those fields. This method re-stamps the
+     * checksum for the new version and keeps the stored minor version, so a trusted field stays trusted and an
+     * untrusted one stays untrusted: a release that predates the field, or one that does not maintain it,
+     * leaves a checksum that cannot match.
+     * <p>
+     * This method writes the checksum before the version. Should the process die between the two writes, the
+     * file stays untrusted, and a repeated call with the same version, which the table type conversion makes
+     * when it runs again at the next startup, completes the stamp.
+     */
+    public static void updateMetadataVersion(MemoryARW metaMem, long metadataVersion) {
+        final int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        if (isMetaFormatMinorVersionFieldValid(metaMem, metaFormatMinorVersionField)) {
+            metaMem.putInt(
+                    META_OFFSET_META_FORMAT_MINOR_VERSION,
+                    Numbers.encodeLowHighShorts(
+                            checksumForMetaFormatMinorVersionField(metadataVersion, metaMem.getInt(META_OFFSET_COUNT)),
+                            Numbers.decodeHighShort(metaFormatMinorVersionField)
+                    )
+            );
+        }
+        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
+    }
+
     public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
         if (indexValueBlockSize < MIN_INDEX_VALUE_BLOCK_SIZE) {
             throw SqlException.$(position, "min index block capacity is ").put(MIN_INDEX_VALUE_BLOCK_SIZE);
@@ -3080,6 +3120,7 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.putInt(tableStruct.getDedupMode());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -3148,14 +3189,18 @@ public final class TableUtils {
     }
 
     static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
-        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
-        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = checksumForMetaFormatMinorVersionField(
-                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
-                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        final int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        return isMetaFormatMinorVersionFieldValid(metaMem, metaFormatMinorVersionField)
+                && Numbers.decodeHighShort(metaFormatMinorVersionField) >= minorVersion;
+    }
+
+    // The checksum in the low short of the Metadata Format Minor Version field matches the metadata version and
+    // the column count of the header only when a version that maintains the field wrote it.
+    private static boolean isMetaFormatMinorVersionFieldValid(MemoryR metaMem, int metaFormatMinorVersionField) {
+        return Numbers.decodeLowShort(metaFormatMinorVersionField) == checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(META_OFFSET_COUNT)
         );
-        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
     }
 
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
@@ -3318,6 +3363,17 @@ public final class TableUtils {
 
     public static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
         return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
+    }
+
+    /**
+     * Returns the dedup mode stored in the _meta header, one of the DEDUP_MODE_* constants. A _meta
+     * file written before the dedup mode field existed has no such field: deduplication on such a
+     * table, when enabled, is always UPSERT.
+     */
+    static int getDedupMode(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_DEDUP_MODE)
+                ? metaMem.getInt(TableUtils.META_OFFSET_DEDUP_MODE)
+                : DEDUP_MODE_UPSERT;
     }
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {

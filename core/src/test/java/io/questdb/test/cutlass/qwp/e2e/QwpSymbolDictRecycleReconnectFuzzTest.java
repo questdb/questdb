@@ -85,9 +85,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * Duplicates are expected and tolerated exactly like
  * {@link QwpIngressServerRestartFuzzTest}: a restart mid-flight can make the
  * sender replay frames the server already committed but had not yet acked.
- * The target table carries the same {@code DEDUP UPSERT KEYS(ts, id)} safety
- * net, so replays collapse and the final row count is exact, not just a
- * lower bound.
+ * The target table carries the same dedup safety net on {@code KEYS(ts, id)},
+ * in a randomly picked UPSERT or SKIP mode, so replays collapse and the final
+ * row count is exact, not just a lower bound.
  * <p>
  * There is no dedicated "ack delay" injection seam anywhere in this harness
  * (checked both {@link RestartableQwpServer} and the QWP client builder) --
@@ -136,6 +136,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     // scenario this suite has no other seam for (see class javadoc).
     private static final int TARGET_DRAIN_EVERY_N_BATCHES = 20;
 
+    private String dedupMode;
     private int recvChunk;
     private Rnd rnd;
     private int sendChunk;
@@ -150,8 +151,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
         // both the WS parser and the recycle/catch-up frame builders.
         recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
         sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        // replays carry the same column values as the original rows, both modes collapse them alike
+        dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
         LOG.info().$("QwpSymbolDictRecycleReconnectFuzzTest fragmentation recvChunk=").$(recvChunk)
-                .$(", sendChunk=").$(sendChunk).$();
+                .$(", sendChunk=").$(sendChunk)
+                .$(", dedupMode=").$(dedupMode).$();
     }
 
     @Test
@@ -527,7 +531,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             + "sym SYMBOL, "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
-                            + "DEDUP UPSERT KEYS(ts, id)"
+                            + "DEDUP " + dedupMode + " KEYS(ts, id)"
             );
         } catch (Exception e) {
             throw new AssertionError("failed to create target table", e);
