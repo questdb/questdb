@@ -1006,7 +1006,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     private static boolean isCommitBatchCandidate(long payload, int length) {
         return length >= QwpConstants.HEADER_SIZE
                 && length <= COMMIT_BATCH_MAX_FRAME_BYTES
-                && (Unsafe.getByte(payload + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_DEFER_COMMIT) == 0
+                && !QwpMessageHeader.isDeferCommit(payload, length)
                 && !QwpMessageHeader.isDurableAckPoll(payload, length);
     }
 

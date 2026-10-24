@@ -37,6 +37,7 @@ import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
@@ -716,11 +717,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     public boolean isDeferCommit() {
-        if (bufferPosition >= QwpConstants.HEADER_SIZE) {
-            byte flags = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_FLAGS);
-            return (flags & QwpConstants.FLAG_DEFER_COMMIT) != 0;
-        }
-        return false;
+        return QwpMessageHeader.isDeferCommit(bufferAddress, bufferPosition);
     }
 
     public boolean isDurableAckEnabled() {
