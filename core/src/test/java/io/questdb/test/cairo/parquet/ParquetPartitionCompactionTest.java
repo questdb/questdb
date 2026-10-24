@@ -988,7 +988,7 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\n6\n");
             assertQuery("SELECT count() FROM pt WHERE ts IN '2020-01-01' AND bt8 IS NULL AND sh8 IS NULL AND bo8 IS NULL "
-                            + "AND btm IS NULL AND shm IS NULL AND bom IS NULL")
+                    + "AND btm IS NULL AND shm IS NULL AND bom IS NULL")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
