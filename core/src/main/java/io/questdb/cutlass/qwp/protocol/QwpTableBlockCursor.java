@@ -400,13 +400,11 @@ public class QwpTableBlockCursor implements Mutable {
                         "column data exceeds table block bounds before column " + i
                 );
             }
-            int consumed = initializeColumnCursor(
-                    i,
-                    dataAddress + offset,
-                    dataLength - offset,
-                    rowCount,
-                    typeCode
-            );
+            // Fixed-width columns take a small method the JIT inlines here; the
+            // 740-byte switch over every type never was, a real call per column.
+            int consumed = isFixedWidthType(typeCode)
+                    ? initializeFixedWidthCursor(i, dataAddress + offset, dataLength - offset, rowCount, typeCode)
+                    : initializeColumnCursor(i, dataAddress + offset, dataLength - offset, rowCount, typeCode);
             offset += consumed;
         }
 
@@ -463,6 +461,14 @@ public class QwpTableBlockCursor implements Mutable {
         }
     }
 
+    private static boolean isFixedWidthType(byte typeCode) {
+        return switch (typeCode) {
+            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_IPV4, TYPE_LONG,
+                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> true;
+            default -> false;
+        };
+    }
+
     private static boolean isSameBytes(long address, byte[] bytes, int len) {
         for (int i = 0; i < len; i++) {
             if (Unsafe.getByte(address + i) != bytes[i]) {
@@ -512,17 +518,8 @@ public class QwpTableBlockCursor implements Mutable {
                 yield boolCursor.of(dataAddress, dataLength, rowCount);
             }
             case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_IPV4, TYPE_LONG,
-                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> {
-                QwpFixedWidthColumnCursor fixedCursor;
-                if (cursor instanceof QwpFixedWidthColumnCursor c) {
-                    fixedCursor = c;
-                } else {
-                    fixedCursor = new QwpFixedWidthColumnCursor();
-                    columnCursors.setQuick(colIndex, fixedCursor);
-                }
-                fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
-                yield fixedCursor.of(dataAddress, dataLength, rowCount, typeCode);
-            }
+                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 ->
+                    initializeFixedWidthCursor(colIndex, dataAddress, dataLength, rowCount, typeCode);
             case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> {
                 QwpTimestampColumnCursor tsCursor;
                 if (cursor instanceof QwpTimestampColumnCursor c) {
@@ -599,5 +596,23 @@ public class QwpTableBlockCursor implements Mutable {
                     "unknown column type: " + typeCode
             );
         };
+    }
+
+    private int initializeFixedWidthCursor(
+            int colIndex,
+            long dataAddress,
+            int dataLength,
+            int rowCount,
+            byte typeCode
+    ) throws QwpParseException {
+        QwpFixedWidthColumnCursor fixedCursor;
+        if (columnCursors.getQuick(colIndex) instanceof QwpFixedWidthColumnCursor c) {
+            fixedCursor = c;
+        } else {
+            fixedCursor = new QwpFixedWidthColumnCursor();
+            columnCursors.setQuick(colIndex, fixedCursor);
+        }
+        fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
+        return fixedCursor.of(dataAddress, dataLength, rowCount, typeCode);
     }
 }
