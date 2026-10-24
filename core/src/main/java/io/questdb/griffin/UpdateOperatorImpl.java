@@ -82,6 +82,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final IntList updateColumnIndexes = new IntList();
     // per affected column: the updateOpcode() of the table column type
     private final IntList updateColumnOpcodes = new IntList();
+    // per affected column: getTimestampType() of the value column, read by the TIMESTAMP arm
+    private final IntList updateColumnTimestampTypes = new IntList();
     private IndexBuilder indexBuilder;
 
     public UpdateOperatorImpl(
@@ -143,12 +145,14 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 // Build index column map from table to update to values returned from the update statement row cursors
                 updateColumnIndexes.clear();
                 updateColumnOpcodes.clear();
+                updateColumnTimestampTypes.clear();
                 for (int i = 0; i < affectedColumnCount; i++) {
                     CharSequence columnName = updateMetadata.getColumnName(i);
                     int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
                     assert tableColumnIndex >= 0;
                     updateColumnIndexes.add(tableColumnIndex);
                     updateColumnOpcodes.add(updateOpcode(tableMetadata.getColumnType(tableColumnIndex)));
+                    updateColumnTimestampTypes.add(ColumnType.getTimestampType(updateMetadata.getColumnType(i)));
                 }
 
                 // Create update memory list of all columns to be updated
@@ -217,7 +221,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                                 affectedColumnCount,
                                 prevRow,
                                 currentRow,
-                                factory.getMetadata(),
                                 masterRecord,
                                 minRow
                         );
@@ -388,7 +391,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             int affectedColumnCount,
             long prevRow,
             long currentRow,
-            RecordMetadata metadata,
             Record masterRecord,
             long firstUpdatedRowId
     ) {
@@ -433,7 +435,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     break;
                 case ColumnType.TIMESTAMP:
                     TimestampDriver driver = ColumnType.getTimestampDriver(toType);
-                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i))));
+                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), updateColumnTimestampTypes.getQuick(i)));
                     break;
                 case ColumnType.DATE:
                     dstFixMem.putLong(masterRecord.getDate(i));
