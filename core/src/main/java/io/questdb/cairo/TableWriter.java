@@ -361,7 +361,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
     // Index versions that in-place parquet O3 updates moved, PARQUET_INDEX_VERSION_CHANGE_LONGS per entry.
     // processO3Block() collects them from the partition update sink. Once the commit lands,
-    // housekeep() purges the old versions; rollback() and a failed O3 block remove the new ones.
+    // housekeep() purges the old versions; rollback() and a failed O3 block remove the new ones, unless
+    // rollback() finds that the commit landed, then it purges the old versions as housekeep() would.
     private final LongList parquetIndexVersionChanges = new LongList();
     // cumulative since the writer opened; tests assert the columns that parquet O3 row group merges decode, the
     // UPSERT identity check included, see O3PartitionJob.mergeRowGroupDecode()
@@ -4114,8 +4115,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnVersionWriter.readUnsafe();
                 // the _cv commit may have landed while the _txn commit did not
                 rollbackColumnVersionToTxn();
-                // the restored _cv references none of the index versions the failed commit built
-                removeParquetIndexVersionOrphans();
+                // A _txn commit that throws after it switched the record, e.g. on its msync, has landed: the restored
+                // _cv then references the new index versions, and the replaced ones are what is left to remove.
+                if (isParquetIndexVersionChangeCommitted()) {
+                    purgeReplacedParquetIndexVersions();
+                } else {
+                    removeParquetIndexVersionOrphans();
+                }
                 closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
@@ -10366,6 +10372,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean isMakePlainEligible(int partitionIndex) {
         return PartitionCompactionPolicy.isMakePlainShape(txWriter, getGeometry(), partitionIndex);
+    }
+
+    /**
+     * Whether the committed _cv, restored by rollback(), references the new version of the
+     * {@link #parquetIndexVersionChanges} entries. All entries come from one O3 commit, whose _cv
+     * record lands or not as a whole.
+     */
+    private boolean isParquetIndexVersionChangeCommitted() {
+        final int n = parquetIndexVersionChanges.size();
+        if (n == 0) {
+            return false;
+        }
+        final boolean isCommitted = isParquetIndexVersionChangeCommitted(0);
+        for (int i = PARQUET_INDEX_VERSION_CHANGE_LONGS; i < n; i += PARQUET_INDEX_VERSION_CHANGE_LONGS) {
+            assert isParquetIndexVersionChangeCommitted(i) == isCommitted;
+        }
+        return isCommitted;
+    }
+
+    // the new version is above the old one, so the _cv of a commit that did not land never holds it
+    private boolean isParquetIndexVersionChangeCommitted(int entry) {
+        return columnVersionWriter.getColumnNameTxn(
+                parquetIndexVersionChanges.getQuick(entry + 3),
+                (int) parquetIndexVersionChanges.getQuick(entry)
+        ) == parquetIndexVersionChanges.getQuick(entry + 2);
     }
 
     /**
