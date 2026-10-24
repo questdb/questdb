@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 
@@ -55,6 +56,16 @@ public class QwpTableBlockCursor implements Mutable {
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
     private final QwpSchema.ParseResult parseResult = new QwpSchema.ParseResult();
+    // The previous block's schema section and its parse. A client sends the
+    // same columns message after message, and parsing allocates a String, two
+    // byte[]s and a QwpColumnDef per column (13% of the ingress fiber at one
+    // row per message). Survives clear(): it is a cache, not block state. A
+    // byte-identical section with the same column count is the same schema,
+    // because the section is exactly columnCount self-delimiting definitions.
+    private byte[] cachedSchemaBytes = new byte[64];
+    private int cachedSchemaColumnCount = -1;
+    private int cachedSchemaLen;
+    private QwpSchema cachedSchema;
     private final QwpTableHeader tableHeader;
     private int arrayColumnCount;
     private int[] arrayColumnIndices = new int[16];
@@ -93,6 +104,15 @@ public class QwpTableBlockCursor implements Mutable {
 
     public QwpTableBlockCursor(int maxRowsPerTable) {
         this.tableHeader = new QwpTableHeader(maxRowsPerTable);
+    }
+
+    private static boolean sameBytes(long address, byte[] bytes, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Unsafe.getByte(address + i) != bytes[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -335,9 +355,27 @@ public class QwpTableBlockCursor implements Mutable {
         this.columnCount = tableHeader.getColumnCount();
 
         // Parse schema section (inline columns; zero-alloc: reuses parseResult)
-        QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
-        offset += parseResult.bytesConsumed;
-        QwpSchema schema = parseResult.schema;
+        final QwpSchema schema;
+        if (cachedSchema != null
+                && columnCount == cachedSchemaColumnCount
+                && dataLength - offset >= cachedSchemaLen
+                && sameBytes(dataAddress + offset, cachedSchemaBytes, cachedSchemaLen)) {
+            schema = cachedSchema;
+            offset += cachedSchemaLen;
+        } else {
+            QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
+            final int n = parseResult.bytesConsumed;
+            if (cachedSchemaBytes.length < n) {
+                cachedSchemaBytes = new byte[Math.max(n, cachedSchemaBytes.length * 2)];
+            }
+            for (int i = 0; i < n; i++) {
+                cachedSchemaBytes[i] = Unsafe.getByte(dataAddress + offset + i);
+            }
+            cachedSchemaLen = n;
+            cachedSchemaColumnCount = columnCount;
+            cachedSchema = schema = parseResult.schema;
+            offset += n;
+        }
 
         this.columnDefs = schema.getColumns();
 
