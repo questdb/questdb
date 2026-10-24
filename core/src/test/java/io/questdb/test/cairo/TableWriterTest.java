@@ -100,9 +100,7 @@ import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -2998,31 +2996,10 @@ public class TableWriterTest extends AbstractCairoTest {
         // An O3 commit into a partition that predates column c changes _cv. When the _cv commit lands
         // and the _txn commit fails, rollback() must restore the _cv the committed _txn references:
         // otherwise a new reader waits for a _cv version that never comes.
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicLong txnFd = new AtomicLong(-1);
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == txnFd.get() && isArmed.compareAndSet(true, false)) {
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (
-                        (Utf8s.containsAscii(name, Files.SEPARATOR + "nt~") || Utf8s.containsAscii(name, Files.SEPARATOR + "nt" + Files.SEPARATOR))
-                                && Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)
-                ) {
-                    txnFd.set(fd);
-                }
-                return fd;
-            }
-        };
+        final TxnExtendFailingFacade ff = new TxnExtendFailingFacade("nt");
         // one O3 row into 2024-01-01 and one row into each of 300 new partitions: the partition table
-        // grows past the size of the _txn file, so the _txn commit extends the file
+        // outgrows the first 4 KB of the _txn file, so the _txn commit extends the file, see
+        // TxnExtendFailingFacade
         final String o3Insert = """
                 INSERT INTO nt
                 SELECT * FROM (SELECT 5 v, '2024-01-01T00:30:00.000000Z'::TIMESTAMP ts, 50 c)
@@ -3047,14 +3024,14 @@ public class TableWriterTest extends AbstractCairoTest {
                     4\t2024-01-02T01:00:00.000000Z\t40
                     """;
 
-            isArmed.set(true);
+            ff.isArmed.set(true);
             try {
                 execute(o3Insert);
                 Assert.fail("the _txn commit must fail");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
             }
-            Assert.assertFalse(isArmed.get());
+            Assert.assertFalse(ff.isArmed.get());
             // checked before a reader opens: a reader waits for _cv to match _txn
             Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("nt"));
 
