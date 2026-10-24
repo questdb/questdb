@@ -2089,12 +2089,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             engine.releaseInactive();
             isRemoveArmed.set(true);
             ff.isArmed.set(true);
-            try {
-                execute(symRowsInsert(o3Rows));
-                Assert.fail("the _txn msync must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
-            }
+            assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "could not msync");
             Assert.assertFalse(ff.isArmed.get());
             Assert.assertEquals(1, refusedRemovals.get());
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, columnNameTxn));
@@ -2145,12 +2140,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 ff.isArmed.set(true);
-                try {
-                    execute(symRowsInsert(o3Rows));
-                    Assert.fail("the _txn msync must fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
-                }
+                assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "could not msync");
                 Assert.assertFalse(ff.isArmed.get());
                 Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
                 Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
@@ -2204,12 +2194,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 WorkerPoolUtils.setupWriterJobs(pool, engine);
                 pool.start(LOG);
                 ff.isArmed.set(true);
-                try {
-                    execute(twoSymbolRowsInsert("pt", o3Rows));
-                    Assert.fail("the _txn msync must fail");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
-                }
+                assertExceptionNoLeakCheck(twoSymbolRowsInsert("pt", o3Rows), -1, "could not msync");
             } finally {
                 pool.halt();
             }
@@ -3620,12 +3605,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             createAttachedForeignParquetTable("INDEX", false, 31);
             ff.isArmed.set(true);
-            try {
-                execute(symRowsInsert(o3Rows));
-                Assert.fail("the _txn msync must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
-            }
+            assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "could not msync");
             Assert.assertFalse(ff.isArmed.get());
             Assert.assertEquals(4, getTableTxn("pt"));
             Assert.assertEquals(32, getColumnNameTxn("pt", 0, "s"));
@@ -5211,12 +5191,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             final long txnBefore = getTableTxn("pt");
             ff.isArmed.set(true);
-            try {
-                execute(symRowsInsert(o3Rows));
-                Assert.fail("the _txn msync must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
-            }
+            assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "could not msync");
             Assert.assertFalse(ff.isArmed.get());
             assertQuery(STALE_INDEX_QUERIES[0])
                     .noLeakCheck()
