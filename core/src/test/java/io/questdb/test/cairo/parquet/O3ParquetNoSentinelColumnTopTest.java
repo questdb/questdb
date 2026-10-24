@@ -1533,50 +1533,16 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
 
     @Test
     public void testDedupUpsertIdenticalThenChangedSurvivesReopen() throws Exception {
-        // the commit of testDedupUpsertIdenticalThenChangedLeavesRowGroupUnchanged, then the writers and readers
-        // reopen, and a second commit with another change of row 11 leaves row group 1 in place again
+        // the second commit runs on a fresh writer that reads the _pm and parquet file of the first from disk
         Assume.assumeTrue(isWal);
-        setInPlaceProperties(4);
-        assertMemoryLeak(() -> {
-            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
-            final long writtenRows = hasNoSentinelType() ? 4 : 8;
-            assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(6, 2), newRow(tsOf(11)));
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-            assertDecodedColumnsAndWrittenRows(
-                    18,
-                    writtenRows,
-                    storedRow(6, 2),
-                    rowOf(51, tsOf(11), o3Literal(), "51", "'51'", "#s", "5.5m")
-            );
-            final List<Row> expected = topRows(12, 2, 11, null, true);
-            expected.set(10, new Row(51, tsOf(11), Kind.O3));
-            assertReaders(expected);
-        });
+        assertIdenticalThenChangedTwice(true);
     }
 
     @Test
     public void testDedupUpsertIdenticalThenChangedTwice() throws Exception {
-        // the commit of testDedupUpsertIdenticalThenChangedLeavesRowGroupUnchanged, then the same replay with
-        // another change of row 11: the second commit decodes and writes as much as the first
+        // the second commit runs on the cached writer of the first, with its merge context
         Assume.assumeTrue(isWal);
-        setInPlaceProperties(4);
-        assertMemoryLeak(() -> {
-            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
-            final long writtenRows = hasNoSentinelType() ? 4 : 8;
-            assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(6, 2), newRow(tsOf(11)));
-            assertDecodedColumnsAndWrittenRows(
-                    18,
-                    writtenRows,
-                    storedRow(6, 2),
-                    rowOf(51, tsOf(11), o3Literal(), "51", "'51'", "#s", "5.5m")
-            );
-            final List<Row> expected = topRows(12, 2, 11, null, true);
-            expected.set(10, new Row(51, tsOf(11), Kind.O3));
-            assertReaders(expected);
-        });
+        assertIdenticalThenChangedTwice(false);
     }
 
     @Test
@@ -2593,6 +2559,33 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         final long count = getIdentityCheckDecodedColumnCount();
         insertUpsertRows(rows);
         Assert.assertEquals(expectedCount, getIdentityCheckDecodedColumnCount() - count);
+    }
+
+    // the commit of testDedupUpsertIdenticalThenChangedLeavesRowGroupUnchanged, then, when isReopen, a check that pt
+    // matches tw and a reopen of the writers and readers, then a second commit with another change of row 11: it
+    // decodes and writes as much as the first and leaves row group 1 in place again
+    private void assertIdenticalThenChangedTwice(boolean isReopen) throws Exception {
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
+            final long writtenRows = hasNoSentinelType() ? 4 : 8;
+            assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(6, 2), newRow(tsOf(11)));
+            if (isReopen) {
+                assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            }
+            assertDecodedColumnsAndWrittenRows(
+                    18,
+                    writtenRows,
+                    storedRow(6, 2),
+                    rowOf(51, tsOf(11), o3Literal(), "51", "'51'", "#s", "5.5m")
+            );
+            final List<Row> expected = topRows(12, 2, 11, null, true);
+            expected.set(10, new Row(51, tsOf(11), Kind.O3));
+            assertReaders(expected);
+        });
     }
 
     // the chunk null counts of the column in the row groups of the 2024-01-01 parquet partition of pt, comma
