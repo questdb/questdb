@@ -624,13 +624,93 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testDedupMergeKeyColumnCloseThrows() throws Exception {
+        // A WAL commit that merges into a partition dedups on the extra keys k and k2, so it reads both from
+        // the partition. The merge succeeds, then releasing k throws: the commit must fail without leaking
+        // k2, and the retry must apply the commit.
+        executeWithPool(
+                0,
+                O3FailureTest::testDedupMergeKeyColumnCloseThrows0,
+                failToCloseRO("1970-01-01" + Files.SEPARATOR + "k.d")
+        );
+    }
+
+    @Test
+    public void testDedupMergeKeyColumnMapFails() throws Exception {
+        // A WAL commit that merges into a partition dedups on the extra key k, so it opens k of the
+        // partition and maps it. Mapping k fails: the commit must fail without leaking the descriptor
+        // the dedup opened, and the retry must apply the commit.
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testDedupMergeKeyColumnReadFails0(
+                        engine, compiler, sqlExecutionContext, timestampTypeName, "INT", "could not mmap", false
+                ),
+                failToMapO3RO("1970-01-01" + Files.SEPARATOR + "k.d")
+        );
+    }
+
+    @Test
+    public void testDedupMergeKeyColumnMapFailsAndCloseThrows() throws Exception {
+        // Mapping k fails, then closing the descriptor the dedup opened for k throws: the error the table
+        // suspends with must be the failed map, and nothing may leak.
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testDedupMergeKeyColumnReadFails0(
+                        engine, compiler, sqlExecutionContext, timestampTypeName, "INT", "could not mmap", true
+                ),
+                failToMapO3RO("1970-01-01" + Files.SEPARATOR + "k.d")
+        );
+    }
+
+    @Test
     public void testDedupMergeKeyColumnOpenFails() throws Exception {
         // A WAL commit that merges into a partition dedups on the extra key k, so it reads k from the
         // partition. Opening k fails: the commit must fail without leaking the merge index the dedup
         // fills, and the retry must apply the commit.
         executeWithPool(
                 0,
-                O3FailureTest::testDedupMergeKeyColumnOpenFails0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testDedupMergeKeyColumnReadFails0(
+                        engine, compiler, sqlExecutionContext, timestampTypeName, "INT", "could not open", false
+                ),
+                failToOpenRO("1970-01-01" + Files.SEPARATOR + "k.d")
+        );
+    }
+
+    @Test
+    public void testDedupMergeVarKeyColumnAuxMapFails() throws Exception {
+        // The dedup reads a var-size key through its aux file first. Mapping the aux file fails: the
+        // commit must fail without leaking the aux descriptor.
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testDedupMergeKeyColumnReadFails0(
+                        engine, compiler, sqlExecutionContext, timestampTypeName, "STRING", "could not mmap", false
+                ),
+                failToMapO3RO("1970-01-01" + Files.SEPARATOR + "k.i")
+        );
+    }
+
+    @Test
+    public void testDedupMergeVarKeyColumnDataMapFails() throws Exception {
+        // The dedup maps the aux file of a var-size key, then opens and maps its data file. Mapping the
+        // data file fails: the commit must fail without leaking either descriptor or the aux mapping.
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testDedupMergeKeyColumnReadFails0(
+                        engine, compiler, sqlExecutionContext, timestampTypeName, "STRING", "could not mmap", false
+                ),
+                failToMapO3RO("1970-01-01" + Files.SEPARATOR + "k.d")
+        );
+    }
+
+    @Test
+    public void testDedupMergeVarKeyColumnDataOpenFails() throws Exception {
+        // The dedup maps the aux file of a var-size key, then opens its data file. Opening the data file
+        // fails: the commit must fail without leaking the aux descriptor or the aux mapping.
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testDedupMergeKeyColumnReadFails0(
+                        engine, compiler, sqlExecutionContext, timestampTypeName, "STRING", "could not open", false
+                ),
                 failToOpenRO("1970-01-01" + Files.SEPARATOR + "k.d")
         );
     }
@@ -1637,6 +1717,32 @@ public class O3FailureTest extends AbstractO3Test {
         };
     }
 
+    // Once the test arms the fault, makes closing the given file of table x throw the way a double close
+    // does: the first read-only descriptor opened for it after arming, which a dedup merge opens to read
+    // the partition's key column. The facade closes the descriptor before it throws, so nothing leaks.
+    private static FilesFacade failToCloseRO(String partitionFile) {
+        final AtomicLong targetFd = new AtomicLong(NO_FD);
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                if (fd == targetFd.get() && isCloseFaultArmed.compareAndSet(true, false)) {
+                    super.close(fd);
+                    throw new IllegalStateException("fd " + fd + " is already closed!");
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (isCloseFaultArmed.get() && isTableXFile(name, partitionFile)) {
+                    targetFd.compareAndSet(NO_FD, fd);
+                }
+                return fd;
+            }
+        };
+    }
+
     // Fails the first O3 mapping of the given file of table x once the test arms the fault. An O3
     // append maps the last partition's columns through the descriptors the writer holds, so the
     // facade remembers the descriptor the writer opened most recently under that name.
@@ -1655,6 +1761,42 @@ public class O3FailureTest extends AbstractO3Test {
             public long openRW(LPSZ name, int opts) {
                 final long fd = super.openRW(name, opts);
                 if (isTableXFile(name, partitionFile)) {
+                    targetFd.set(fd);
+                }
+                return fd;
+            }
+        };
+    }
+
+    // Fails the first O3 mapping of the given file of table x through a read-only descriptor opened
+    // after the test arms the fault. A dedup merge reads the partition's key columns through
+    // descriptors it opens read-only, so the facade remembers the latest one opened under that name.
+    // Once the test also arms the close fault, closing that descriptor throws the way a double close
+    // does. The facade closes the descriptor before it throws, so nothing leaks.
+    private static FilesFacade failToMapO3RO(String partitionFile) {
+        final AtomicLong targetFd = new AtomicLong(NO_FD);
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                if (fd == targetFd.get() && isCloseFaultArmed.compareAndSet(true, false)) {
+                    super.close(fd);
+                    throw new IllegalStateException("fd " + fd + " is already closed!");
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (memoryTag == MemoryTag.MMAP_O3 && fd == targetFd.get() && isO3FaultArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (isO3FaultArmed.get() && isTableXFile(name, partitionFile)) {
                     targetFd.set(fd);
                 }
                 return fd;
@@ -3491,19 +3633,71 @@ public class O3FailureTest extends AbstractO3Test {
         assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
-    private static void testDedupMergeKeyColumnOpenFails0(
+    private static void testDedupMergeKeyColumnCloseThrows0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
     ) throws SqlException {
         engine.execute(
-                "CREATE TABLE x (ts " + timestampTypeName + ", k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)",
+                "CREATE TABLE x (ts " + timestampTypeName + ", k INT, k2 STRING, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k, k2)",
                 sqlExecutionContext
         );
         // Five hours apart, two day partitions.
         engine.execute(
-                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::INT k, x::INT v FROM long_sequence(10)",
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::INT k, x::STRING k2, x::INT v FROM long_sequence(10)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        final TableToken tableToken = engine.verifyTableName("x");
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        // The first partition's timestamps with new keys: the commit merges three rows into the partition.
+        isCloseFaultArmed.set(true);
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, (x + 100)::INT k, (x + 100)::STRING k2, x::INT v FROM long_sequence(3)",
+                sqlExecutionContext
+        );
+        drainWalQueue(engine);
+        Assert.assertFalse(isCloseFaultArmed.get());
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        engine.releaseInactive();
+        engine.execute("ALTER TABLE x RESUME WAL", sqlExecutionContext);
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+        assertXCountAndMax(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                """
+                        count
+                        13
+                        """,
+                replaceTimestampSuffix1("""
+                        max
+                        1970-01-02T21:00:00.000000Z
+                        """, timestampTypeName)
+        );
+    }
+
+    private static void testDedupMergeKeyColumnReadFails0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName,
+            String keyTypeName,
+            String expectedError,
+            boolean isCloseFailing
+    ) throws SqlException {
+        engine.execute(
+                "CREATE TABLE x (ts " + timestampTypeName + ", k " + keyTypeName + ", v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)",
+                sqlExecutionContext
+        );
+        // Five hours apart, two day partitions.
+        engine.execute(
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, x::" + keyTypeName + " k, x::INT v FROM long_sequence(10)",
                 sqlExecutionContext
         );
         drainWalQueue(engine);
@@ -3512,13 +3706,17 @@ public class O3FailureTest extends AbstractO3Test {
 
         // The first partition's timestamps with new keys: the commit merges three rows into the partition.
         isO3FaultArmed.set(true);
+        isCloseFaultArmed.set(isCloseFailing);
         engine.execute(
-                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, (x + 100)::INT k, x::INT v FROM long_sequence(3)",
+                "INSERT INTO x SELECT timestamp_sequence(0, 18_000_000_000)::" + timestampTypeName + " ts, (x + 100)::" + keyTypeName + " k, x::INT v FROM long_sequence(3)",
                 sqlExecutionContext
         );
         drainWalQueue(engine);
         Assert.assertFalse(isO3FaultArmed.get());
+        Assert.assertFalse(isCloseFaultArmed.get());
         Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+        // The table suspends with the fault that failed the commit, whatever releasing the key columns ran into.
+        TestUtils.assertContains(engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage(), expectedError);
 
         engine.releaseInactive();
         engine.execute("ALTER TABLE x RESUME WAL", sqlExecutionContext);
