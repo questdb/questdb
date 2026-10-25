@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -36,6 +37,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -99,6 +101,41 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testExplicitTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE x2 (ts TIMESTAMP, ts2 TIMESTAMP, k SYMBOL, a LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x2 VALUES (0, 0, 'k1', 1), (3_600_000_000, 3_600_000_000, 'k1', 3)");
+            drainWalQueue();
+            // A TIMESTAMP() clause names the timestamp that a temporal join or SAMPLE BY reads from the query
+            // it follows, so the scan of x2 reads ts2, and not the designated timestamp ts.
+            assertDependencies(
+                    "SELECT t.a, u.c FROM (SELECT k, a, ts2 FROM x2) t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "{x2=[a, k, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT t.k, u.c FROM (SELECT k, ts2 FROM x2) t TIMESTAMP(ts2) SPLICE JOIN y u ON (k)",
+                    "{x2=[k, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT count() FROM (SELECT * FROM x2) t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "{x2=[k, ts2], y=[k, ts]}"
+            );
+            assertDependencies(
+                    "WITH c AS (SELECT k, a, ts2 FROM x2) SELECT t.a, u.c FROM c t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "{x2=[a, k, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies("SELECT count() FROM (SELECT k, ts2 FROM x2) TIMESTAMP(ts2) SAMPLE BY 1h", "{x2=[ts2]}");
+            // the view reads no ts, so a reader cannot read it by overriding @c
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v, ts2 FROM x2) t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "DECLARE @c := ts SELECT * FROM v",
+                    "permission denied [table=x2, columns=ts]"
+            );
+        });
+    }
+
+    @Test
     public void testLateralJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -141,7 +178,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies(
                     "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT * FROM y))",
                     "{x=[a, k], y=[]}",
-                    false
+                    "permission denied [table=y, columns=k]"
             );
 
             // The view reads no column the base table gains later, even when its SELECT list names every
@@ -243,15 +280,9 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     public void testOverridableVariableReadsNoColumnTheViewDoesNot() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertDependencies("DECLARE OVERRIDABLE @c := t.a SELECT t.ts, @c FROM x t", "{x=[a, ts]}");
-            execute("CREATE VIEW v AS (DECLARE OVERRIDABLE @c := t.a SELECT t.ts, @c FROM x t)");
-            drainWalAndViewQueues();
-            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                assertQuery("DECLARE @c := t.b SELECT * FROM v")
-                        .withContext(context)
-                        .noLeakCheck()
-                        .failsWith("permission denied [table=x, columns=b]");
-            }
+            final String viewSql = "DECLARE OVERRIDABLE @c := t.a SELECT t.ts, @c FROM x t";
+            assertDependencies(viewSql, "{x=[a, ts]}");
+            assertOverrideDenied(viewSql, "DECLARE @c := t.b SELECT * FROM v", "permission denied [table=x, columns=b]");
         });
     }
 
@@ -413,7 +444,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies(
                     "SELECT t.a FROM x t WHERE t.k IN (SELECT u.k FROM y u WHERE u.c > 0)",
                     "{x=[a, k], y=[]}",
-                    false
+                    "permission denied [table=y, columns=k,c]"
             );
         });
     }
@@ -481,6 +512,40 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // a SELECT list that names its columns, every one of them included, reads no column added later
             assertDependencies("SELECT count() FROM (SELECT ts, k, a, b FROM (SELECT * FROM x))", "{x=[a, b, k, ts]}");
             assertDependencies("SELECT count() FROM (SELECT a, b FROM x)", "{x=[a, b]}");
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcardOfTableAlteredWhileViewCompiles() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // x gains a column after the optimiser has read its columns and before the statement records the
+            // dependencies, as it does when an ALTER TABLE commits while the view compiles. The plan, built
+            // again on the new metadata, reads the added column, and the "*" the view records for x covers it.
+            final ColumnAddingSecurityContext securityContext = new ColumnAddingSecurityContext();
+            try (
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
+                    SqlExecutionContext denyContext = denyBaseTableSelectContext()
+            ) {
+                final String[] statements = {"CREATE VIEW", "ALTER VIEW"};
+                final String[] expectedDependencies = {"{x=[*, a, b, k, ts], y=[]}", "{x=[*, a, b, e1, k, ts], y=[]}"};
+                for (int i = 0; i < statements.length; i++) {
+                    securityContext.addColumnOnce("e" + (i + 1));
+                    execute(statements[i] + " v AS (SELECT count() FROM (SELECT * FROM x) CROSS JOIN y)", context);
+                    drainWalAndViewQueues();
+                    Assert.assertFalse(statements[i], securityContext.isColumnPending());
+                    Assert.assertEquals(statements[i], expectedDependencies[i], dependenciesOf("v"));
+                    assertQuery("SELECT * FROM v")
+                            .withContext(denyContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    4
+                                    """);
+                }
+            }
         });
     }
 
@@ -651,7 +716,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies(
                     "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT DISTINCT * FROM y))",
                     "{x=[a, k], y=[]}",
-                    false
+                    "permission denied [table=y, columns=k,ts,c,d]"
             );
         });
     }
@@ -755,16 +820,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     private void assertDependencies(String viewSql, String expectedDependencies) throws Exception {
-        assertDependencies(viewSql, expectedDependencies, true);
+        assertDependencies(viewSql, expectedDependencies, null);
     }
 
     // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a
-    // view, and, unless told otherwise, that a principal with no permission on the columns of the base
-    // tables reads the view exactly as a principal with every permission does.
-    private void assertDependencies(String viewSql, String expectedDependencies, boolean isReadableWithViewPermissionOnly) throws Exception {
+    // view, and that a principal with no permission on the columns of the base tables reads the view
+    // exactly as a principal with every permission does or, given expectedReadFailure, fails to read it.
+    private void assertDependencies(String viewSql, String expectedDependencies, @Nullable String expectedReadFailure) throws Exception {
         forEachViewStatement(
                 viewSql,
-                statement -> assertViewDependencies(viewSql, expectedDependencies, isReadableWithViewPermissionOnly, statement)
+                statement -> assertViewDependencies(viewSql, expectedDependencies, expectedReadFailure, statement)
         );
     }
 
@@ -780,13 +845,13 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         });
     }
 
-    private void assertViewDependencies(String viewSql, String expectedDependencies, boolean isReadableWithViewPermissionOnly, String statement) throws Exception {
+    private void assertViewDependencies(String viewSql, String expectedDependencies, @Nullable String expectedReadFailure, String statement) throws Exception {
         Assert.assertEquals(statement + ": " + viewSql, expectedDependencies, dependenciesOf("v"));
-        if (isReadableWithViewPermissionOnly) {
-            // The views differ in timestamp, size and random access, which the read infers. It returns the
-            // rows a principal with every permission reads.
-            final String expected = print(sqlExecutionContext, "SELECT * FROM v");
-            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+        try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+            if (expectedReadFailure == null) {
+                // The views differ in timestamp, size and random access, which the read infers. It returns the
+                // rows a principal with every permission reads.
+                final String expected = print(sqlExecutionContext, "SELECT * FROM v");
                 assertQuery("SELECT * FROM v")
                         .withContext(context)
                         .noLeakCheck()
@@ -794,15 +859,49 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         .inferRandomAccess()
                         .sizeMayVary()
                         .returns(expected);
-            } catch (AssertionError e) {
-                throw new AssertionError(statement + ": " + viewSql, e);
+            } else {
+                assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().failsWith(expectedReadFailure);
             }
+        } catch (AssertionError e) {
+            throw new AssertionError(statement + ": " + viewSql, e);
         }
     }
 
     @FunctionalInterface
     private interface ViewStatementAssertion {
         void assertView(String statement) throws Exception;
+    }
+
+    /**
+     * Grants everything, and adds a column to x the first time a statement checks whether y is visible
+     * after {@link #addColumnOnce(String)}. The optimiser checks that once it has read the columns of x
+     * when the FROM clause reads x before y, so x gains the column while the statement compiles.
+     */
+    private static final class ColumnAddingSecurityContext extends AllowAllSecurityContext {
+        private String pendingColumnName;
+
+        @Override
+        public boolean isTableVisible(TableToken tableToken) {
+            if (pendingColumnName != null && "y".equals(tableToken.getTableName())) {
+                final String columnName = pendingColumnName;
+                pendingColumnName = null;
+                try {
+                    execute("ALTER TABLE x ADD COLUMN " + columnName + " INT");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                drainWalQueue();
+            }
+            return true;
+        }
+
+        private void addColumnOnce(String columnName) {
+            pendingColumnName = columnName;
+        }
+
+        private boolean isColumnPending() {
+            return pendingColumnName != null;
+        }
     }
 
     /**

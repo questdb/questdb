@@ -378,6 +378,10 @@ public class SqlUtil {
      * This also adds {@code *} for the tables in {@code wildcardSources} whose wildcard the optimised
      * model keeps whole: the optimiser keeps every column of the sub-query the wildcard sits in, so the
      * view reads every column of the table, including one the table gains after the view is created.
+     * For that, the scans of the table have to read every column the optimiser enumerated for them, not
+     * every column the table has by the time this runs: a column an ALTER TABLE adds while the view
+     * compiles is not in the plan built before it, and the {@code *} covers it once the plan is built
+     * again.
      *
      * @param engine          the engine, which resolves the table names
      * @param model           the SELECT of the view, after optimisation
@@ -391,7 +395,7 @@ public class SqlUtil {
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
             @Nullable ViewWildcardSources wildcardSources
     ) {
-        collectTableColumnReads(engine, model, depMap, false);
+        collectTableColumnReads(engine, model, depMap, wildcardSources, false);
         if (wildcardSources != null) {
             collectKeptWildcardReferences(engine, model, depMap, wildcardSources);
         }
@@ -2232,17 +2236,10 @@ public class SqlUtil {
                 continue;
             }
             // The scan of a table whose wildcard the plan keeps whole reads every column of it. One that
-            // does not has met a rewrite this does not recognise, and the map keeps only its columns.
-            boolean isEveryColumnRead = true;
-            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-                for (int j = 0, m = metadata.getColumnCount(); j < m; j++) {
-                    if (columns.excludes(metadata.getColumnName(j))) {
-                        isEveryColumnRead = false;
-                        break;
-                    }
-                }
-            }
-            if (isEveryColumnRead) {
+            // does not has met a rewrite this does not recognise, and the map keeps only its columns. Every
+            // column is every one the optimiser enumerated for the plan: one that an ALTER TABLE adds while
+            // the view compiles is in the metadata of the table, but not in the plan built before it.
+            if (wildcardSources.isEveryScannedColumnRead(tableToken.getTableName(), columns)) {
                 columns.add("*");
             }
         }
@@ -2316,6 +2313,7 @@ public class SqlUtil {
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @Nullable ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
@@ -2323,7 +2321,7 @@ public class SqlUtil {
             // a table-name function or a SHOW statement reads no table data
             if ((tableNameExpr.type == ExpressionNode.LITERAL || tableNameExpr.type == ExpressionNode.CONSTANT)
                     && model.getSelectModelType() != IQueryModel.SELECT_MODEL_SHOW) {
-                collectTableScanColumns(engine, model, tableNameExpr.token, depMap, isTimestampRequired);
+                collectTableScanColumns(engine, model, tableNameExpr.token, depMap, wildcardSources, isTimestampRequired);
             }
             return;
         }
@@ -2339,13 +2337,14 @@ public class SqlUtil {
         } else {
             isNestedTimestampRequired = isTimestampRequired;
         }
-        collectTableColumnReads(engine, model.getNestedModel(), depMap, isNestedTimestampRequired);
+        collectTableColumnReads(engine, model.getNestedModel(), depMap, wildcardSources, isNestedTimestampRequired);
     }
 
     private static void collectTableColumnReads(
             @NotNull CairoEngine engine,
             @Nullable IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @Nullable ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
         if (model == null) {
@@ -2374,18 +2373,18 @@ public class SqlUtil {
                         ? isAnyJoinTemporal
                         : SqlCodeGenerator.joinsRequiringTimestamp[joinModel.getJoinType()];
                 if (joinModel == model) {
-                    collectSourceColumnReads(engine, model, depMap, isJoinTimestampRequired);
+                    collectSourceColumnReads(engine, model, depMap, wildcardSources, isJoinTimestampRequired);
                 } else {
-                    collectTableColumnReads(engine, joinModel, depMap, isJoinTimestampRequired);
+                    collectTableColumnReads(engine, joinModel, depMap, wildcardSources, isJoinTimestampRequired);
                 }
             }
         } else {
             // SqlCodeGenerator.generateQuery0(): a model that orders its rows requires no timestamp
             // of its source
-            collectSourceColumnReads(engine, model, depMap, isTimestampRequired && model.getOrderBy().size() == 0);
+            collectSourceColumnReads(engine, model, depMap, wildcardSources, isTimestampRequired && model.getOrderBy().size() == 0);
         }
         // every branch of a set operation compiles under the requirement of the first one
-        collectTableColumnReads(engine, model.getUnionModel(), depMap, isTimestampRequired);
+        collectTableColumnReads(engine, model.getUnionModel(), depMap, wildcardSources, isTimestampRequired);
     }
 
     // A table-name function, such as table_columns('t'), reads the metadata of the object its constant
@@ -2409,11 +2408,13 @@ public class SqlUtil {
 
     // Collects the columns the scan of a table model reads: its top-down columns, which
     // SqlCodeGenerator.buildQueryMetadata() reads, and the timestamp it adds when the plan requires one.
+    // Records the scan in wildcardSources, when given, for collectKeptWildcardReferences().
     private static void collectTableScanColumns(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull CharSequence tableName,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @Nullable ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
         CharSequence name = tableName;
@@ -2428,6 +2429,9 @@ public class SqlUtil {
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
             columns.add(Chars.toString(topDownColumns.getQuick(i).getName()));
+        }
+        if (wildcardSources != null) {
+            wildcardSources.addScan(tableToken.getTableName(), model);
         }
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
@@ -2737,18 +2741,25 @@ public class SqlUtil {
      * {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
      * fills this from the parsed SELECT, and
      * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
-     * reads it once optimisation has rewritten the SELECT, which keeps the holders.
+     * reads it once optimisation has rewritten the SELECT, which keeps the holders, and records the
+     * scans of the optimised SELECT in it, which tell the columns of each table the plan is built on.
      */
     public static final class ViewWildcardSources implements Mutable {
         // the holders of the sub-queries the walk of the parsed SELECT is in, outermost first
         private final ObjList<IQueryModel> holderStack = new ObjList<>();
         private final ObjList<IQueryModel> holders = new ObjList<>();
+        // the tables the models in scans scan, at the same index
+        private final ObjList<String> scanTableNames = new ObjList<>();
+        // the models of the optimised SELECT that scan a table
+        private final ObjList<IQueryModel> scans = new ObjList<>();
         private final ObjList<String> tableNames = new ObjList<>();
 
         @Override
         public void clear() {
             holderStack.clear();
             holders.clear();
+            scanTableNames.clear();
+            scans.clear();
             tableNames.clear();
         }
 
@@ -2760,6 +2771,29 @@ public class SqlUtil {
                 holders.add(holderStack.getQuick(i));
                 tableNames.add(name);
             }
+        }
+
+        private void addScan(String tableName, IQueryModel scan) {
+            scanTableNames.add(tableName);
+            scans.add(scan);
+        }
+
+        // Whether the plan scans the table, and its scans read every column the optimiser enumerated for
+        // them from the metadata of the table, the columns a wildcard of the plan expands to.
+        private boolean isEveryScannedColumnRead(String tableName, LowerCaseCharSequenceHashSet readColumns) {
+            boolean isScanned = false;
+            for (int i = 0, n = scans.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(scanTableNames.getQuick(i), tableName)) {
+                    final ObjList<CharSequence> columnNames = scans.getQuick(i).getWildcardColumnNames();
+                    for (int j = 0, m = columnNames.size(); j < m; j++) {
+                        if (readColumns.excludes(columnNames.getQuick(j))) {
+                            return false;
+                        }
+                    }
+                    isScanned = true;
+                }
+            }
+            return isScanned;
         }
     }
 
