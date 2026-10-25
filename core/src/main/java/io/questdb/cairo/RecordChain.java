@@ -403,6 +403,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     /**
+     * Reserves the memory that records of {@code bytes} bytes in all take, so that appending them to an empty chain
+     * does not grow its memory again.
+     */
+    public void reserve(long bytes) {
+        mem.extend(bytes);
+    }
+
+    /**
      * Binds the per-query native memory tracker. The chain is lazy by design
      * (the inner MemoryCARW does not allocate native memory until the first
      * write), so factories can safely set the tracker between cursors as long

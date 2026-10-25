@@ -291,6 +291,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return decodeCount;
     }
 
+    /**
+     * The bytes the cache keeps at most of this many Parquet frames, which decode to this many bytes in all, under the
+     * hint: as many of the frames as the hint lets it keep, within the budget the hint gives it.
+     */
+    public long getCacheableBytes(ParquetDecodeHint hint, int frameCount, long decodedBytes) {
+        if (frameCount <= 0) {
+            return 0;
+        }
+        return Math.min(hint.applyTo(maxCacheBytes), decodedBytes / frameCount * Math.min(frameCount, hint.maxCachedBuffers));
+    }
+
     public ParquetDecodeHint getDecodeHint() {
         return decodeHint;
     }

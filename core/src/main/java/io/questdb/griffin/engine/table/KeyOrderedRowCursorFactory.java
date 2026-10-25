@@ -24,18 +24,22 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * A row cursor factory whose cursors emit the rows of a page frame key by key, in the key order a query requires, and
  * the rows of each key in its index direction. The record cursor reads such a factory key by key over all page frames,
  * so the keys stay ordered when the scan reads more than one page frame. When the Parquet page frames of the scan do
- * not stay decoded across the passes of the keys, the record cursor instead gathers the rows of all keys in one pass
- * over the page frames and returns them key by key.
+ * not stay decoded across the passes of the keys, the record cursor instead gathers the rows of the keys window by
+ * window, each in one pass over the page frames, and returns them key by key.
  */
 interface KeyOrderedRowCursorFactory extends RowCursorFactory {
 
@@ -67,6 +71,27 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
      * The number of keys, known once the cursors are prepared.
      */
     int getKeyCount();
+
+    /**
+     * The number of rows the index holds for the keys at {@code keyLo}, inclusive, to {@code keyHi}, exclusive, among
+     * the rows {@code rowLo} to {@code rowHi}, inclusive, of the partition of the page frame, which bounds the rows the
+     * cursors of the keys return there, or any number above {@code maxCount} once the count passes it, or -1 when the
+     * index cannot count them.
+     */
+    default long getIndexRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount) {
+        if (!(pageFrame.getIndexReader(getColumnIndex(), IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+            return -1;
+        }
+        final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
+        long count = 0;
+        for (int i = keyLo; i < keyHi && count <= maxCount; i++) {
+            final int symbolKey = getSymbolKey(i);
+            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                count += reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, maxCount - count);
+            }
+        }
+        return count;
+    }
 
     /**
      * The row the cursor of the key at {@code keyIndex} returns after it skips {@code rowIndex} of the rows

@@ -1347,10 +1347,10 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .withPlanContaining(isFiltered ? "FilterOnValues" : "SortedSymbolIndex")
                                 .returns(expected);
-                        // the rows outgrow half the budget, which keeps two of the six row groups, so the read gathers
-                        // row ids and decodes each row group that holds them once
-                        assertKeyOrderedDecodes("SELECT *" + sql, null, ParquetDecodeHint.CYCLIC, isFiltered ? 2 : 6);
-                        assertKeyOrderedDecodes("SELECT *" + sql, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.CYCLIC, isFiltered ? 2 : 6);
+                        // the budget of two of the six row groups holds the rows in one window, a pass that decodes
+                        // each row group that holds them once
+                        assertKeyOrderedDecodes("SELECT *" + sql, null, ParquetDecodeHint.MONOTONIC, isFiltered ? 2 : 6);
+                        assertKeyOrderedDecodes("SELECT *" + sql, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.MONOTONIC, isFiltered ? 2 : 6);
                     }
                 }
             }
@@ -1539,7 +1539,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSortedSymbolIndexOverParquetGathersRowIdsOverBudget() throws Exception {
+    public void testSortedSymbolIndexOverParquetGathersWindowsOverBudget() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             createParquetKeyTable();
@@ -1581,10 +1581,10 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             6	S0	2024-01-01T00:00:05.000000Z
                             3	S0	2024-01-01T00:00:02.000000Z
                             """);
-            // the rows outgrow half the budget, which keeps three of the six row groups, so the read gathers row ids,
-            // and the first two row groups stay decoded across the passes of the three keys
-            assertKeyOrderedDecodes(query, null, ParquetDecodeHint.CYCLIC, 14);
-            assertKeyOrderedDecodes(query, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.CYCLIC, 14);
+            // the rows outgrow the budget of three of the six row groups, so the read gathers them in two windows, each
+            // a pass that decodes the row groups that hold its rows
+            assertKeyOrderedDecodes(query, null, ParquetDecodeHint.MONOTONIC, 12);
+            assertKeyOrderedDecodes(query, ParquetDecodeHint.SCATTERED, ParquetDecodeHint.MONOTONIC, 12);
         });
     }
 
@@ -2545,7 +2545,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsWhenCountedRowsExceedQueryMemoryLimit() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsWhenCountedRowsExceedQueryMemoryLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 64);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
@@ -2558,7 +2558,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY""");
             execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
             // all rows, or the share of the rows of the first row group that NOT IN and its filter keep, take more than
-            // half the memory limit, so those reads gather row ids; the narrower key lists gather rows
+            // half the memory limit, so those reads gather windows; the narrower key lists gather in one window
             assertKeyOrderedReadsMatchSort(
                     "g",
                     new String[]{"ts IN '2024-01-01'"},
@@ -2569,7 +2569,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsWhenRowsOutgrowHalfTheDecodeCache() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsWhenRowsOutgrowTheDecodeCache() throws Exception {
         // 300 row groups of a day, more than the decode cache keeps, so the read gathers whatever the budget
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
@@ -2587,12 +2587,12 @@ public class OrderByAdviceTest extends AbstractCairoTest {
             printSql("SELECT /*+ no_index(m) */ " + tail, expected);
             final String expectedRows = expected.toString();
             final StringSink actual = new StringSink();
-            // the 900 rows take 1.8 MB, within half of a 4 MB decode cache, which the read gathers them in, decoding
-            // each row group once, and over half of a 1 MB one, where the read gathers their row ids instead and the
-            // passes of the keys decode the row groups past those the cache keeps
+            // the 900 rows take 1.8 MB, within the budget of a 4 MB decode cache, which the read gathers them in,
+            // decoding each row group once, and over that of a 1 MB one, where the read gathers them in two windows
+            // and decodes each row group once per window
             final long[] decodeCacheBytes = {4 * 1024 * 1024L, 1024 * 1024L};
-            final ParquetDecodeHint[] hints = {ParquetDecodeHint.MONOTONIC, ParquetDecodeHint.CYCLIC};
-            final long[] decodes = {300, 644};
+            final ParquetDecodeHint[] hints = {ParquetDecodeHint.MONOTONIC, ParquetDecodeHint.MONOTONIC};
+            final long[] decodes = {300, 600};
             final long[] usedBytes = new long[decodeCacheBytes.length];
             for (int i = 0; i < decodeCacheBytes.length; i++) {
                 node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, decodeCacheBytes[i]);
@@ -2602,12 +2602,12 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     usedBytes[i] = sqlExecutionContext.getMemoryTracker().getUsed();
                 }
             }
-            Assert.assertTrue("row ids leave the VARCHAR values in the decode cache", usedBytes[1] + 500_000 < usedBytes[0]);
+            Assert.assertTrue("a window holds part of the VARCHAR values", usedBytes[1] + 500_000 < usedBytes[0]);
         });
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsWhenNonVarcharValuesOutgrowQueryMemoryLimit() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsWhenNonVarcharValuesOutgrowQueryMemoryLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
@@ -2638,7 +2638,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsWhenRowsOutgrowQueryMemoryLimit() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsWhenRowsOutgrowQueryMemoryLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
@@ -2653,7 +2653,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
             final String tail = "s, left(vc, 6) vc, length(vc) len, ts FROM m WHERE ts IN '2024-01-01' AND s IN ('k1', 'k2', 'k3') ORDER BY s, ts";
             final StringSink expected = new StringSink();
             // the 300 rows of the read hold 600 KB of VARCHAR, which outgrows the memory the query may take, so the read
-            // gathers their row ids instead
+            // gathers them in windows
             for (String limit : new String[]{"", " LIMIT 5", " LIMIT -7", " LIMIT 3, 40", " LIMIT -250, -4"}) {
                 node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
                 printSql("SELECT /*+ no_index(m) */ " + tail + limit, expected);
@@ -2664,7 +2664,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         .withPlanContaining("FilterOnValues symbolOrder: asc")
                         .returns(expected);
             }
-            // a cached factory reads the row ids again with and without the limit
+            // a cached factory reads the windows again with and without the limit
             node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
             printSql("SELECT /*+ no_index(m) */ " + tail, expected);
             final String expectedRows = expected.toString();
@@ -2681,7 +2681,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsBesideCompositePartition() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsBesideCompositePartition() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 512);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
@@ -2711,13 +2711,13 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
                 Assert.assertTrue(reader.getTxFile().isPartitionComposite(1));
             }
-            // the Parquet day gathers row ids, the composite day walks its pieces key by key
+            // the Parquet day gathers windows, the composite day walks its pieces key by key
             assertKeyOrderedReadsMatchSort(
                     "g",
                     new String[]{"ts IN '2024-01-01'", "ts IN '2024-01-02'"},
                     new String[]{"", "s IN ('k1', 'k2')", "s NOT IN ('k0')"}
             );
-            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts", null, ParquetDecodeHint.CYCLIC, 34);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts", null, ParquetDecodeHint.MONOTONIC, 36);
         });
     }
 
@@ -2761,10 +2761,12 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
                     try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(cursor.hasNext());
-                        Assert.assertTrue("the gather scans page frames densely", PageFrameRecordCursorImpl.testDenseScanFrames.get() > 0);
+                        // some windows of the small decode cache hold too few keys for the scan to pay
+                        if (cacheBytes > 1024) {
+                            Assert.assertTrue("the gather scans page frames densely", PageFrameRecordCursorImpl.testDenseScanFrames.get() > 0);
+                        }
                         Assert.assertEquals(predicate.isEmpty(), ((PageFrameRecordCursorImpl) cursor).getRowCursorFactory() instanceof SortedSymbolIndexRowCursorFactory);
-                        Assert.assertEquals(cacheBytes == 1024 ? ParquetDecodeHint.CYCLIC : ParquetDecodeHint.MONOTONIC,
-                                ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeHint());
+                        Assert.assertEquals(ParquetDecodeHint.MONOTONIC, ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeHint());
                     } finally {
                         PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
                     }
@@ -2805,7 +2807,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsOfPartitionConvertedAfterCompile() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsOfPartitionConvertedAfterCompile() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 512);
         assertMemoryLeak(() -> {
@@ -2829,27 +2831,28 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         // read every row
                     }
                     final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
-                    Assert.assertEquals(30, pool.getDecodeCount());
-                    Assert.assertEquals(ParquetDecodeHint.CYCLIC, pool.getDecodeHint());
+                    Assert.assertEquals(28, pool.getDecodeCount());
+                    Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
                 }
             }
         });
     }
 
     @Test
-    public void testSymbolSearchOrderByKeyGathersRowIdsOverDecodeCache() throws Exception {
+    public void testSymbolSearchOrderByKeyGathersWindowsOverDecodeCache() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 512);
         assertMemoryLeak(() -> {
             createGatherTable();
             // two days of twelve row groups each, then native days
             execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
-            // the rows outgrow half the decode cache, so every pass of a key decodes the row groups that hold its rows
-            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-02' ORDER BY s", null, ParquetDecodeHint.CYCLIC, 86);
-            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-02' AND s IN ('k1', 'k3', NULL) ORDER BY s DESC", null, ParquetDecodeHint.CYCLIC, 30);
-            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts DESC", ParquetDecodeHint.SCATTERED, ParquetDecodeHint.CYCLIC, 85);
-            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' AND s IN ('k1', 'k5') AND id % 3 = 0 ORDER BY s", null, ParquetDecodeHint.CYCLIC, 20);
-            // a Parquet day gathers row ids, a native day walks them key by key
+            // the rows outgrow the budget of the decode cache, so the read gathers them in windows, each a pass that
+            // decodes the row groups that hold its rows
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-02' ORDER BY s", null, ParquetDecodeHint.MONOTONIC, 48);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-02' AND s IN ('k1', 'k3', NULL) ORDER BY s DESC", null, ParquetDecodeHint.MONOTONIC, 28);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts DESC", ParquetDecodeHint.SCATTERED, ParquetDecodeHint.MONOTONIC, 48);
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' AND s IN ('k1', 'k5') AND id % 3 = 0 ORDER BY s", null, ParquetDecodeHint.MONOTONIC, 12);
+            // a Parquet day gathers windows, a native day walks them key by key
             assertKeyOrderedReadsMatchSort(
                     "g",
                     new String[]{"ts IN '2024-01-02'", "ts IN '2024-01-03'"},
