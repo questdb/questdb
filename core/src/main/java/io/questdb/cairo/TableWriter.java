@@ -8212,9 +8212,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
+        final long dedupRowCount;
         try {
             if (dedupColumnCommitAddresses.getColumnCount() > 0) {
                 dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
+                // The block holds whatever its last user left in it: an earlier dedup, an O3 partition task, or
+                // uninitialized memory. From here on, each LAG mapping goes into its key's slot as soon as it exists,
+                // so whichever call below throws, the release finds exactly what this call mapped. Zeroed slots hold
+                // nothing to release.
+                dedupColumnCommitAddresses.clear(dedupCommitAddr);
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
                     if (i != metadata.getTimestampIndex() && columnType > 0 && metadata.isDedupKey(i)) {
@@ -8233,17 +8239,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             // Map column buffers for lag rows for deduplication
                             long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
+                            DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagKeyAddr, lagMemOffset, lagMapSize);
                             long o3ColumnData = o3Columns.get(getPrimaryColumnIndex(i)).addressOf(0);
                             assert o3ColumnData != 0;
 
                             DedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnData);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagKeyAddr));
-                            DedupColumnCommitAddresses.setReservedValuesSet1(
-                                    addr,
-                                    lagKeyAddr,
-                                    lagMemOffset,
-                                    lagMapSize
-                            );
                         } else {
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                             MemoryCR o3VarColumn = o3Columns.get(getPrimaryColumnIndex(i));
@@ -8258,17 +8259,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
                                 long lagAuxKeyAddrRaw = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddrRaw, lagAuxOffset, lagAuxSize);
                                 long lagAuxKeyAddr = Math.abs(lagAuxKeyAddrRaw);
 
                                 long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
                                 long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows - 1);
                                 long lagVarDataAddrRaw = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
+                                // The release takes a positive O3_VAR_DATA_LEN to mean that RESERVED4 and RESERVED5 hold
+                                // the data vector mapping, so the three go into the slot together.
+                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddrRaw, lagVarDataOffset);
                                 long lagVarDataAddr = Math.abs(lagVarDataAddrRaw);
                                 // Aux points into the var buffer as if it's mapped from 0 row.
                                 // Compensate mapped with offset address of var buffer by subtracting lagVarDataOffset
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, lagAuxKeyAddr, lagVarDataAddr - lagVarDataOffset, lagVarDataSize + lagVarDataOffset);
-                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddrRaw, lagAuxOffset, lagAuxSize);
-                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddrRaw, lagVarDataOffset);
                             } else {
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
                             }
@@ -8277,7 +8280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 assert dedupKeyIndex <= dedupColumnCommitAddresses.getColumnCount();
             }
-            long dedupRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+            dedupRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
                     indexSrcAddr,
                     longIndexLength,
                     indexDstAddr,
@@ -8295,28 +8298,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (dedupRowsRemoved > 0) {
                 dedupRowsRemovedSinceLastCommit.add(dedupRowsRemoved);
             }
-            return dedupRowCount;
-        } finally {
-            if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
-                // Release mapped column buffers for lag rows
-                for (int i = 0; i < dedupKeyIndex; i++) {
-                    long lagAuxAddr = DedupColumnCommitAddresses.getColReserved1(dedupCommitAddr, i);
-                    long lagAuxMemOffset = DedupColumnCommitAddresses.getColReserved2(dedupCommitAddr, i);
-                    long mapAuxSize = DedupColumnCommitAddresses.getColReserved3(dedupCommitAddr, i);
-
-                    mapAppendColumnBufferRelease(lagAuxAddr, lagAuxMemOffset, mapAuxSize);
-
-                    long mapVarSize = DedupColumnCommitAddresses.getO3VarDataLen(dedupCommitAddr, i);
-                    if (mapVarSize > 0) {
-                        long lagVarAddr = DedupColumnCommitAddresses.getColReserved4(dedupCommitAddr, i);
-                        long lagVarMemOffset = DedupColumnCommitAddresses.getColReserved5(dedupCommitAddr, i);
-                        assert mapVarSize > lagVarMemOffset;
-                        mapAppendColumnBufferRelease(lagVarAddr, lagVarMemOffset, mapVarSize - lagVarMemOffset);
-                    }
-                }
+        } catch (Throwable th) {
+            // Only LAG rows have mappings to release
+            if (lagRows > 0) {
+                releaseDedupLagMappingsQuietly(dedupCommitAddr, 0, dedupKeyIndex);
             }
             dedupColumnCommitAddresses.clear();
+            throw th;
         }
+        try {
+            if (lagRows > 0) {
+                releaseDedupLagMappings(dedupCommitAddr, dedupKeyIndex);
+            }
+        } finally {
+            dedupColumnCommitAddresses.clear();
+        }
+        return dedupRowCount;
     }
 
     private void deferPendingPostingSealPurges(ColumnIndexer indexer, long currentTableTxn) {
@@ -15623,6 +15620,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
             ff.removeQuiet(path.$());
             path.trimTo(pathSize);
+        }
+    }
+
+    // Releases the LAG mappings that deduplicateSortedIndex() recorded in the slot of one dedup key: the vector of a
+    // fixed-size key, or the aux and data vectors of a var-size key. The data vector still goes when the aux release
+    // throws. A zero address holds no mapping, and a positive one points into a page the column itself maps, so
+    // neither releases anything.
+    private void releaseDedupLagMapping(long dedupCommitAddr, int keyIndex) {
+        try {
+            mapAppendColumnBufferRelease(
+                    DedupColumnCommitAddresses.getColReserved1(dedupCommitAddr, keyIndex),
+                    DedupColumnCommitAddresses.getColReserved2(dedupCommitAddr, keyIndex),
+                    DedupColumnCommitAddresses.getColReserved3(dedupCommitAddr, keyIndex)
+            );
+        } finally {
+            final long mapVarSize = DedupColumnCommitAddresses.getO3VarDataLen(dedupCommitAddr, keyIndex);
+            if (mapVarSize > 0) {
+                final long lagVarMemOffset = DedupColumnCommitAddresses.getColReserved5(dedupCommitAddr, keyIndex);
+                assert mapVarSize > lagVarMemOffset;
+                mapAppendColumnBufferRelease(
+                        DedupColumnCommitAddresses.getColReserved4(dedupCommitAddr, keyIndex),
+                        lagVarMemOffset,
+                        mapVarSize - lagVarMemOffset
+                );
+            }
+        }
+    }
+
+    // Releases the LAG mappings of the first keyCount dedup keys after a dedup that succeeded. When a release throws,
+    // the keys after it still release, and the error propagates.
+    private void releaseDedupLagMappings(long dedupCommitAddr, int keyCount) {
+        int i = 0;
+        try {
+            for (; i < keyCount; i++) {
+                releaseDedupLagMapping(dedupCommitAddr, i);
+            }
+        } catch (Throwable th) {
+            releaseDedupLagMappingsQuietly(dedupCommitAddr, i + 1, keyCount);
+            throw th;
+        }
+    }
+
+    // The failed-dedup counterpart of releaseDedupLagMappings(). It logs a release that throws instead of propagating
+    // it, so the error that failed the dedup stays the one that propagates.
+    private void releaseDedupLagMappingsQuietly(long dedupCommitAddr, int keyLo, int keyHi) {
+        for (int i = keyLo; i < keyHi; i++) {
+            try {
+                releaseDedupLagMapping(dedupCommitAddr, i);
+            } catch (Throwable th) {
+                LOG.error().$("could not release dedup LAG mapping [table=").$(tableToken)
+                        .$(", keyIndex=").$(i)
+                        .$(", e=").$(th)
+                        .I$();
+            }
         }
     }
 
