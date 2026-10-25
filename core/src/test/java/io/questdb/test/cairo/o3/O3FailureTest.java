@@ -304,6 +304,9 @@ public class O3FailureTest extends AbstractO3Test {
         // of the same commit wait in the queue. The failed column completes the last partition
         // itself, and the writer must not complete it a second time: that makes it stop draining
         // with a partition task still queued.
+        // On Windows Files.PAGE_SIZE is the 64 KiB allocation granularity: the append fits the page
+        // the writer has mapped, and the commit never makes the O3 mapping the facade fails.
+        Assume.assumeFalse(Os.isWindows());
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithoutPool(
                 O3FailureTest::testAppendLastPartitionOnlyColumnFailsWithPartitionsQueued0,
@@ -806,13 +809,25 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testMergeColumnFailsAndSourceCloseThrowsInDrain() throws Exception {
+        // The writer runs the queued tasks itself. The last column fails to open its file in the new
+        // partition version after the columns before it queued their copy tasks. The writer discards
+        // those tasks, and releasing the first column's file of the old version throws during a discard.
+        // Nothing may escape the drain: the writer would skip its wait and the queue slot.
+        executeWithoutPool(
+                O3FailureTest::testMergeFailsAndCloseThrows0,
+                failMergeThenSourceClose("c.d", true, false, "a.d")
+        );
+    }
+
+    @Test
     public void testMergeColumnFailsAndTimestampCloseThrowsInDrain() throws Exception {
         // The writer runs the queued tasks itself. Once the first column fails, it discards the rest,
         // and the last discard completes the partition, where releasing the timestamp column throws.
         // Nothing may escape the drain: the writer would skip its wait and the queue slot.
         executeWithoutPool(
                 O3FailureTest::testMergeFailsAndCloseThrows0,
-                failMergeThenTimestampClose("a.d", false, false)
+                failMergeThenSourceClose("a.d", false, false, "ts.d")
         );
     }
 
@@ -834,7 +849,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testMergeFailsAndCloseThrows0,
-                failMergeThenTimestampClose("c.d", true, false)
+                failMergeThenSourceClose("c.d", true, false, "ts.d")
         );
     }
 
@@ -845,7 +860,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testMergeFailsAndCloseThrows0,
-                failMergeThenTimestampClose("c.d", false, false)
+                failMergeThenSourceClose("c.d", false, false, "ts.d")
         );
     }
 
@@ -856,7 +871,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testMergeFailsAndCloseThrows0,
-                failMergeThenTimestampClose(null, true, true)
+                failMergeThenSourceClose(null, true, true, "ts.d")
         );
     }
 
@@ -1532,21 +1547,23 @@ public class O3FailureTest extends AbstractO3Test {
 
     // Once the test arms the faults, fails one step of the merge into the first partition of table x:
     // opening the given column file of the old or the new partition version, or creating the new
-    // version's directory. Then makes closing the partition's timestamp column throw the way a double
-    // close does. That is the descriptor the merge opens first; the timestamp column's own task opens
+    // version's directory. Then makes closing the given source file, a file of the old version, throw
+    // the way a double close does: the first descriptor opened for it after arming, which belongs to
+    // the merge. For ts.d that is the partition's own descriptor; the timestamp column's task opens
     // the file again and closes its copy as usual. The facade closes the descriptor before it throws,
     // so nothing leaks.
-    private static FilesFacade failMergeThenTimestampClose(
+    private static FilesFacade failMergeThenSourceClose(
             @Nullable String columnFile,
             boolean isNewPartitionVersion,
-            boolean isFailingPartitionDir
+            boolean isFailingPartitionDir,
+            String sourceFile
     ) {
         final String newVersionPrefix = Files.SEPARATOR + "x~" + Files.SEPARATOR + "1970-01-01.";
-        final AtomicLong timestampFd = new AtomicLong(NO_FD);
+        final AtomicLong sourceFd = new AtomicLong(NO_FD);
         return new TestFilesFacadeImpl() {
             @Override
             public boolean close(long fd) {
-                if (fd == timestampFd.get() && isCloseFaultArmed.compareAndSet(true, false)) {
+                if (fd == sourceFd.get() && isCloseFaultArmed.compareAndSet(true, false)) {
                     super.close(fd);
                     throw new IllegalStateException("fd " + fd + " is already closed!");
                 }
@@ -1567,8 +1584,8 @@ public class O3FailureTest extends AbstractO3Test {
                     return -1;
                 }
                 final long fd = super.openRW(name, opts);
-                if (isCloseFaultArmed.get() && isTableXFile(name, "1970-01-01" + Files.SEPARATOR + "ts.d")) {
-                    timestampFd.compareAndSet(NO_FD, fd);
+                if (isCloseFaultArmed.get() && isTableXFile(name, "1970-01-01" + Files.SEPARATOR + sourceFile)) {
+                    sourceFd.compareAndSet(NO_FD, fd);
                 }
                 return fd;
             }
