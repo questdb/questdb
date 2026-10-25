@@ -886,6 +886,17 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testMergeColumnCloseThrowsInDrain() throws Exception {
+        // The writer runs the queued tasks itself. The merge succeeds, but releasing a column's own file
+        // of the old partition version throws. The drain only logs what a task throws, so the column's
+        // error handler must record the error, or the commit succeeds.
+        executeWithoutPool(
+                O3FailureTest::testMergeReleaseFails0,
+                failToClose("1970-01-01" + Files.SEPARATOR + "a.d")
+        );
+    }
+
+    @Test
     public void testMergeColumnFailsAndSourceCloseThrowsInDrain() throws Exception {
         // The writer runs the queued tasks itself. The last column fails to open its file in the new
         // partition version after the columns before it queued their copy tasks. The writer discards
