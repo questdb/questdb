@@ -47,6 +47,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -1158,6 +1159,23 @@ public class FuzzRunner {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
 
+    // The sum of the seqTxns the WAL tables have committed, WAL lag excluded.
+    private long committedWalTxnCount(ObjHashSet<TableToken> tableTokenBucket) {
+        tableTokenBucket.clear();
+        engine.getTableTokens(tableTokenBucket, false);
+        long committed = 0;
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            final TableToken tableToken = tableTokenBucket.get(i);
+            if (tableToken.isWal()) {
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+                if (tracker != null) {
+                    committed += tracker.getWriterTxn();
+                }
+            }
+        }
+        return committed;
+    }
+
     private TableToken createInitialTable(String tableName, ObjList<FuzzTransaction> transactions) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
 
@@ -1430,8 +1448,10 @@ public class FuzzRunner {
              TableReader rdr2 = getReaderWithRetries(tableName, null)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+            long committedAtRelease = -1;
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
-                forceReleaseTableWriter(applyRnd);
+                committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
             }
             // This path is the ONLY compaction coverage for single-writer tables driven through
@@ -1453,12 +1473,22 @@ public class FuzzRunner {
         }
     }
 
-    private void forceReleaseTableWriter(Rnd applyRnd) {
-        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
-        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+    // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
+    // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+    // A reopened writer applies its WAL lag again from the WAL, so the writers are closed only once
+    // the apply has committed something since the last close. Closing them after every run would
+    // discard a lag that takes several runs to commit (one transaction per run under a small apply
+    // time quota) as often as it is rebuilt, and the apply would never finish. Returns the committed
+    // count at the last close.
+    private long forceReleaseTableWriter(Rnd applyRnd, ObjHashSet<TableToken> tableTokenBucket, long committedAtRelease) {
         if (applyRnd.nextDouble() < 0.8) {
-            engine.releaseInactive();
+            final long committed = committedWalTxnCount(tableTokenBucket);
+            if (committed != committedAtRelease) {
+                engine.releaseInactive();
+                return committed;
+            }
         }
+        return committedAtRelease;
     }
 
     private TableReader getReader(String tableName) {
@@ -1500,21 +1530,20 @@ public class FuzzRunner {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
+            long committedAtRelease = -1;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.loadFence();
                     while (job.run() || checkJob.run()) {
-                        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
-                        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
-                        forceReleaseTableWriter(applyRnd);
+                        committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                     }
                     Os.sleep(1);
                     checkNoSuspendedTables(tableTokenBucket);
                     i++;
                 }
                 while (job.run() || checkJob.run()) {
-                    forceReleaseTableWriter(applyRnd);
+                    committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                 }
                 i++;
             }
