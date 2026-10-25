@@ -2142,7 +2142,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        boolean lastPartitionConverted = txWriter.getLogicalPartitionTimestamp(lastPartitionTimestamp)
+                == partitionTimestamp;
         // A logical partition with no split siblings never enters squashSplitPartitions, so
         // squashPartitionForce alone would leave a composite directory composite - and
         // produceParquetFromNative needs each column file as one flat [0, liveRows) range from byte 0.

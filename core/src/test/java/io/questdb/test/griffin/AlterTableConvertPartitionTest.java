@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.MemoryTag;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.Files;
@@ -64,6 +65,60 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     public AlterTableConvertPartitionTest() {
         this.timestampType = TestUtils.getTimestampType();
+    }
+
+    @Test
+    public void testConvertActiveSplitPartitionToParquetClosesNativeColumns() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE x (value LONG, marker INT, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 10, '2020-01-01T00:00:00.000000Z'),
+                    (2, 20, '2020-01-01T02:00:00.000000Z'),
+                    (3, 30, '2020-01-01T04:00:00.000000Z'),
+                    (4, 40, '2020-01-01T06:00:00.000000Z'),
+                    (5, 50, '2020-01-01T08:00:00.000000Z'),
+                    (6, 60, '2020-01-01T10:00:00.000000Z'),
+                    (7, 70, '2020-01-01T12:00:00.000000Z'),
+                    (8, 80, '2020-01-01T14:00:00.000000Z'),
+                    (9, 90, '2020-01-01T16:00:00.000000Z'),
+                    (10, 100, '2020-01-01T18:00:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            try (TableReader pinReader = engine.getReader(token)) {
+                execute("INSERT INTO x VALUES (11, 110, '2020-01-01T17:00:00.000000Z')");
+                drainWalQueue();
+
+                pinReader.reload();
+                Assert.assertEquals("test setup must create a split partition", 2, pinReader.getPartitionCount());
+            }
+
+            try (TableWriter writer = getWriter(token)) {
+                final long partitionTimestamp = writer.getPartitionTimestamp(0);
+                Assert.assertEquals(
+                        "test setup must leave the active logical partition split",
+                        partitionTimestamp,
+                        writer.getTxWriter().getLogicalPartitionTimestamp(writer.getPartitionTimestamp(1))
+                );
+
+                writer.convertPartitionNativeToParquet(partitionTimestamp, null, Double.NaN);
+
+                for (int i = 0, n = writer.getColumnCount(); i < n; i++) {
+                    final MemoryMA column = writer.getStorageColumn(i);
+                    Assert.assertTrue(
+                            "native storage column must be closed [index=" + i + ']',
+                            column == null || !column.isOpen()
+                    );
+                }
+            }
+        });
     }
 
     @Test
