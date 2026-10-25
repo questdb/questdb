@@ -1331,14 +1331,15 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // WHERE a.id > 0 drops the rows in which the FULL join NULL-extends a, per outer row too, so
-    // the decorrelated query is exact.
+    // the decorrelated query is exact. The FULL join takes the outer value from either of its sides,
+    // and the plan matches it to the outer row in a filter after the lateral join, which does not
+    // know its size.
     @Test
     public void testLateralCorrelatedFullJoinSubQueryWhereKeyWithMasterFilter() throws Exception {
         assertMemoryLeak(() -> {
             createNullOuterKeyTables();
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x AND a.id > 0) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\taid\tsid
                             1\t10\t21
@@ -1522,7 +1523,8 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // The computed INT t.id is NULL in the rows that the RIGHT join NULL-extends, so per outer row
     // WHERE t.id > o.k drops them, as it does on a table column, and for the NULL o.k of order 3 it
-    // holds for no row at all. Trade 10 matches refund 100 for o.k = 1.
+    // holds for no row at all. Trade 10 matches refund 100 for o.k = 1. The plan runs t.id > o.k in
+    // a filter after the lateral join, which does not know its size.
     @Test
     public void testLateralCorrelatedInnerOnBeforeRightJoinWithComputedColumnCorrelatedFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1530,7 +1532,6 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (3, NULL, 3::timestamp)");
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM (SELECT id + 0 id, x FROM trades) t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON t.x = r.k WHERE t.id > o.k) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\ttid\trid
                             1\t10\t100
@@ -1868,9 +1869,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // t.id > 0 drops the refunds that match no trade for every value of $1, so the query needs no
-    // check of $1 and runs for a NULL $1 too: t.id >= NULL then holds only for a NULL t.id, which
-    // t.id > 0 drops, so no row remains.
+    // t.id > 0 drops the refunds that match no trade for every value of $1, so the plan joins trades
+    // with an INNER join, which runs both conjuncts in the scan of trades, and the query runs for a
+    // NULL $1 too: t.id >= NULL then holds only for a NULL t.id, which t.id > 0 drops, so no row
+    // remains.
     @Test
     public void testLateralCorrelatedRightJoinOnWithBindVariableAndMasterFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1887,20 +1889,21 @@ public class LateralJoinTest extends AbstractCairoTest {
             bindVariableService.setInt(0, 5);
             assertQuery(sql)
                     .noLeakCheck()
-                    .assertsPlanNotContaining("Lateral Null Check");
+                    .assertsPlanContaining("filter: (id>=$0::int and 0<id)");
         });
     }
 
     // NULL >= NULL is true, so WHERE t.id >= $1 drops the refunds that match no trade per outer row
     // only while $1 is not NULL: for $1 = 5, order 1 returns 10 100. For a NULL $1, it keeps 1 null
-    // 101, 2 null 100 and 2 null 101. The query compiles once for all three executions, and checks $1
-    // at the top of the plan. A cast of NULL keeps them in every execution. < and > are false for a
-    // NULL t.id whatever $1 holds, so they drop those refunds for every value, without a check.
+    // 101, 2 null 100 and 2 null 101. The query compiles once for all three executions, so its plan
+    // keeps the RIGHT join and filters after it. A cast of NULL keeps them in every execution. < and
+    // > are false for a NULL t.id whatever $1 holds, so they drop those refunds for every value.
     @Test
     public void testLateralCorrelatedRightJoinOnWithBindVariableFilter() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            for (String[] filter : new String[][]{{"t.id >= $1", "5"}, {"$1 <= t.id", "5"}, {"t.id <= $1", "15"}}) {
+            // the filter, the value of $1 that drops the refunds, and the filter as the plan prints it
+            for (String[] filter : new String[][]{{"t.id >= $1", "5", "t.id>=$0::int"}, {"$1 <= t.id", "5", "t.id>=$0::int"}, {"t.id <= $1", "15", "$0::int>=t.id"}}) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter[0] + ") l ORDER BY 1, 2, 3";
                 final int value = Integer.parseInt(filter[1]);
                 assertQuery(sql)
@@ -1911,7 +1914,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                 bindVariableService.setInt(0, value);
                 assertQuery(sql)
                         .noLeakCheck()
-                        .assertsPlanContaining("Lateral Null Check");
+                        .assertsPlanContaining("Filter filter: " + filter[2], "Hash Right Outer Join");
             }
             bindVariableService.clear();
             bindVariableService.setInt(0, 5);
@@ -1939,10 +1942,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // WHERE t.ts <= systimestamp() reads the clock in every row, so the plan cannot check it once per
-    // execution, and checks the value of t.id >= $1 instead: for $1 = 5, order 1 returns 10 100. For a
-    // NULL $1, t.id >= NULL holds for the refunds that match no trade, and t.ts <= systimestamp()
-    // drops them, as their t.ts is NULL, so no row remains.
+    // WHERE t.ts <= systimestamp() reads the clock in every row, and t.id >= $1 keeps the refunds that
+    // match no trade for a NULL $1, so the plan keeps the RIGHT join and runs both conjuncts after
+    // it: for $1 = 5, order 1 returns 10 100. For a NULL $1, t.id >= NULL holds for the refunds that
+    // match no trade, and t.ts <= systimestamp() drops them, as their t.ts is NULL, so no row remains.
     @Test
     public void testLateralCorrelatedRightJoinOnWithBindVariableAfterRowVaryingFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -1956,7 +1959,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             bindVariableService.setInt(0, 5);
             assertQuery(sql)
                     .noLeakCheck()
-                    .assertsPlanContaining("Lateral Null Check");
+                    .assertsPlanContaining("Filter filter: (systimestamp()>=t.ts and t.id>=$0::int)", "Hash Right Outer Join");
         });
     }
 
@@ -1989,8 +1992,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     // NULL of an IPv4 column, and 'NaN' that of a DOUBLE column. Against such a NULL, WHERE keeps the
     // refunds that match no trade per outer row, as it does for a NULL text compared with a SYMBOL
     // column. A value that converts to no NULL drops them: order 1 returns 10 100. The compiled query
-    // returns the rows of each value in turn. The plan checks the filter on the NULL of the column
-    // type once per execution.
+    // returns the rows of each value in turn, as its plan keeps the RIGHT join and filters after it.
     @Test
     public void testLateralCorrelatedRightJoinOnWithTextBindVariableFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2020,22 +2022,30 @@ public class LateralJoinTest extends AbstractCairoTest {
             final String ipSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.ip >= $1) l ORDER BY 1, 2, 3";
             assertQuery(ipSql)
                     .noLeakCheck()
-                    .assertsPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=$0::string] groups: [[0]]\n");
+                    .assertsPlanContaining("Filter filter: t.ip>=$0::string", "Hash Right Outer Join");
         });
     }
 
-    // A constant operand needs no check when the query runs: 5::int, abs(-5) and abs(-10) are not
-    // NULL, so they drop the refunds that match no trade.
+    // 5::int, abs(-5) and abs(-10) are not NULL, so they drop the refunds that match no trade. The
+    // plan of 5::int, a constant, joins trades with an INNER join, which runs the filter in the scan
+    // of trades. The planner does not evaluate abs() when it picks the join, so those plans keep the
+    // RIGHT join and filter after it.
     @Test
     public void testLateralCorrelatedRightJoinOnWithConstantExpressionFilter() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            for (String filter : new String[]{"t.id >= 5::int", "t.id >= abs(-5)", "t.id = abs(-10)"}) {
-                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3";
+            // the filter, and the plan fragments that show where it runs
+            final String[][] cases = {
+                    {"t.id >= 5::int", "filter: id>=5", null},
+                    {"t.id >= abs(-5)", "Filter filter: t.id>=5", "Hash Right Outer Join"},
+                    {"t.id = abs(-10)", "Filter filter: t.id=10", "Hash Right Outer Join"}
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + c[0] + ") l ORDER BY 1, 2, 3";
                 assertQuery(sql)
                         .noLeakCheck()
                         .expectSize()
-                        .withPlanNotContaining("Lateral Null Check")
+                        .withPlanContaining(c[1], c[2])
                         .returns("""
                                 id\ttid\trid
                                 1\t10\t100
@@ -2229,9 +2239,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The lateral NULL check runs the scalar sub-query and passes its value to the filter, so the
-    // sub-query runs once per execution and the filter never uses a value that the check did not
-    // see. EXPLAIN opens the cursor, so the check has passed its value on.
+    // NULL >= NULL is true, so the plan keeps the RIGHT join, and the filter after it runs the scalar
+    // sub-query.
     @Test
     public void testLateralCorrelatedRightJoinOnWithScalarSubQueryFilterPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2239,14 +2248,15 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= (SELECT min(id) FROM trades)) l")
                     .noLeakCheck()
                     .assertsPlanContaining("""
-                            Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor\s
-                                Async Group By workers: 1
-                                  vectorized: true
-                                  values: [min(id)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades [state-shared]] groups: [[0]]
+                                            Filter filter: t.id [thread-safe] >= cursor\s
+                                                Async Group By workers: 1
+                                                  vectorized: true
+                                                  values: [min(id)]
+                                                  filter: null
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: trades
+                                                Hash Right Outer Join
                             """);
         });
     }
@@ -2397,23 +2407,24 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The plan of the NULL check shows the sub-query with its WHERE, as the filter runs it, and
-    // names the column that the WHERE reads: x is the second column of trades, while the check
-    // itself reads only the probe column. EXPLAIN runs the check, so trade 20 keeps the value
-    // from being NULL.
+    // The filter after the RIGHT join, which the plan keeps, shows the sub-query with its WHERE and
+    // LIMIT, and names the column that the WHERE reads: x is the second column of trades.
     @Test
     public void testLateralCorrelatedRightJoinOnWithScalarSubQueryWhereFilterPlan() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            execute("INSERT INTO trades VALUES (20, 2, 2::timestamp)");
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id = (SELECT id FROM trades WHERE x > 1 LIMIT 1)) l")
                     .noLeakCheck()
                     .assertsPlanContaining("""
-                                      limit: 1
-                                      filter: 1<x
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades [state-shared]] groups: [[0]]
+                                            Filter filter: t.id [thread-safe] = cursor\s
+                                                SelectedRecord
+                                                    Async JIT Filter workers: 1
+                                                      limit: 1
+                                                      filter: 1<x
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: trades
+                                                Hash Right Outer Join
                             """);
         });
     }
@@ -3399,11 +3410,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // test_fault() in the projection makes the plan below the NULL check throw on close. The
-    // NULL check still closes its own copy of the scalar sub-query, and close() reports the
-    // failure of the plan.
+    // test_fault() in the projection makes the plan throw on close. The plan still closes the scalar
+    // sub-query of the filter after the RIGHT join, and close() reports the failure.
     @Test
-    public void testLateralNullCheckClosesChecksWhenBaseCloseFails() throws Exception {
+    public void testLateralCloseFailureClosesFilterSubQuery() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -3434,17 +3444,17 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The first NULL check holds a test_fault() that throws on close, and the second one fails
-    // to compile. The code generator still frees the plan and the first check, and reports the
-    // compile failure instead of the close failure.
+    // The filter of one LATERAL body holds a test_fault() that throws on close, and the filter of
+    // the other one fails to compile. The code generator still frees the plan and the first filter,
+    // and reports the compile failure instead of the close failure.
     @Test
-    public void testLateralNullCheckCompileFailureFreesPlan() throws Exception {
+    public void testLateralCompileFailureFreesPlan() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE trades (id INT, x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-            // each lateral sub-query gets its own NULL check
+            // each filter keeps its RIGHT join, and holds a test_fault() of its own
             final String sql = """
                     SELECT l1.tid, l2.tid
                     FROM orders o
@@ -3462,15 +3472,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ) l2
                     """;
             TestFaultFunctionFactory.armCloseFailures();
-            // the filters create test_fault() instances 0 and 1, then the checks create 2 and 3
-            TestFaultFunctionFactory.armToFailAfterCompiles(3);
+            // the first filter creates test_fault() instance 0, and the second one fails to create 1
+            TestFaultFunctionFactory.armToFailAfterCompiles(1);
             try {
                 select(sql).close();
                 Assert.fail("injected compile failure expected");
             } catch (SqlException e) {
                 Assert.assertSame(TestFaultFunctionFactory.lastCompileFailure(), e);
-                // the close failure of instance 2 shows that the first check was built
-                Assert.assertTrue(Arrays.asList(e.getSuppressed()).contains(TestFaultFunctionFactory.closeFailure(2)));
+                // the close failure of instance 0 shows that the first filter was built
+                Assert.assertTrue(Arrays.asList(e.getSuppressed()).contains(TestFaultFunctionFactory.closeFailure(0)));
                 Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
             } finally {
                 TestFaultFunctionFactory.disarm();
@@ -4547,7 +4557,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                             3\t11\t24
                             """},
                     {"SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 right join b ON a.x = b.k WHERE b.k = o.x", itemRows},
-                    {"SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 FULL JOIN b ON a.x = b.k WHERE b.k = o.x", itemRows},
                     // a correlated sub-query before the RIGHT join reads o.x: for o.x = 1 every c row has
                     // id > o.x + 98, and a row 10 matches b rows 21 and 23; for o.x = 3 the c rows left
                     // match only a row 12, whose NULL x matches no b row
@@ -4571,6 +4580,14 @@ public class LateralJoinTest extends AbstractCairoTest {
                             .expectSize()
                             .returns(c[1]);
                 }
+            }
+            // the FULL join takes the outer value from either of its sides, and the plan matches it to
+            // the outer row in a filter after the lateral join, which does not know its size
+            final String fullJoinSql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 FULL JOIN b ON a.x = b.k WHERE b.k = o.x) l ORDER BY 1, 2, 3";
+            for (int i = 0; i < 2; i++) {
+                assertQuery(fullJoinSql)
+                        .noLeakCheck()
+                        .returns(itemRows);
             }
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid - 20 = o.x RIGHT JOIN b ON a.x = b.k WHERE a.x = o.x AND a.id IS NOT NULL) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
@@ -4913,12 +4930,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k LEFT JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k RIGHT JOIN b b2 ON b2.id = b.id WHERE b2.k = o.x AND a.id IS NOT NULL", itemRows},
-                    // two conjuncts that read no b column, where a.id > o.id + 8 drops a row 11 of o row 3,
-                    // and a.id > o.id + 7 keeps it
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 8 AND a.id IS NOT NULL", "id\taid\tsid\n"},
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 7 AND a.id IS NOT NULL", itemRows},
-                    // a conjunct that drops the NULL-extended rows and reads b and the outer row
-                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x < b.k + o.x", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x < b.k WHERE b.k = o.x AND a.id IS NOT NULL", """
                             id\taid\tsid
                             3\t10\t24
@@ -4928,6 +4939,17 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t10\t21
                             1\t10\t23
                             """},
+            };
+            // the plan runs a conjunct that reads the outer row next to a column of the body, and the
+            // match of the outer value of a FULL join, which either of its sides holds, in a filter after
+            // the lateral join, which does not know its size
+            final String[][] unsizedCases = {
+                    // two conjuncts that read no b column, where a.id > o.id + 8 drops a row 11 of o row 3,
+                    // and a.id > o.id + 7 keeps it
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 8 AND a.id IS NOT NULL", "id\taid\tsid\n"},
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id > o.id + 7 AND a.id IS NOT NULL", itemRows},
+                    // a conjunct that drops the NULL-extended rows and reads b and the outer row
+                    {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x < b.k + o.x", itemRows},
                     {"a JOIN c ON c.sid = a.id + 11 AND o.id > 1 FULL JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL", """
                             id\taid\tsid
                             2\t12\tnull
@@ -4943,20 +4965,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                             .returns(c[1]);
                 }
             }
+            for (String[] c : unsizedCases) {
+                final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM " + c[0] + ") l ORDER BY 1, 2, 3";
+                for (int i = 0; i < 2; i++) {
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .returns(c[1]);
+                }
+            }
             assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 11 AND {I} > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
             assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 10 + {I} RIGHT JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
             assertLateralMatchesPerOuterRow("a JOIN c ON c.sid = a.id + 11 AND {I} > 1 FULL JOIN b ON a.x = b.k WHERE b.k = {X} AND a.id IS NOT NULL");
 
-            // a.x >= o.x - 2 reads no b column, so it stays in the ON clause of the outer-ref join and
-            // filters ahead of the RIGHT join, and only b.k = o.x runs after it
+            // a.id IS NOT NULL drops the rows that the RIGHT join NULL-extends, so the rewriter plans it
+            // as an INNER join: b.k = o.x keys the lateral join, o.id > 1 filters o, and a.x >= o.x - 2,
+            // which reads o.x and a, runs in a filter after the lateral join
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.x >= o.x - 2 AND a.id IS NOT NULL) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
-                    .expectSize()
                     .withPlanContaining(
-                            "Filter filter: (a.id!=null and b.k=__qdb_outer_ref__0.__qdb_outer_ref__0_x)",
-                            "Hash Right Outer Join Light",
-                            "Filter filter: a.x>=__qdb_outer_ref__0.__qdb_outer_ref__0_x-2"
+                            "Filter filter: l.x>=o.x-2",
+                            "condition: l.k=o.x",
+                            "filter: 1<id",
+                            "condition: b.k=a.x"
                     )
+                    .withPlanNotContaining("Outer Join")
                     .returns(itemRows);
 
             execute("INSERT INTO b VALUES (25, NULL, NULL)");
@@ -5004,8 +5036,9 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // The query of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejecting() in a LEFT or
     // CROSS JOIN LATERAL, a lower-case CTE, a count(*) body, a wrapped body, a body with ORDER BY and
-    // LIMIT, a LATERAL two levels below o, EXPLAIN and a view, with the rows of DuckDB. The plan runs
-    // b.k = o.x after the RIGHT join, next to a.id IS NOT NULL. With VARCHAR and SYMBOL keys the
+    // LIMIT, a LATERAL two levels below o, EXPLAIN and a view, with the rows of DuckDB. a.id IS NOT
+    // NULL drops the rows that the RIGHT join NULL-extends, so the plan joins b with an INNER join,
+    // keys the lateral join on b.k = o.x and filters o on o.id > 1. With VARCHAR and SYMBOL keys the
     // query returns the same rows, and on empty tables no rows.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingContexts() throws Exception {
@@ -5052,36 +5085,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Hash Join
-                                  condition: l.__qdb_outer_ref__0_id=o.id and l.__qdb_outer_ref__0_x=o.x
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: o
+                                  condition: l.k=o.x
+                                    Async JIT Filter workers: 1
+                                      filter: 1<id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
                                     Hash
                                         SelectedRecord
-                                            Filter filter: (a.id!=null and b.k=__qdb_outer_ref__0.__qdb_outer_ref__0_x)
-                                                Hash Right Outer Join Light
-                                                  condition: b.k=a.x
-                                                    Filter filter: c.sid=a.id+11
-                                                        Cross Join
-                                                            Cross Join
-                                                                Async JIT Filter workers: 1
-                                                                  filter: id!=null
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: a
-                                                                Async JIT Group By workers: 1
-                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_x]
-                                                                  filter: 1<id
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: o
+                                            Filter filter: c.sid=a.id+11
+                                                Cross Join
+                                                    Hash Join Light
+                                                      condition: b.k=a.x
+                                                        Async JIT Filter workers: 1
+                                                          filter: id!=null
                                                             PageFrame
                                                                 Row forward scan
-                                                                Frame forward scan on: c
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: b
+                                                                Frame forward scan on: a
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: b
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: c
                             """);
             execute("CREATE VIEW v AS (SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL " + body + ")");
             assertQuery("SELECT * FROM v ORDER BY 1, 2, 3")
@@ -5114,12 +5141,12 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // o.ts is TIMESTAMP and s.ts TIMESTAMP_NS. c's ON clause reads o.ts, which WHERE keys on s, the
     // slave of the RIGHT join, and a.ts < o.ts + 1 adds a microsecond to o.ts, where s.ts + 1 would add
-    // a nanosecond, so the rewriter keeps the outer-ref join ahead of the RIGHT join; see
-    // testLateralWhereKeyAndCorrelatedComparisonRetypedKey().
+    // a nanosecond; see testLateralWhereKeyAndCorrelatedComparisonRetypedKey().
     // Per outer row, a.ts < o.ts + 1 keeps a row 10 (1.5us) for o row 1 (1us), which matches s row 20,
     // and a rows 10 and 11 (5.5us) for o row 2 (5us), of which a row 11 matches s row 21, at 5us. On
-    // a nanosecond, a.ts < o.ts + 1 would keep neither of these rows. The plan runs s.ts = o.ts after
-    // the RIGHT join and a.ts < o.ts + 1 on the outer-ref join ahead of it.
+    // a nanosecond, a.ts < o.ts + 1 would keep neither of these rows. a.id IS NOT NULL drops the rows
+    // that the RIGHT join NULL-extends, so the rewriter plans it as an INNER join: the plan keys the
+    // lateral join on s.ts = o.ts and runs a.ts < o.ts + 1 on o.ts in a filter after it.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveRetypedKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -5135,12 +5162,12 @@ public class LateralJoinTest extends AbstractCairoTest {
             final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (" + body.replace("{T}", "o.ts") + ") l ORDER BY 1, 2, 3";
             assertQuery(sql)
                     .noLeakCheck()
-                    .expectSize()
                     .withPlanContaining(
-                            "Filter filter: (a.id!=null and __qdb_outer_ref__0.__qdb_outer_ref__0_ts=s.ts)",
-                            "Hash Right Outer Join Light",
-                            "Filter filter: a.ts<__qdb_outer_ref__0.__qdb_outer_ref__0_ts+1"
+                            "Filter filter: l.ts<o.ts+1",
+                            "condition: l.__qdb_outer_ref__0_ts=o.ts",
+                            "condition: s.k=a.x"
                     )
+                    .withPlanNotContaining("Outer Join")
                     .returns("""
                             id\taid\tsid
                             1\t10\t20
@@ -5935,12 +5962,15 @@ public class LateralJoinTest extends AbstractCairoTest {
     // the master side of the RIGHT join empty for o.x = 1 and NULL, so a.id IS NOT NULL drops every
     // row there, and for o.x = 3 a row 11 matches b row 24, whose k is 3. DuckDB returns 3 11 3, as a
     // LATERAL query with IS NOT DISTINCT FROM for QuestDB's = and as the body run once per outer row.
+    // a.id IS NOT NULL drops the rows that the RIGHT join NULL-extends, so the plan joins b with an
+    // INNER join, and knows its size.
     @Test
     public void testLateralWhereKeyOnUpperLayerAliasNamedLikeJoinColumnBeforeRightJoin() throws Exception {
         assertMemoryLeak(() -> {
             createKeyAndComparisonTables();
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT * FROM (SELECT a.id aid, b.k sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b ON a.x = b.k WHERE a.id IS NOT NULL) WHERE sid = o.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             id\taid\tsid
                             3\t11\t3
