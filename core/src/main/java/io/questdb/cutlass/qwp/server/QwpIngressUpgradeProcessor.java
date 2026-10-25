@@ -1657,7 +1657,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // The commit batch this frame follows, if any. Its rows sit uncommitted in
         // the writers; whatever this frame does, they end up committed (and the
         // watermark may pass them) or lost (and the watermark is pinned below them).
-        final boolean isBatchPending = state.isCommitBatchPending();
+        boolean isBatchPending = state.isCommitBatchPending();
         final long batchFirstSeq = state.getFirstCommitBatchSequence();
         final long batchLastSeq = state.getLastCommitBatchSequence();
         boolean isBatched = false;
@@ -1679,6 +1679,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // Process the QWP v1 message
             state.processMessage();
             final boolean isProcessed = state.isOk();
+            if (isBatchPending && state.isCommitBatchCommittedBehind()) {
+                // The appender committed the batch's table on its own (the
+                // max-uncommitted-rows cap): the batch's rows are in the WAL. Ack
+                // them as one commit per frame would have; a later failure must not
+                // pin the watermark below durable rows, or the client's replay
+                // duplicates them. This frame then goes on as if no batch were open.
+                state.resetCommitBatch();
+                state.setHighestProcessedSequence(batchLastSeq);
+                isBatchPending = false;
+            }
 
             if (state.isOk() && !deferCommit) {
                 // Capture BEFORE commit(): a successful commitAll() clears the
@@ -1702,9 +1712,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     }
                 }
                 if (state.isOk()) {
+                    // A frame whose own table was committed during it has rows in
+                    // the WAL already: it commits and acks on its own, so no later
+                    // batch failure can NACK it.
                     if (state.isFrameJoinableToCommitBatch()
                             && !closesDeferredGroup
                             && !state.isRoleChangeClosePending()
+                            && !state.isFrameCommittedBehind()
                             && isJoinableToCommitBatch(state, length)) {
                         state.addToCommitBatch(seq, length);
                         isBatched = true;

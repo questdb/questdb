@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
@@ -272,11 +273,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // The one table the commit batch's rows are in, null while it holds only
     // rowless frames. A batch never spans tables: see isFrameJoinableToCommitBatch.
     private WalTableUpdateDetails commitBatchTud;
+    // commitBatchTud's writer and its data txn count when the batch last grew; a
+    // different count on the same writer means a commit the batch did not make
+    // (see isCommitBatchCommittedBehind).
+    private long commitBatchDataTxns;
+    private WalWriter commitBatchWriter;
     private int commitBatchFrames;
     private long firstCommitBatchSequence = -1;
     // The table the current frame appended rows to, null if none; and whether it
     // appended to more than one. Set by processMessage.
     private WalTableUpdateDetails frameRowTud;
+    // frameRowTud's writer and its data txn count before the frame's first append
+    // to it (see isFrameCommittedBehind).
+    private long frameRowDataTxns;
+    private WalWriter frameRowWriter;
     private boolean isFrameMultiTable;
     private long lastCommitBatchSequence = -1;
     // Non-zero while a frame that follows a pending commit batch is processed:
@@ -452,6 +462,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         lastCommitBatchSequence = seq;
         if (frameRowTud != null) {
             commitBatchTud = frameRowTud;
+            commitBatchWriter = frameRowWriter;
+            commitBatchDataTxns = frameRowWriter != null ? frameRowWriter.getDataTxnCount() : -1;
         }
         commitBatchFrames++;
         commitBatchBytes += frameBytes;
@@ -487,6 +499,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         firstCommitBatchSequence = -1;
         lastCommitBatchSequence = -1;
         commitBatchTud = null;
+        commitBatchWriter = null;
     }
 
     /**
@@ -513,6 +526,29 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * wrote to at most one table, and that table is the batch's (or either holds
      * no rows).
      */
+    /**
+     * True when the commit batch's table was committed since the batch last grew:
+     * the appender commits a writer on its own at the max-uncommitted-rows cap, so
+     * the batch's rows can be in the WAL before the batch commits. Counts only a
+     * commit by the same writer, so an evicted or replaced writer never reads as one.
+     */
+    public boolean isCommitBatchCommittedBehind() {
+        return commitBatchWriter != null
+                && commitBatchTud.getWriter() == commitBatchWriter
+                && commitBatchWriter.getDataTxnCount() != commitBatchDataTxns;
+    }
+
+    /**
+     * True when the current frame's table was committed after the frame began
+     * appending to it, so some or all of the frame's rows are already in the WAL.
+     */
+    public boolean isFrameCommittedBehind() {
+        return frameRowTud != null
+                && frameRowWriter != null
+                && frameRowTud.getWriter() == frameRowWriter
+                && frameRowWriter.getDataTxnCount() != frameRowDataTxns;
+    }
+
     public boolean isFrameJoinableToCommitBatch() {
         return !isFrameMultiTable && (frameRowTud == null || commitBatchTud == null || frameRowTud == commitBatchTud);
     }
@@ -1378,6 +1414,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // Before the early return: an empty frame must not inherit the previous
         // frame's table (see isFrameJoinableToCommitBatch).
         frameRowTud = null;
+        frameRowWriter = null;
         isFrameMultiTable = false;
         if (bufferPosition == 0 || !isOk()) {
             return;
@@ -1474,10 +1511,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 if (savepointEpoch != 0) {
                     tudCache.setSavepoint(tud, savepointEpoch);
                 }
+                final boolean isFirstRowBlock = blockHasRows && frameRowTud == null;
+                if (isFirstRowBlock) {
+                    // Before the append: the appender may commit this writer at the
+                    // max-uncommitted-rows cap, and isFrameCommittedBehind must see it.
+                    frameRowWriter = tud.getWriter() instanceof WalWriter walWriter ? walWriter : null;
+                    frameRowDataTxns = frameRowWriter != null ? frameRowWriter.getDataTxnCount() : -1;
+                }
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
                 messageAppendedRows |= blockHasRows;
                 if (blockHasRows) {
-                    if (frameRowTud == null) {
+                    if (isFirstRowBlock) {
                         frameRowTud = tud;
                     } else if (frameRowTud != tud) {
                         isFrameMultiTable = true;

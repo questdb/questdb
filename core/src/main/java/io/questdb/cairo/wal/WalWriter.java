@@ -152,6 +152,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private ConversionSymbolMapWriter conversionSymbolMap;
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
+    // Data txns the sequencer accepted from this writer. A caller batching rows
+    // across several of its own operations reads it to see a commit made in
+    // between (TableUpdateDetails commits at the max-uncommitted-rows cap).
+    private long dataTxnCount;
     // Savepoint inside the open txn (see setSavepoint): the uncommitted row count
     // and the txn's timestamp bounds when it was taken; -1 = none usable. Relative
     // to the txn start, so it survives rollUncommittedToNewSegment, which moves
@@ -462,6 +466,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
+    }
+
+    public long getDataTxnCount() {
+        return dataTxnCount;
     }
 
     @Override
@@ -1146,6 +1154,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
+                dataTxnCount++;
                 if (walTelemetryEnabled) {
                     final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
                     final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;

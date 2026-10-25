@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
@@ -472,6 +473,95 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
      * on is committed, and it is the frame the client replays first, so a
      * deterministic failure keeps striking the same frame.
      */
+    /**
+     * The appender commits a writer on its own once the table's uncommitted rows
+     * reach maxUncommittedRows. Inside a commit batch that commit makes the batch's
+     * frames durable; a later failure in the same receive pass must not pin the
+     * watermark below them, or the client's replay duplicates their rows.
+     */
+    @Test
+    public void testForcedCommitInsideBatchIsAckedBeforeLaterFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                private final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public long getQwpMaxUncommittedRows() {
+                        return 2;
+                    }
+                };
+
+                @Override
+                public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                    return lineConfig;
+                }
+            };
+            execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            // seq=1 reaches the cap: the appender commits seq=0 and seq=1. The commit of
+            // seq=2 at the end of the pass is the one denied.
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    denyCommitsAfterFirst("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from b").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            Assert.assertEquals("the force-committed frames must be acked", 1, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the failed commit must be NACKed at the frame it covered", hasErrorResponseForSeq(sent, 2));
+            Assert.assertFalse("a NACK at seq=0 would replay committed rows", hasErrorResponseForSeq(sent, 0));
+        });
+    }
+
+    /**
+     * A frame can itself push the batch's table over the cap: its first block's
+     * append commits the batch and that block, and its second block's commit is
+     * then denied. The batch is durable and must be acked; only this frame is
+     * NACKed, as one commit per frame would have done.
+     */
+    @Test
+    public void testFrameCommittedMidwayInBatchIsNackedAloneAfterBatchAck() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                private final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public long getQwpMaxUncommittedRows() {
+                        return 2;
+                    }
+                };
+
+                @Override
+                public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                    return lineConfig;
+                }
+            };
+            execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    denyCommitsAfterFirst("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, twoBlockMessage(
+                            "b",
+                            new long[]{200L, 2_000_000L, 300L, 3_000_000L},
+                            new long[]{400L, 4_000_000L}
+                    ))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from b").noLeakCheck().expectSize().returns("v\n100\n200\n300\n");
+            Assert.assertEquals("the force-committed batch must be acked", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the denied frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 1));
+            Assert.assertFalse("a NACK at seq=0 would replay committed rows", hasErrorResponseForSeq(sent, 0));
+        });
+    }
+
     @Test
     public void testFailedBatchCommitIsNackedAtFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
@@ -494,6 +584,21 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    private static SecurityContext denyCommitsAfterFirst(String tableName) {
+        // On the QWP path authorizeInsert runs only at commit, and only for a commit
+        // with rows (TableUpdateDetails.commit): the first such commit passes.
+        return new AllowAllSecurityContext() {
+            private int commits;
+
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                if (tableToken.getTableName().equals(tableName) && ++commits > 1) {
+                    throw CairoException.nonCritical().put("test: commit denied for ").put(tableName);
+                }
+            }
+        };
+    }
+
     private static SecurityContext denyCommitTo(String tableName) {
         // On the QWP path authorizeInsert runs only at commit (TableUpdateDetails.authorizeCommit).
         return new AllowAllSecurityContext() {
@@ -504,6 +609,59 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 }
             }
         };
+    }
+
+    /**
+     * One message with two table blocks for the same table; each block is a flat
+     * array of (v, ts) pairs.
+     */
+    private static byte[] twoBlockMessage(String table, long[] firstBlock, long[] secondBlock) {
+        byte[] name = table.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assert name.length < 128;
+        byte[] first = tableBlock(name, firstBlock);
+        byte[] second = tableBlock(name, secondBlock);
+        byte[] message = new byte[QwpConstants.HEADER_SIZE + first.length + second.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = QwpConstants.VERSION;
+        message[5] = 0; // flags
+        message[6] = 2; // tableCount lo
+        message[7] = 0; // tableCount hi
+        final int payloadLength = first.length + second.length;
+        assert payloadLength < 256;
+        message[8] = (byte) payloadLength;
+        System.arraycopy(first, 0, message, QwpConstants.HEADER_SIZE, first.length);
+        System.arraycopy(second, 0, message, QwpConstants.HEADER_SIZE + first.length, second.length);
+        return message;
+    }
+
+    private static byte[] tableBlock(byte[] name, long[] pairs) {
+        final int rows = pairs.length / 2;
+        assert rows < 128;
+        byte[] block = new byte[1 + name.length + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 8 * rows + 1 + 8 * rows];
+        int i = 0;
+        block[i++] = (byte) name.length;
+        System.arraycopy(name, 0, block, i, name.length);
+        i += name.length;
+        block[i++] = (byte) rows; // rowCount
+        block[i++] = 2; // columnCount
+        block[i++] = 1; // column name length
+        block[i++] = 'v';
+        block[i++] = QwpConstants.TYPE_LONG;
+        block[i++] = 0; // empty name = designated timestamp
+        block[i++] = QwpConstants.TYPE_TIMESTAMP;
+        block[i++] = 0; // no null bitmap
+        for (int r = 0; r < rows; r++) {
+            i = writeLeLong(block, i, pairs[2 * r]);
+        }
+        block[i++] = 0; // no null bitmap
+        for (int r = 0; r < rows; r++) {
+            i = writeLeLong(block, i, pairs[2 * r + 1]);
+        }
+        assert i == block.length;
+        return block;
     }
 
     private static byte[] oneRowMessage(String table, long value, long tsMicros) {
