@@ -952,12 +952,12 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             target.add(key);
         }
         target.build();
-        source.add(5);
         source.add(70);
+        source.add(100);
         source.build();
         target.copyFrom(source);
         for (int key = -1; key <= 1000; key++) {
-            Assert.assertEquals(key == 5 || key == 70, target.contains(key));
+            Assert.assertEquals(key == 70 || key == 100, target.contains(key));
         }
         source.clear();
         source.add(10);
