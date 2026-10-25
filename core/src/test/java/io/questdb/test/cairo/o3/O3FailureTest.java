@@ -1377,8 +1377,8 @@ public class O3FailureTest extends AbstractO3Test {
         );
     }
 
-    // The failed commit leaves nothing queued and x as it was; then the same rows merge cleanly.
-    private static void assertMergeRecovers(
+    // The failed commit leaves nothing queued and x as it was; then the same rows commit cleanly.
+    private static void assertFailedCommitRecovers(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -2690,15 +2690,7 @@ public class O3FailureTest extends AbstractO3Test {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
         }
 
-        assertO3QueuesDrained(engine);
-        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "CREATE ATOMIC TABLE y AS (x UNION ALL append)",
-                "INSERT ATOMIC INTO x SELECT * FROM append"
-        );
+        assertFailedCommitRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
     }
 
     private static void testAppendLastPartitionOnlyColumnFailsWithPartitionsQueued0(
@@ -2746,15 +2738,7 @@ public class O3FailureTest extends AbstractO3Test {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
         }
 
-        assertO3QueuesDrained(engine);
-        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "CREATE ATOMIC TABLE y AS (x UNION ALL append)",
-                "INSERT ATOMIC INTO x SELECT * FROM append"
-        );
+        assertFailedCommitRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
     }
 
     private static void testColumnTopLastDataOOODataFailRetry0(
@@ -4229,11 +4213,11 @@ public class O3FailureTest extends AbstractO3Test {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        // Both faults fired: the merge failed, then so did releasing the timestamp column.
+        // Both faults fired: the merge failed, then so did releasing a file of the old partition version.
         Assert.assertFalse(isO3FaultArmed.get());
         Assert.assertFalse(isCloseFaultArmed.get());
 
-        assertMergeRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertFailedCommitRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
     }
 
     private static void testMergeMidPartitionFailsWithDroppedColumn0(
@@ -4280,15 +4264,7 @@ public class O3FailureTest extends AbstractO3Test {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
         }
 
-        assertO3QueuesDrained(engine);
-        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "CREATE ATOMIC TABLE y AS (x UNION ALL append)",
-                "INSERT ATOMIC INTO x SELECT * FROM append"
-        );
+        assertFailedCommitRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
     }
 
     private static void testMergeReleaseFails0(
@@ -4309,7 +4285,7 @@ public class O3FailureTest extends AbstractO3Test {
         }
         Assert.assertFalse(isCloseFaultArmed.get());
 
-        assertMergeRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertFailedCommitRecovers(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
     }
 
     private static void testOooFollowedByAnotherOOO0(
