@@ -432,7 +432,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return switch (rnd.nextInt(3)) {
             case 0 -> new Predicate("t.x IN (" + key + ", " + other + ')', PredicateKind.PROVABLE, null);
             case 1 -> new Predicate("t.x BETWEEN " + key + " AND " + other, PredicateKind.PROVABLE, null);
-            default -> new Predicate("t.x " + COMPARISONS[rnd.nextInt(COMPARISONS.length)] + ' ' + key, PredicateKind.PROVABLE, null);
+            default ->
+                    new Predicate("t.x " + COMPARISONS[rnd.nextInt(COMPARISONS.length)] + ' ' + key, PredicateKind.PROVABLE, null);
         };
     }
 
