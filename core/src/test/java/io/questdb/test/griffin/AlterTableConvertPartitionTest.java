@@ -69,8 +69,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testConvertActiveSplitPartitionToParquetClosesNativeColumns() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
 
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE x (value LONG, marker INT, ts " + timestampType.getTypeName()
@@ -1029,6 +1030,33 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionExists("x", "1970-01.1");
             assertPartitionExists("x", "1970-02.2");
             assertPartitionDoesNotExist("x", "1970-03.3");
+        });
+    }
+
+    @Test
+    public void testConvertPartitionWithZeroRowIndexedSymbol() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "x";
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " SELECT timestamp_sequence(0, 1000000), x::int FROM long_sequence(10)");
+            drainWalQueue();
+
+            // sym_top is added once the partition already holds all its rows, so its
+            // column top equals the partition's row count: it holds zero real rows here.
+            execute("ALTER TABLE " + tableName + " ADD COLUMN sym_top SYMBOL INDEX");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+
+            // Force a cold reopen of the writer. This used to crash configuring
+            // sym_top's BITMAP indexer, because its .k/.v files were never carried
+            // into the new parquet partition directory (colTop == partitionRowCount
+            // was treated the same as "column does not exist in this partition").
+            engine.releaseInactive();
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertNotNull(writer);
+            }
         });
     }
 
