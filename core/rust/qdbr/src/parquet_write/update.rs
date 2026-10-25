@@ -687,6 +687,9 @@ impl ParquetUpdater {
                 .with_context(|_| {
                     format!("Failed to write row group {row_group_id} in rewrite mode")
                 })
+                .map(|()| {
+                    self.check_kept_tops_against_written_row_group(partition, row_offset, row_count)
+                })
         } else {
             // Track the old row group's bytes that will become dead space.
             if row_group_id < 0 {
@@ -725,6 +728,9 @@ impl ParquetUpdater {
             self.parquet_file
                 .replace(row_group, Some(row_group_id), &bloom_hashes)
                 .with_context(|_| format!("Failed to replace row group {row_group_id}"))
+                .map(|()| {
+                    self.check_kept_tops_against_written_row_group(partition, row_offset, row_count)
+                })
         }
     }
 
@@ -759,7 +765,7 @@ impl ParquetUpdater {
             false,
         )?;
 
-        if self.is_rewrite {
+        let written = if self.is_rewrite {
             self.parquet_file
                 .write(row_group, &bloom_hashes)
                 .with_context(|_| {
@@ -769,6 +775,70 @@ impl ParquetUpdater {
             self.parquet_file
                 .insert(row_group, position, &bloom_hashes)
                 .with_context(|_| format!("Failed to insert row group at position {position}"))
+        };
+        written.map(|()| {
+            self.check_kept_tops_against_written_row_group(partition, row_offset, row_count)
+        })
+    }
+
+    /// Checks the unverified top that the output keeps for a column with a NULL sentinel against
+    /// the null count of the row group just encoded at output row `row_offset`, the last one the
+    /// file holds. with_kept_column_tops() checks the values below the top of a column without a
+    /// NULL sentinel before the encode; a column with one encodes its NULLs as NULL definition
+    /// levels, and the encoder counts them: the caller passes every row as a value, top 0.
+    ///
+    /// The footer decoder skips a row group that the top covers whole, and a reader turns the
+    /// rows below the top into the column top of a type without a NULL sentinel, so the file must
+    /// not keep a top over a value. QuestDB 9.3.3 and older kept the top of a file it merged rows
+    /// into, and a merge that splits the row group the top ends in can leave one of its values in
+    /// a row group that the top covers whole. A count below the rows that the top covers shows a
+    /// value below it: the top is stale, and it ends, as the native merge that wrote the value
+    /// ended it. A row group that lies wholly below the top and has no null count, written with
+    /// statistics off, cannot show its rows NULL: the top keeps only the rows before it. A count
+    /// that covers the rows below the top cannot verify them in the row group the top ends in;
+    /// the decoder reads that one through its definition levels.
+    fn check_kept_tops_against_written_row_group(
+        &mut self,
+        partition: &Partition,
+        row_offset: usize,
+        row_count: usize,
+    ) {
+        if row_offset >= self.column_top_row_limit {
+            return;
+        }
+        // the row group just written holds a chunk for each column of the partition
+        let written_chunks = self
+            .parquet_file
+            .row_groups()
+            .last()
+            .map_or(&[][..], |row_group| &row_group.columns[..]);
+        let mut lowered = Vec::new();
+        for (col, chunk) in partition.columns.iter().zip(written_chunks) {
+            if is_no_null_sentinel_type(col.data_type)
+                || !self.unverified_column_tops.contains(&col.id)
+            {
+                continue;
+            }
+            let top = self.kept_column_top(col.id);
+            if top <= row_offset {
+                continue;
+            }
+            let rows_below_top = (top.min(row_offset + row_count) - row_offset) as u64;
+            let null_count = chunk
+                .meta_data
+                .as_ref()
+                .and_then(|meta_data| meta_data.statistics.as_ref())
+                .and_then(|statistics| statistics.null_count)
+                .and_then(|null_count| u64::try_from(null_count).ok());
+            match null_count {
+                Some(null_count) if null_count < rows_below_top => lowered.push((col.id, 0)),
+                None if rows_below_top == row_count as u64 => lowered.push((col.id, row_offset)),
+                _ => {}
+            }
+        }
+        // the kept top lies past row_offset, so it is below any row lowered before
+        for (column_id, row) in lowered {
+            self.lowered_column_tops.insert(column_id, row);
         }
     }
 
@@ -6875,6 +6945,10 @@ mod tests {
         Ok(())
     }
 
+    /// A value of the kept-column-top tests for a row below a top: INT NULL in the INT column, and
+    /// 0, the value of a NULL, in the narrower BOOLEAN, BYTE, SHORT and CHAR columns.
+    const NULL_BELOW_TOP: i64 = i32::MIN as i64;
+
     /// Columns of the kept-column-top tests: the designated timestamp (id 0), then
     /// BOOLEAN, BYTE, SHORT, CHAR (ids 1..4) and INT (id 5), a type with a NULL sentinel.
     const TOPPED_TAGS: [(i32, &str, ColumnTypeTag); 5] = [
@@ -7003,9 +7077,18 @@ mod tests {
         let out = NamedTempFile::new()?;
         let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
         updater.set_column_top_row_limit(7);
-        updater.insert_row_group(&topped_partition(&[10, 20, 30, 40], [0; 5], |_| 0), 0, 0)?;
-        let mut row_group_1 =
-            topped_partition(&[50, 60, 70, 80], [0; 5], |row| if row < 2 { 0 } else { 3 });
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40], [0; 5], |_| NULL_BELOW_TOP),
+            0,
+            0,
+        )?;
+        let mut row_group_1 = topped_partition(&[50, 60, 70, 80], [0; 5], |row| {
+            if row < 2 {
+                NULL_BELOW_TOP
+            } else {
+                3
+            }
+        });
         row_group_1.columns[2] =
             topped_column(2, "b", ColumnTypeTag::Byte, 0, 4, move |row| match row {
                 0 | 1 => byte_rows_4_5[row],
@@ -7035,6 +7118,36 @@ mod tests {
             write_file_size,
             None,
             true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?)
+    }
+
+    /// Opens an updater that rewrites `src` into `out` with statistics off, as a rewrite does when
+    /// the configuration turns them off: its row groups carry no null count.
+    fn open_rewrite_without_statistics(
+        alloc: &crate::allocator::TestAllocatorState,
+        src: &NamedTempFile,
+        src_len: u64,
+        out: &NamedTempFile,
+    ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+        Ok(super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0,
+            None,
+            false,
             false,
             CompressionOptions::Uncompressed,
             None,
@@ -7216,7 +7329,8 @@ mod tests {
         updater.replace_row_group(&merged, 0, 0)?;
         updater.end(None)?;
         let md = read_footer(&src)?;
-        assert_eq!(footer_column_tops(&md), vec![0, 2, 2, 2, 2, 2]);
+        // INT counts no NULL below its top: the value shows the top stale, and it ends
+        assert_eq!(footer_column_tops(&md), vec![0, 2, 2, 2, 2, 0]);
         // replace() appends the new row group and puts it first in the footer
         assert_eq!(md.row_groups[0].num_rows(), 5);
         assert_eq!(topped_null_counts(&md, 0), vec![2, 2, 2, 2, 0]);
@@ -7238,17 +7352,27 @@ mod tests {
         let (src, src_len) = write_topped_source([6; 5])?;
         let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
         updater.set_column_top_row_limit(7);
-        updater.replace_row_group(&topped_partition(&[10, 20, 30, 40], [0; 5], |_| 0), 0, 0)?;
+        updater.replace_row_group(
+            &topped_partition(&[10, 20, 30, 40], [0; 5], |_| NULL_BELOW_TOP),
+            0,
+            0,
+        )?;
         updater.insert_row_group(
-            &topped_partition(&[50, 60, 70], [0; 5], |row| if row < 2 { 0 } else { 3 }),
+            &topped_partition(&[50, 60, 70], [0; 5], |row| {
+                if row < 2 {
+                    NULL_BELOW_TOP
+                } else {
+                    3
+                }
+            }),
             1,
             4,
         )?;
         updater.end(None)?;
         let md = read_footer(&src)?;
         assert_eq!(footer_column_tops(&md), vec![0, 6, 6, 6, 6, 6]);
-        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 0]);
-        assert_eq!(topped_null_counts(&md, 1), vec![2, 2, 2, 2, 0]);
+        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 4]);
+        assert_eq!(topped_null_counts(&md, 1), vec![2, 2, 2, 2, 2]);
         Ok(())
     }
 
@@ -7259,13 +7383,23 @@ mod tests {
         let out = NamedTempFile::new()?;
         let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
         updater.set_column_top_row_limit(3);
-        updater.insert_row_group(&topped_partition(&[10, 20, 30, 35], [0; 5], |_| 1), 0, 0)?;
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 35], [0; 5], |row| {
+                if row < 2 {
+                    NULL_BELOW_TOP
+                } else {
+                    1
+                }
+            }),
+            0,
+            0,
+        )?;
         updater.copy_row_group(1)?;
         updater.insert_row_group(&topped_partition(&[90, 95], [0; 5], |_| 1), 2, 8)?;
         updater.end(None)?;
         let md = read_footer(&out)?;
         assert_eq!(footer_column_tops(&md), vec![0, 2, 2, 2, 2, 2]);
-        assert_eq!(topped_null_counts(&md, 0), vec![2, 2, 2, 2, 0]);
+        assert_eq!(topped_null_counts(&md, 0), vec![2, 2, 2, 2, 2]);
         assert_eq!(topped_null_counts(&md, 2), vec![0; 5]);
         Ok(())
     }
@@ -7273,9 +7407,9 @@ mod tests {
     #[test]
     fn top_contradicted_by_null_counts_ends() -> Result<(), Box<dyn Error>> {
         // a QuestDB 9.3.3 merge wrote both row groups from row 0 and kept the old footer tops of 2:
-        // the chunks count no NULL below them. The tops of the no-sentinel columns end, and the
-        // values the merge gave rows 0 and 1 stay. INT reads NULL from its sentinel, so the counts
-        // cannot tell, and its footer top stays.
+        // the chunks count no NULL below them. Every top ends: those of the no-sentinel columns by
+        // the null counts of the source, INT's by the count of the row group the rewrite encodes.
+        // The values the merge gave rows 0 and 1 stay.
         let alloc = crate::allocator::TestAllocatorState::new();
         let (src, _) = write_topped_source([0; 5])?;
         let stale = with_footer_column_tops(&std::fs::read(src.path())?, &[0, 2, 2, 2, 2, 2])?;
@@ -7292,10 +7426,207 @@ mod tests {
         updater.copy_row_group(1)?;
         updater.end(None)?;
         let md = read_footer(&out)?;
-        assert_eq!(footer_column_tops(&md), vec![0, 0, 0, 0, 0, 2]);
+        assert_eq!(footer_column_tops(&md), vec![0; 6]);
         assert_eq!(topped_null_counts(&md, 0), vec![0; 5]);
         let byte_stats = chunk_statistics(&md, 0, 2);
         assert_eq!(byte_stats.min_value, Some(1i32.to_le_bytes().to_vec()));
+        Ok(())
+    }
+
+    /// The rows of the stale INT top tests: as QuestDB 9.3.3 left a merge into a top of 4, rows
+    /// 0, 1, 3 and 4 are NULL and row 2 holds the value the merge wrote, 4 NULLs that the counts
+    /// cannot tell from the top. The no-sentinel columns hold the same values, with no top.
+    fn stale_int_top_value(row: usize) -> i64 {
+        match row {
+            0 | 1 | 3 | 4 => NULL_BELOW_TOP,
+            2 => 555,
+            row => row as i64 + 1,
+        }
+    }
+
+    /// Writes the 8 rows of stale_int_top_value() in one row group, with footer INT top 4.
+    fn write_stale_int_top_source(
+        is_statistics: bool,
+    ) -> Result<(NamedTempFile, u64), Box<dyn Error>> {
+        let written = NamedTempFile::new()?;
+        ParquetWriter::new(written.reopen()?)
+            .with_row_group_size(Some(8))
+            .with_statistics(is_statistics)
+            .finish(topped_partition(
+                &[10, 20, 30, 40, 50, 60, 70, 80],
+                [0; 5],
+                stale_int_top_value,
+            ))?;
+        let stale = with_footer_column_tops(&std::fs::read(written.path())?, &[0, 0, 0, 0, 0, 4])?;
+        let src = NamedTempFile::new()?;
+        std::fs::write(src.path(), &stale)?;
+        Ok((src, stale.len() as u64))
+    }
+
+    #[test]
+    fn kept_top_of_type_with_null_sentinel_ends_at_row_group_holding_a_value(
+    ) -> Result<(), Box<dyn Error>> {
+        // the merge keeps rows 0..6 in place and splits them at row 4: row group 0 lies wholly
+        // below the stale top, counts 3 NULLs in 4 rows, and so shows the value below the top.
+        // The top ends, as the footer decoder would otherwise skip row group 0 whole.
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_stale_int_top_source(true)?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(6);
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40], [0; 5], stale_int_top_value),
+            0,
+            0,
+        )?;
+        updater.insert_row_group(
+            &topped_partition(&[50, 60, 65, 70, 80], [0; 5], |row| {
+                stale_int_top_value(row + 4)
+            }),
+            1,
+            4,
+        )?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert_eq!(footer_column_tops(&md), vec![0; 6]);
+        assert_eq!(topped_null_counts(&md, 0)[4], 3);
+        let int_stats = chunk_statistics(&md, 0, 5);
+        assert_eq!(int_stats.max_value, Some(555i32.to_le_bytes().to_vec()));
+        Ok(())
+    }
+
+    #[test]
+    fn kept_top_of_type_with_null_sentinel_holds_over_row_group_it_ends_in(
+    ) -> Result<(), Box<dyn Error>> {
+        // the merge keeps the row group whole: its 4 NULLs cover the 4 rows below the top, which
+        // the counts cannot verify. The top stays; the decoder reads the row group through its
+        // definition levels, and a reader that turns the top into one of a type without a NULL
+        // sentinel checks its rows.
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_stale_int_top_source(true)?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(6);
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40, 50, 60, 65, 70, 80], [0; 5], |row| {
+                if row < 6 {
+                    stale_int_top_value(row)
+                } else {
+                    stale_int_top_value(row - 1)
+                }
+            }),
+            0,
+            0,
+        )?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 0, 0, 0, 0, 4]);
+        assert_eq!(topped_null_counts(&md, 0)[4], 4);
+        Ok(())
+    }
+
+    #[test]
+    fn kept_top_of_type_with_null_sentinel_keeps_no_row_group_it_cannot_count(
+    ) -> Result<(), Box<dyn Error>> {
+        // a rewrite with statistics off writes no null count: row group 0, wholly below the top,
+        // cannot show its rows NULL, and the top keeps none of its rows. An in-place update
+        // writes statistics: the designated timestamp of the source has them.
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_stale_int_top_source(false)?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_rewrite_without_statistics(&alloc, &src, src_len, &out)?;
+        updater.set_column_top_row_limit(6);
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40], [0; 5], |row| match row {
+                2 => NULL_BELOW_TOP,
+                row => stale_int_top_value(row),
+            }),
+            0,
+            0,
+        )?;
+        updater.insert_row_group(
+            &topped_partition(&[50, 60, 65, 70, 80], [0; 5], |row| {
+                stale_int_top_value(row + 4)
+            }),
+            1,
+            4,
+        )?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert!(md.row_groups[0].columns()[5]
+            .metadata()
+            .statistics
+            .is_none());
+        // even a row group of NULLs: nothing tells them from values
+        assert_eq!(footer_column_tops(&md), vec![0; 6]);
+        Ok(())
+    }
+
+    #[test]
+    fn kept_top_of_type_with_null_sentinel_holds_without_count_over_row_group_it_ends_in(
+    ) -> Result<(), Box<dyn Error>> {
+        // statistics off and the row group kept whole: the top ends in it, and the decoder reads
+        // its rows through their definition levels, so the top stays
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_stale_int_top_source(false)?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_rewrite_without_statistics(&alloc, &src, src_len, &out)?;
+        updater.set_column_top_row_limit(6);
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40, 50, 60, 65, 70, 80], [0; 5], |row| {
+                if row < 6 {
+                    stale_int_top_value(row)
+                } else {
+                    stale_int_top_value(row - 1)
+                }
+            }),
+            0,
+            0,
+        )?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert!(md.row_groups[0].columns()[5]
+            .metadata()
+            .statistics
+            .is_none());
+        assert_eq!(footer_column_tops(&md), vec![0, 0, 0, 0, 0, 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn kept_top_of_type_with_null_sentinel_holds_over_row_groups_counting_nulls(
+    ) -> Result<(), Box<dyn Error>> {
+        // a top that holds, over rows 0..4 of a row group of 8, which the counts cannot verify.
+        // The split at row 4 leaves row group 0 wholly below the top, and its null count shows
+        // all its rows NULL
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_row_group_size(Some(8))
+            .finish(topped_partition(
+                &[10, 20, 30, 40, 50, 60, 70, 80],
+                [0, 0, 0, 0, 4],
+                |row| row as i64 + 1,
+            ))?;
+        let src_len = src.as_file().metadata()?.len();
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        assert!(updater.unverified_column_tops.contains(&5));
+        updater.set_column_top_row_limit(6);
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40], [0; 5], |_| NULL_BELOW_TOP),
+            0,
+            0,
+        )?;
+        updater.insert_row_group(
+            &topped_partition(&[50, 60, 65, 70, 80], [0; 5], |row| row as i64 + 5),
+            1,
+            4,
+        )?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 0, 0, 0, 0, 4]);
+        assert_eq!(topped_null_counts(&md, 0)[4], 4);
         Ok(())
     }
 
@@ -7304,8 +7635,8 @@ mod tests {
         // no null count verifies the tops, the rows below them hold 0: every top holds
         let md = rewrite_unverified_top([0, 0])?;
         assert_eq!(footer_column_tops(&md), vec![0, 6, 6, 6, 6, 6]);
-        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 0]);
-        assert_eq!(topped_null_counts(&md, 1), vec![2, 2, 2, 2, 0]);
+        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 4]);
+        assert_eq!(topped_null_counts(&md, 1), vec![2, 2, 2, 2, 2]);
         Ok(())
     }
 
@@ -7315,8 +7646,8 @@ mod tests {
         // BYTE column keeps its top up to row group 1, which holds its rows as values
         let md = rewrite_unverified_top([0, 9])?;
         assert_eq!(footer_column_tops(&md), vec![0, 6, 4, 6, 6, 6]);
-        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 0]);
-        assert_eq!(topped_null_counts(&md, 1), vec![2, 0, 2, 2, 0]);
+        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 4]);
+        assert_eq!(topped_null_counts(&md, 1), vec![2, 0, 2, 2, 2]);
         let byte_stats = chunk_statistics(&md, 1, 2);
         assert_eq!(byte_stats.min_value, Some(0i32.to_le_bytes().to_vec()));
         assert_eq!(byte_stats.max_value, Some(9i32.to_le_bytes().to_vec()));

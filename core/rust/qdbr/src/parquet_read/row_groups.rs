@@ -2120,6 +2120,14 @@ impl ParquetDecoder {
     /// buffer rows of the top that hold decoded values. A row with another value shows the top
     /// stale: an O3 merge of QuestDB 9.3.3 or older gave it a value in place. The chunk then has
     /// no leading NULL, and its rows read as decoded.
+    ///
+    /// A source type with a NULL sentinel decodes its rows through their definition levels, so a
+    /// stale top hides none of them here. Its leading NULLs matter only to a reader that turns
+    /// them into the column top of a type without a NULL sentinel, which checks that they
+    /// converted to 0 (TableWriter.produceNativeFromParquet()). A row group that such a top covers
+    /// whole holds no value: QuestDB 9.3.3 and older merged rows only into the row group the top
+    /// ended in, and the ParquetUpdater keeps no top over a row group whose null count does not
+    /// show all its rows NULL.
     fn verified_leading_nulls(
         &self,
         column_idx: usize,

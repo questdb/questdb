@@ -1608,6 +1608,26 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegitFooterTopChangeToByteThenToInt() throws Exception {
+        // The second ALTER converts the partition to native first. The rows below the tops of 4 that hold
+        // converted to BYTE 0 and become the native column top, which reads NULL as INT, as natively.
+        assertStaleFooterTopMatchesTwin(
+                "legit_top",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE BYTE",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE INT"
+        );
+    }
+
+    @Test
+    public void testLegitFooterTopChangeToShortThenToInt() throws Exception {
+        assertStaleFooterTopMatchesTwin(
+                "legit_top",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE INT"
+        );
+    }
+
+    @Test
     public void testLegitFooterTopLateRowSplitsRowGroupBelowTop() throws Exception {
         // The split leaves row group 0 wholly below the tops of 4 that hold: it counts all its rows NULL,
         // and the tops stay. After the change to SHORT and back to INT the rows of the top read NULL, as
@@ -1641,6 +1661,53 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // 23:00 lands after the last row of 2020-01-01: no row moves, yet the rewrite re-encodes the
         // row group below the stale top
         assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("23"));
+    }
+
+    @Test
+    public void testStaleFooterTopChangeStringToShortThenConvert() throws Exception {
+        // CONVERT TO NATIVE converts the STRING values to SHORT. 'mid' below the stale top converts to 0,
+        // which reads as the native top does.
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                "ALTER TABLE {t} ALTER COLUMN s TYPE SHORT"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopChangeToBooleanThenConvert() throws Exception {
+        // Lazily changed to a type without NULL, the INT column reads the rows below its stale top
+        // through the INT values. CONVERT TO NATIVE turns them into the native top only when they
+        // converted to 0: 555 shows the top stale, as the native merge that wrote it ended it.
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE BOOLEAN"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopChangeToByteThenConvert() throws Exception {
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE BYTE"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopChangeToShortThenConvert() throws Exception {
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopChangeToShortThenToInt() throws Exception {
+        // the second ALTER converts the partition to native first, see ConvertOperatorImpl
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE INT"
+        );
     }
 
     @Test
@@ -1712,6 +1779,54 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaleFooterTopLateRowSplitsRowGroupBelowTopAtSize5() throws Exception {
+        // 8 rows exceed 1.5 times 5 as well
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5);
+        assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("21"));
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowSplitsRowGroupBelowTopThenChangeToLong() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN i TYPE LONG"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowSplitsRowGroupBelowTopThenChangeToShort() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowSplitsRowGroupBelowTopThenChangeToSymbol() throws Exception {
+        // ALTER COLUMN TYPE SYMBOL converts the partition to native first, other types read it lazily
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SYMBOL"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowSplitsRowGroupBelowTopThenChangeToVarchar() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN i TYPE VARCHAR"
+        );
+    }
+
+    @Test
     public void testStaleFooterTopLegitTopsHold() throws Exception {
         // legit_top: 9.3.3 converted the partition and merged no row into it. Every top holds through
         // the rewrite, the BOOLEAN one included, and the rows below it read NULL after a conversion to a
@@ -1745,6 +1860,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testStaleFooterTopWalLateRowPastTop() throws Exception {
+        assertStaleFooterTopMatchesTwin("stale_top_wal", staleFooterTopRow("21"));
+    }
+
+    @Test
+    public void testStaleFooterTopWalLateRowSplitsRowGroupBelowTop() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertStaleFooterTopMatchesTwin("stale_top_wal", staleFooterTopRow("21"));
     }
 

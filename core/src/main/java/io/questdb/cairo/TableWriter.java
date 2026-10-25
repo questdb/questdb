@@ -5020,6 +5020,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Whether the {@code size} bytes at {@code address} all hold 0, the value a BOOLEAN, BYTE, SHORT or CHAR
+     * NULL decodes to.
+     */
+    private static boolean isZeroFilled(long address, long size) {
+        long offset = 0;
+        for (long n = size - Long.BYTES; offset <= n; offset += Long.BYTES) {
+            if (Unsafe.getLong(address + offset) != 0) {
+                return false;
+            }
+        }
+        for (; offset < size; offset++) {
+            if (Unsafe.getByte(address + offset) != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * One step of a learned copy ratio: grows to a higher sample at once and moves a quarter of the way toward a
      * lower one, since under-estimating the copy is the expensive direction.
      */
@@ -14696,12 +14715,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // of the native column top and skip the region in the data file so it reads as NULL --
                         // matching native, and so a subsequent ALTER ... TYPE SYMBOL (which runs after this
                         // parquet->native pre-pass) sees the column top instead of a literal 0/false.
-                        final long skipBytes = ColumnType.isNoNullSentinelFixedType(tableColumnType)
+                        final long topBytes = ColumnType.isNoNullSentinelFixedType(tableColumnType)
                                 ? (long) colTopRows * ColumnType.sizeOf(tableColumnType)
                                 : 0;
-                        if (skipBytes > 0) {
-                            parquetToNativeTops.setQuick(columnIndex, rowGroupFirstRow + colTopRows);
-                        }
                         final int srcTag2 = ColumnType.tagOf(parquetColumnType);
                         final int dstTag2 = ColumnType.tagOf(tableColumnType);
 
@@ -14720,12 +14736,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         directUtf8String, utf16Sink,
                                         d64, d128, d256
                                 );
+                                final long skipBytes = skipNativeTopRows(columnIndex, rowGroupFirstRow, colTopRows, topBytes, fixBuf);
                                 appendBuffer(dstFixFd, fixBuf + skipBytes, fixSize - skipBytes);
                             } finally {
                                 Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
                             }
                         } else {
                             // Same type, or fixed->fixed conversion handled by Rust post_convert.
+                            final long skipBytes = skipNativeTopRows(columnIndex, rowGroupFirstRow, colTopRows, topBytes, srcDataPtr);
                             appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
                         }
                     }
@@ -17517,6 +17535,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3mem2.truncate();
             }
         }
+    }
+
+    /**
+     * Makes the leading {@code topRows} rows of the chunk that a BOOLEAN, BYTE, SHORT or CHAR column converted
+     * from parquet first part of the native column top, which starts at {@code topRowLo}, and returns the
+     * {@code topBytes} they take in {@code dataPtr}, the bytes the data file leaves out, when they all hold 0.
+     * The decoder verifies the top rows of a source type without a NULL sentinel. Those of a source type with
+     * one, which the column changed from lazily, come from the column top of the file, and QuestDB 9.3.3 and
+     * older kept a stale one in a file it merged rows into. A top row that converted to another value shows the
+     * top stale: the column then keeps no top, as the native merge that wrote the value ended it, and the
+     * method returns 0.
+     */
+    private long skipNativeTopRows(int columnIndex, long topRowLo, int topRows, long topBytes, long dataPtr) {
+        if (topBytes == 0 || !isZeroFilled(dataPtr, topBytes)) {
+            return 0;
+        }
+        parquetToNativeTops.setQuick(columnIndex, topRowLo + topRows);
+        return topBytes;
     }
 
     /**
