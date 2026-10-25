@@ -185,19 +185,30 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // maximum of a column of a numeric or time type, which is NULL only when every trade holds NULL,
     // or against a CASE over a scalar sub-query, see nestedScalarSubQuery(). A NULL $1 makes = true
     // on the NULL-extended row, and the query must then return rows when the sub-query drops that row.
-    private static void addRuntimeValuePair(Rnd rnd, Bind bind, List<Predicate> predicates) {
+    // A coverage query binds NULL and compares against a sub-query that is never NULL, see
+    // nonNullScalarSubQuery(), so that only its second predicate drops the NULL-extended rows on any
+    // data.
+    private static void addRuntimeValuePair(Rnd rnd, Bind bind, List<Predicate> predicates, boolean isCoverageQuery) {
         FuzzColumn column;
         do {
             column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         } while (column.bindType == null || isTypeWithoutNull(column));
         bind.type = column.bindType;
-        bind.value = rnd.nextBoolean() ? null : column.bindValues[rnd.nextInt(column.bindValues.length)];
+        bind.value = isCoverageQuery || rnd.nextBoolean() ? null : column.bindValues[rnd.nextInt(column.bindValues.length)];
         predicates.add(new Predicate("t." + column.name + " = $1", PredicateKind.RUNTIME_VALUE_EQUALITY, column.name));
+        // a coverage query computes the column of the second predicate only, so it reads another column
+        final String firstColumn = column.name;
         do {
             column = COLUMNS[rnd.nextInt(COLUMNS.length)];
-        } while (column.bindType == null || column.bindType.equals("str") || isTypeWithoutNull(column));
+        } while (column.bindType == null || column.bindType.equals("str") || isTypeWithoutNull(column)
+                || (isCoverageQuery && column.name.equals(firstColumn)));
         final String ref = "t." + column.name;
         final String op = rnd.nextBoolean() ? "<=" : ">=";
+        if (isCoverageQuery) {
+            final String subQuery = nonNullScalarSubQuery(column);
+            predicates.add(new Predicate(rnd.nextBoolean() ? ref + ' ' + op + ' ' + subQuery : subQuery + ' ' + op + ' ' + ref, PredicateKind.RUNTIME_VALUE, column.name));
+            return;
+        }
         if (rnd.nextInt(4) == 0) {
             predicates.add(new Predicate(ref + ' ' + op + ' ' + nestedScalarSubQuery(rnd, column), PredicateKind.RUNTIME_VALUE, column.name));
             return;
@@ -311,6 +322,12 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             sb.append(column.name);
         }
         return sb.append(" FROM trades)").toString();
+    }
+
+    // A scalar sub-query over trades whose value is never NULL: the maximum of the column, or, while
+    // trades is empty or holds only NULL in the column, the first of the values of the column
+    private static String nonNullScalarSubQuery(FuzzColumn column) {
+        return "(SELECT coalesce(max(" + column.name + "), " + column.values[0] + "::" + column.type + ") FROM trades)";
     }
 
     // A CASE that reads a scalar sub-query below its top and takes one value per execution: a value
@@ -427,9 +444,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     // Half of the queries read a mixed projection, see mixedProjection(), which passes knownColumn
-    // through and computes computedColumn, and whose computed columns computedColumns receives. Each
-    // run then has queries whose verdict needs a computed column next to a column of known type.
-    // Without isUnionAllAllowed, the table is no UNION ALL.
+    // through and computes computedColumn, and whose computed columns computedColumns receives. Without
+    // isUnionAllAllowed, the table is no UNION ALL.
     private static String randomTable(Rnd rnd, Set<String> computedColumns, String knownColumn, String computedColumn, boolean isUnionAllAllowed) {
         if (rnd.nextBoolean()) {
             return mixedProjection(rnd, computedColumns, knownColumn, computedColumn);
@@ -495,13 +511,18 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void assertRandomQuery(Rnd rnd, List<String> outerRows, List<String> failures) throws SqlException {
+    // A coverage query has a filter of the two predicates of addRuntimeValuePair() alone, on a shape
+    // that keeps the outer-ref join and reads a mixed projection that computes the column of the second
+    // predicate: = against a NULL $1 on a column of known type, which keeps the NULL-extended rows, and
+    // a comparison of the computed column with a sub-query that is never NULL, which drops them. Its
+    // verdict is PROVEN_BY_LATER_RUNTIME_PREDICATE and needs the computed column, whatever the data.
+    private void assertRandomQuery(Rnd rnd, List<String> outerRows, List<String> failures, boolean isCoverageQuery) throws SqlException {
         bindVariableService.clear();
         final Bind bind = new Bind();
         final List<Predicate> predicates = new ArrayList<>();
-        final boolean isRuntimeValuePair = rnd.nextBoolean();
+        final boolean isRuntimeValuePair = isCoverageQuery || rnd.nextBoolean();
         if (isRuntimeValuePair) {
-            addRuntimeValuePair(rnd, bind, predicates);
+            addRuntimeValuePair(rnd, bind, predicates, isCoverageQuery);
         } else {
             predicates.add(randomPredicate(rnd, bind));
         }
@@ -510,19 +531,22 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             filter.append(" AND ").append(predicates.get(i).sql);
         }
         boolean hasOr = false;
-        for (int i = 0, n = rnd.nextInt(3); i < n; i++) {
+        for (int i = 0, n = isCoverageQuery ? 0 : rnd.nextInt(3); i < n; i++) {
             final boolean isOr = rnd.nextInt(4) == 0;
             hasOr |= isOr;
             final Predicate predicate = randomPredicate(rnd, bind);
             predicates.add(predicate);
             filter.append(isOr ? " OR " : " AND ").append(predicate.sql);
         }
-        final Shape shape = SHAPES[rnd.nextInt(SHAPES.length)];
+        Shape shape = SHAPES[rnd.nextInt(SHAPES.length)];
+        while (isCoverageQuery && (shape.hasWhereKey || shape.hasKeyOnFullJoinedTable)) {
+            shape = SHAPES[rnd.nextInt(SHAPES.length)];
+        }
         // t.x = o.k, in the shape or as the correlated conjunct, keys the rows by t.x, and = against a
         // runtime value then does not count towards the verdict.
         boolean isOuterRefJoinKept = !shape.hasWhereKey;
         boolean hasWhereKeyCorrelated = false;
-        if (rnd.nextInt(3) == 0) {
+        if (!isCoverageQuery && rnd.nextInt(3) == 0) {
             final String correlated = CORRELATED[rnd.nextInt(CORRELATED.length)];
             isOuterRefJoinKept = !shape.hasWhereKey && !correlated.equals("t.x = {K}");
             hasWhereKeyCorrelated = shape.hasWhereKey && !correlated.equals("t.x = {K}");
@@ -538,9 +562,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         // a mixed projection passes the column of = $1 of the pair through and computes the column
         // of the sub-query comparison, so that only the latter drops the NULL-extended rows while $1
         // is NULL
-        final String table = isRuntimeValuePair
-                ? randomTable(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column, isUnionAllAllowed)
-                : randomTable(rnd, computedColumns, null, null, isUnionAllAllowed);
+        final String table;
+        if (isCoverageQuery) {
+            table = mixedProjection(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column);
+        } else if (isRuntimeValuePair) {
+            table = randomTable(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column, isUnionAllAllowed);
+        } else {
+            table = randomTable(rnd, computedColumns, null, null, isUnionAllAllowed);
+        }
         final String lateralJoin = LATERAL_JOINS[rnd.nextInt(LATERAL_JOINS.length)];
         final String body = shape.body.replace("{T}", table).replace("{P}", filter);
         final String sql = "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
@@ -716,9 +745,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 final List<String> outerRows = rowsOf(sink);
                 Assert.assertEquals(outerRowCount, outerRows.size());
                 for (int q = 0; q < QUERIES_PER_ROUND; q++) {
-                    assertRandomQuery(rnd, outerRows, failures);
+                    assertRandomQuery(rnd, outerRows, failures, false);
                     queryCount++;
                 }
+                // A verdict that reads a runtime value needs a value that is not NULL, and a scalar
+                // sub-query over trades is NULL in a round whose trades is empty or holds only NULL in
+                // the column, so a whole round may make no such verdict. The coverage query makes one
+                // of each kind on any data, so the counts asserted below do not depend on the seed.
+                assertRandomQuery(rnd, outerRows, failures, true);
+                queryCount++;
                 execute("DROP TABLE orders");
                 execute("DROP TABLE refunds");
                 execute("DROP TABLE xs");
@@ -755,15 +790,17 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // that made none would check only the rows that the join NULL-extends.
             Assert.assertTrue("too few queries provably NULL-rejecting: " + counts, nullRejectingCount * 8 >= queryCount);
             // A generator that put a predicate on a bind variable or a sub-query only first in the
-            // filter would not show that a later one drops the NULL-extended rows too.
-            Assert.assertTrue("no query provably NULL-rejecting by a later predicate against a runtime value: " + counts, laterRuntimeVerdictCount > 0);
+            // filter would not show that a later one drops the NULL-extended rows too. The coverage
+            // query of each round makes one such verdict.
+            Assert.assertTrue("fewer queries provably NULL-rejecting by a later predicate against a runtime value than rounds: " + counts, laterRuntimeVerdictCount >= rounds);
             Assert.assertTrue("no query with two RIGHT joins compared: " + counts, twoRightJoinsComparedCount > 0);
             // A generator that never followed the RIGHT join to a correlated sub-query with another join
             // would not show that the rows of that join keep their outer row through a later join.
             Assert.assertTrue("no query with a join after a RIGHT join to a correlated sub-query compared: " + counts, laterJoinComparedCount > 0);
             // A generator that never put a computed column next to a column of known type would not
-            // show that the query reads the NULL-extended rows of both alike.
-            Assert.assertTrue("no query proven by a computed column next to a predicate against a runtime value: " + counts, mixedTypeVerdictCount > 0);
+            // show that the query reads the NULL-extended rows of both alike. The coverage query of each
+            // round makes one such verdict.
+            Assert.assertTrue("fewer queries proven by a computed column next to a predicate against a runtime value than rounds: " + counts, mixedTypeVerdictCount >= rounds);
             // A generator that never nested a sub-query below the top of an operand would not show that
             // the filter reads its value per execution there.
             Assert.assertTrue("no query with a nested sub-query compared: " + counts, nestedSubQueryComparedCount > 0);
