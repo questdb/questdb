@@ -382,12 +382,24 @@ always lies below the current txn, so a range check against the pins would keep 
 left the table, `O3PartitionPurgeJob.isDroppedVersionFree` checks readers and a running checkpoint over [name txn,
 current txn) as before, but treats a save point pin in that range only as a reason to look: it then reads the `_txn`
 copy in each save point file with a valid header (`DurableEpochManifest.TxnSectionCache`, `TxReader
-.imageListsPartition`) and keeps the version while either copy lists it. A read or checksum problem counts as
-listed. A purge task reads each copy at most once and frees it when the task ends; a fault while loading a copy
-keeps every version for the rest of that task. Nothing else queues a purge once a version is free, so a writer that leaves versions to the purge job
-records the txn (`partitionPurgeOwedTxn`), and after each save point it queues a partition purge until the older pin
-has reached that txn. On a table that gets no further write, the idle save point below moves the older pin; `VACUUM
-TABLE` cannot remove the versions earlier.
+.imageListsPartition`) and keeps the version while either copy lists it. The committed partition table is sorted by
+timestamp with one entry per timestamp, so the lookup is a binary search. A read or checksum problem, or a partition
+table that is not a whole number of entries, counts as listed. A purge task reads each copy at most once and frees it
+when the task ends; a fault while loading a copy keeps every version for the rest of that task. Nothing else queues a
+purge once a version is free, so a writer that leaves versions to the purge job records the txn
+(`partitionPurgeOwedTxn`), and after each save point it queues a partition purge until the older pin has reached that
+txn. On a table that gets no further write, the idle save point below moves the older pin; `VACUUM TABLE` cannot
+remove the versions earlier.
+
+A DROP PARTITION commits once per partition. While only a save point pin holds the dropped versions (no reader or
+checkpoint below the current txn), a DROP or FORCE DROP records the owed txn and queues no purge task of its own: none
+could delete anything before the next save point, and one task per partition would fill the shared purge queue (128
+slots by default). A dropped version that no save point names, one created after the newest save point, then also
+waits for the next save point. The owed txn lives in the writer's memory; if the writer closes first (without a close
+save point) or the server restarts, the next writer open finds the leftover versions in its directory scan
+(`purgeUnusedPartitionsAtOpen`) and owes the purge again. A DROP while a reader or a checkpoint holds an older txn
+queues a task per partition, as in the other modes. TTL eviction, out-of-order rewrites and DETACH keep queueing one
+task per commit.
 
 **The idle save point.** On a table that stops changing, nothing else would replace the older save point, so its WAL,
 superseded and dropped partition versions, superseded column files and posting files would stay for ever. At the

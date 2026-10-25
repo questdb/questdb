@@ -507,7 +507,8 @@ More detail:
 - **Space freed by DROP PARTITION and TTL** comes back once neither save point names the dropped partition: at the
   table's next save point after the drop's own one, which on a table that gets no further write is its idle save
   point. `VACUUM TABLE` alone does not free it earlier, because a start could still fall back to the save point
-  that names it.
+  that names it. A partition dropped before any save point named it goes at the drop's own save point, or, if the
+  table's writer closes without one, at its next open.
 - **Outside Linux** a save point, the start's header flush and the COPY flush call `fsync` per file instead of one
   `syncfs`, which costs more with many files; only the figures marked "measured on Linux with that path forced"
   show how much.
