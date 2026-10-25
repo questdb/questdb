@@ -1608,6 +1608,20 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegitFooterTopLateRowSplitsRowGroupBelowTop() throws Exception {
+        // The split leaves row group 0 wholly below the tops of 4 that hold: it counts all its rows NULL,
+        // and the tops stay. After the change to SHORT and back to INT the rows of the top read NULL, as
+        // natively; a lost top would read them 0.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertStaleFooterTopMatchesTwin(
+                "legit_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE INT"
+        );
+    }
+
+    @Test
     public void testStaleFooterTopAlterColumnTypeThenLateRow() throws Exception {
         // Lazy conversions read the stale file through the chunk null counts, and the late row then
         // re-encodes the converted values: the INT column turned SHORT keeps the 555 that its stale
@@ -1675,6 +1689,25 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     public void testStaleFooterTopLateRowPastTop() throws Exception {
         // 21:00 lands past the stale top of 4: rows 0 to 5 keep their place, so the merge would keep a
         // top below row 6, and the stale one covers the values 9.3.3 merged into row 2
+        assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("21"));
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowPastTopThenChangeToShort() throws Exception {
+        // The late row keeps rows 0 to 5 in place, and the rewrite keeps the stale INT top of 4 over the
+        // row group it ends in. The values below it stay through the change to SHORT and CONVERT TO NATIVE.
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowSplitsRowGroupBelowTop() throws Exception {
+        // The merge of 7 + 1 rows splits them at row 4: row group 0 lies wholly below the stale tops of 4
+        // of i and s and holds 555 and 'mid'. CONVERT TO NATIVE must not read its rows NULL.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("21"));
     }
 
