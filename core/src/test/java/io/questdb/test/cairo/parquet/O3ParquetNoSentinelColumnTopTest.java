@@ -668,21 +668,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         setInPlaceProperties(4);
         final AtomicBoolean isFailing = new AtomicBoolean();
         final AtomicBoolean isWriteFailure = new AtomicBoolean();
-        ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (isFailing.get() && Utf8s.endsWithAscii(name, TableUtils.PARQUET_PARTITION_NAME)
-                        && Utf8s.containsAscii(name, "pt~")) {
-                    if (!isWriteFailure.get()) {
-                        return -1;
-                    }
-                    // a read-only descriptor: the updater takes it, its first write fails
-                    super.close(super.openRW(name, opts));
-                    return super.openRONoCache(name);
-                }
-                return super.openRW(name, opts);
-            }
-        };
+        ff = newParquetOpenFailureFacade(isFailing, isWriteFailure);
         // the rows of the partition, the commit, the row it changes
         final Object[][] commits = {
                 {8, new String[]{newRow(tsOf(7))}, 7},
@@ -691,31 +677,13 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             for (Object[] commit : commits) {
                 final int rowCount = (int) commit[0];
-                for (boolean isRewrite : new boolean[]{false, true}) {
-                    for (boolean isWrite : new boolean[]{false, true}) {
-                        createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, rowCount, -1);
-                        if (isRewrite) {
-                            for (String t : tables()) {
-                                execute("ALTER TABLE " + t + " ADD COLUMN extra INT");
-                            }
-                            drainWalQueue();
-                        }
-                        final TableToken tableToken = engine.verifyTableName("pt");
-                        final Set<String> partitionDirs = listPartitionDirs(tableToken);
-                        isWriteFailure.set(isWrite);
-                        isFailing.set(true);
-                        insertUpsertRows((String[]) commit[1]);
-                        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-                        // a failed rewrite removes the directory it created
-                        Assert.assertTrue(partitionDirs.containsAll(listPartitionDirs(tableToken)));
-                        isFailing.set(false);
-                        execute("ALTER TABLE pt RESUME WAL");
-                        drainWalQueue();
-                        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-                        assertReaders(topRows(rowCount, 2, (int) commit[2], null, true));
-                        dropTables();
-                    }
-                }
+                assertFailedCommitThenRetry(
+                        isFailing,
+                        isWriteFailure,
+                        rowCount,
+                        (String[]) commit[1],
+                        topRows(rowCount, 2, (int) commit[2], null, true)
+                );
             }
         });
     }
@@ -854,6 +822,65 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertIdenticalBeforeSmallLastRowGroupThenAppendDecodesOnce() throws Exception {
+        // row groups of 8, the last one small: the replays of a row of an earlier row group and of the last row, and
+        // a row at 23:00 past the max, which the small last row group takes. Every replay passes the identity check,
+        // so the commit runs in SKIP mode: the merge loop leaves the earlier row group as stored, without the
+        // key-only merge prepare whose dedup would drop the replay, and merges the last one from what the check
+        // decoded. The 9 columns of each decode once, and only the last row group is written. With top 2 the earlier
+        // row group, rows 9..16, holds no NULL; with top 6 it is row group 0, which holds the top rows. CHAR: the
+        // check does not run, the merge decodes and writes both row groups
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        // the top, the row count and the replayed row of the earlier row group
+        final int[][] shapes = {{2, 17, 12}, {6, 9, 3}};
+        assertMemoryLeak(() -> {
+            for (int[] shape : shapes) {
+                final int top = shape[0];
+                final int rowCount = shape[1];
+                createShapeTables(" DEDUP UPSERT KEYS(ts)", top, rowCount, -1);
+                assertDecodedColumnsAndWrittenRows(
+                        18,
+                        hasNoSentinelType() ? 2 : 10,
+                        storedRow(shape[2], top),
+                        storedRow(rowCount, top),
+                        newRow("2024-01-01T23:00:00.000000Z")
+                );
+                assertReaders(topRows(rowCount, top, -1, "2024-01-01T23:00:00.000000Z", true));
+                dropTables();
+            }
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalCoalescedTieInSmallLastRowGroupThenAppendKeepsTop() throws Exception {
+        // KEYS(ts, v), top 2, 9 rows in row groups of 8 and 1, row 9 shares the timestamp of row 8 (07:00) across
+        // their boundary: the replay of rows 8 and 9 merges both row groups as one run, which forces a rewrite, and
+        // the small row group 1 also takes the row at 23:00 past the max. The replay passes the identity check, and
+        // the run writes the new row: the merge loop merges the run from what the check decoded, its 9 columns decode
+        // once. The dedup turns on after the rows exist, see testDedupUpsertIdenticalCoalescedTieThenAppendKeepsTop
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createShapeTables("", 2, 9, 9);
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts, v)");
+            }
+            drainWalQueue();
+            assertDecodedColumnsAndWrittenRows(
+                    9,
+                    10,
+                    storedRow(8, 2),
+                    rowOf(9, tsOf(8), literalOf(9), "9", "'9'", "#s", "9.5m"),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            final List<Row> expected = topRows(9, 2, -1, "2024-01-01T23:00:00.000000Z", true);
+            expected.set(8, new Row(9, tsOf(8), Kind.VALUE));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
     public void testDedupUpsertIdenticalCoalescedTieThenAppendKeepsTop() throws Exception {
         // KEYS(ts, v), top 4, row 5 shares the timestamp of row 4 (03:00) across the boundary of row groups
         // 0 and 1: the replay of row 5 merges both row groups as one run, which forces a rewrite. The dedup
@@ -871,6 +898,28 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                     newRow("2024-01-01T23:00:00.000000Z")
             );
             assertReaders(topRows(8, 4, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalEveryTypeInSmallLastRowGroupThenAppendMatchesNative() throws Exception {
+        // rows 1..9 hold a value in a column of every type, in row groups of 8 and 1: the replay of row 9 with every
+        // value as stored passes the identity check of the small row group 1, which also takes the row at 23:00 past
+        // the max, NULL in every column of every type. The merge loop merges row group 1 from what the check decoded:
+        // each of the 28 columns decodes once. The test does not depend on the parameters, it runs once
+        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createEveryTypeValueTables(" DEDUP UPSERT KEYS(ts)", 9);
+            final StringBuilder columns = new StringBuilder("v, ts");
+            final StringBuilder row9 = new StringBuilder("(9, '").append(tsOf(9)).append('\'');
+            for (String[] column : EVERY_TYPE_COLUMNS) {
+                columns.append(", ").append(column[0]);
+                row9.append(", ").append(column[2]);
+            }
+            final String newRow = "(50, '2024-01-01T23:00:00.000000Z'" + ", NULL".repeat(EVERY_TYPE_COLUMNS.length) + ")";
+            assertDecodedColumnsAndWrittenRows(columns.toString(), 28, 2, row9 + ")", newRow);
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
         });
     }
 
@@ -910,17 +959,38 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertIdenticalInSmallLastRowGroupThenAppendFailureThenRetryKeepsTop() throws Exception {
+        // the commit of testDedupUpsertIdenticalInSmallLastRowGroupThenAppendKeepsTop: the identity check leaves what
+        // it decoded of row group 1 to the merge loop, which opens the output of the SKIP commit at the merge of row
+        // group 1. The open fails, or the first write, the merge of row group 1 in place or the copy of row group 0 in
+        // a rewrite. Nothing that the check decoded leaks. Once the table resumes, the commit applies
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final AtomicBoolean isWriteFailure = new AtomicBoolean();
+        ff = newParquetOpenFailureFacade(isFailing, isWriteFailure);
+        assertMemoryLeak(ff, () -> assertFailedCommitThenRetry(
+                isFailing,
+                isWriteFailure,
+                9,
+                new String[]{storedRow(9, 2), newRow("2024-01-01T23:00:00.000000Z")},
+                topRows(9, 2, -1, "2024-01-01T23:00:00.000000Z", true)
+        ));
+    }
+
+    @Test
     public void testDedupUpsertIdenticalInSmallLastRowGroupThenAppendKeepsTop() throws Exception {
         // 9 rows in row groups of 8 and 1, top 2: one MERGE of the small last row group takes the replay of row 9
         // and the row at 23:00, past the partition max. The replay passes the identity check, but the MERGE writes
-        // the row past the max, so the merge loop merges it: the commit appends and keeps the top. The check decodes
-        // the 9 columns of row group 1, the merge decodes them again
+        // the row past the max, so the merge loop merges it: the commit appends and keeps the top. The merge loop
+        // merges row group 1 from what the check decoded: its 9 columns decode once. CHAR: the check does not run,
+        // the merge decodes them
         Assume.assumeTrue(isWal);
         setInPlaceProperties(8);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 9, -1);
             assertDecodedColumnsAndWrittenRows(
-                    hasNoSentinelType() ? 18 : 9,
+                    9,
                     2,
                     storedRow(9, 2),
                     newRow("2024-01-01T23:00:00.000000Z")
@@ -930,13 +1000,44 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertIdenticalInSmallLastRowGroupThenAppendMaterializedRewriteKeepsTop() throws Exception {
+        // the commit of testDedupUpsertIdenticalInSmallLastRowGroupThenAppendKeepsTop after ci changed type: the
+        // rewrite opens at the merge of row group 1 and first copies row group 0 through the materializer, which
+        // decodes into the buffers of the columns past the keys, so the merge loop takes nothing that the check
+        // decoded of row group 1 and decodes its 9 columns again. CHAR: the check does not run
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 9, -1);
+            changeControlColumnType();
+            assertDecodedColumnsAndWrittenRows(
+                    hasNoSentinelType() ? 18 : 9,
+                    10,
+                    storedRow(9, 2),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            assertReaders(topRows(9, 2, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertIdenticalInTwoRowGroupsThenAppendKeepsTop() throws Exception {
-        // the replays of row 2 (row group 0) and row 6 (row group 1): two merges, both identical
+        // the replays of row 2 (row group 0) and row 6 (row group 1): two merges, both identical, and the row at
+        // 23:00 in a row group of its own. Both row groups hold top rows, NULLs of c1..c3, which the SKIP commit
+        // keeps: the merge loop leaves them as stored without the key-only merge prepare whose dedup would drop
+        // every O3 row, so the 9 columns of each decode once, in the check, and only the new row is written.
+        // CHAR: the check does not run, the merge decodes and writes both row groups
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
-            insertUpsertRows(storedRow(2, 6), storedRow(6, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertDecodedColumnsAndWrittenRows(
+                    18,
+                    hasNoSentinelType() ? 1 : 9,
+                    storedRow(2, 6),
+                    storedRow(6, 6),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
             assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
         });
     }
@@ -2373,6 +2474,26 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         return new HashSet<>(Arrays.asList(dirs));
     }
 
+    // a facade that, while isFailing, fails to open data.parquet of pt for writing or, when isWriteFailure, hands out
+    // a read-only descriptor, whose first write fails
+    private static TestFilesFacadeImpl newParquetOpenFailureFacade(AtomicBoolean isFailing, AtomicBoolean isWriteFailure) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isFailing.get() && Utf8s.endsWithAscii(name, TableUtils.PARQUET_PARTITION_NAME)
+                        && Utf8s.containsAscii(name, "pt~")) {
+                    if (!isWriteFailure.get()) {
+                        return -1;
+                    }
+                    // a read-only descriptor: the updater takes it, its first write fails
+                    super.close(super.openRW(name, opts));
+                    return super.openRONoCache(name);
+                }
+                return super.openRW(name, opts);
+            }
+        };
+    }
+
     private static String tsOf(int v) {
         return String.format("2024-01-01T%02d:00:00.000000Z", v - 1);
     }
@@ -2495,6 +2616,45 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         }
         drainWalQueue();
         assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", isTopKept));
+    }
+
+    // for an update in place and for a rewrite, which the column added after the conversion forces: the tables of
+    // createShapeTables() with top 2 and rowCount rows, then a commit of the rows while data.parquet of pt fails to
+    // open for writing, or its first write fails, see newParquetOpenFailureFacade(). The table suspends and keeps no
+    // partition directory of the failed commit; once it resumes, the commit applies and the tables read the expected
+    // rows
+    private void assertFailedCommitThenRetry(
+            AtomicBoolean isFailing,
+            AtomicBoolean isWriteFailure,
+            int rowCount,
+            String[] rows,
+            List<Row> expected
+    ) throws Exception {
+        for (boolean isRewrite : new boolean[]{false, true}) {
+            for (boolean isWrite : new boolean[]{false, true}) {
+                createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, rowCount, -1);
+                if (isRewrite) {
+                    for (String t : tables()) {
+                        execute("ALTER TABLE " + t + " ADD COLUMN extra INT");
+                    }
+                    drainWalQueue();
+                }
+                final TableToken tableToken = engine.verifyTableName("pt");
+                final Set<String> partitionDirs = listPartitionDirs(tableToken);
+                isWriteFailure.set(isWrite);
+                isFailing.set(true);
+                insertUpsertRows(rows);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                // a failed rewrite removes the directory it created
+                Assert.assertTrue(partitionDirs.containsAll(listPartitionDirs(tableToken)));
+                isFailing.set(false);
+                execute("ALTER TABLE pt RESUME WAL");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                assertReaders(expected);
+                dropTables();
+            }
+        }
     }
 
     // createFloatTables() with d and f of row 7 as stored, then a commit that resends row 7 with the given d and f

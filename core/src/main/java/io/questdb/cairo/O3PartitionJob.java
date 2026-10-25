@@ -2447,11 +2447,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // gives the same rows, and native turns such a commit into a noop or an
                 // append, which keeps every column top. Only the columns without a NULL
                 // value (BOOLEAN, BYTE, SHORT) read a kept top differently from a zeroed
-                // one, so the check runs for tables that have such a column. When a later
-                // MERGE changes the partition, the merge loop leaves the row groups of the
-                // identical MERGEs before it as they are, unless they hold a NULL of such a
-                // column, and completes what the check prepared of the MERGE where it stops
-                // instead of decoding the row group again, when it merges nothing before it.
+                // one, so the check runs for tables that have such a column. When the commit
+                // runs in SKIP mode, the merge loop leaves every MERGE up to the max as
+                // stored and completes what the check prepared of the MERGE that also takes
+                // the O3 rows past the max. When a later MERGE changes the partition, the
+                // merge loop leaves the row groups of the identical MERGEs before it as they
+                // are, unless they hold a NULL of such a column, and completes what the check
+                // prepared of the MERGE where it stops, when it merges nothing before it.
+                // Either way it does not decode that row group again.
                 // A rewrite that copies row groups through ParquetRowGroupMaterializer
                 // decodes them into the buffers of the columns past the keys, so the check
                 // keeps those columns only when it does not.
@@ -5000,19 +5003,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * the O3 rows that replace the stored rows. A COPY_O3 up to the max holds new rows, the commit then changes
      * the partition.
      * <p>
-     * An identical MERGE reproduces its row groups as stored, except for the NULLs of a BOOLEAN, BYTE or SHORT
-     * column, which its merge writes as 0/false unless they stay a column top. So the merge loop leaves the row
-     * groups of an identical MERGE as they are, see {@link O3ParquetMergeContext#setUnchangedMergeActions}, unless
-     * they hold such a NULL, see {@link #hasNoSentinelNull}, or the MERGE also takes O3 rows past the max. The NULLs
-     * of such a column are a leading run of rows, the top, so the check leaves unchanged the identical MERGEs after
-     * the last one that the merge loop merges.
+     * In SKIP mode the dedup drops every O3 row at or below the max, and the output keeps every column top, so
+     * the merge loop leaves every MERGE up to the max as stored, see
+     * {@link O3ParquetMergeContext#setUnchangedMergeActions}, also one that holds a NULL of a BOOLEAN, BYTE or
+     * SHORT column. Of the MERGEs, only one of the last row group that also takes the O3 rows past the max writes
+     * rows: it is the last action the check visits, and the first one the merge loop writes.
+     * <p>
+     * When a MERGE changes the partition, the commit runs in UPSERT mode. An identical MERGE then reproduces its
+     * row groups as stored, except for the NULLs of a BOOLEAN, BYTE or SHORT column, which its merge writes as
+     * 0/false unless they stay a column top. So the merge loop leaves the row groups of an identical MERGE as they
+     * are unless they hold such a NULL, see {@link #hasNoSentinelNull}. The NULLs of such a column are a leading
+     * run of rows, the top, so the check leaves unchanged the identical MERGEs after the last one that the merge
+     * loop merges.
      * <p>
      * When the merge loop merges no action before the one where the check stops, the check keeps what it prepared
      * of that merge, see {@link O3ParquetMergeContext#keepRowGroupMerge}: the keys and the merge index, which live
      * in buffers of their own, and the other columns when it decoded them and {@code isCopyMaterializing} is false.
      * When it is true, the rewrite copies the row groups before the action through ParquetRowGroupMaterializer,
-     * which decodes into the buffers of the other columns. After an identical MERGE the check frees what it
-     * prepared: when the merge loop merges that MERGE, it does so first, in the same buffers.
+     * which decodes into the buffers of the other columns. The check stops at the MERGE that changes the partition,
+     * and at the MERGE past the max, which it keeps with the merge index of the SKIP dedup. After another identical
+     * MERGE the check frees what it prepared: in UPSERT mode the merge loop merges the MERGEs that it does not leave
+     * as stored in order, in the same buffers.
      *
      * @param isCopyMaterializing whether the rewrite copies row groups through ParquetRowGroupMaterializer
      */
@@ -5111,9 +5122,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // after the stored rows, so the first rgSize rows of the merge index map onto the stored rows
                 final long mergeIndexAddr = ctx.getMergeIndexAddr();
                 final IntList activeColIndices = ctx.getMergeActiveColIndices();
+                long storedTimestampsAddr = 0;
                 for (int ai = 0, n = ctx.getMergeActiveColCount(); ai < n; ai++) {
                     final int columnIndex = activeColIndices.getQuick(ai);
-                    if (columnIndex == timestampIndex || tableWriterMetadata.isDedupKey(columnIndex)) {
+                    if (columnIndex == timestampIndex) {
+                        // as the first stage prepared it: the designated timestamp is never converted and has no top
+                        storedTimestampsAddr = srcPtrs.getQuick(ai * 2);
+                        continue;
+                    }
+                    if (tableWriterMetadata.isDedupKey(columnIndex)) {
                         continue;
                     }
                     final int columnType = tableWriterMetadata.getColumnType(columnIndex);
@@ -5138,19 +5155,40 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         return false;
                     }
                 }
+                if (action.o3Hi > o3HiUpToPartitionMax) {
+                    // The MERGE of the last row group also takes the O3 rows past the max: the commit runs in SKIP
+                    // mode, which keeps the stored rows of the merge and drops the O3 rows that replace them. The O3
+                    // rows past the max sort after the stored rows, so the SKIP dedup builds the merge index that a
+                    // commit without dedup builds from the stored rows and the O3 rows past the max
+                    if (!isCopyMaterializing) {
+                        assert storedTimestampsAddr != 0;
+                        assert ctx.getMergeRowCount() == rgSize + action.o3Hi - o3HiUpToPartitionMax;
+                        Vect.mergeTwoLongIndexesAsc(
+                                storedTimestampsAddr,
+                                0,
+                                rgSize,
+                                sortedTimestampsAddr + (o3HiUpToPartitionMax + 1) * TIMESTAMP_MERGE_ENTRY_BYTES,
+                                action.o3Hi - o3HiUpToPartitionMax,
+                                mergeIndexAddr
+                        );
+                        ctx.keepRowGroupMerge(i, duplicateCount, false);
+                        isMergeKept = true;
+                    }
+                    ctx.setUnchangedMergeActions(0, i);
+                    return true;
+                }
             } finally {
                 if (!isMergeKept) {
                     ctx.freeRowGroupMerge();
                 }
             }
-            if (action.o3Hi > o3HiUpToPartitionMax
-                    || hasNoSentinelNull(decoder.metadata(), tableWriterMetadata, tableToParquetIdx, action.rowGroupIndex, action.rowGroupIndexHi)) {
-                // the merge loop merges this MERGE
+            if (hasNoSentinelNull(decoder.metadata(), tableWriterMetadata, tableToParquetIdx, action.rowGroupIndex, action.rowGroupIndexHi)) {
+                // the merge loop merges this MERGE when a later one changes the partition
                 unchangedActionLo = i + 1;
                 isMergedBefore = true;
             }
         }
-        ctx.setUnchangedMergeActions(unchangedActionLo, i);
+        ctx.setUnchangedMergeActions(0, i);
         return true;
     }
 
