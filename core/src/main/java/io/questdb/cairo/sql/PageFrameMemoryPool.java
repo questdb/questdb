@@ -2263,14 +2263,34 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     hi = mid;
                 }
             }
-            while (lo < sourceRowRefsRowCount
-                    && Unsafe.getLong(sourceRowTimestampsAddress + (long) lo * Long.BYTES) == timestamp) {
-                if (Unsafe.getLong(sourceRowRefsAddress + (long) lo * Long.BYTES) == sourceRowRef) {
-                    return lo;
+            final int timestampLo = lo;
+            hi = sourceRowRefsRowCount;
+            while (lo < hi) {
+                final int mid = (lo + hi) >>> 1;
+                final long midTimestamp = Unsafe.getLong(sourceRowTimestampsAddress + (long) mid * Long.BYTES);
+                if (midTimestamp <= timestamp) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
                 }
-                lo++;
             }
-            return -1;
+            hi = lo;
+            lo = timestampLo;
+            // Query-local refs preserve merge order inside one timestamp tie group.
+            while (lo < hi) {
+                final int mid = (lo + hi) >>> 1;
+                final long midSourceRowRef = Unsafe.getLong(sourceRowRefsAddress + (long) mid * Long.BYTES);
+                if (Long.compareUnsigned(midSourceRowRef, sourceRowRef) < 0) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo < sourceRowRefsRowCount
+                    && Unsafe.getLong(sourceRowTimestampsAddress + (long) lo * Long.BYTES) == timestamp
+                    && Unsafe.getLong(sourceRowRefsAddress + (long) lo * Long.BYTES) == sourceRowRef
+                    ? lo
+                    : -1;
         }
 
         @Override
@@ -2283,6 +2303,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         public long getBaseRowLo() {
             prepareSourceBaseRows();
             return sourceBaseRowLo;
+        }
+
+        @Override
+        public long getTimestampHi() {
+            if (!hasSourceRows() || sourceRowRefsRowCount == 0) {
+                return Long.MAX_VALUE;
+            }
+            return Unsafe.getLong(sourceRowTimestampsAddress + (long) (sourceRowRefsRowCount - 1) * Long.BYTES);
+        }
+
+        @Override
+        public long getTimestampLo() {
+            if (!hasSourceRows() || sourceRowRefsRowCount == 0) {
+                return Long.MIN_VALUE;
+            }
+            return Unsafe.getLong(sourceRowTimestampsAddress);
         }
 
         public long decodeRemainingColumns(

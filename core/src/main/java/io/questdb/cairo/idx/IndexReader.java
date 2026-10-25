@@ -258,6 +258,7 @@ public interface IndexReader extends Closeable {
     interface SourceRowResolver {
         SourceRowResolver NONE = (timestamp, sourceRowRef) -> -1;
 
+        /** Resolves an opaque, query-local source row reference. Callers must not persist it. */
         int find(long timestamp, long sourceRowRef);
 
         default long getBaseRowHi() {
@@ -266,6 +267,16 @@ public interface IndexReader extends Closeable {
 
         default long getBaseRowLo() {
             return 0;
+        }
+
+        /** Inclusive timestamp maximum represented by this resolver. */
+        default long getTimestampHi() {
+            return Long.MAX_VALUE;
+        }
+
+        /** Inclusive timestamp minimum represented by this resolver. */
+        default long getTimestampLo() {
+            return Long.MIN_VALUE;
         }
 
         default boolean isAvailable() {
