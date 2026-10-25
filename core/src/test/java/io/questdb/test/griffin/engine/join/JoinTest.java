@@ -15418,9 +15418,10 @@ public class JoinTest extends AbstractCairoTest {
     public void testOuterJoinOnKeysSharingColumnOfSubQuery() throws Exception {
         // The ON keys b.k2 = a.m AND b.kk = a.m imply b.k2 = b.kk. On INT columns the RIGHT and FULL
         // JOINs keep both keys. On DOUBLE columns, whose keys tell 0.0 from -0.0, b.k2 = b.kk becomes
-        // the outer join filter. The WHERE constant a.m = 1 implies b.kk = 1, and pushing it into the
-        // sub-query renames the key node kk to the inner name k in place. The outer join filter shared
-        // that node, so it read a.k or failed to resolve k.
+        // the outer join filter. The WHERE constant a.m = 1 implies b.kk = 1, which moves into the
+        // sub-query as k = 1, renamed in place. The filter that moves holds copies of the key nodes, so
+        // the keys and the outer join filter keep kk; while they shared the renamed node, the outer
+        // join filter read a.k or failed to resolve k.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (id INT, m INT, k INT)");
             execute("INSERT INTO a VALUES (1, 1, 100), (2, 7, 200), (3, 1, 1)");
@@ -15440,18 +15441,18 @@ public class JoinTest extends AbstractCairoTest {
                     """;
             assertQuery("SELECT a.id, b.id FROM a RIGHT JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
                     .noLeakCheck()
-                    .withPlanContaining("Hash Right Outer Join Light", "condition: k=a.m and k2=a.m")
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: b.kk=a.m and b.k2=a.m")
                     .returns(expectedRenamed);
             assertQuery("SELECT a.id, b.id FROM a FULL JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
                     .noLeakCheck()
                     .returns(expectedRenamed);
             assertQuery("SELECT a.id, b.id FROM ad a RIGHT JOIN (SELECT id, k2, k AS kk FROM bd WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
                     .noLeakCheck()
-                    .withPlanContaining("condition: k=a.m", "filter: b.k2=b.kk")
+                    .withPlanContaining("condition: b.kk=a.m", "filter: b.k2=b.kk")
                     .returns(expectedRenamed);
             assertQuery("SELECT a.id, b.id FROM ad a FULL JOIN (SELECT id, k2, k AS kk FROM bd WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
                     .noLeakCheck()
-                    .withPlanContaining("condition: k=a.m", "filter: b.k2=b.kk")
+                    .withPlanContaining("condition: b.kk=a.m", "filter: b.k2=b.kk")
                     .returns(expectedRenamed);
 
             final String expectedSameName = """

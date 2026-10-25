@@ -458,6 +458,7 @@ public class SqlOptimiser implements Mutable {
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
         this.lateralJoinRewriter = new LateralJoinRewriter(
+                this,
                 characterStore,
                 pivotAliasMap,
                 pivotAliasSequenceMap,
@@ -765,7 +766,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private static ExpressionNode findFirstLiteral(ExpressionNode node) {
+    static ExpressionNode findFirstLiteral(ExpressionNode node) {
         if (node == null || node.type == LITERAL) {
             return node;
         }
@@ -1309,7 +1310,7 @@ public class SqlOptimiser implements Mutable {
 
     // BOOLEAN, BYTE and SHORT have no NULL: a RIGHT or FULL join puts false or 0 in the rows that
     // it NULL-extends, which compare as any other value
-    private static boolean isTypeWithoutNull(int columnType) {
+    static boolean isTypeWithoutNull(int columnType) {
         final short tag = ColumnType.tagOf(columnType);
         return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT;
     }
@@ -2706,8 +2707,11 @@ public class SqlOptimiser implements Mutable {
                         OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
                                 .getOperatorDefinition(token);
                         ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
-                        node.lhs = jc.aNodes.getQuick(k);
-                        node.rhs = constNode;
+                        // moveWhereInsideSubQueries() renames the columns of a filter that it moves into a
+                        // sub-query in place, so the filter reads copies: the join context shares its
+                        // nodes with the ON clauses, which another join context may read too
+                        node.lhs = ExpressionNode.deepClone(expressionNodePool, jc.aNodes.getQuick(k));
+                        node.rhs = ExpressionNode.deepClone(expressionNodePool, constNode);
                         node.paramCount = 2;
                         addWhereNode(model, jc.slaveIndex, node);
                     }
@@ -7609,6 +7613,25 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    // Returns true when every literal of the conjunct names the column, every largest part of the conjunct
+    // that reads no column folds to a constant, and the conjunct is false on the NULL record of the column
+    // type, see isFalseOnNullRecord(). A bind variable or a function that varies between executions does
+    // not fold, so the answer holds for every execution of the plan. LateralJoinRewriter asks it about the
+    // columns of the tables of a LATERAL body.
+    boolean isFalseOnNullRecordOverColumn(
+            ExpressionNode conjunct,
+            CharSequence columnName,
+            int columnType,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (!isFoldableOverColumn(conjunct, columnName, sqlExecutionContext)) {
+            return false;
+        }
+        final ExpressionNode probe = ExpressionNode.deepClone(expressionNodePool, conjunct);
+        renameLiterals(probe, NULL_REJECTING_PROBE_COLUMN);
+        return isFalseOnNullRecord(functionParser, probe, columnType, sqlExecutionContext);
+    }
+
     // Returns true when the filter a = b on two columns of the model keeps exactly the rows whose a and b
     // encode the same as join keys. That holds for two columns of one type whose equal values have equal
     // bytes, with NULL equal to NULL. FLOAT and DOUBLE fail it: 0.0 = -0.0 holds, yet the keys differ.
@@ -8098,16 +8121,8 @@ public class SqlOptimiser implements Mutable {
         final ExpressionNode column = findFirstLiteral(node);
         // the callers pass a conjunct that reads a column of the table
         assert column != null;
-        if (!isFoldableOverColumn(node, column.token, sqlExecutionContext)) {
-            return false;
-        }
         final int columnType = getQueryColumnType(tableModel, getModelColumn(tableModel, column.token));
-        if (columnType < 0) {
-            return false;
-        }
-        final ExpressionNode probe = ExpressionNode.deepClone(expressionNodePool, node);
-        renameLiterals(probe, NULL_REJECTING_PROBE_COLUMN);
-        return isFalseOnNullRecord(functionParser, probe, columnType, sqlExecutionContext);
+        return columnType >= 0 && isFalseOnNullRecordOverColumn(node, column.token, columnType, sqlExecutionContext);
     }
 
     // Returns true when the comparison of the column with the compile-time constant, in the given operand
@@ -18235,7 +18250,7 @@ public class SqlOptimiser implements Mutable {
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
-            lateralJoinRewriter.rewrite(rewrittenModel);
+            lateralJoinRewriter.rewrite(rewrittenModel, sqlExecutionContext);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             verifyNoResidualSubsample(rewrittenModel, true);

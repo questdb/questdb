@@ -44,6 +44,7 @@ import io.questdb.std.ObjectPool;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlOptimiser.*;
 import static io.questdb.griffin.model.IQueryModel.*;
 
@@ -119,6 +120,9 @@ class LateralJoinRewriter implements Mutable {
     // layer, see tryEliminateOuterRefInBranch()
     private final LowerCaseCharSequenceObjHashMap<CharSequence> layerEqualities = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> nonCorrelatedPreds = new ObjList<>();
+    // the conjuncts of the filter that hasNullRejectingConjunct() reads
+    private final ObjList<ExpressionNode> nullRejectionConjuncts = new ObjList<>();
+    private final SqlOptimiser optimiser;
     private final IntList orderByDirSave;
     private final ObjList<ExpressionNode> orderBySave;
     private final ObjList<CharSequence> outerAliasSaveStack;
@@ -133,6 +137,9 @@ class LateralJoinRewriter implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
+    // pairs of the index and the type as written of each join that reduceLayerOuterJoins() planned as an
+    // INNER join, so that it can restore them
+    private final IntList reducedJoinIndexes = new IntList();
     // conjuncts of the criteria of an outer-ref join that Pass 3 moves into the criteria of the
     // lateral join when it removes the outer-ref join, see tryEliminateOuterRefInBranch()
     // the shared sub-queries of sharedModels that the FROM clauses hold themselves, see rehomeSharedSubqueries()
@@ -178,6 +185,7 @@ class LateralJoinRewriter implements Mutable {
     private long truthLo;
 
     LateralJoinRewriter(
+            SqlOptimiser optimiser,
             CharacterStore characterStore,
             LowerCaseCharSequenceHashSet tempCarrierAliases,
             LowerCaseCharSequenceIntHashMap tempCarrierAliasSequenceMap,
@@ -198,6 +206,7 @@ class LateralJoinRewriter implements Mutable {
             ObjList<IQueryModel> tempCarrierChain,
             ObjList<QueryColumn> tempTemplateBuffer
     ) {
+        this.optimiser = optimiser;
         this.carrierAliases = tempCarrierAliases;
         this.carrierAliasSequenceMap = tempCarrierAliasSequenceMap;
         this.characterStore = characterStore;
@@ -230,10 +239,12 @@ class LateralJoinRewriter implements Mutable {
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
         nonCorrelatedPreds.clear();
+        nullRejectionConjuncts.clear();
         layerEqualities.clear();
         mainOuterRefJoins.clear();
         outerRefCopyWrappers.clear();
         outerRefRenamingLayers.clear();
+        reducedJoinIndexes.clear();
         rehomedSubqueries.clear();
         residualConjuncts.clear();
         hasAggregateLeaf = false;
@@ -252,7 +263,7 @@ class LateralJoinRewriter implements Mutable {
         templateNodeBudget = 0;
     }
 
-    public void rewrite(IQueryModel model) throws SqlException {
+    public void rewrite(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         mainOuterRefJoins.clear();
         outerRefCopyWrappers.clear();
         tagSourceOuterRefJoins.clear();
@@ -263,6 +274,9 @@ class LateralJoinRewriter implements Mutable {
         // Pass 1 (top-down): tag correlated refs with lateralDepth
         // and collect correlated columns per lateral join model
         if (analyzeCorrelation(model, 0)) {
+            // Pass 1b (top-down): plan each RIGHT or FULL join of a LATERAL body whose filter drops
+            // the rows that it NULL-extends as an INNER join, see reduceNullRejectedOuterJoins()
+            reduceNullRejectedOuterJoins(model, 0, sqlExecutionContext);
             outerRefId = 0;
             // Pass 2 (bottom-up): decorrelate each lateral join.
             // Input:
@@ -447,6 +461,34 @@ class LateralJoinRewriter implements Mutable {
         };
     }
 
+    // Returns the type of the column that the literal names when it is a column of a table of the layer at an
+    // index from lo to hi, and -1 otherwise: for an outer column, which Pass 1 tags with its lateralDepth, for a
+    // column without the alias of its table, and for a column of a sub-query, whose type only the code generator
+    // knows. Before rewriteSelectClause(), a table of a layer holds the columns of its metadata, with their
+    // types, and the SELECT list of the layer sits in a model above it.
+    private static int getTableColumnType(IQueryModel layer, ExpressionNode node, int lo, int hi) {
+        // the callers pass an operand of a comparison or BETWEEN, or the first literal of a conjunct
+        assert node != null;
+        if (node.type != ExpressionNode.LITERAL || node.lateralDepth != 0) {
+            return -1;
+        }
+        final CharSequence token = node.token;
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot < 1) {
+            return -1;
+        }
+        final int index = layer.getModelAliasIndex(token, 0, dot);
+        if (index < lo || index > hi) {
+            return -1;
+        }
+        final IQueryModel table = layer.getJoinModels().getQuick(index);
+        if (table.getTableNameExpr() == null) {
+            return -1;
+        }
+        final QueryColumn column = table.getAliasToColumnMap().get(token, dot + 1, token.length());
+        return column != null ? column.getColumnType() : -1;
+    }
+
     private static boolean hasBareWildcard(ObjList<QueryColumn> columns) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             ExpressionNode ast = columns.getQuick(i).getAst();
@@ -470,6 +512,25 @@ class LateralJoinRewriter implements Mutable {
         }
         for (int i = 0, n = node.args.size(); i < n; i++) {
             if (hasBindVariableOrSubQuery(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True when the expression calls the function of the name
+    private static boolean hasFunction(ExpressionNode node, CharSequence name) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(node.token, name)) {
+            return true;
+        }
+        if (node.paramCount < 3) {
+            return hasFunction(node.lhs, name) || hasFunction(node.rhs, name);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasFunction(node.args.getQuick(i), name)) {
                 return true;
             }
         }
@@ -569,10 +630,27 @@ class LateralJoinRewriter implements Mutable {
         return isRightOrFullJoin(joinType) || joinType == IQueryModel.JOIN_SPLICE;
     }
 
+    // True when the node is a column of a table of the layer at an index from lo to hi, see
+    // getTableColumnType(), whose type has NULL
+    private static boolean isNullableColumn(IQueryModel layer, ExpressionNode node, int lo, int hi) {
+        final int columnType = getTableColumnType(layer, node, lo, hi);
+        return columnType >= 0 && !isTypeWithoutNull(columnType);
+    }
+
     private static boolean isOuterRefToken(ExpressionNode node, CharSequence outerRefAlias) {
         return node != null
                 && node.type == ExpressionNode.LITERAL
                 && matchesOuterRefAlias(node.token, outerRefAlias);
+    }
+
+    // True for an INNER, CROSS, LEFT, RIGHT or FULL join, which pairs the rows by its ON clause alone, see
+    // reduceLayerOuterJoins()
+    private static boolean isRelationalJoin(int joinType) {
+        return switch (joinType) {
+            case IQueryModel.JOIN_INNER, IQueryModel.JOIN_CROSS, IQueryModel.JOIN_LEFT_OUTER,
+                 IQueryModel.JOIN_RIGHT_OUTER, IQueryModel.JOIN_FULL_OUTER -> true;
+            default -> false;
+        };
     }
 
     private static boolean isRightOrFullJoin(int joinType) {
@@ -2848,6 +2926,27 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // True when a conjunct of the filter is false whenever the columns of the models of the layer from lo to
+    // hi are NULL, see isNullRejectingConjunct()
+    private boolean hasNullRejectingConjunct(
+            IQueryModel layer,
+            ExpressionNode filter,
+            int lo,
+            int hi,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (filter == null) {
+            return false;
+        }
+        splitAndPredicates(filter, nullRejectionConjuncts);
+        for (int i = 0, n = nullRejectionConjuncts.size(); i < n; i++) {
+            if (isNullRejectingConjunct(layer, nullRejectionConjuncts.getQuick(i), lo, hi, sqlExecutionContext)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasOuterRefLiteral(ExpressionNode node, CharSequence outerRefAlias) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -2864,6 +2963,38 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
             node = node.lhs != null ? node.lhs : (sqlNodeStack.poll());
+        }
+        return false;
+    }
+
+    // True when a model of the LATERAL body reads the designated timestamp of the rows of a join or their
+    // order: SAMPLE BY, LATEST ON, a window function, a time-series join, and twap() and sparkline(), which
+    // GroupByUtils rejects without ascending designated timestamp order. A RIGHT or FULL join gives its rows
+    // no designated timestamp, while the INNER join that reduceLayerOuterJoins() plans instead may give them
+    // the timestamp of its master, so a RANGE frame or a time-series join would run where the body as
+    // written fails. Such a body keeps its outer joins.
+    private boolean hasTimestampDependentModel(IQueryModel model) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getSampleBy() != null || m.getLatestBy().size() > 0 || hasWindowColumns(m)) {
+                return true;
+            }
+            final ObjList<QueryColumn> columns = m.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final ExpressionNode ast = columns.getQuick(i).getAst();
+                if (hasFunction(ast, "twap") || hasFunction(ast, "sparkline")) {
+                    return true;
+                }
+            }
+            if (m.getUnionModel() != null && hasTimestampDependentModel(m.getUnionModel())) {
+                return true;
+            }
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinsRequiringTimestamp[joinModel.getJoinType()] || hasTimestampDependentModel(joinModel.getNestedModel())) {
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -3072,6 +3203,65 @@ class LateralJoinRewriter implements Mutable {
         }
         // count() is non-negative, so covering [0, Long.MAX_VALUE] covers the domain
         return truthLo > 0 || truthHi != Long.MAX_VALUE;
+    }
+
+    // True when a WHERE conjunct of the layer, or an ON conjunct of an INNER join after the join at position,
+    // is false whenever the columns of the models from lo to hi are NULL. Such a conjunct drops every row in
+    // which the join at position NULL-extends those models, whatever the joins between them do: they only pair
+    // the row with other rows, or NULL-extend it further.
+    private boolean isNullExtensionRejected(
+            IQueryModel layer,
+            int lo,
+            int hi,
+            int position,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (hasNullRejectingConjunct(layer, layer.getWhereClause(), lo, hi, sqlExecutionContext)) {
+            return true;
+        }
+        final ObjList<IQueryModel> joinModels = layer.getJoinModels();
+        for (int i = position + 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            if (joinModel.getJoinType() == IQueryModel.JOIN_INNER
+                    && hasNullRejectingConjunct(layer, joinModel.getJoinCriteria(), lo, hi, sqlExecutionContext)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True when the conjunct is false whenever the columns of the models of the layer from lo to hi are NULL,
+    // by the rules of SqlOptimiser.isNullRejectingColumnPredicate(), on a column of a table of those models, see
+    // getTableColumnType(): < and > with the bare column on one side, whatever the other side reads, as they are
+    // false for a NULL operand, and BETWEEN with the bare column as its value, when the column type has NULL;
+    // and a conjunct that reads that column alone, folds otherwise, and is false on the NULL record of the
+    // column type, see SqlOptimiser.isFalseOnNullRecordOverColumn(). = <= and >= hold when both operands are
+    // NULL, so they qualify only through the NULL record, with a constant other side.
+    private boolean isNullRejectingConjunct(
+            IQueryModel layer,
+            ExpressionNode node,
+            int lo,
+            int hi,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 2
+                && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
+            if (isNullableColumn(layer, node.lhs, lo, hi) || isNullableColumn(layer, node.rhs, lo, hi)) {
+                return true;
+            }
+        } else if (node.type == ExpressionNode.SET_OPERATION && SqlKeywords.isBetweenKeyword(node.token)) {
+            // the parser gives BETWEEN its value and both bounds
+            assert node.paramCount == 3;
+            if (isNullableColumn(layer, node.args.getLast(), lo, hi)) {
+                return true;
+            }
+        }
+        final ExpressionNode column = findFirstLiteral(node);
+        if (column == null) {
+            return false;
+        }
+        final int columnType = getTableColumnType(layer, column, lo, hi);
+        return columnType >= 0 && optimiser.isFalseOnNullRecordOverColumn(node, column.token, columnType, sqlExecutionContext);
     }
 
     private boolean isOuterRefCopyWrapper(IQueryModel joinModel) {
@@ -4173,6 +4363,126 @@ class LateralJoinRewriter implements Mutable {
             result = result == null ? lifted : createBinaryOp("and", result, lifted);
         }
         return result;
+    }
+
+    // Reduces the outer joins of every layer of a LATERAL body, see reduceLayerOuterJoins(). The layers of a
+    // LATERAL body nested in it reduce at their own depth, see reduceNullRejectedOuterJoins().
+    private void reduceBodyOuterJoins(IQueryModel model, int depth, SqlExecutionContext sqlExecutionContext) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            // the wrappers of shared sub-queries, the only models that are not optimisable, come from
+            // createOuterRefBase() and createSharedRef() in Pass 2
+            assert m.isOptimisable();
+            reduceLayerOuterJoins(m, depth, sqlExecutionContext);
+            reduceBodyOuterJoins(m.getUnionModel(), depth, sqlExecutionContext);
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (!isLateralJoin(joinModel.getJoinType())) {
+                    reduceBodyOuterJoins(joinModel.getNestedModel(), depth, sqlExecutionContext);
+                }
+            }
+        }
+    }
+
+    // Plans each RIGHT or FULL join of the layer that terminateWithTaggedPrefix() would repeat per outer key as
+    // an INNER join when the rows that it NULL-extends never reach the result, see isNullExtensionRejected().
+    // terminateWithTaggedPrefix() repeats the RIGHT and FULL joins at and after the first join whose ON clause
+    // reads the outer row, and the joins before it keep their plan. A RIGHT join reduces when a conjunct drops
+    // the rows that it NULL-extends on its master side, and a FULL join only when conjuncts drop those on both
+    // sides: with its master side alone rejected, it returns the rows of a LEFT join, whose ON clause Pass 2
+    // does not decorrelate correctly yet when it reads the outer row, and with its slave side alone, those of
+    // a RIGHT join, which terminateWithTaggedPrefix() repeats too. Every join after a reduced join must be an
+    // INNER, CROSS or outer join, as in SqlOptimiser.isNullExtensionRejected(): any other join could pair a row
+    // that the join NULL-extends with a row that the query returns.
+    private void reduceLayerOuterJoins(IQueryModel layer, int depth, SqlExecutionContext sqlExecutionContext) {
+        final ObjList<IQueryModel> joinModels = layer.getJoinModels();
+        final int n = joinModels.size();
+        if (n < 2 || !layer.isCorrelatedAtDepth(depth)) {
+            return;
+        }
+        // The layer must read the outer row only through ON clauses and WHERE: Pass 2 decorrelates an INNER join
+        // to a correlated sub-query wrongly in some shapes, so a join reduced next to one could return wrong rows
+        // that its outer join does not.
+        if (layer.getNestedModel() != null && layer.getNestedModel().isCorrelatedAtDepth(depth)) {
+            return;
+        }
+        int lastNonRelationalJoin = 0;
+        int firstOuterRowRead = n;
+        for (int i = 1; i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            if (joinModel.getNestedModel() != null && joinModel.getNestedModel().isCorrelatedAtDepth(depth)) {
+                return;
+            }
+            if (!isRelationalJoin(joinModel.getJoinType())) {
+                lastNonRelationalJoin = i;
+            }
+            if (joinModel.getJoinCriteria() != null && hasCorrelatedExprAtDepth(joinModel.getJoinCriteria(), depth)) {
+                // A reduced join moves the outer-ref join ahead of the LEFT joins after it, see
+                // outerRefInsertPos(), and Pass 2 does not decorrelate the ON clause of a LEFT join that
+                // reads the outer row correctly yet.
+                if (joinModel.getJoinType() == IQueryModel.JOIN_LEFT_OUTER) {
+                    return;
+                }
+                if (firstOuterRowRead == n) {
+                    firstOuterRowRead = i;
+                }
+            }
+        }
+        // Every RIGHT or FULL join from the first join that reads the outer row on reduces, or none does: a join
+        // that keeps its outer join would see the INNER joins reduced after it as tagged joins whose ON clauses
+        // read the outer row, a mix that the layer as written does not have. The joins reduce from the last
+        // one, so that the ON clause of a later join planned as an INNER join counts for the joins before it.
+        reducedJoinIndexes.clear();
+        for (int i = n - 1; i >= firstOuterRowRead; i--) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            final int joinType = joinModel.getJoinType();
+            if (!isRightOrFullJoin(joinType)) {
+                continue;
+            }
+            if (i < lastNonRelationalJoin
+                    || !isNullExtensionRejected(layer, 0, i - 1, i, sqlExecutionContext)
+                    || (joinType == IQueryModel.JOIN_FULL_OUTER && !isNullExtensionRejected(layer, i, i, i, sqlExecutionContext))) {
+                for (int j = 0, m = reducedJoinIndexes.size(); j < m; j += 2) {
+                    joinModels.getQuick(reducedJoinIndexes.getQuick(j)).setJoinType(reducedJoinIndexes.getQuick(j + 1));
+                }
+                return;
+            }
+            reducedJoinIndexes.add(i);
+            reducedJoinIndexes.add(joinType);
+            joinModel.setJoinType(IQueryModel.JOIN_INNER);
+        }
+    }
+
+    // Pass 1b. A RIGHT or FULL join of a LATERAL body whose ON clause reads the outer row keeps the rows that it
+    // NULL-extends once per outer key, so terminateWithTaggedPrefix() CROSS joins the side that the join keeps
+    // with the distinct outer keys, and the join reads that side once per key. When a WHERE conjunct of the
+    // layer, or an ON conjunct of a later INNER join, drops every row that the join NULL-extends, the join
+    // returns the rows of an INNER join, which needs no such copy. The pass plans each such join as an INNER
+    // join, see reduceLayerOuterJoins(), before Pass 2 reads any join type. A body that reads the designated
+    // timestamp of its rows keeps its outer joins, see hasTimestampDependentModel().
+    private void reduceNullRejectedOuterJoins(IQueryModel model, int lateralDepth, SqlExecutionContext sqlExecutionContext) {
+        if (model == null) {
+            return;
+        }
+        // the wrappers of shared sub-queries, the only models that are not optimisable, come from
+        // createOuterRefBase() and createSharedRef() in Pass 2
+        assert model.isOptimisable();
+        reduceNullRejectedOuterJoins(model.getNestedModel(), lateralDepth, sqlExecutionContext);
+        reduceNullRejectedOuterJoins(model.getUnionModel(), lateralDepth, sqlExecutionContext);
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            final IQueryModel nested = joinModel.getNestedModel();
+            if (isLateralJoin(joinModel.getJoinType())) {
+                final int depth = lateralDepth + 1;
+                if (!hasTimestampDependentModel(nested)) {
+                    reduceBodyOuterJoins(nested, depth, sqlExecutionContext);
+                }
+                reduceNullRejectedOuterJoins(nested, depth, sqlExecutionContext);
+            } else {
+                reduceNullRejectedOuterJoins(nested, lateralDepth, sqlExecutionContext);
+            }
+        }
     }
 
     // The optimiser processes a shared sub-query of sharedModels where it meets the sub-query itself,

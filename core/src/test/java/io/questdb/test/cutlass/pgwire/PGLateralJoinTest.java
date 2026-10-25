@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import org.junit.Test;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -33,6 +34,28 @@ import java.sql.Statement;
 import java.sql.Types;
 
 public class PGLateralJoinTest extends BasePGTest {
+
+    // A prepared statement whose LATERAL body holds a RIGHT join that WHERE t.id > ? plans as an INNER
+    // join runs with each value, NULL included: t.id > ? is false on the rows that the join NULL-extends
+    // whatever the value, so one plan returns the rows of the body for each. t.id >= ? keeps those rows
+    // for a NULL value, as NULL >= NULL is true, so its RIGHT join keeps its plan.
+    @Test
+    public void testNullRejectingBindVariableNextToRightJoin() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createOrdersAndRefunds(statement);
+                statement.execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 1::timestamp), (11, 2, 2::timestamp)");
+            }
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + "trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id {OP} ?) l ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            final String bothTrades = "1,10,100\n2,11,101\n";
+            final String nullExtended = "1,null,101\n1,null,102\n2,null,100\n2,null,102\n3,null,100\n3,null,101\n3,null,102\n";
+            assertExecutions(connection, sql.replace("{OP}", ">"), header, new Integer[]{0, null, 10, 0}, new String[]{bothTrades, "", "2,11,101\n", bothTrades});
+            assertExecutions(connection, sql.replace("{OP}", ">="), header, new Integer[]{null, 10, null}, new String[]{nullExtended, bothTrades, nullExtended});
+        });
+    }
 
     // A prepared statement whose LATERAL body holds a RIGHT join over a computed SHORT column runs with
     // a NULL value: t.sid != 0 is false on the 0 that the join puts in the SHORT column, so it drops
@@ -279,6 +302,23 @@ public class PGLateralJoinTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    // Runs the prepared statement once per value of its INTEGER parameter, and checks the rows of each
+    // execution
+    private static void assertExecutions(Connection connection, String sql, String header, Integer[] values, String[] rows) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < values.length; i++) {
+                if (values[i] == null) {
+                    statement.setNull(1, Types.INTEGER);
+                } else {
+                    statement.setInt(1, values[i]);
+                }
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(header + rows[i], sink, rs);
+                }
+            }
+        }
     }
 
     private static void bind(PreparedStatement statement, int index, Integer first, Long second) throws SQLException {

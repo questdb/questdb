@@ -99,9 +99,13 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // correlated conjuncts: terminateHere() moves some into the outer-ref join's ON clause, and
     // t.x = o.k lets the rewriter remove the outer-ref join
     private static final String[] CORRELATED = {"t.id > {K}", "t.id >= {K}", "t.x = {K}", "t.id != {K}"};
+    // constants of a filter on t.x, whose keys run from 0 to 3, see randomKeyPredicate()
+    private static final String[] KEY_CONSTANTS = {"0", "1", "2", "3", "NULL"};
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
     // the start of the CASE of nestedScalarSubQuery()
     private static final String NESTED_SCALAR_SUB_QUERY = "CASE WHEN (SELECT count() FROM";
+    // the plan nodes of a RIGHT or FULL join
+    private static final String[] OUTER_JOIN_PLAN_NODES = {"Right Outer Join", "Full Outer Join", "Nested Loop Right Join", "Nested Loop Full Join"};
     private static final int QUERIES_PER_ROUND = 40;
     // bind variable values of a filter on refunds, whose ids start at 100
     private static final Object[] REFUND_BIND_VALUES = {null, 0, 101};
@@ -156,6 +160,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private int nestedSubQueryComparedCount;
     // queries whose filter provably drops every NULL-extended row
     private int nullRejectingCount;
+    // queries whose RIGHT joins the rewriter plans as INNER joins, as their filter drops the rows that
+    // the joins NULL-extend, and whose LATERAL rows were compared with the reference rows
+    private int reducedJoinComparedCount;
     // queries of the SLAVE_KEY_READ_EARLIER shape whose LATERAL rows were compared with the reference rows
     private int slaveKeyReadEarlierComparedCount;
     // queries of the TWO_RIGHT_JOINS shape whose LATERAL rows were compared with the reference rows
@@ -185,26 +192,26 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // maximum of a column of a numeric or time type, which is NULL only when every trade holds NULL,
     // or against a CASE over a scalar sub-query, see nestedScalarSubQuery(). A NULL $1 makes = true
     // on the NULL-extended row, and the query must then return rows when the sub-query drops that row.
-    // A coverage query binds NULL and compares against a sub-query that is never NULL, see
-    // nonNullScalarSubQuery(), so that only its second predicate drops the NULL-extended rows on any
-    // data.
-    private static void addRuntimeValuePair(Rnd rnd, Bind bind, List<Predicate> predicates, boolean isCoverageQuery) {
+    // A query of Coverage.MIXED_TYPE_VERDICT binds NULL and compares against a sub-query that is never
+    // NULL, see nonNullScalarSubQuery(), so that only its second predicate drops the NULL-extended rows
+    // on any data.
+    private static void addRuntimeValuePair(Rnd rnd, Bind bind, List<Predicate> predicates, boolean isMixedTypeCoverage) {
         FuzzColumn column;
         do {
             column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         } while (column.bindType == null || isTypeWithoutNull(column));
         bind.type = column.bindType;
-        bind.value = isCoverageQuery || rnd.nextBoolean() ? null : column.bindValues[rnd.nextInt(column.bindValues.length)];
+        bind.value = isMixedTypeCoverage || rnd.nextBoolean() ? null : column.bindValues[rnd.nextInt(column.bindValues.length)];
         predicates.add(new Predicate("t." + column.name + " = $1", PredicateKind.RUNTIME_VALUE_EQUALITY, column.name));
-        // a coverage query computes the column of the second predicate only, so it reads another column
+        // such a query computes the column of the second predicate only, so it reads another column
         final String firstColumn = column.name;
         do {
             column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         } while (column.bindType == null || column.bindType.equals("str") || isTypeWithoutNull(column)
-                || (isCoverageQuery && column.name.equals(firstColumn)));
+                || (isMixedTypeCoverage && column.name.equals(firstColumn)));
         final String ref = "t." + column.name;
         final String op = rnd.nextBoolean() ? "<=" : ">=";
-        if (isCoverageQuery) {
+        if (isMixedTypeCoverage) {
             final String subQuery = nonNullScalarSubQuery(column);
             predicates.add(new Predicate(rnd.nextBoolean() ? ref + ' ' + op + ' ' + subQuery : subQuery + ' ' + op + ' ' + ref, PredicateKind.RUNTIME_VALUE, column.name));
             return;
@@ -282,6 +289,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
 
     private static boolean hasNestedScalarSubQuery(CharSequence filter) {
         return Chars.contains(filter, NESTED_SCALAR_SUB_QUERY);
+    }
+
+    private static boolean hasOuterJoinPlanNode(CharSequence plan) {
+        for (String node : OUTER_JOIN_PLAN_NODES) {
+            if (Chars.contains(plan, node)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isEqualityOnlyType(FuzzColumn column) {
@@ -408,6 +424,18 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return rnd.nextDouble() < nullRate ? "NULL" : Integer.toString(rnd.nextInt(4));
     }
 
+    // A filter on t.x, which the ON clauses equate with r.k and, through it, with the outer key, so the
+    // optimiser carries its constant across the joins and into the outer key sub-query
+    private static Predicate randomKeyPredicate(Rnd rnd) {
+        final String key = KEY_CONSTANTS[rnd.nextInt(KEY_CONSTANTS.length)];
+        final String other = KEY_CONSTANTS[rnd.nextInt(KEY_CONSTANTS.length)];
+        return switch (rnd.nextInt(3)) {
+            case 0 -> new Predicate("t.x IN (" + key + ", " + other + ')', PredicateKind.PROVABLE, null);
+            case 1 -> new Predicate("t.x BETWEEN " + key + " AND " + other, PredicateKind.PROVABLE, null);
+            default -> new Predicate("t.x " + COMPARISONS[rnd.nextInt(COMPARISONS.length)] + ' ' + key, PredicateKind.PROVABLE, null);
+        };
+    }
+
     // A filter on refunds, which a RIGHT join keeps whole, drops no row that the join NULL-extends on
     // trades, so it does not count towards the verdict.
     private static Predicate randomRefundsPredicate(Rnd rnd, Bind bind) {
@@ -466,6 +494,19 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         };
     }
 
+    // < or > against a value of the column, on a column of trades whose type has NULL, which is false
+    // on the rows that a RIGHT join NULL-extends, whatever the other side holds
+    private static Predicate reducedJoinPredicate(Rnd rnd) {
+        FuzzColumn column;
+        do {
+            column = COLUMNS[rnd.nextInt(COLUMNS.length)];
+        } while (column.bindType == null || column.bindType.equals("str") || isTypeWithoutNull(column));
+        final String ref = "t." + column.name;
+        final String op = rnd.nextBoolean() ? "<" : ">";
+        final String value = column.values[rnd.nextInt(column.values.length)];
+        return new Predicate(rnd.nextBoolean() ? ref + ' ' + op + ' ' + value : value + ' ' + op + ' ' + ref, PredicateKind.PROVABLE, column.name);
+    }
+
     private static List<String> rowsOf(CharSequence printed) {
         final List<String> rows = new ArrayList<>(Arrays.asList(printed.toString().split("\n")));
         // the header
@@ -511,18 +552,24 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
     }
 
-    // A coverage query has a filter of the two predicates of addRuntimeValuePair() alone, on a shape
-    // that keeps the outer-ref join and reads a mixed projection that computes the column of the second
-    // predicate: = against a NULL $1 on a column of known type, which keeps the NULL-extended rows, and
-    // a comparison of the computed column with a sub-query that is never NULL, which drops them. Its
-    // verdict is PROVEN_BY_LATER_RUNTIME_PREDICATE and needs the computed column, whatever the data.
-    private void assertRandomQuery(Rnd rnd, List<String> outerRows, List<String> failures, boolean isCoverageQuery) throws SqlException {
+    // A query of Coverage.MIXED_TYPE_VERDICT has a filter of the two predicates of addRuntimeValuePair()
+    // alone, on a shape that keeps the outer-ref join and reads a mixed projection that computes the
+    // column of the second predicate: = against a NULL $1 on a column of known type, which keeps the
+    // NULL-extended rows, and a comparison of the computed column with a sub-query that is never NULL,
+    // which drops them. Its verdict is PROVEN_BY_LATER_RUNTIME_PREDICATE and needs the computed column,
+    // whatever the data. A query of Coverage.REDUCED_JOIN has a filter of reducedJoinPredicate() alone,
+    // on trades itself and a shape whose RIGHT joins follow an ON clause that reads the outer key, and
+    // its plan must have no outer join.
+    private void assertRandomQuery(Rnd rnd, List<String> outerRows, List<String> failures, Coverage coverage) throws SqlException {
         bindVariableService.clear();
         final Bind bind = new Bind();
         final List<Predicate> predicates = new ArrayList<>();
-        final boolean isRuntimeValuePair = isCoverageQuery || rnd.nextBoolean();
+        final boolean isMixedTypeCoverage = coverage == Coverage.MIXED_TYPE_VERDICT;
+        final boolean isRuntimeValuePair = isMixedTypeCoverage || (coverage == Coverage.NONE && rnd.nextBoolean());
         if (isRuntimeValuePair) {
-            addRuntimeValuePair(rnd, bind, predicates, isCoverageQuery);
+            addRuntimeValuePair(rnd, bind, predicates, isMixedTypeCoverage);
+        } else if (coverage == Coverage.REDUCED_JOIN) {
+            predicates.add(reducedJoinPredicate(rnd));
         } else {
             predicates.add(randomPredicate(rnd, bind));
         }
@@ -531,7 +578,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             filter.append(" AND ").append(predicates.get(i).sql);
         }
         boolean hasOr = false;
-        for (int i = 0, n = isCoverageQuery ? 0 : rnd.nextInt(3); i < n; i++) {
+        for (int i = 0, n = coverage == Coverage.NONE ? rnd.nextInt(3) : 0; i < n; i++) {
             final boolean isOr = rnd.nextInt(4) == 0;
             hasOr |= isOr;
             final Predicate predicate = randomPredicate(rnd, bind);
@@ -539,14 +586,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             filter.append(isOr ? " OR " : " AND ").append(predicate.sql);
         }
         Shape shape = SHAPES[rnd.nextInt(SHAPES.length)];
-        while (isCoverageQuery && (shape.hasWhereKey || shape.hasKeyOnFullJoinedTable)) {
+        while ((isMixedTypeCoverage && (shape.hasWhereKey || shape.hasKeyOnFullJoinedTable))
+                || (coverage == Coverage.REDUCED_JOIN && (shape.hasWhereKey || shape.hasCorrelatedSlave || shape.hasFullJoin()))) {
             shape = SHAPES[rnd.nextInt(SHAPES.length)];
         }
         // t.x = o.k, in the shape or as the correlated conjunct, keys the rows by t.x, and = against a
         // runtime value then does not count towards the verdict.
         boolean isOuterRefJoinKept = !shape.hasWhereKey;
         boolean hasWhereKeyCorrelated = false;
-        if (!isCoverageQuery && rnd.nextInt(3) == 0) {
+        if (coverage == Coverage.NONE && rnd.nextInt(3) == 0) {
             final String correlated = CORRELATED[rnd.nextInt(CORRELATED.length)];
             isOuterRefJoinKept = !shape.hasWhereKey && !correlated.equals("t.x = {K}");
             hasWhereKeyCorrelated = shape.hasWhereKey && !correlated.equals("t.x = {K}");
@@ -563,8 +611,11 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         // of the sub-query comparison, so that only the latter drops the NULL-extended rows while $1
         // is NULL
         final String table;
-        if (isCoverageQuery) {
+        if (isMixedTypeCoverage) {
             table = mixedProjection(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column);
+        } else if (coverage == Coverage.REDUCED_JOIN) {
+            // the rewriter knows the types of the columns of a table only
+            table = "trades";
         } else if (isRuntimeValuePair) {
             table = randomTable(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column, isUnionAllAllowed);
         } else {
@@ -650,6 +701,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             if (!actual.equals(expected)) {
                 failures.add("WRONG ROWS " + actual + ", expected " + expected + bindSuffix + "\n    " + sql);
             }
+            if (coverage == Coverage.REDUCED_JOIN) {
+                sink.clear();
+                printSql("EXPLAIN " + sql);
+                if (hasOuterJoinPlanNode(sink)) {
+                    failures.add("OUTER JOIN KEPT although the filter drops the rows that it NULL-extends\n    " + sql + "\n" + sink);
+                } else {
+                    reducedJoinComparedCount++;
+                }
+            }
         } catch (SqlException e) {
             failures.add("failed with [" + e.getPosition() + "] " + e.getFlyweightMessage() + ", expected " + expected + bindSuffix + "\n    " + sql);
         } catch (Throwable e) {
@@ -730,6 +790,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             laterJoinComparedCount = 0;
             slaveKeyReadEarlierComparedCount = 0;
             nullRejectingCount = 0;
+            reducedJoinComparedCount = 0;
             laterRuntimeVerdictCount = 0;
             mixedTypeVerdictCount = 0;
             nestedSubQueryComparedCount = 0;
@@ -745,14 +806,19 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 final List<String> outerRows = rowsOf(sink);
                 Assert.assertEquals(outerRowCount, outerRows.size());
                 for (int q = 0; q < QUERIES_PER_ROUND; q++) {
-                    assertRandomQuery(rnd, outerRows, failures, false);
+                    assertRandomQuery(rnd, outerRows, failures, Coverage.NONE);
                     queryCount++;
                 }
                 // A verdict that reads a runtime value needs a value that is not NULL, and a scalar
                 // sub-query over trades is NULL in a round whose trades is empty or holds only NULL in
                 // the column, so a whole round may make no such verdict. The coverage query makes one
                 // of each kind on any data, so the counts asserted below do not depend on the seed.
-                assertRandomQuery(rnd, outerRows, failures, true);
+                assertRandomQuery(rnd, outerRows, failures, Coverage.MIXED_TYPE_VERDICT);
+                queryCount++;
+                // One random query in 16 reads trades itself, whose column types the rewriter knows,
+                // so a round may plan no RIGHT join as an INNER join. The coverage query does on any
+                // data.
+                assertRandomQuery(rnd, outerRows, failures, Coverage.REDUCED_JOIN);
                 queryCount++;
                 execute("DROP TABLE orders");
                 execute("DROP TABLE refunds");
@@ -769,7 +835,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     + " proven by a computed column next to a predicate against a runtime value, "
                     + nestedSubQueryComparedCount + " compared with a nested sub-query, " + whereKeyCorrelatedComparedCount
                     + " compared with a WHERE key next to a correlated condition, " + slaveKeyReadEarlierComparedCount
-                    + " compared with the key on a table joined after an ON clause that reads the outer key";
+                    + " compared with the key on a table joined after an ON clause that reads the outer key, "
+                    + reducedJoinComparedCount + " compared with the RIGHT joins planned as INNER joins";
             LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
                     .$(", compared=").$(comparedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
@@ -778,7 +845,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
                     .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount)
                     .$(", whereKeyCorrelatedCompared=").$(whereKeyCorrelatedComparedCount)
-                    .$(", slaveKeyReadEarlierCompared=").$(slaveKeyReadEarlierComparedCount).I$();
+                    .$(", slaveKeyReadEarlierCompared=").$(slaveKeyReadEarlierComparedCount)
+                    .$(", reducedJoinCompared=").$(reducedJoinComparedCount).I$();
             if (!failures.isEmpty()) {
                 Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + counts + "):\n"
                         + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
@@ -810,12 +878,19 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // A generator that never keyed the outer row on a table joined after an ON clause that
             // reads it would not show that such a query returns the rows of its body.
             Assert.assertTrue("no query with the key on a table joined after an ON clause that reads the outer key compared: " + counts, slaveKeyReadEarlierComparedCount > 0);
+            // A generator that never filtered trades itself on a column of known type would not show
+            // that the rewriter plans the RIGHT joins as INNER joins and returns the same rows. The
+            // coverage query of each round plans them so.
+            Assert.assertTrue("fewer queries with the RIGHT joins planned as INNER joins compared than rounds: " + counts, reducedJoinComparedCount >= rounds);
         });
     }
 
     private Predicate randomPredicate(Rnd rnd, Bind bind) {
         if (rnd.nextInt(8) == 0) {
             return randomRefundsPredicate(rnd, bind);
+        }
+        if (rnd.nextInt(8) == 0) {
+            return randomKeyPredicate(rnd);
         }
         final FuzzColumn column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         final String ref = "t." + column.name;
@@ -875,6 +950,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // the queries that each round adds to its random ones, see fuzz() and assertRandomQuery()
+    private enum Coverage {
+        // a random query
+        NONE,
+        // = against a NULL $1 next to a comparison on a computed column with a sub-query that is never NULL
+        MIXED_TYPE_VERDICT,
+        // < or > on a column of trades itself, whose RIGHT joins the rewriter plans as INNER joins
+        REDUCED_JOIN
+    }
+
     private enum FilterOutcome {
         COMPILE_ERROR, RUN_ERROR, RUNS
     }
@@ -912,6 +997,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     // column: the name of the trades column that the predicate reads, or null for a predicate on refunds
+    // or on the key t.x
     private record Predicate(String sql, PredicateKind kind, String column) {
     }
 
@@ -926,6 +1012,11 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     ) {
         Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {
             this(body, hasWhereKey, hasKeyOnFullJoinedTable, false, false);
+        }
+
+        // a FULL join reduces only when the filter drops the rows that it NULL-extends on both sides
+        boolean hasFullJoin() {
+            return body.contains("FULL JOIN");
         }
     }
 }

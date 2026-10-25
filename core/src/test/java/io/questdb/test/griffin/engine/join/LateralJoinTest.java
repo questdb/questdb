@@ -2044,11 +2044,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // terminateHere() moves WHERE t.id > o.k into the outer-ref join's ON clause, ahead of the
-    // RIGHT join, so it never sees the unmatched refunds. Per outer row, WHERE drops them: t.id
-    // is NULL in them, and for the NULL o.k of order 3, t.id > o.k holds for no row at all. A
-    // copy of the condition in WHERE drops them after the join; without it, refund 101 reached
-    // order 3, as = matches its NULL outer-ref key to the NULL o.k.
+    // Per outer row, WHERE t.id > o.k drops the unmatched refunds, as t.id is NULL in them, so the
+    // rewriter plans the RIGHT join as an INNER join, which joins no copy of refunds per outer key.
+    // For the NULL o.k of order 3, t.id > o.k holds for no row at all: refund 101 must not reach
+    // order 3, as = matches a NULL outer-ref key to the NULL o.k.
     @Test
     public void testLateralCorrelatedRightJoinOnWithCorrelatedMasterFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2057,7 +2056,37 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > o.k) l ORDER BY o.id")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k<t.id\n                        Hash Right Outer Join Light")
+                    .withPlan("""
+                            Encode sort
+                              keys: [id]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: l.__qdb_outer_ref__0_k=o.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: r.k=__qdb_outer_ref__0_k
+                                                    Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k<t.id
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_k=t.x
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Hash
+                                                                GroupBy vectorized: true workers: 1
+                                                                  keys: [k]
+                                                                  values: [count(*)]
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: orders
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: refunds
+                            """)
                     .returns("""
                             id\ttid\trid
                             1\t10\t100
