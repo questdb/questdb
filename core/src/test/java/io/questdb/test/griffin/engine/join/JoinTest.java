@@ -1713,6 +1713,104 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinSlaveOmitsMasterKeyColumnName() throws Exception {
+        // q.v is a VARCHAR column that nothing references; only the master's key column t.v shares
+        // its name. A full-fat ASOF or LT join rejects a var-size slave column, so the slave must not
+        // project q.v for the master's key name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, v VARCHAR, px INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, v VARCHAR, bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (code VARCHAR, name VARCHAR)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('A', 'A', 1, '2024-01-01T00:00:10.000000Z'),
+                        ('B', 'B', 2, '2024-01-01T00:00:20.000000Z'),
+                        ('C', 'A', 3, '2024-01-01T00:00:30.000000Z'),
+                        ('D', 'C', 4, '2024-01-01T00:00:40.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('A', 'x', 10, '2024-01-01T00:00:05.000000Z'),
+                        ('B', 'y', 20, '2024-01-01T00:00:06.000000Z'),
+                        ('A', 'z', 30, '2024-01-01T00:00:30.000000Z'),
+                        ('C', 'w', 40, '2024-01-01T00:00:45.000000Z')
+                    """);
+            execute("INSERT INTO instruments VALUES ('A', 'alpha'), ('B', 'beta')");
+            // UNION ALL gives the view no random access, so ASOF and LT joins run full-fat on it
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM quotes UNION ALL SELECT * FROM quotes WHERE bid < 0) TIMESTAMP(ts))");
+
+            // the default compiler on a view slave, and the full-fat compiler flag on a table slave
+            final String[] slaves = {"uq", "quotes"};
+            final boolean[] isFullFatFlags = {false, true};
+            for (int s = 0; s < slaves.length; s++) {
+                final String slave = slaves[s];
+                final boolean isFullFat = isFullFatFlags[s];
+
+                // the inner join implies q.sym = i.code from q.sym = t.v, and the key keeps both equalities
+                final String innerFrom = " FROM trades t JOIN instruments i ON i.code = t.v ";
+                final String innerOn = " q ON q.sym = t.v AND q.sym = i.code";
+                assertQuery("SELECT t.ts, t.px, i.name, q.sym, q.bid" + innerFrom + "ASOF JOIN " + slave + innerOn)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .noRandomAccess()
+                        .expectSize(isFullFat)
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tpx\tname\tsym\tbid
+                                2024-01-01T00:00:10.000000Z\t1\talpha\tA\t10
+                                2024-01-01T00:00:20.000000Z\t2\tbeta\tB\t20
+                                2024-01-01T00:00:30.000000Z\t3\talpha\tA\t30
+                                """);
+                assertQuery("SELECT t.ts, t.px, i.name, q.sym, q.bid" + innerFrom + "LT JOIN " + slave + innerOn)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .noRandomAccess()
+                        .expectSize(isFullFat)
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tpx\tname\tsym\tbid
+                                2024-01-01T00:00:10.000000Z\t1\talpha\tA\t10
+                                2024-01-01T00:00:20.000000Z\t2\tbeta\tB\t20
+                                2024-01-01T00:00:30.000000Z\t3\talpha\tA\t10
+                                """);
+
+                // a single key pair
+                assertQuery("SELECT t.ts, t.px, q.sym, q.bid FROM trades t ASOF JOIN " + slave + " q ON q.sym = t.v")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tpx\tsym\tbid
+                                2024-01-01T00:00:10.000000Z\t1\tA\t10
+                                2024-01-01T00:00:20.000000Z\t2\tB\t20
+                                2024-01-01T00:00:30.000000Z\t3\tA\t30
+                                2024-01-01T00:00:40.000000Z\t4\t\tnull
+                                """);
+                assertQuery("SELECT t.ts, t.px, q.sym, q.bid FROM trades t LT JOIN " + slave + " q ON q.sym = t.v")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tpx\tsym\tbid
+                                2024-01-01T00:00:10.000000Z\t1\tA\t10
+                                2024-01-01T00:00:20.000000Z\t2\tB\t20
+                                2024-01-01T00:00:30.000000Z\t3\tA\t10
+                                2024-01-01T00:00:40.000000Z\t4\t\tnull
+                                """);
+            }
+
+            // a column that the query references still fails as before
+            assertQuery("SELECT t.ts, q.v FROM trades t ASOF JOIN uq q ON q.sym = t.v")
+                    .noLeakCheck()
+                    .fails(31, "right side column 'v' is of unsupported type");
+        });
+    }
+
+    @Test
     public void testAsOfJoinSlaveSymbol() throws Exception {
         testAsOfJoinSlaveSymbol0(false);
     }
@@ -4368,6 +4466,166 @@ public class JoinTest extends AbstractCairoTest {
                 // The position points at the join keyword; the prefix "SELECT a.ts, b.arr
                 // FROM m a " is identical for LT and ASOF, so the keyword starts at 28.
                 assertExceptionNoLeakCheck(arraySql, 28, "right side column 'arr' is of unsupported type", true);
+            }
+        });
+    }
+
+    @Test
+    public void testFullJoinChainKeepsUnmatchedRowsOfSharedKey() throws Exception {
+        // t0 has fewer rows than t1, so the first FULL join hashes t0 on t0.a, and no t0 row passes
+        // its filter. Only the t0 row (null, 1, null) matches t4 rows, and it shares its NULL key with
+        // (null, null, 1), so the join must emit every unmatched t0 row of a key, not the first one.
+        assertQuery("""
+                SELECT t0.a c0a, t0.b c0b, t0.c c0c, t1.a c1a, t2.a c2a, t3.b c3b, t4.a c4a, t4.b c4b, t4.c c4c
+                FROM t0
+                FULL JOIN t1 ON t1.c > t0.b AND t1.c = t0.a AND t1.c > t0.a
+                FULL JOIN t2 ON t2.c > t0.c AND t2.b > t1.a AND t2.a = t0.b
+                FULL JOIN t3 ON t0.b = t3.b AND t3.b = t1.a
+                RIGHT JOIN t4 ON t4.c > t0.b
+                ORDER BY c4a, c4b, c4c, c0a
+                """)
+                .ddl(
+                        "CREATE TABLE t0 (a INT, b INT, c INT)",
+                        "CREATE TABLE t1 (a INT, b INT, c INT)",
+                        "CREATE TABLE t2 (a INT, b INT, c INT)",
+                        "CREATE TABLE t3 (a INT, b INT, c INT)",
+                        "CREATE TABLE t4 (a INT, b INT, c INT)",
+                        """
+                                INSERT INTO t0 VALUES
+                                    (2, null, null),
+                                    (2, 2, 2),
+                                    (null, 1, null),
+                                    (null, null, 1)
+                                """,
+                        """
+                                INSERT INTO t1 VALUES
+                                    (3, 2, 2),
+                                    (null, 2, 1),
+                                    (2, 1, 2),
+                                    (null, 3, null),
+                                    (2, null, null)
+                                """,
+                        """
+                                INSERT INTO t2 VALUES
+                                    (2, 2, 2),
+                                    (1, 1, 2),
+                                    (3, null, null),
+                                    (null, 3, 1),
+                                    (2, 2, 1)
+                                """,
+                        """
+                                INSERT INTO t3 VALUES
+                                    (null, 3, 1),
+                                    (2, 2, 2),
+                                    (1, 3, 2)
+                                """,
+                        """
+                                INSERT INTO t4 VALUES
+                                    (2, 2, 2),
+                                    (null, 2, 3),
+                                    (2, 3, 2)
+                                """
+                )
+                .returns("""
+                        c0a\tc0b\tc0c\tc1a\tc2a\tc3b\tc4a\tc4b\tc4c
+                        null\t1\tnull\tnull\tnull\tnull\tnull\t2\t3
+                        2\t2\t2\tnull\tnull\tnull\tnull\t2\t3
+                        null\t1\tnull\tnull\tnull\tnull\t2\t2\t2
+                        null\t1\tnull\tnull\tnull\tnull\t2\t3\t2
+                        """);
+    }
+
+    @Test
+    public void testFullJoinFilterKeepsUnmatchedRowsOfSharedKey() throws Exception {
+        // A FULL join with a filter emits its unmatched build rows after the probe. The light join
+        // builds on the input with fewer rows, the left one in "t0 FULL JOIN t1", and must emit every
+        // unmatched row of a key, NULL keys included.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("CREATE TABLE n0 (a INT, b INT)");
+            execute("CREATE TABLE t1 (a INT, c INT)");
+            execute("CREATE TABLE t2 (b INT)");
+            execute("INSERT INTO t0 VALUES (7, 1), (7, 2)");
+            execute("INSERT INTO n0 VALUES (null, 1), (null, 2)");
+            execute("INSERT INTO t1 VALUES (1, 1), (2, 2), (3, 3)");
+            execute("INSERT INTO t2 VALUES (5)");
+
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String from : new String[]{"t0 FULL JOIN t1 ON t1.a = t0.a", "t1 FULL JOIN t0 ON t0.a = t1.a"}) {
+                    assertQuery("SELECT t0.a c0a, t0.b c0b, t1.a c1a, t1.c c1c FROM " + from + " AND t1.c > t0.b ORDER BY c0a, c0b, c1a")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .returns("""
+                                    c0a\tc0b\tc1a\tc1c
+                                    null\tnull\t1\t1
+                                    null\tnull\t2\t2
+                                    null\tnull\t3\t3
+                                    7\t1\tnull\tnull
+                                    7\t2\tnull\tnull
+                                    """);
+                }
+                assertQuery("SELECT n0.a c0a, n0.b c0b, t1.a c1a, t1.c c1c FROM n0 FULL JOIN t1 ON t1.a = n0.a AND t1.c > n0.b ORDER BY c0b, c1a")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFatJoin)
+                        .returns("""
+                                c0a\tc0b\tc1a\tc1c
+                                null\tnull\t1\t1
+                                null\tnull\t2\t2
+                                null\tnull\t3\t3
+                                null\t1\tnull\tnull
+                                null\t2\tnull\tnull
+                                """);
+                // t2 keeps both of its equalities, so the t0 FULL JOIN t1 join keeps the single key t1.a = t0.a
+                assertQuery("""
+                        SELECT t0.a c0a, t0.b c0b, t1.a c1a, t1.c c1c, t2.b c2b
+                        FROM t0
+                        FULL JOIN t1 ON t1.a = t0.a AND t1.c > t0.b
+                        FULL JOIN t2 ON t0.b = t2.b AND t2.b = t1.c
+                        ORDER BY c0a, c0b, c1a
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFatJoin)
+                        .returns("""
+                                c0a\tc0b\tc1a\tc1c\tc2b
+                                null\tnull\tnull\tnull\t5
+                                null\tnull\t1\t1\tnull
+                                null\tnull\t2\t2\tnull
+                                null\tnull\t3\t3\tnull
+                                7\t1\tnull\tnull\tnull
+                                7\t2\tnull\tnull\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFullJoinFilterSkipsMatchedRowsOfSharedKey() throws Exception {
+        // t0 has fewer rows than t1, so the light FULL join builds on t0 and probes t1. The probe row
+        // (7, 3) matches t0's (7, 2) and (7, 1) but not (7, 6) or (7, 5), which share their key. After
+        // the probe, the join emits exactly the unmatched t0 rows, whatever the filter returns for a
+        // NULL t1 side. The second pass of returns() rewinds the join through toTop().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("CREATE TABLE t1 (a INT, c INT)");
+            execute("INSERT INTO t0 VALUES (7, 5), (7, 1), (7, 6), (7, 2)");
+            execute("INSERT INTO t1 VALUES (7, 3), (1, 1), (2, 2), (3, 3), (4, 4)");
+
+            for (String filter : new String[]{"t1.c > t0.b", "(t1.c > t0.b OR t1.c IS NULL)"}) {
+                assertQuery("SELECT t0.a c0a, t0.b c0b, t1.a c1a, t1.c c1c FROM t0 FULL JOIN t1 ON t1.a = t0.a AND " + filter)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Hash Full Outer Join Light")
+                        .returns("""
+                                c0a\tc0b\tc1a\tc1c
+                                7\t2\t7\t3
+                                7\t1\t7\t3
+                                null\tnull\t1\t1
+                                null\tnull\t2\t2
+                                null\tnull\t3\t3
+                                null\tnull\t4\t4
+                                7\t6\tnull\tnull
+                                7\t5\tnull\tnull
+                                """);
             }
         });
     }
@@ -8084,6 +8342,20 @@ public class JoinTest extends AbstractCairoTest {
                             1\t20\t200
                             2\t20\t200
                             """);
+        });
+    }
+
+    @Test
+    public void testJoinInnerQualifiedColumnFilterWithNonBooleanExpressionFails() throws Exception {
+        // SqlOptimiser pushes each single-table conjunct into its join model's own WHERE clause
+        // and strips the table prefix there. The error still points at the column token.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+
+            final String sql = "SELECT * FROM trades t JOIN prices p ON t.sym = p.sym WHERE ";
+            assertQuery(sql + "t.qty > 1 AND p.price").noLeakCheck().fails(74, "boolean expression expected");
+            assertQuery(sql + "p.price > 1 AND t.qty").noLeakCheck().fails(76, "boolean expression expected");
         });
     }
 
@@ -15698,6 +15970,442 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedKeyColumnWithMixedStringTypesAsOfJoin() throws Exception {
+        // Compare mixed text keys across light and full-fat ASOF/LT joins. The optimizer may
+        // eliminate redundant equalities, but their order must not change the matched rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, v VARCHAR, s STRING, px INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE q (sym SYMBOL, bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE qs (s STRING, bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE iv (code VARCHAR, name VARCHAR)");
+            execute("CREATE TABLE istr (code STRING, name VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', 'A', 'A', 1, '2024-01-01T00:00:10.000000Z'),
+                        ('B', 'A', 'B', 2, '2024-01-01T00:00:20.000000Z'),
+                        ('A', 'B', 'A', 3, '2024-01-01T00:00:30.000000Z'),
+                        ('C', 'C', 'X', 4, '2024-01-01T00:00:40.000000Z')
+                    """);
+            // B comes first, so q's symbol keys differ from t's
+            execute("""
+                    INSERT INTO q VALUES
+                        ('B', 20, '2024-01-01T00:00:06.000000Z'),
+                        ('A', 10, '2024-01-01T00:00:05.000000Z'),
+                        ('A', 11, '2024-01-01T00:00:25.000000Z'),
+                        ('A', 12, '2024-01-01T00:00:30.000000Z'),
+                        ('C', 30, '2024-01-01T00:00:35.000000Z'),
+                        ('D', 40, '2024-01-01T00:00:45.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO qs VALUES
+                        ('A', 10, '2024-01-01T00:00:05.000000Z'),
+                        ('B', 20, '2024-01-01T00:00:06.000000Z'),
+                        ('A', 11, '2024-01-01T00:00:25.000000Z'),
+                        ('A', 12, '2024-01-01T00:00:30.000000Z'),
+                        ('C', 30, '2024-01-01T00:00:35.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO iv VALUES
+                        ('A', 'alpha'),
+                        ('B', 'beta'),
+                        ('C', 'gamma')
+                    """);
+            execute("""
+                    INSERT INTO istr VALUES
+                        ('A', 'alpha'),
+                        ('B', 'beta'),
+                        ('C', 'gamma')
+                    """);
+            // UNION ALL gives the views no random access, so ASOF and LT joins run full-fat on them
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q WHERE bid < 0) TIMESTAMP(ts))");
+            execute("CREATE VIEW uqs AS (SELECT * FROM (SELECT * FROM qs UNION ALL SELECT * FROM qs WHERE bid < 0) TIMESTAMP(ts))");
+
+            // the light join on a table slave, the full-fat join on a view slave, and the full-fat
+            // compiler flag on a table slave
+            final String[] slaves = {"q", "uq", "q"};
+            final String[] stringSlaves = {"qs", "uqs", "qs"};
+            final boolean[] isFullFatFlags = {false, false, true};
+            for (int s = 0; s < slaves.length; s++) {
+                final String slave = slaves[s];
+                final boolean isFullFat = isFullFatFlags[s];
+
+                // the inner join ties t.sym to i.code, a VARCHAR or a STRING
+                for (String instruments : new String[]{"iv", "istr"}) {
+                    for (String on : new String[]{"q.sym = t.sym AND q.sym = i.code", "q.sym = i.code AND q.sym = t.sym"}) {
+                        final String from = " FROM t JOIN " + instruments + " i ON i.code = t.sym ";
+                        final String select = "SELECT t.ts, t.sym, i.name, q.sym qsym, q.bid";
+                        assertQuery(select + from + "ASOF JOIN " + slave + " q ON " + on)
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .noRandomAccess()
+                                .expectSize(isFullFat)
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tsym\tname\tqsym\tbid
+                                        2024-01-01T00:00:10.000000Z\tA\talpha\tA\t10
+                                        2024-01-01T00:00:20.000000Z\tB\tbeta\tB\t20
+                                        2024-01-01T00:00:30.000000Z\tA\talpha\tA\t12
+                                        2024-01-01T00:00:40.000000Z\tC\tgamma\tC\t30
+                                        """);
+                        assertQuery(select + from + "LT JOIN " + slave + " q ON " + on)
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .noRandomAccess()
+                                .expectSize(isFullFat)
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tsym\tname\tqsym\tbid
+                                        2024-01-01T00:00:10.000000Z\tA\talpha\tA\t10
+                                        2024-01-01T00:00:20.000000Z\tB\tbeta\tB\t20
+                                        2024-01-01T00:00:30.000000Z\tA\talpha\tA\t11
+                                        2024-01-01T00:00:40.000000Z\tC\tgamma\tC\t30
+                                        """);
+                    }
+                }
+
+                // A STRING slave key paired with VARCHAR is exposed from the full-fat key.
+                final String stringSlave = stringSlaves[s];
+                assertQuery("SELECT t.ts, t.v, q.s qs, q.bid FROM t ASOF JOIN " + stringSlave + " q ON q.s = t.v")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv\tqs\tbid
+                                2024-01-01T00:00:10.000000Z\tA\tA\t10
+                                2024-01-01T00:00:20.000000Z\tA\tA\t10
+                                2024-01-01T00:00:30.000000Z\tB\tB\t20
+                                2024-01-01T00:00:40.000000Z\tC\tC\t30
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedKeyColumnWithMixedStringTypesHashJoin() throws Exception {
+        // Redundant equalities across mixed text types and different SYMBOL dictionaries must
+        // return the same rows with both light and full-fat hash joins.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, s STRING, px INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE q (sym SYMBOL, bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE iv (code VARCHAR, name VARCHAR)");
+            execute("CREATE TABLE istr (code STRING, name VARCHAR)");
+            execute("CREATE TABLE isym (code SYMBOL, name VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', 'A', 1, '2024-01-01T00:00:10.000000Z'),
+                        ('B', 'B', 2, '2024-01-01T00:00:20.000000Z'),
+                        ('A', 'A', 3, '2024-01-01T00:00:30.000000Z'),
+                        ('C', 'X', 4, '2024-01-01T00:00:40.000000Z')
+                    """);
+            // the three SYMBOL columns assign their keys in different orders
+            execute("""
+                    INSERT INTO q VALUES
+                        ('B', 20, '2024-01-01T00:00:06.000000Z'),
+                        ('A', 10, '2024-01-01T00:00:05.000000Z'),
+                        ('A', 11, '2024-01-01T00:00:25.000000Z'),
+                        ('A', 12, '2024-01-01T00:00:30.000000Z'),
+                        ('C', 30, '2024-01-01T00:00:35.000000Z'),
+                        ('D', 40, '2024-01-01T00:00:45.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO iv VALUES
+                        ('A', 'alpha'),
+                        ('B', 'beta'),
+                        ('C', 'gamma')
+                    """);
+            execute("""
+                    INSERT INTO istr VALUES
+                        ('A', 'alpha'),
+                        ('B', 'beta'),
+                        ('C', 'gamma')
+                    """);
+            execute("""
+                    INSERT INTO isym VALUES
+                        ('C', 'gamma'),
+                        ('B', 'beta'),
+                        ('A', 'alpha')
+                    """);
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                // the inner join ties t.sym to i.code, a VARCHAR, a STRING or a SYMBOL
+                for (String instruments : new String[]{"iv", "istr", "isym"}) {
+                    final String from = " FROM t JOIN " + instruments + " i ON i.code = t.sym ";
+                    assertQuery("SELECT t.px, i.name, q.sym qsym, q.bid" + from + "LEFT JOIN q ON q.sym = t.sym AND q.sym = i.code ORDER BY t.px, q.bid")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    px\tname\tqsym\tbid
+                                    1\talpha\tA\t10
+                                    1\talpha\tA\t11
+                                    1\talpha\tA\t12
+                                    2\tbeta\tB\t20
+                                    3\talpha\tA\t10
+                                    3\talpha\tA\t11
+                                    3\talpha\tA\t12
+                                    4\tgamma\tC\t30
+                                    """);
+                    assertQuery("SELECT t.px, i.name, q.sym qsym, q.bid" + from + "FULL JOIN q ON q.sym = t.sym AND q.sym = i.code ORDER BY t.px, q.bid")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    px\tname\tqsym\tbid
+                                    null\t\tD\t40
+                                    1\talpha\tA\t10
+                                    1\talpha\tA\t11
+                                    1\talpha\tA\t12
+                                    2\tbeta\tB\t20
+                                    3\talpha\tA\t10
+                                    3\talpha\tA\t11
+                                    3\talpha\tA\t12
+                                    4\tgamma\tC\t30
+                                    """);
+                    // Also exercise an outer-joined dimension followed by an inner join.
+                    assertQuery("SELECT t.px, i.name, q.sym qsym, q.bid FROM t LEFT JOIN " + instruments
+                            + " i ON i.code = t.sym JOIN q ON q.sym = t.sym AND q.sym = i.code ORDER BY t.px, q.bid")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .expectSize(isFullFat)
+                            .returns("""
+                                    px\tname\tqsym\tbid
+                                    1\talpha\tA\t10
+                                    1\talpha\tA\t11
+                                    1\talpha\tA\t12
+                                    2\tbeta\tB\t20
+                                    3\talpha\tA\t10
+                                    3\talpha\tA\t11
+                                    3\talpha\tA\t12
+                                    4\tgamma\tC\t30
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedKeyColumnWithMixedTimestampUnits() throws Exception {
+        // Compare mixed timestamp keys across light and full-fat joins, including redundant
+        // equalities that the optimizer can eliminate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k TIMESTAMP, kn TIMESTAMP_NS, px INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ti (kn TIMESTAMP_NS, name VARCHAR)");
+            execute("CREATE TABLE q (k TIMESTAMP, bid INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2020-01-01T00:00:01.000000Z', '2020-01-01T00:00:01.000000000Z', 1, '2024-01-01T00:00:10.000000Z'),
+                        ('2020-01-01T00:00:02.000000Z', '2020-01-01T00:00:02.000000000Z', 2, '2024-01-01T00:00:20.000000Z'),
+                        ('2020-01-01T00:00:01.000000Z', '2020-01-01T00:00:03.000000000Z', 3, '2024-01-01T00:00:30.000000Z'),
+                        ('2020-01-01T00:00:03.000000Z', '2020-01-01T00:00:03.000000000Z', 4, '2024-01-01T00:00:40.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO ti VALUES
+                        ('2020-01-01T00:00:01.000000000Z', 'one'),
+                        ('2020-01-01T00:00:02.000000000Z', 'two'),
+                        ('2020-01-01T00:00:03.000000000Z', 'three')
+                    """);
+            execute("""
+                    INSERT INTO q VALUES
+                        ('2020-01-01T00:00:01.000000Z', 10, '2024-01-01T00:00:05.000000Z'),
+                        ('2020-01-01T00:00:02.000000Z', 20, '2024-01-01T00:00:06.000000Z'),
+                        ('2020-01-01T00:00:01.000000Z', 11, '2024-01-01T00:00:25.000000Z'),
+                        ('2020-01-01T00:00:01.000000Z', 12, '2024-01-01T00:00:30.000000Z'),
+                        ('2020-01-01T00:00:03.000000Z', 30, '2024-01-01T00:00:35.000000Z')
+                    """);
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q WHERE bid < 0) TIMESTAMP(ts))");
+
+            final String[] slaves = {"q", "uq", "q"};
+            final boolean[] isFullFatFlags = {false, false, true};
+            for (int s = 0; s < slaves.length; s++) {
+                final String slave = slaves[s];
+                final boolean isFullFat = isFullFatFlags[s];
+                final String k1 = "2020-01-01T00:00:01.000000000Z";
+                final String k2 = "2020-01-01T00:00:02.000000000Z";
+                final String k3 = "2020-01-01T00:00:03.000000000Z";
+
+                // The inner join ties t.k to i.kn. Cast the output to fixed units because the
+                // optimizer can remove a redundant key pair before the full-fat join exposes it.
+                for (String on : new String[]{"q.k = t.k AND q.k = i.kn", "q.k = i.kn AND q.k = t.k"}) {
+                    final String from = " FROM t JOIN ti i ON i.kn = t.k ";
+                    assertQuery("SELECT t.ts, t.px, i.name, q.k::TIMESTAMP_NS qk, q.bid" + from + "ASOF JOIN " + slave + " q ON " + on)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .noRandomAccess()
+                            .expectSize(isFullFat)
+                            .timestamp("ts")
+                            .returns("ts\tpx\tname\tqk\tbid\n" +
+                                    "2024-01-01T00:00:10.000000Z\t1\tone\t" + k1 + "\t10\n" +
+                                    "2024-01-01T00:00:20.000000Z\t2\ttwo\t" + k2 + "\t20\n" +
+                                    "2024-01-01T00:00:30.000000Z\t3\tone\t" + k1 + "\t12\n" +
+                                    "2024-01-01T00:00:40.000000Z\t4\tthree\t" + k3 + "\t30\n");
+                    assertQuery("SELECT t.ts, t.px, i.name, q.k::TIMESTAMP_NS qk, q.bid" + from + "LT JOIN " + slave + " q ON " + on)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .noRandomAccess()
+                            .expectSize(isFullFat)
+                            .timestamp("ts")
+                            .returns("ts\tpx\tname\tqk\tbid\n" +
+                                    "2024-01-01T00:00:10.000000Z\t1\tone\t" + k1 + "\t10\n" +
+                                    "2024-01-01T00:00:20.000000Z\t2\ttwo\t" + k2 + "\t20\n" +
+                                    "2024-01-01T00:00:30.000000Z\t3\tone\t" + k1 + "\t11\n" +
+                                    "2024-01-01T00:00:40.000000Z\t4\tthree\t" + k3 + "\t30\n");
+                }
+
+                // One TIMESTAMP_NS partner alone. The full-fat join keys its map on q.k in nanos, but reads
+                // the key back in its own unit, so q.k is a TIMESTAMP whichever join runs, see
+                // FullFatJoinConvertedKeyTest.
+                assertQuery("SELECT t.ts, t.px, q.k qk, q.bid FROM t ASOF JOIN " + slave + " q ON q.k = t.kn")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tpx\tqk\tbid
+                                2024-01-01T00:00:10.000000Z\t1\t2020-01-01T00:00:01.000000Z\t10
+                                2024-01-01T00:00:20.000000Z\t2\t2020-01-01T00:00:02.000000Z\t20
+                                2024-01-01T00:00:30.000000Z\t3\t\tnull
+                                2024-01-01T00:00:40.000000Z\t4\t2020-01-01T00:00:03.000000Z\t30
+                                """);
+            }
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("SELECT t.px, i.name, q.bid FROM t JOIN ti i ON i.kn = t.k LEFT JOIN q ON q.k = t.k AND q.k = i.kn ORDER BY t.px, q.bid")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                px\tname\tbid
+                                1\tone\t10
+                                1\tone\t11
+                                1\tone\t12
+                                2\ttwo\t20
+                                3\tone\t10
+                                3\tone\t11
+                                3\tone\t12
+                                4\tthree\t30
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedKeyColumnWithMixedTimestampUnitsAndNullKeys() throws Exception {
+        // A TIMESTAMP key column with a TIMESTAMP_NS partner writes its keys in nanos. The widening keeps
+        // NULL as NULL, so a NULL key matches NULL keys, as keys of one unit do, and never the epoch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (px INT, k TIMESTAMP, kn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE q (bid INT, kk TIMESTAMP, kkn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2020-01-01T00:00:01.000000Z', '2020-01-01T00:00:01.000000000Z', '2024-01-01T00:00:10.000000Z'),
+                        (2, NULL, NULL, '2024-01-01T00:00:20.000000Z'),
+                        (3, '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000000000Z', '2024-01-01T00:00:30.000000Z')
+                    """);
+            // the NULL row follows the epoch row, so a NULL key read as the epoch would find it
+            execute("""
+                    INSERT INTO q VALUES
+                        (10, '2020-01-01T00:00:01.000000Z', '2020-01-01T00:00:01.000000000Z', '2024-01-01T00:00:02.000000Z'),
+                        (30, '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000000000Z', '2024-01-01T00:00:04.000000Z'),
+                        (20, NULL, NULL, '2024-01-01T00:00:06.000000Z')
+                    """);
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q WHERE bid < 0) TIMESTAMP(ts))");
+
+            // HORIZON JOIN builds its own key sinks, from the same encodings
+            for (String on : new String[]{"q.kk = t.kn", "q.kkn = t.k", "q.kk = t.kn AND q.kk = t.k"}) {
+                assertQuery("SELECT t.px, sum(q.bid) bid FROM t HORIZON JOIN q ON (" + on + ") LIST (0) AS h ORDER BY t.px")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                px\tbid
+                                1\t10
+                                2\t20
+                                3\t30
+                                """);
+            }
+
+            // the chunked sink falls back to the single-method one for keys this narrow
+            for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, sinkType);
+                final String[] slaves = {"q", "uq", "q"};
+                final boolean[] isFullFatFlags = {false, false, true};
+                for (int s = 0; s < slaves.length; s++) {
+                    final String slave = slaves[s];
+                    final boolean isFullFat = isFullFatFlags[s];
+                    for (String join : new String[]{"ASOF", "LT"}) {
+                        // One pair, with the slave key widened. A full-fat join reads the widened key back
+                        // in its own unit, so q.kk is a TIMESTAMP whichever join runs, see
+                        // FullFatJoinConvertedKeyTest.
+                        assertQuery("SELECT t.ts, t.px, q.kk qk, q.bid FROM t " + join + " JOIN " + slave + " q ON q.kk = t.kn")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .noRandomAccess()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tpx\tqk\tbid
+                                        2024-01-01T00:00:10.000000Z\t1\t2020-01-01T00:00:01.000000Z\t10
+                                        2024-01-01T00:00:20.000000Z\t2\t\t20
+                                        2024-01-01T00:00:30.000000Z\t3\t1970-01-01T00:00:00.000000Z\t30
+                                        """);
+                        // one pair, with the master key widened
+                        assertQuery("SELECT t.ts, t.px, q.kkn qk, q.bid FROM t " + join + " JOIN " + slave + " q ON q.kkn = t.k")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .noRandomAccess()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tpx\tqk\tbid
+                                        2024-01-01T00:00:10.000000Z\t1\t2020-01-01T00:00:01.000000000Z\t10
+                                        2024-01-01T00:00:20.000000Z\t2\t\t20
+                                        2024-01-01T00:00:30.000000Z\t3\t1970-01-01T00:00:00.000000000Z\t30
+                                        """);
+                    }
+                }
+
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    // q.kkn repeats under a RIGHT join, which keeps both pairs
+                    assertQuery("SELECT t.px, q.bid FROM t RIGHT JOIN q ON q.kkn = t.k AND q.kkn = t.kn ORDER BY q.bid")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    px\tbid
+                                    1\t10
+                                    2\t20
+                                    3\t30
+                                    """);
+                    // one pair: a NULL key matches the NULL row, not the epoch row
+                    for (String on : new String[]{"q.kkn = t.k", "q.kk = t.kn"}) {
+                        assertQuery("SELECT t.px, q.bid FROM t LEFT JOIN q ON " + on + " ORDER BY t.px")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .returns("""
+                                        px\tbid
+                                        1\t10
+                                        2\t20
+                                        3\t30
+                                        """);
+                    }
+                }
+
+                // the fused hash join GROUP BY builds its key sinks with the same factory
+                for (String on : new String[]{"q.kkn = t.k", "q.kk = t.kn"}) {
+                    assertQuery("SELECT t.px, count(q.bid) n, sum(q.bid) s FROM t LEFT JOIN q ON " + on + " ORDER BY t.px")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining("Async Hash Join Group By")
+                            .returns("""
+                                    px\tn\ts
+                                    1\t1\t10
+                                    2\t1\t20
+                                    3\t1\t30
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRightJoinAfterInnerOverMixedTypeUnion() throws Exception {
         // getQueryColumnType() read a.x as BYTE from the union's first branch, although the union widens it to
         // INT. a.x != 0 then looked NULL-rejecting, the INNER join keyed on the derived a.w = bq.k, and that key
@@ -16345,6 +17053,138 @@ public class JoinTest extends AbstractCairoTest {
                             2\t2\t1\t5\t1\t-1\t2\t20
                             2\t2\t1\t5\t2\t7\t2\t20
                             2\t2\t1\t5\t4\t9\t2\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinPreservedSideFilterRunsBeforeJoin() throws Exception {
+        // A RIGHT join keeps every row of its right side, so a WHERE predicate that reads only that
+        // side selects the same rows whether it filters the side's scan or the join's output. The
+        // optimizer pushes it into the scan, as it does for the master of a LEFT join, unless a later
+        // join NULL-extends the side. A predicate on the NULL-extended left side stays above the join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k INT, x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c (k INT, w INT)");
+            execute("""
+                    INSERT INTO a VALUES
+                        (1, 10, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20, '2024-01-02T00:00:00.000000Z'),
+                        (5, 50, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        (1, 100, 100, '2024-01-01T00:00:00.000000Z'),
+                        (2, -1, 7, '2024-01-02T00:00:00.000000Z'),
+                        (3, 300, 300, '2024-01-03T00:00:00.000000Z'),
+                        (4, 400, 1, '2024-01-04T00:00:00.000000Z')
+                    """);
+            execute("INSERT INTO c VALUES (1, 1_000), (3, 3_000), (6, 6_000)");
+
+            final String select = "SELECT a.k ak, a.v, b.k bk, b.x FROM a RIGHT JOIN b ON a.k = b.k WHERE ";
+            final String positive = """
+                    ak\tv\tbk\tx
+                    1\t10\t1\t100
+                    null\tnull\t3\t300
+                    null\tnull\t4\t400
+                    """;
+            assertQuery(select + "b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns(positive);
+            // A predicate on the designated timestamp narrows the scan to an interval.
+            assertQuery(select + "b.ts >= '2024-01-03' ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Interval forward scan on: b")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            null\tnull\t3\t300
+                            null\tnull\t4\t400
+                            """);
+            // An equality of two columns of the side takes its own route through the optimizer.
+            assertQuery(select + "b.x = b.y ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x=y")
+                    .withPlanNotContaining("Filter filter: b.x=b.y")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            1\t10\t1\t100
+                            null\tnull\t3\t300
+                            """);
+            // So does a column compared with a constant.
+            assertQuery(select + "b.x = 400")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: x=400")
+                    .withPlanNotContaining("Filter filter: b.x=400")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            null\tnull\t4\t400
+                            """);
+            // An outer query's WHERE clause reaches the join model after the join's own.
+            assertQuery("SELECT * FROM (SELECT a.k ak, a.v, b.k bk, b.x FROM a RIGHT JOIN b ON a.k = b.k) WHERE x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns(positive);
+            // The left side is NULL-extended, so its predicate stays above the join.
+            assertQuery(select + "a.v > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<a.v")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            1\t10\t1\t100
+                            2\t20\t2\t-1
+                            """);
+            // A FULL join NULL-extends both sides, so neither side's predicate filters its scan.
+            assertQuery("SELECT a.k ak, a.v, b.k bk, b.x FROM a FULL JOIN b ON a.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<b.x")
+                    .returns(positive);
+
+            // A later LEFT or INNER join keeps every row of b that it matches, so the predicate
+            // still filters b's scan.
+            final String chain = "SELECT a.k ak, b.k bk, b.x, c.k ck FROM a RIGHT JOIN b ON a.k = b.k ";
+            assertQuery(chain + "LEFT JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            null\t4\t400\tnull
+                            """);
+            assertQuery(chain + "JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            """);
+            // A later RIGHT or FULL join NULL-extends b for the c row that matches nothing, and the
+            // predicate must drop that row. Pushed into b's scan, it would keep the (null,null,null,6)
+            // row.
+            assertQuery(chain + "RIGHT JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY ck")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            """);
+            assertQuery(chain + "FULL JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            null\t4\t400\tnull
                             """);
         });
     }
@@ -17135,13 +17975,14 @@ public class JoinTest extends AbstractCairoTest {
         // Regression for a query-fuzzer divergence: a SPLICE JOIN whose master
         // table has an indexed SYMBOL column and an interval WHERE on ts, with
         // the outer query ordering by that indexed symbol, used to compile the
-        // master as SortedSymbolIndexRecordCursorFactory. That factory emits
-        // rows in symbol order and zeroes the timestamp index, so the SPLICE
+        // master as SortedSymbolIndexRecordCursorFactory. That factory emitted
+        // rows in symbol order and zeroed the timestamp index, so the SPLICE
         // join validation either threw "left side of time series join has no
         // timestamp" or, with the timestamp restored, would have fed
-        // sym-ordered input into a merge that assumes ts order. The codegen
-        // now skips the symbol-index sort path when the parent join requires
-        // a timestamp on the master.
+        // sym-ordered input into a merge that assumes ts order. That symbol-index
+        // sort path is gone - it could not keep its ordering promise across page
+        // frames - so the master now compiles to an interval frame scan that keeps
+        // its timestamp, and the ORDER BY is served by a sort above the join.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x_idx (sym SYMBOL INDEX, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE y_tab (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

@@ -323,6 +323,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         // Same as testCheckpointInProgressDefersPartitionRemoval but for WAL tables.
         // WAL tables apply O3 inserts through the WAL apply job, which eventually calls
         // processPartitionRemoveCandidates0 on the TableWriter — the same code path.
+        // Merge-append rewrites in place with no new directory version, defeating this test's premise.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
 

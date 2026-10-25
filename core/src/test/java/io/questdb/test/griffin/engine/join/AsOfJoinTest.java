@@ -105,6 +105,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             7\tnull\t
             """;
     private final String defaultIndexTypeName;
+    private final boolean isCompositePartitionEnabled;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
@@ -113,12 +114,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
         this.defaultIndexTypeName = TestUtils.randomSymbolIndexTypeName(rnd);
+        this.isCompositePartitionEnabled = rnd.nextBoolean();
     }
 
     @Override
     public void setUp() {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, defaultIndexTypeName);
         super.setUp();
+        if (isCompositePartitionEnabled) {
+            enableCompositePartitionRandomisation();
+        }
     }
 
     @Test
@@ -2538,6 +2543,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinOnTripleSymbolKey() throws Exception {
+        // Several master rows share a timestamp here and the query does not order within a
+        // timestamp, so the result order follows physical row order - which the composite
+        // round-trip changes when it relocates a cut range to the tail.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
@@ -2648,6 +2657,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinOnTripleSymbolKeyLastKeyMissing() throws Exception {
+        // Several master rows share a timestamp here and the query does not order within a
+        // timestamp, so the result order follows physical row order - which the composite
+        // round-trip changes when it relocates a cut range to the tail.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
@@ -5261,6 +5274,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinStringOnSymbolKey() throws Exception {
+        // Several master rows share a timestamp here and the query does not order within a
+        // timestamp, so the result order follows physical row order - which the composite
+        // round-trip changes when it relocates a cut range to the tail.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL INDEX, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
@@ -5346,6 +5363,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinVarcharOnSymbolKey() throws Exception {
+        // Several master rows share a timestamp here and the query does not order within a
+        // timestamp, so the result order follows physical row order - which the composite
+        // round-trip changes when it relocates a cut range to the tail.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL INDEX, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
@@ -5848,6 +5869,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinNonKeyed() throws Exception {
+        // Several master rows share a timestamp here and the query does not order within a
+        // timestamp, so the result order follows physical row order - which the composite
+        // round-trip changes when it relocates a cut range to the tail.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp("""
@@ -5931,6 +5956,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinOnCompositeSymbolKey() throws Exception {
+        // Several master rows share a timestamp here and the query does not order within a
+        // timestamp, so the result order follows physical row order - which the composite
+        // round-trip changes when it relocates a cut range to the tail.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());

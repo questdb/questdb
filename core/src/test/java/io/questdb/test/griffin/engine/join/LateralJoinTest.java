@@ -3110,6 +3110,219 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLateralLatestOnSampleByFillLeftJoinKeepsOuterRowWithEmptyBody() throws Exception {
+        // Outer row 2 starts after every lt row, so its lateral body is empty. LEFT JOIN
+        // LATERAL must keep that outer row with NULLs while row 1 still gets its gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-02T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o LEFT JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\tnull
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            2\t\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillNoneLeavesRowsUnfilled() throws Exception {
+        // FILL(NONE) under the same LATEST ON fallback: the group-by output carries the
+        // bucket node, so the ownership check passes, and the NONE token then skips the
+        // fill as it does outside LATERAL. No gap row, no fill node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NONE)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: _latest_rn=1")
+                    .withPlanNotContaining("Sample By Fill")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillNullKeepsGapRows() throws Exception {
+        // LATEST ON with a non-equality correlation takes LateralJoinRewriter's row_number
+        // fallback, which inserts a filter model and a window model between the SAMPLE BY
+        // select and the table model that holds the fill. The group-by must still own the
+        // fill, otherwise every gap row disappears.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\tnull
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillSkipsOuterRowWithEmptyBody() throws Exception {
+        // Outer row 2 starts after every lt row, so its lateral body is empty and the
+        // inner join drops it. Row 1 must still get its gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-02T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\tnull
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillUnderOuterGroupBy() throws Exception {
+        // An outer GROUP BY over the lateral join must still see the inner gap row
+        // (3 rows for id 1, not 2). The fill-holding model sits under join model x, so
+        // generateFill's nested-model walk from the outer group-by never reaches it;
+        // this test pins that the fill survives under an outer aggregate. The outer
+        // GROUP BY ownership shapes are pinned by the SampleByFill*Test classes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT id, count() AS n FROM (
+                      SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                        SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                        LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x)
+                    GROUP BY id ORDER BY id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tn
+                            1\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillValueAndPrevTwoOuterRows() throws Exception {
+        // Same fallback as testLateralLatestOnSampleByFillNullKeepsGapRows, with two outer
+        // rows and the value and PREV fill modes. Each fill must match the rows the same
+        // LATERAL body returns without LATEST ON. Those rows follow the keyed fill grid
+        // of the decorrelated query: the outer row is a group key, so every key gets
+        // every bucket between the global first and last bucket, which is why outer row
+        // 2 also gets the 00:00 and 01:00 buckets that precede its own start_ts. That is
+        // master's behaviour for the body without LATEST ON too; this test pins only
+        // that the fallback matches it, not that a per-outer-row grid would be wrong.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-01T01:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO lt VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00Z'),
+                    ('b', 2.0, '2024-01-01T02:10:00Z'),
+                    ('c', 3.0, '2024-01-01T04:10:00Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(0)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\t0.0
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            1\t2024-01-01T03:00:00.000000Z\t0.0
+                            1\t2024-01-01T04:00:00.000000Z\t3.0
+                            2\t2024-01-01T00:00:00.000000Z\t0.0
+                            2\t2024-01-01T01:00:00.000000Z\t0.0
+                            2\t2024-01-01T02:00:00.000000Z\t2.0
+                            2\t2024-01-01T03:00:00.000000Z\t0.0
+                            2\t2024-01-01T04:00:00.000000Z\t3.0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(PREV)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\t1.0
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            1\t2024-01-01T03:00:00.000000Z\t2.0
+                            1\t2024-01-01T04:00:00.000000Z\t3.0
+                            2\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-01T01:00:00.000000Z\tnull
+                            2\t2024-01-01T02:00:00.000000Z\t2.0
+                            2\t2024-01-01T03:00:00.000000Z\t2.0
+                            2\t2024-01-01T04:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
     // The ON clause of the RIGHT join reads both outer queries. Per order 1 and ps row, t.s != 0 drops
     // the refund that matches no trade, and WHERE t.x = o.k drops it too, as its NULL t.x equals no
     // o.k. A computed column behaves as the column that it passes through: t.s holds 0 in the rows

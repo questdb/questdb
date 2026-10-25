@@ -1449,6 +1449,96 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedMultiApproxPercentile() throws Exception {
+        // The lateral subquery reads o.p through a shared copy of the GROUP BY functions. The
+        // histograms live on the heap of the computing instance, so the shared copy must adopt them
+        // in initSharedFrom(); otherwise o.p[1] reads as null and the join drops every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (lval LONG, dval DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    (10, 10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20, 20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30, 30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // p_double and p_long use the default precision, p_double4 and p_long4 the packed histograms
+            assertQuery("""
+                    SELECT o.p_double, o.p_double4, o.p_long, o.p_long4, sub.rate
+                    FROM (
+                        SELECT approx_percentile(dval, ARRAY[0.5, 0.9]) AS p_double,
+                               approx_percentile(dval, ARRAY[0.5, 0.9], 4) AS p_double4,
+                               approx_percentile(lval, ARRAY[0.5, 0.9]) AS p_long,
+                               approx_percentile(lval, ARRAY[0.5, 0.9], 4) AS p_long4
+                        FROM items
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates
+                        WHERE min_val <= o.p_double[1] AND min_val <= o.p_double4[1]
+                          AND min_val <= o.p_long[1] AND min_val <= o.p_long4[1]
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            p_double\tp_double4\tp_long\tp_long4\trate
+                            [20.5,30.5]\t[20.00048828125,30.00048828125]\t[20.0,30.0]\t[20.0,30.0]\t0.1
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedPercentile() throws Exception {
+        // percentile_disc() and percentile_cont() keep their values in the GROUP BY allocator, which
+        // the shared copy reads through the map value it shares with the computing instance
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (lval LONG, dval DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    (10, 10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20, 20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30, 30.0, '2024-01-01T02:00:00.000000Z'),
+                    (40, 40.0, '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT o.pd, o.pc, o.pl, o.pdm, o.pcm, sub.rate
+                    FROM (
+                        SELECT percentile_disc(dval, 0.5) AS pd,
+                               percentile_cont(dval, 0.5) AS pc,
+                               percentile_disc(lval, 0.5) AS pl,
+                               percentile_disc(dval, ARRAY[0.25, 0.75]) AS pdm,
+                               percentile_cont(dval, ARRAY[0.25, 0.75]) AS pcm
+                        FROM items
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates
+                        WHERE min_val <= o.pd AND min_val < o.pc AND min_val <= o.pl
+                          AND min_val <= o.pdm[1] AND min_val < o.pcm[1]
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            pd\tpc\tpl\tpdm\tpcm\trate
+                            20.0\t25.0\t20\t[10.0,30.0]\t[17.5,32.5]\t0.1
+                            """);
+        });
+    }
+
+    @Test
     public void testSharedArrayAgg() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE items (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

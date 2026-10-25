@@ -286,6 +286,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<ExpressionNode> getExpressionModels();
 
+    ExpressionNode getFillBucketKey();
+
     ExpressionNode getFillFrom();
 
     ExpressionNode getFillOffset();
@@ -607,6 +609,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setDistinct(boolean distinct);
 
     void setExplicitTimestamp(boolean explicitTimestamp);
+
+    void setFillBucketKey(ExpressionNode fillBucketKey);
 
     void setFillFrom(ExpressionNode fillFrom);
 
