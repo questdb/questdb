@@ -25,7 +25,9 @@ use crate::allocator::QdbAllocator;
 use crate::parquet::error::{
     fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
 };
-use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
+use crate::parquet::qdb_metadata::{
+    column_top_evidence, ColumnTopEvidence, QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY,
+};
 use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{
@@ -137,8 +139,15 @@ pub struct ParquetUpdater {
     /// Keying by id rather than by partition position guarantees end() looks up
     /// the right column even if the partition layout drifts across calls.
     written_ascii: RapidHashMap<i32, bool>,
-    /// Column top of each column of the old file's QDB metadata, keyed by parquet field_id.
+    /// Column top of each column of the old file, keyed by parquet field_id: the top its QDB
+    /// metadata gives, or 0 when the chunk null counts contradict it, see column_top_evidence().
     old_column_tops: RapidHashMap<i32, usize>,
+    /// The columns whose old top the chunk null counts cannot verify. with_kept_column_tops()
+    /// keeps such a top only over rows the caller passes as 0.
+    unverified_column_tops: HashSet<i32>,
+    /// The row at which with_kept_column_tops() found a value below an unverified top, keyed by
+    /// parquet field_id: the column keeps no top from that row on.
+    lowered_column_tops: RapidHashMap<i32, usize>,
     /// Row count of the old file, the top of a column the old file lacks.
     old_row_count: usize,
     /// The update keeps a column top below this row count: the rows below it keep their
@@ -417,11 +426,32 @@ impl ParquetUpdater {
             })
             .collect();
 
+        // An O3 merge of QuestDB 9.3.3 or older kept the footer metadata of the file it updated
+        // in place, so a top there can cover rows the merge gave values. A top that the chunk
+        // null counts contradict ends, as the merge would have ended it natively.
+        let mut unverified_column_tops = HashSet::new();
         let old_column_tops: RapidHashMap<i32, usize> = source_qdb_meta
             .schema
             .iter()
             .zip(old_fields.iter())
-            .filter_map(|(col, field)| field.get_field_info().id.map(|id| (id, col.column_top)))
+            .enumerate()
+            .filter_map(|(index, (col, field))| {
+                let id = field.get_field_info().id?;
+                let top = match column_top_evidence(
+                    &file_metadata,
+                    index,
+                    col.column_type,
+                    col.column_top,
+                ) {
+                    ColumnTopEvidence::Verified => col.column_top,
+                    ColumnTopEvidence::Contradicted => 0,
+                    ColumnTopEvidence::Unverifiable => {
+                        unverified_column_tops.insert(id);
+                        col.column_top
+                    }
+                };
+                Some((id, top))
+            })
             .collect();
         let old_row_count = file_metadata
             .row_groups
@@ -453,6 +483,8 @@ impl ParquetUpdater {
             old_ascii,
             written_ascii: RapidHashMap::default(),
             old_column_tops,
+            unverified_column_tops,
+            lowered_column_tops: RapidHashMap::default(),
             old_row_count,
             column_top_row_limit: 0,
             parquet_meta_fd,
@@ -544,13 +576,18 @@ impl ParquetUpdater {
     }
 
     /// The top that the output keeps for the column: its old top (the old row count for a
-    /// column the old file lacks) when it is below the limit, 0 otherwise.
+    /// column the old file lacks), lowered where with_kept_column_tops() found a value below
+    /// it, when it is below the limit, 0 otherwise.
     fn kept_column_top(&self, column_id: i32) -> usize {
         let top = self
             .old_column_tops
             .get(&column_id)
             .copied()
             .unwrap_or(self.old_row_count);
+        let top = self
+            .lowered_column_tops
+            .get(&column_id)
+            .map_or(top, |&lowered| top.min(lowered));
         if top < self.column_top_row_limit {
             top
         } else {
@@ -561,8 +598,14 @@ impl ParquetUpdater {
     /// Returns a copy of the partition whose BOOLEAN, BYTE, SHORT and CHAR columns start
     /// with the rows of the kept top that fall into it, as a column top, for a row group
     /// that starts at output row `row_offset`. Returns `None` when no column needs it.
+    ///
+    /// A top that the chunk null counts cannot verify is kept only over rows that the
+    /// partition holds as 0, the value of a NULL of these types: a row with another value
+    /// shows the top stale, and the column keeps no top from `row_offset` on. The row groups
+    /// come in output row order, so the rows before `row_offset` that already went out as
+    /// the top hold 0.
     fn with_kept_column_tops(
-        &self,
+        &mut self,
         partition: &Partition,
         row_offset: usize,
     ) -> ParquetResult<Option<Partition>> {
@@ -584,15 +627,22 @@ impl ParquetUpdater {
                 continue;
             }
             let skipped_bytes = (top - col.column_top) * value_size;
-            let primary_data = col.primary_data.get(skipped_bytes..).ok_or_else(|| {
-                fmt_err!(
+            if skipped_bytes > col.primary_data.len() {
+                return Err(fmt_err!(
                     InvalidLayout,
                     "column {} has {} bytes, fewer than its top of {} rows",
                     col.name,
                     col.primary_data.len(),
                     top
-                )
-            })?;
+                ));
+            }
+            let (skipped_data, primary_data) = col.primary_data.split_at(skipped_bytes);
+            if self.unverified_column_tops.contains(&col.id)
+                && skipped_data.iter().any(|&byte| byte != 0)
+            {
+                self.lowered_column_tops.insert(col.id, row_offset);
+                continue;
+            }
             let columns = columns.get_or_insert_with(|| partition.columns.clone());
             columns[i].column_top = top;
             columns[i].primary_data = primary_data;
@@ -6899,6 +6949,73 @@ mod tests {
         Ok((src, len))
     }
 
+    /// Sets the QDB metadata column tops of the footer to `tops`, as an O3 merge of QuestDB 9.3.3
+    /// or older left a file it updated in place: the row groups hold the rows the merge wrote,
+    /// the footer the tops of the file before the merge.
+    fn with_footer_column_tops(bytes: &[u8], tops: &[usize]) -> Result<Vec<u8>, Box<dyn Error>> {
+        use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+        let len = bytes.len();
+        let meta_len = i32::from_le_bytes(bytes[len - 8..len - 4].try_into()?) as usize;
+        let meta_start = len - 8 - meta_len;
+        let mut thrift =
+            read_metadata_with_size(&mut Cursor::new(bytes), len as u64)?.into_thrift();
+        let kv = thrift
+            .key_value_metadata
+            .as_mut()
+            .and_then(|kvs| kvs.iter_mut().find(|kv| kv.key == QDB_META_KEY))
+            .expect("qdb meta");
+        let mut qdb_meta = QdbMeta::deserialize(kv.value.as_deref().expect("qdb meta value"))?;
+        assert_eq!(qdb_meta.schema.len(), tops.len());
+        for (col, &top) in qdb_meta.schema.iter_mut().zip(tops) {
+            col.column_top = top;
+        }
+        kv.value = Some(qdb_meta.serialize()?);
+        let mut out = bytes[..meta_start].to_vec();
+        parquet2::write::end_file(&mut out, &thrift)?;
+        Ok(out)
+    }
+
+    /// write_topped_source() without chunk statistics: no null count can verify the tops.
+    fn write_topped_source_without_statistics(
+        tops: [usize; 5],
+    ) -> Result<(NamedTempFile, u64), Box<dyn Error>> {
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_row_group_size(Some(4))
+            .with_statistics(false)
+            .finish(topped_partition(
+                &[10, 20, 30, 40, 50, 60, 70, 80],
+                tops,
+                |row| row as i64 + 1,
+            ))?;
+        let len = src.as_file().metadata()?.len();
+        Ok((src, len))
+    }
+
+    /// Rewrites the 8 rows of a source without statistics and with top 6, which runs into
+    /// row group 1, and returns the output footer: rows 4, 5 of the BYTE column hold
+    /// `byte_rows_4_5`, every other no-sentinel row below the top holds 0.
+    fn rewrite_unverified_top(
+        byte_rows_4_5: [i64; 2],
+    ) -> Result<parquet2::metadata::FileMetaData, Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source_without_statistics([6; 5])?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(7);
+        updater.insert_row_group(&topped_partition(&[10, 20, 30, 40], [0; 5], |_| 0), 0, 0)?;
+        let mut row_group_1 =
+            topped_partition(&[50, 60, 70, 80], [0; 5], |row| if row < 2 { 0 } else { 3 });
+        row_group_1.columns[2] =
+            topped_column(2, "b", ColumnTypeTag::Byte, 0, 4, move |row| match row {
+                0 | 1 => byte_rows_4_5[row],
+                _ => 3,
+            });
+        updater.insert_row_group(&row_group_1, 1, 4)?;
+        updater.end(None)?;
+        read_footer(&out)
+    }
+
     /// Opens an updater over `src`: in place when `out` is None, a rewrite into `out` otherwise.
     fn open_topped_updater(
         alloc: &crate::allocator::TestAllocatorState,
@@ -7150,6 +7267,59 @@ mod tests {
         assert_eq!(footer_column_tops(&md), vec![0, 2, 2, 2, 2, 2]);
         assert_eq!(topped_null_counts(&md, 0), vec![2, 2, 2, 2, 0]);
         assert_eq!(topped_null_counts(&md, 2), vec![0; 5]);
+        Ok(())
+    }
+
+    #[test]
+    fn top_contradicted_by_null_counts_ends() -> Result<(), Box<dyn Error>> {
+        // a QuestDB 9.3.3 merge wrote both row groups from row 0 and kept the old footer tops of 2:
+        // the chunks count no NULL below them. The tops of the no-sentinel columns end, and the
+        // values the merge gave rows 0 and 1 stay. INT reads NULL from its sentinel, so the counts
+        // cannot tell, and its footer top stays.
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, _) = write_topped_source([0; 5])?;
+        let stale = with_footer_column_tops(&std::fs::read(src.path())?, &[0, 2, 2, 2, 2, 2])?;
+        let src = NamedTempFile::new()?;
+        std::fs::write(src.path(), &stale)?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, stale.len() as u64, Some(&out))?;
+        updater.set_column_top_row_limit(3);
+        updater.insert_row_group(
+            &topped_partition(&[10, 20, 30, 40], [0; 5], |row| row as i64 + 1),
+            0,
+            0,
+        )?;
+        updater.copy_row_group(1)?;
+        updater.end(None)?;
+        let md = read_footer(&out)?;
+        assert_eq!(footer_column_tops(&md), vec![0, 0, 0, 0, 0, 2]);
+        assert_eq!(topped_null_counts(&md, 0), vec![0; 5]);
+        let byte_stats = chunk_statistics(&md, 0, 2);
+        assert_eq!(byte_stats.min_value, Some(1i32.to_le_bytes().to_vec()));
+        Ok(())
+    }
+
+    #[test]
+    fn unverified_top_holds_over_rows_of_zero() -> Result<(), Box<dyn Error>> {
+        // no null count verifies the tops, the rows below them hold 0: every top holds
+        let md = rewrite_unverified_top([0, 0])?;
+        assert_eq!(footer_column_tops(&md), vec![0, 6, 6, 6, 6, 6]);
+        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 0]);
+        assert_eq!(topped_null_counts(&md, 1), vec![2, 2, 2, 2, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn unverified_top_ends_at_row_group_with_value_below_it() -> Result<(), Box<dyn Error>> {
+        // BYTE row 5 holds 9 below the top of 6, as a QuestDB 9.3.3 merge leaves it: the
+        // BYTE column keeps its top up to row group 1, which holds its rows as values
+        let md = rewrite_unverified_top([0, 9])?;
+        assert_eq!(footer_column_tops(&md), vec![0, 6, 4, 6, 6, 6]);
+        assert_eq!(topped_null_counts(&md, 0), vec![4, 4, 4, 4, 0]);
+        assert_eq!(topped_null_counts(&md, 1), vec![2, 0, 2, 2, 0]);
+        let byte_stats = chunk_statistics(&md, 1, 2);
+        assert_eq!(byte_stats.min_value, Some(0i32.to_le_bytes().to_vec()));
+        assert_eq!(byte_stats.max_value, Some(9i32.to_le_bytes().to_vec()));
         Ok(())
     }
 

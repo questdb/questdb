@@ -41,6 +41,9 @@ pub struct ParquetDecoder {
     pub qdb_meta: Option<QdbMeta>,
     pub row_group_sizes_acc: AcVec<usize>,
     pub unused_bytes: u64,
+    /// Per column: the chunk null counts cannot verify its QDB metadata column top, see
+    /// verified_leading_nulls().
+    pub unverified_column_tops: AcVec<bool>,
 }
 
 /// The local positional index as it is stored in parquet.
@@ -1895,6 +1898,14 @@ impl ParquetDecoder {
             let leading_nulls = column_top
                 .saturating_sub(accumulated_size + row_group_lo as usize)
                 .min(row_group_hi.saturating_sub(row_group_lo) as usize);
+            let leading_nulls = self.verified_leading_nulls(
+                column_idx,
+                original_column_type,
+                column_type,
+                leading_nulls,
+                0..leading_nulls,
+                column_chunk_bufs,
+            );
             // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
             // conversions, where the source has no in-band null and Java must emit NULL here.
             column_chunk_bufs.column_top = leading_nulls;
@@ -2066,10 +2077,28 @@ impl ParquetDecoder {
             let window_column_top = column_top
                 .saturating_sub(accumulated_size + row_group_lo as usize)
                 .min(row_group_hi.saturating_sub(row_group_lo) as usize);
+            let decoded_top_rows =
+                rows_filter.partition_point(|&r| (r as usize) < window_column_top);
             let leading_nulls = if FILL_NULLS {
-                window_column_top
+                // the rows the filter skips hold the NULL the decode fills in, so only the
+                // decoded rows of the top tell whether it holds
+                self.verified_leading_nulls(
+                    column_idx,
+                    original_column_type,
+                    column_type,
+                    window_column_top,
+                    rows_filter[..decoded_top_rows].iter().map(|&r| r as usize),
+                    column_chunk_bufs,
+                )
             } else {
-                rows_filter.partition_point(|&r| (r as usize) < window_column_top)
+                self.verified_leading_nulls(
+                    column_idx,
+                    original_column_type,
+                    column_type,
+                    decoded_top_rows,
+                    0..decoded_top_rows,
+                    column_chunk_bufs,
+                )
             };
             column_chunk_bufs.column_top = leading_nulls;
             // Post-decode conversions that cannot be handled by the decode dispatch.
@@ -2082,6 +2111,57 @@ impl ParquetDecoder {
         }
 
         Ok(output_count)
+    }
+
+    /// The `leading_nulls` rows that a decoded chunk of column `column_idx` starts with in its
+    /// column top. A column with a top that the chunk null counts cannot verify (see
+    /// column_top_evidence()) and no NULL sentinel in `source_type` decodes a NULL to 0, so the
+    /// top holds only over rows that decoded, as `decode_type`, to 0: `decoded_top_rows` are the
+    /// buffer rows of the top that hold decoded values. A row with another value shows the top
+    /// stale: an O3 merge of QuestDB 9.3.3 or older gave it a value in place. The chunk then has
+    /// no leading NULL, and its rows read as decoded.
+    fn verified_leading_nulls(
+        &self,
+        column_idx: usize,
+        source_type: ColumnType,
+        decode_type: ColumnType,
+        leading_nulls: usize,
+        decoded_top_rows: impl IntoIterator<Item = usize>,
+        bufs: &ColumnChunkBuffers,
+    ) -> usize {
+        if leading_nulls == 0
+            || !self
+                .unverified_column_tops
+                .get(column_idx)
+                .copied()
+                .unwrap_or(false)
+            || !matches!(
+                source_type.tag(),
+                ColumnTypeTag::Boolean
+                    | ColumnTypeTag::Byte
+                    | ColumnTypeTag::Short
+                    | ColumnTypeTag::Char
+            )
+        {
+            return leading_nulls;
+        }
+        // a type without a NULL sentinel decodes as itself or as a fixed-size target, see
+        // plan_decode_conversion(); a size of 0 would find no value and keep the top
+        let value_size = decode_type.tag().fixed_size().unwrap_or(0);
+        debug_assert!(
+            value_size > 0,
+            "{source_type} decodes as var-size {decode_type}"
+        );
+        let data = bufs.data_vec.as_slice();
+        let has_value_below_top = decoded_top_rows.into_iter().any(|row| {
+            data.get(row * value_size..(row + 1) * value_size)
+                .is_some_and(|value| value.iter().any(|&byte| byte != 0))
+        });
+        if has_value_below_top {
+            0
+        } else {
+            leading_nulls
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

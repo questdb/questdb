@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -38,11 +39,13 @@ import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
@@ -62,6 +65,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -259,6 +263,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             "SELECT v, ts, s FROM {t} WHERE s IN ('x', 'a') AND ts IN '2024-01-01'",
             "SELECT v, ts, s FROM {t} WHERE ts IN '2024-01-01' LATEST ON ts PARTITION BY s"
     };
+    private static final String[] STALE_FOOTER_TOP_QUERIES = {"SELECT * FROM {t} ORDER BY ts"};
     private static final String[] LEGACY_ABSENT_NATIVE_QUERIES = {
             "SELECT * FROM {t}",
             "SELECT v, ts, s, d FROM {t} WHERE s = 'x'",
@@ -1600,6 +1605,114 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 assertQueriesMatchTwin(table, table + ", native again", queries);
             }
         });
+    }
+
+    @Test
+    public void testStaleFooterTopAlterColumnTypeThenLateRow() throws Exception {
+        // Lazy conversions read the stale file through the chunk null counts, and the late row then
+        // re-encodes the converted values: the INT column turned SHORT keeps the 555 that its stale
+        // top covers, BOOLEAN and BYTE turned INT read the rows below the top as 0, as natively.
+        assertStaleFooterTopMatchesTwin(
+                "stale_top",
+                "ALTER TABLE {t} ALTER COLUMN bo TYPE INT",
+                "ALTER TABLE {t} ALTER COLUMN b TYPE INT",
+                "ALTER TABLE {t} ALTER COLUMN c TYPE VARCHAR",
+                "ALTER TABLE {t} ALTER COLUMN i TYPE SHORT",
+                "INSERT INTO {t} (v, ts) VALUES (8, '2020-01-01T21:00:00.000000Z')"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopAppendPastPartitionMax() throws Exception {
+        // 23:00 lands after the last row of 2020-01-01: no row moves, yet the rewrite re-encodes the
+        // row group below the stale top
+        assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("23"));
+    }
+
+    @Test
+    public void testStaleFooterTopCompactionAfterAlterColumnType() throws Exception {
+        // No late row: ALTER COLUMN TYPE of v makes the parquet schema stale, and the sweep compacts the
+        // partition, re-encoding the row group below the stale top.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            final String table = "stale_top_wal";
+            loadStaleFooterTopFixture(table);
+            createStaleFooterTopTwin(table);
+            for (String t : new String[]{table, "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN v TYPE LONG");
+            }
+            drainWalQueue();
+            engine.releaseInactive();
+            final long nameTxnBefore = getParquetPartitionNameTxn(table, 0);
+            final Clock twoHoursAhead = () -> configuration.getMicrosecondClock().getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), twoHoursAhead)) {
+                job.run();
+            }
+            engine.releaseInactive();
+            Assert.assertNotEquals("the sweep should have compacted the partition", nameTxnBefore, getParquetPartitionNameTxn(table, 0));
+            assertQueriesMatchTwin(table, "compacted", STALE_FOOTER_TOP_QUERIES);
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+            drainWalQueue();
+            assertQueriesMatchTwin(table, "compacted, native", STALE_FOOTER_TOP_QUERIES);
+        });
+    }
+
+    @Test
+    public void testStaleFooterTopConvertToNative() throws Exception {
+        // No other statement: CONVERT TO NATIVE took the native top from the stale footer, and lost the
+        // values below it
+        assertStaleFooterTopMatchesTwin("stale_top");
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowBeforeTop() throws Exception {
+        // 01:00 lands below the stale top: the merge ends the top, as it does natively
+        assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("01"));
+    }
+
+    @Test
+    public void testStaleFooterTopLateRowPastTop() throws Exception {
+        // 21:00 lands past the stale top of 4: rows 0 to 5 keep their place, so the merge would keep a
+        // top below row 6, and the stale one covers the values 9.3.3 merged into row 2
+        assertStaleFooterTopMatchesTwin("stale_top", staleFooterTopRow("21"));
+    }
+
+    @Test
+    public void testStaleFooterTopLegitTopsHold() throws Exception {
+        // legit_top: 9.3.3 converted the partition and merged no row into it. Every top holds through
+        // the rewrite, the BOOLEAN one included, and the rows below it read NULL after a conversion to a
+        // type with NULL, as natively.
+        assertStaleFooterTopMatchesTwin(
+                "legit_top",
+                staleFooterTopRow("21"),
+                "ALTER TABLE {t} ALTER COLUMN bo TYPE INT",
+                "ALTER TABLE {t} ALTER COLUMN b TYPE INT",
+                "ALTER TABLE {t} ALTER COLUMN sh TYPE INT",
+                "ALTER TABLE {t} ALTER COLUMN c TYPE VARCHAR"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopRowGroups() throws Exception {
+        // stale_top_row_groups: 9.3.3 merged a row into row group 1, which straddles the top of 6, and left
+        // row group 0 as it converted it. A late row in row group 2 re-encodes every row group. The null
+        // counts of row group 1 end the BYTE and CHAR tops, which then read as natively after a conversion.
+        // The BOOLEAN top holds up to row group 1, where the merged true shows it stale: row group 0 holds
+        // false there, which cannot tell a column top from a value, so it stays a top. The test does not
+        // convert BOOLEAN, which would read NULL there and 0 natively.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertStaleFooterTopMatchesTwin(
+                "stale_top_row_groups",
+                "INSERT INTO {t} (v, bo, b, c, ts) VALUES (17, true, 17, 'Q', '2020-01-01T13:30:00.000000Z')",
+                "ALTER TABLE {t} ALTER COLUMN b TYPE INT",
+                "ALTER TABLE {t} ALTER COLUMN c TYPE VARCHAR"
+        );
+    }
+
+    @Test
+    public void testStaleFooterTopWalLateRowPastTop() throws Exception {
+        assertStaleFooterTopMatchesTwin("stale_top_wal", staleFooterTopRow("21"));
     }
 
     @Test
@@ -5748,6 +5861,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
      * The native twin of the legacy_live_top fixtures: the statements that wrote them, without the
      * CONVERT.
      */
+    private static String staleFooterTopRow(String hour) {
+        return "INSERT INTO {t} (v, bo, b, sh, c, i, s, ts) VALUES (8, true, 9, 9, 'Q', 9, 'late', '2020-01-01T" + hour + ":00:00.000000Z')";
+    }
+
     private static void createLegacyLiveTopTwin(boolean isPosting) throws Exception {
         execute("CREATE TABLE tw (k SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("INSERT INTO tw VALUES " + LEGACY_LIVE_TOP_P1_ROWS);
@@ -5756,6 +5873,110 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         execute("ALTER TABLE tw ADD COLUMN s SYMBOL INDEX" + (isPosting ? " TYPE POSTING" : ""));
         execute("INSERT INTO tw (k, v, ts, d, vc, s) VALUES ('a', 99, '2024-01-02T00:00:00.000000Z', 0.5, 'p2', 'a')");
         execute("INSERT INTO tw (k, v, ts, d, vc, s) VALUES ('b', 9, '2024-01-01T08:00:00.000000Z', 2.5, 'y9', 'y')");
+    }
+
+    /**
+     * Loads {@code table}, see {@link #loadStaleFooterTopFixture(String)}, and the native twin tw that the
+     * SQL which wrote it writes. Runs each statement on both, with {@code {t}} for the table, and compares
+     * every row after it, after a reopen and after CONVERT TO NATIVE. A merge into a native column top ends
+     * the top, so the native twin is what the parquet partition must read like.
+     */
+    private static void assertStaleFooterTopMatchesTwin(String table, String... statements) throws Exception {
+        assertMemoryLeak(() -> {
+            loadStaleFooterTopFixture(table);
+            createStaleFooterTopTwin(table);
+            // 9.3.3 reads the rows right: the stale top bites only when something re-encodes them
+            assertQueriesMatchTwin(table, "upgraded", STALE_FOOTER_TOP_QUERIES);
+            for (String statement : statements) {
+                for (String t : new String[]{table, "tw"}) {
+                    execute(statement.replace("{t}", t));
+                }
+                drainWalQueue();
+                assertQueriesMatchTwin(table, statement, STALE_FOOTER_TOP_QUERIES);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQueriesMatchTwin(table, "reopened", STALE_FOOTER_TOP_QUERIES);
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+            drainWalQueue();
+            assertQueriesMatchTwin(table, "converted to native", STALE_FOOTER_TOP_QUERIES);
+        });
+    }
+
+    /**
+     * Writes the native table tw with the SQL that wrote the fixture {@code table} on 9.3.3, see
+     * {@link #loadStaleFooterTopFixture(String)}.
+     */
+    private static void createStaleFooterTopTwin(String table) throws SqlException {
+        execute("CREATE TABLE tw (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        if (table.equals("stale_top_row_groups")) {
+            execute("""
+                    INSERT INTO tw VALUES
+                    (1, '2020-01-01T00:00:00.000000Z'), (2, '2020-01-01T01:00:00.000000Z'),
+                    (3, '2020-01-01T02:00:00.000000Z'), (4, '2020-01-01T03:00:00.000000Z'),
+                    (5, '2020-01-01T04:00:00.000000Z'), (6, '2020-01-01T05:00:00.000000Z'),
+                    (100, '2020-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE tw ADD COLUMN bo BOOLEAN");
+            execute("ALTER TABLE tw ADD COLUMN b BYTE");
+            execute("ALTER TABLE tw ADD COLUMN c CHAR");
+            execute("""
+                    INSERT INTO tw (v, bo, b, c, ts) VALUES
+                    (11, true, 11, 'K', '2020-01-01T10:00:00.000000Z'), (12, true, 12, 'L', '2020-01-01T11:00:00.000000Z'),
+                    (13, true, 13, 'M', '2020-01-01T12:00:00.000000Z'), (14, true, 14, 'N', '2020-01-01T13:00:00.000000Z'),
+                    (15, true, 15, 'O', '2020-01-01T14:00:00.000000Z'), (16, true, 16, 'P', '2020-01-01T15:00:00.000000Z')
+                    """);
+            execute("INSERT INTO tw (v, bo, b, c, ts) VALUES (7, true, 5, 'Z', '2020-01-01T04:30:00.000000Z')");
+            return;
+        }
+        execute("""
+                INSERT INTO tw VALUES
+                (1, '2020-01-01T00:00:00.000000Z'), (2, '2020-01-01T06:00:00.000000Z'),
+                (3, '2020-01-01T12:00:00.000000Z'), (4, '2020-01-01T18:00:00.000000Z'),
+                (100, '2020-01-02T00:00:00.000000Z')
+                """);
+        execute("ALTER TABLE tw ADD COLUMN bo BOOLEAN");
+        execute("ALTER TABLE tw ADD COLUMN b BYTE");
+        execute("ALTER TABLE tw ADD COLUMN sh SHORT");
+        execute("ALTER TABLE tw ADD COLUMN c CHAR");
+        execute("ALTER TABLE tw ADD COLUMN i INT");
+        execute("ALTER TABLE tw ADD COLUMN s STRING");
+        execute("""
+                INSERT INTO tw (v, bo, b, sh, c, i, s, ts) VALUES
+                (5, true, 6, 6, 'F', 6, 'six', '2020-01-01T20:00:00.000000Z'),
+                (6, true, 7, 7, 'G', 7, 'seven', '2020-01-01T22:00:00.000000Z')
+                """);
+        if (!table.equals("legit_top")) {
+            execute("INSERT INTO tw (v, bo, b, sh, c, i, s, ts) VALUES (7, true, 5, 555, 'Z', 555, 'mid', '2020-01-01T09:00:00.000000Z')");
+        }
+    }
+
+    /**
+     * Unpacks {@code table} from resources/parquet-stale-column-top and upgrades it as a server start
+     * does: EngineMigration runs Mig941, which writes the _pm that 9.3.3 did not, and Mig1002. The
+     * QuestDB 9.3.3 release wrote the fixtures (questdb-9.3.3-no-jre-bin.tar.gz, sha256
+     * cc83a90d0de5669ba4c11749fd1a8180149d9fa8fd39e8681f563994ad58bb0d). Each table starts with
+     * CREATE TABLE (v INT, ts TIMESTAMP) PARTITION BY DAY:
+     * <ul>
+     *     <li>stale_top, BYPASS WAL: INSERT (1, 00:00), (2, 06:00), (3, 12:00), (4, 18:00) on
+     *     2020-01-01 and (100, '2020-01-02'), ADD COLUMN bo BOOLEAN, b BYTE, sh SHORT, c CHAR, i INT,
+     *     s STRING, INSERT (5, true, 6, 6, 'F', 6, 'six', 20:00), (6, true, 7, 7, 'G', 7, 'seven',
+     *     22:00), CONVERT '2020-01-01' TO PARQUET, INSERT (7, true, 5, 555, 'Z', 555, 'mid', 09:00).
+     *     9.3.3 merged the last row into the one row group in place and kept the footer tops of 4,
+     *     which cover it at row 2. It stored BOOLEAN, BYTE, SHORT and CHAR Required, and the merge
+     *     counted no NULL in their chunks;</li>
+     *     <li>stale_top_wal: the same as a WAL table;</li>
+     *     <li>legit_top: stale_top without the last row, so its tops of 4 hold;</li>
+     *     <li>stale_top_row_groups, BYPASS WAL, row group size 4: INSERT (1..6, 00:00..05:00) and (100,
+     *     '2020-01-02'), ADD COLUMN bo BOOLEAN, b BYTE, c CHAR, INSERT (11..16, true, 11..16, 'K'..'P',
+     *     10:00..15:00), CONVERT, INSERT (7, true, 5, 'Z', 04:30). The top of 6 covers row group 0 and
+     *     the first 2 rows of row group 1, which the merge rewrote with the row at row 5. 9.3.3 cannot
+     *     merge a row into a row group a top covers whole: it passes the empty chunk to the merge.</li>
+     * </ul>
+     */
+    private static void loadStaleFooterTopFixture(String table) throws IOException {
+        loadStaleColumnTopFixture(table);
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
     }
 
     /**

@@ -436,13 +436,23 @@ mod tests {
     // A 9.4.x-shaped file: BYTE column `b` and SHORT column `s`, both stored Required
     // (no def levels), added after 3 rows (QdbMeta column_top 3). Row group 0 holds 2
     // rows, all in the top. Row group 1 holds 5 rows: 1 top row stored as 0, then a real
-    // 0, the type's smallest and largest values, and 5.
-    fn gen_legacy_required_byte_short_top_parquet() -> ParquetResult<Vec<u8>> {
+    // 0, the type's smallest and largest values, and 5. The arrow writer counts no NULL in a
+    // Required chunk, where a QuestDB writer counted the top rows: `statistics` false writes
+    // none, so no null count can verify the top, true leaves a null count of 0 below it.
+    fn gen_legacy_required_byte_short_top_parquet(statistics: bool) -> ParquetResult<Vec<u8>> {
+        gen_legacy_required_byte_short_parquet(statistics, 3)
+    }
+
+    // gen_legacy_required_byte_short_top_parquet() with QdbMeta column top `column_top`.
+    fn gen_legacy_required_byte_short_parquet(
+        statistics: bool,
+        column_top: usize,
+    ) -> ParquetResult<Vec<u8>> {
         let mut qdb_meta = QdbMeta::new(2);
         for tag in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
             qdb_meta.schema.push(QdbMetaCol {
                 column_type: tag.into_type(),
-                column_top: 3,
+                column_top,
                 format: None,
                 ascii: None,
                 id: None,
@@ -465,6 +475,11 @@ mod tests {
         let props = Arc::new(
             WriterProperties::builder()
                 .set_dictionary_enabled(false)
+                .set_statistics_enabled(if statistics {
+                    parquet::file::properties::EnabledStatistics::Chunk
+                } else {
+                    parquet::file::properties::EnabledStatistics::None
+                })
                 .set_key_value_metadata(Some(vec![KeyValue::new(
                     "questdb".to_string(),
                     qdb_meta.serialize()?,
@@ -511,12 +526,13 @@ mod tests {
 
     // The footer decoder reads the column top from QdbMeta. A Required BYTE/SHORT chunk
     // read as INT/LONG must return NULL for the top rows of a row group the top only
-    // partly covers, as native ALTER does, and keep the stored values after the top.
+    // partly covers, as native ALTER does, and keep the stored values after the top. No
+    // null count verifies the top here: it holds over the rows that decode to 0.
     #[test]
     fn decode_row_group_stamps_legacy_required_byte_short_top() -> ParquetResult<()> {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let buf = gen_legacy_required_byte_short_top_parquet()?;
+        let buf = gen_legacy_required_byte_short_top_parquet(false)?;
         let buf_len = buf.len() as u64;
         let mut reader = Cursor::new(&buf);
         let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
@@ -584,6 +600,119 @@ mod tests {
             read_i64s(&rgb, 1),
             vec![LONG_NULL, LONG_NULL, -32768, LONG_NULL, LONG_NULL]
         );
+        Ok(())
+    }
+
+    // A chunk below the top that counts no NULL contradicts it: the merge of QuestDB 9.3.3 or
+    // older that wrote such a row group kept the top of the old footer, and the `_pm` decoder
+    // reads the rows as stored. The footer decoder reads them as stored too: the top ends, row
+    // group 0 decodes, and nothing is stamped NULL.
+    #[test]
+    fn decode_row_group_ignores_top_contradicted_by_null_counts() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf = gen_legacy_required_byte_short_top_parquet(true)?;
+        let buf_len = buf.len() as u64;
+        let mut reader = Cursor::new(&buf);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        assert_eq!(
+            decoder.qdb_meta.as_ref().map(|m| m
+                .schema
+                .iter()
+                .map(|c| c.column_top)
+                .collect::<Vec<_>>()),
+            Some(vec![0, 0])
+        );
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+        let columns = [
+            (0, ColumnTypeTag::Int.into_type()),
+            (1, ColumnTypeTag::Long.into_type()),
+        ];
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 0, 0, 2)?,
+            2
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, 0]);
+        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 0, 5)?,
+            5
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, 0, -128, 127, 5]);
+        assert_eq!(read_i64s(&rgb, 1), vec![0, 0, -32768, 32767, 5]);
+        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        Ok(())
+    }
+
+    // Without null counts, a value that decodes below the top shows it stale: the chunk has no
+    // leading NULL, and every row reads as stored.
+    #[test]
+    fn decode_row_group_ends_unverified_top_over_value() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        // the top of 5 covers rows 0, 1, 2 of row group 1, which hold 0, 0 and the minimum
+        let buf = gen_legacy_required_byte_short_parquet(false, 5)?;
+        let buf_len = buf.len() as u64;
+        let mut reader = Cursor::new(&buf);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+        let columns = [
+            (0, ColumnTypeTag::Int.into_type()),
+            (1, ColumnTypeTag::Long.into_type()),
+        ];
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 0, 5)?,
+            5
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, 0, -128, 127, 5]);
+        assert_eq!(read_i64s(&rgb, 1), vec![0, 0, -32768, 32767, 5]);
+        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        assert_eq!(rgb.column_bufs[1].column_top, 0);
+        // a window that ends past the top decides on the top rows it holds
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 0, 4)?,
+            5
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, 0, -128, 127]);
+        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        Ok(())
+    }
+
+    // A filling filtered decode decides on the rows of the top it decodes, not on the NULLs it
+    // fills in for the rows it skips.
+    #[test]
+    fn decode_row_group_filtered_checks_decoded_rows_of_unverified_top() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf = gen_legacy_required_byte_short_top_parquet(false)?;
+        let buf_len = buf.len() as u64;
+        let mut reader = Cursor::new(&buf);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+        let columns = [(0, ColumnTypeTag::Int.into_type())];
+        const INT_NULL: i32 = i32::MIN;
+        // the top of 3 covers row 0 of row group 1, which holds 0: it holds
+        assert_eq!(
+            decoder.decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                1,
+                0,
+                5,
+                &[0, 3],
+            )?,
+            5
+        );
+        assert_eq!(
+            read_i32s(&rgb, 0),
+            vec![INT_NULL, INT_NULL, INT_NULL, 127, INT_NULL]
+        );
+        assert_eq!(rgb.column_bufs[0].column_top, 1);
         Ok(())
     }
 
