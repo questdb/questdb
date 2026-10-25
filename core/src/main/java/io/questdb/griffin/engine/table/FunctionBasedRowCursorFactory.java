@@ -33,6 +33,11 @@ import io.questdb.cairo.sql.RowCursorFactory;
 public interface FunctionBasedRowCursorFactory extends RowCursorFactory {
 
     /**
+     * The index of the symbol column whose key the factory reads.
+     */
+    int getColumnIndex();
+
+    /**
      * The cursor over the rows of the page frame from the row {@code firstRow} of the partition on, in the index
      * direction, numbered from the start of the page frame. A count of the rows of the page frame from
      * {@link #getRowCount} must have succeeded.
@@ -54,4 +59,12 @@ public interface FunctionBasedRowCursorFactory extends RowCursorFactory {
      * tell without reading the rows.
      */
     long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount);
+
+    /**
+     * The symbol key that the records of the key hold in the column, known once the cursor is prepared:
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL} for NULL, or
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND} when the symbol table lacks the value, so that no record
+     * matches.
+     */
+    int getSymbolKey();
 }

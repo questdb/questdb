@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.LoopingRecordSink;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
@@ -49,6 +50,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -76,6 +78,9 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private final KeyOrderedRowCursorFactory keyOrderedFactory;
     // The cumulative row counts of the keys the gathered read counted, in key order.
     private final DirectLongList keyRowCounts;
+    // The key that a dense scan of a gather finds for each index key of the column, by index key, or -1 for an index
+    // key whose rows the gather does not take.
+    private final DirectIntList symbolKeyIndexes;
     // The index and the type of each var-size column, in pairs.
     private final IntList varSizeColumns = new IntList();
     private int countedKeyCount;
@@ -118,6 +123,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         try {
             gatheredRows = new KeyOrderedRowChain(configuration, metadata, this);
             keyRowCounts = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            symbolKeyIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
             throw th;
@@ -149,6 +155,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         super.close();
         Misc.free(gatheredRows);
         Misc.free(keyRowCounts);
+        Misc.free(symbolKeyIndexes);
     }
 
     @Override
@@ -242,20 +249,31 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         gatheredRows.of(sqlExecutionContext.getMemoryTracker());
         keyRowCounts.close();
         keyRowCounts.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+        symbolKeyIndexes.close();
+        symbolKeyIndexes.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
         countedKeyCount = 0;
         isKeyRowCountUnknown = false;
         gatherLo = 0;
         gatherHi = Long.MAX_VALUE;
         gatheredLo = -1;
         isGatherPositioned = false;
-        isGathering = isGatherRequired();
-        if (isGathering) {
-            gatherBudget = getGatherBudget(sqlExecutionContext.getMemoryTracker());
-            if (isGatherOverBudget()) {
-                gatheredRows.isHoldingRowIds = true;
-            } else {
-                frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+        try {
+            isGathering = isGatherRequired();
+            if (isGathering) {
+                gatherBudget = getGatherBudget(sqlExecutionContext.getMemoryTracker());
+                if (isGatherOverBudget()) {
+                    gatheredRows.isHoldingRowIds = true;
+                } else {
+                    frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                }
             }
+        } catch (Throwable th) {
+            // a cursor that fails to open is not closed before the query that charged this memory ends
+            recordA.clear();
+            recordB.clear();
+            frameMemoryPool.releaseParquetBuffers();
+            keyRowCounts.close();
+            throw th;
         }
     }
 
@@ -320,6 +338,12 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     @Override
     protected boolean isSizeWalked() {
         return keyCount > 1 && (keyLo > 0 || frameCount > 0) || super.isSizeWalked();
+    }
+
+    private static void countDenseScanFrame() {
+        if (isWalkCounterEnabled) {
+            testDenseScanFrames.incrementAndGet();
+        }
     }
 
     private static void countReadFrame() {
@@ -485,6 +509,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         gatheredRows.reset(gatherKeyLo, gatherKeyHi);
         final boolean isByIndex = isKeyOrderedByIndex();
         final boolean isHoldingRowIds = gatheredRows.isHoldingRowIds;
+        final boolean isDenseScanAllowed = isDenseScanAllowed(gatherKeyLo, gatherKeyHi, lo, hi, isByIndex, isHoldingRowIds);
         long remaining = hi == Long.MAX_VALUE ? Long.MAX_VALUE : hi - lo;
         if (isHoldingRowIds) {
             final long rowCount = getCumulativeRowCount(keyCount - 1);
@@ -492,12 +517,28 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 gatheredRows.reserveRowIds(Math.min(rowCount - lo, remaining));
             }
         }
+        final ParquetDecodeHint readHint = frameMemoryPool.getDecodeHint();
+        if (isHoldingRowIds && isByIndex) {
+            // the probes of a gather of row ids decode no page frame, and the dense scans decode each once
+            frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+        }
+        boolean isKeyMapPrepared = false;
         toTopFrames();
         PageFrame frame;
         while (remaining > 0 && gatherKeyLo < gatherKeyHi && (frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             frameAddressCache.add(frameCount, frame);
             final int frameIndex = frameCount++;
+            final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
+            if (isDenseScanAllowed && gatherKeyHi - gatherKeyLo > getDenseScanCost(frameRowCount, isHoldingRowIds)) {
+                if (!isKeyMapPrepared) {
+                    prepareSymbolKeyIndexes(gatherKeyLo, gatherKeyHi);
+                    isKeyMapPrepared = true;
+                }
+                countDenseScanFrame();
+                remaining = gatherFrame(frameIndex, frameRowCount, gatherKeyLo, gatherKeyHi, rankLo, rankHi, remaining);
+                continue;
+            }
             PageFrameMemory frameMemory = null;
             if (!isByIndex) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -548,8 +589,44 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             // and recordA, which may still read that row group unpinned, navigates afresh
             frameMemoryPool.releaseFrameMemory();
             recordA.clear();
+            frameMemoryPool.setParquetDecodeHint(readHint);
             frameMemoryPool.setRecordAtRows(gatheredRows);
         }
+    }
+
+    /**
+     * Gathers the rows of the page frame that the keys {@code keyLo} to {@code keyHi} hold, or their row ids, scanning
+     * the rows in the index direction and finding the key of each by its symbol key, and returns the rows the window of
+     * the gather takes after the page frame.
+     */
+    private long gatherFrame(int frameIndex, long rowCount, int keyLo, int keyHi, long rankLo, long rankHi, long remaining) {
+        recordA.init(frameMemoryPool.navigateTo(frameIndex));
+        final int columnIndex = keyOrderedFactory.getColumnIndex();
+        final long indexKeyCount = symbolKeyIndexes.size();
+        final long step = isBackward() ? -1 : 1;
+        for (long row = step < 0 ? rowCount - 1 : 0; row >= 0 && row < rowCount && remaining > 0; row += step) {
+            recordA.setRowIndex(row);
+            final int indexKey = TableUtils.toIndexKey(recordA.getInt(columnIndex));
+            final int key = indexKey >= 0 && indexKey < indexKeyCount ? symbolKeyIndexes.get(indexKey) : -1;
+            if (key < 0 || filter != null && !filter.getBool(recordA)) {
+                continue;
+            }
+            final long rank = gatheredRows.getRank(key);
+            if (key == keyHi - 1 && rank >= rankHi) {
+                continue;
+            }
+            gatheredRows.setRank(key, rank + 1);
+            if (key == keyLo && rank < rankLo) {
+                continue;
+            }
+            if (gatheredRows.isHoldingRowIds) {
+                gatheredRows.putRowId(key, Rows.toRowID(frameIndex, row));
+            } else {
+                gatheredRows.put(key, recordA);
+            }
+            remaining--;
+        }
+        return remaining;
     }
 
     /**
@@ -567,6 +644,25 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             }
         }
         return isKeyRowCountUnknown ? -1 : keyRowCounts.get(key);
+    }
+
+    /**
+     * The cost of a dense scan of a page frame of {@code rowCount} rows, in probes of the index for a key, which the
+     * gather pays there instead of a probe per key. Measured over Parquet row groups: a gather of row ids decodes the
+     * page frame, which its probes leave undecoded, and the decode costs about 64 probes plus a probe per 128 bytes of
+     * its rows. A gather of rows decodes no more than its probes, which decode each page frame that holds a row of
+     * the gather, but the scan appends the rows to the record chain in row order rather than key by key, and reading
+     * them back key by key costs about a third of a probe more per row.
+     */
+    private double getDenseScanCost(long rowCount, boolean isHoldingRowIds) {
+        return isHoldingRowIds ? 64 + rowCount * (double) decodedRowSize / 128 : rowCount / 3.0;
+    }
+
+    /**
+     * The index keys of the column: one per symbol of its symbol table, and one for NULL.
+     */
+    private int getIndexKeyCount() {
+        return frameCursor.getSymbolTable(keyOrderedFactory.getColumnIndex()).getSymbolCount() + 1;
     }
 
     /**
@@ -646,6 +742,29 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private boolean isCompositePartition(PageFrame frame) {
         return frameCursor instanceof TablePageFrameCursor tableCursor
                 && tableCursor.getTableReader().getTxFile().isPartitionComposite(frame.getPartitionIndex());
+    }
+
+    /**
+     * True when the gather of the keys {@code keyLo} to {@code keyHi}, over the rows {@code lo} to {@code hi} of the
+     * key order, may scan a page frame row by row rather than probe the index once per key there.
+     * <ul>
+     * <li>The scan maps every index key of the column to its key, once per gather. The map may take no more memory
+     * than the entries the gather keeps for its keys, so that a few keys of a column with many symbols probe the index
+     * rather than map every symbol.</li>
+     * <li>The scan decodes every page frame it reads in full, where the probes decode only the page frames that hold a
+     * row of the read, or none for a gather of row ids. Over fixed-size columns that decode is bounded by the rows of
+     * the page frame and their decoded size, which {@link #getDenseScanCost(long, boolean)} prices. The values of
+     * var-size columns have no such bound: a page frame whose rows the read does not return may hold large ones. Over
+     * var-size columns the scan therefore reads only page frames that the probes decode as well: a filtered read
+     * decodes each page frame to filter its rows, and a read that gathers the rows, not the row ids, of every key of
+     * the column with no window decodes each page frame for the rows it takes there.</li>
+     * </ul>
+     */
+    private boolean isDenseScanAllowed(int keyLo, int keyHi, long lo, long hi, boolean isByIndex, boolean isHoldingRowIds) {
+        return (varSizeColumns.size() == 0
+                || !isByIndex
+                || !isHoldingRowIds && keyOrderedFactory.isReadingEveryKey() && lo == 0 && hi == Long.MAX_VALUE)
+                && (long) getIndexKeyCount() * Integer.BYTES <= (long) (keyHi - keyLo) * KeyOrderedRowChain.KEY_ENTRY_SIZE * Long.BYTES;
     }
 
     /**
@@ -810,6 +929,25 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         }
         keyLo = 0;
         keyHi = Math.min(keyCount, 1);
+    }
+
+    /**
+     * Maps each index key of the column to the key among the keys {@code keyLo} to {@code keyHi} that holds it, and the
+     * other index keys to -1.
+     */
+    private void prepareSymbolKeyIndexes(int keyLo, int keyHi) {
+        final int indexKeyCount = getIndexKeyCount();
+        if (symbolKeyIndexes.getCapacity() < indexKeyCount) {
+            symbolKeyIndexes.setCapacity(indexKeyCount);
+        }
+        symbolKeyIndexes.setPos(indexKeyCount);
+        symbolKeyIndexes.zero(-1);
+        for (int key = keyLo; key < keyHi; key++) {
+            final int indexKey = TableUtils.toIndexKey(keyOrderedFactory.getSymbolKey(key));
+            if (indexKey >= 0 && indexKey < indexKeyCount) {
+                symbolKeyIndexes.set(indexKey, key);
+            }
+        }
     }
 
     /**

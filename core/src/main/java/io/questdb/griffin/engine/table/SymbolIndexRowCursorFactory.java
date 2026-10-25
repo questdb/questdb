@@ -54,6 +54,11 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
@@ -91,6 +96,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
         return reader.countRows(symbolKey, rowLo + indexShift, rowHi + indexShift, maxCount);
     }
 
+    @Override
     public int getSymbolKey() {
         return symbolKey == 0 ? SymbolTable.VALUE_IS_NULL : symbolKey - 1;
     }

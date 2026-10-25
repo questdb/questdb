@@ -60,6 +60,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             return EmptyRowCursor.INSTANCE;
@@ -85,6 +90,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     @Override
     public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
         return -1;
+    }
+
+    @Override
+    public int getSymbolKey() {
+        return symbolKey;
     }
 
     @Override

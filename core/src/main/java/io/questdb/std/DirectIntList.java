@@ -29,6 +29,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -41,6 +42,11 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long address;
     private long capacity;
     private long limit;
+    // Per-query native memory tracker bound by the owning cursor before the
+    // backing array is (re)allocated. Null when no per-query limit applies;
+    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long pos;
 
     public DirectIntList(long capacity, int memoryTag) {
@@ -95,7 +101,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     @Override
     public void close() {
         if (address != 0) {
-            address = Unsafe.free(address, capacity, memoryTag);
+            address = Unsafe.free(address, capacity, memoryTag, memoryTracker);
             limit = 0;
             pos = 0;
             capacity = 0;
@@ -167,6 +173,13 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         setCapacityBytes(capacity << 2);
     }
 
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker && address != 0) {
+            Unsafe.chargeHeldMemory(capacity, memoryTag, tracker);
+        }
+        this.memoryTracker = tracker;
+    }
+
     public void setPos(long p) {
         assert p * Integer.BYTES <= capacity;
         pos = address + (p << 2);
@@ -214,7 +227,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag, memoryTracker);
             this.capacity = capacity;
             this.address = address;
             this.limit = address + capacity;

@@ -43,6 +43,11 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
     }
 
     @Override
+    public int getColumnIndex() {
+        return keyCursorFactories.getQuick(0).getColumnIndex();
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi, long firstRow) {
         return getCursor(keyCursorFactories.getQuick(keyLo).getCursor(pageFrame, pageFrameMemory, firstRow), pageFrame, pageFrameMemory, keyLo, keyHi);
     }
@@ -73,5 +78,15 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
             count += keyRowCount;
         }
         return count;
+    }
+
+    @Override
+    public int getSymbolKey(int keyIndex) {
+        return keyCursorFactories.getQuick(keyIndex).getSymbolKey();
+    }
+
+    @Override
+    public boolean isReadingEveryKey() {
+        return false;
     }
 }

@@ -63,6 +63,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             return EmptyRowCursor.INSTANCE;
@@ -108,6 +113,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         }
         final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
         return reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, maxCount);
+    }
+
+    @Override
+    public int getSymbolKey() {
+        return symbolKey;
     }
 
     @Override

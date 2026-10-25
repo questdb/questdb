@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.engine.table.SortedSymbolIndexRowCursorFactory;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -2717,6 +2718,71 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     new String[]{"", "s IN ('k1', 'k2')", "s NOT IN ('k0')"}
             );
             assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts", null, ParquetDecodeHint.CYCLIC, 34);
+        });
+    }
+
+    @Test
+    public void testSymbolSearchOrderByKeyDenseGatherMatchesSort() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE g AS (
+                        SELECT x id, (CASE WHEN x % 17 = 0 THEN NULL ELSE 'k' || (x % 256) END)::SYMBOL s,
+                            x * 0.5 v, ('value-' || x)::VARCHAR vc, timestamp_sequence('2024-01-01', 1_000_000) ts
+                        FROM long_sequence(2_080)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO g VALUES (2_081, 'k1', 0.5, 'native', '2024-01-02'), (2_082, NULL, 1.0, NULL, '2024-01-02T00:00:01')");
+            execute("ALTER TABLE g CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            final StringSink values = new StringSink();
+            values.put("s IN ('k0'");
+            final StringSink binds = new StringSink();
+            binds.put("s IN ($1");
+            bindVariableService.setStr(0, "k0");
+            for (int i = 1; i < 128; i++) {
+                values.put(", 'k").put(i).put("'");
+                binds.put(", $").put(i + 1);
+                bindVariableService.setStr(i, "k" + i);
+            }
+            binds.put(", $129, $130)");
+            bindVariableService.setStr(128, "absent");
+            bindVariableService.setStr(129, null);
+            values.put(", NULL)");
+            for (long cacheBytes : new long[]{64 * 1024 * 1024L, 1024}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheBytes);
+                for (String predicate : new String[]{"", values.toString(), values + " AND id % 3 = 0", binds.toString(), binds + " AND id % 3 = 0"}) {
+                    final String tail = (cacheBytes == 1024 || !predicate.isEmpty() ? "id, s, ts" : "*")
+                            + " FROM g WHERE ts IN '2024-01-01'" + (predicate.isEmpty() ? "" : " AND " + predicate) + " ORDER BY s, ts";
+                    final StringSink expected = new StringSink();
+                    printSql("SELECT /*+ no_index(g) */ " + tail, expected);
+                    assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                    PageFrameRecordCursorImpl.testDenseScanFrames.set(0);
+                    PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+                    try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue("the gather scans page frames densely", PageFrameRecordCursorImpl.testDenseScanFrames.get() > 0);
+                        Assert.assertEquals(predicate.isEmpty(), ((PageFrameRecordCursorImpl) cursor).getRowCursorFactory() instanceof SortedSymbolIndexRowCursorFactory);
+                        Assert.assertEquals(cacheBytes == 1024 ? ParquetDecodeHint.CYCLIC : ParquetDecodeHint.MONOTONIC,
+                                ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeHint());
+                    } finally {
+                        PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+                    }
+                }
+                assertKeyOrderedReadsMatchSort(
+                        "g",
+                        new String[]{"ts IN '2024-01-01'", "ts IN '2024-01-01T00:00:03;10m;20m;2'", ""},
+                        new String[]{"", values.toString(), values + " AND id % 3 = 0", binds.toString(), binds + " AND id % 3 = 0"}
+                );
+                for (String order : new String[]{"s, ts", "s DESC, ts DESC", "s, ts DESC", "s DESC, ts"}) {
+                    for (String limit : new String[]{" LIMIT 3, 400", " LIMIT -400, -3"}) {
+                        final String tail = "ts, vc, s, id FROM g WHERE ts IN '2024-01-01' ORDER BY " + order + limit;
+                        final StringSink expected = new StringSink();
+                        printSql("SELECT /*+ no_index(g) */ " + tail, expected);
+                        assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                    }
+                }
+            }
         });
     }
 

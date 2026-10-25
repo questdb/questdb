@@ -63,6 +63,11 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return getCursor(pageFrame, pageFrameMemory, 0, symbolKeyLimit);
     }
@@ -109,8 +114,19 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     }
 
     @Override
+    public int getSymbolKey(int keyIndex) {
+        final int key = symbolKeys.getQuick(keyIndex);
+        return key == 0 ? SymbolTable.VALUE_IS_NULL : key - 1;
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
+    }
+
+    @Override
+    public boolean isReadingEveryKey() {
+        return true;
     }
 
     @Override

@@ -40,6 +40,11 @@ import org.jetbrains.annotations.Nullable;
 interface KeyOrderedRowCursorFactory extends RowCursorFactory {
 
     /**
+     * The index of the symbol column whose keys the factory reads.
+     */
+    int getColumnIndex();
+
+    /**
      * The cursor over the rows in the page frame of the keys at {@code keyLo}, inclusive, to {@code keyHi}, exclusive,
      * in key order. An unfiltered cursor accepts null memory so the caller can check the index before decoding.
      */
@@ -78,4 +83,18 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
      * stops after {@code maxCount} rows.
      */
     long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount);
+
+    /**
+     * The symbol key that records of the key at {@code keyIndex} hold in the column, the keys counted in key order:
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL} for NULL, or
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND} when the symbol table lacks the value, so that no record
+     * holds the key.
+     */
+    int getSymbolKey(int keyIndex);
+
+    /**
+     * True when the keys are every key of the column, NULL included, so that the cursors of all keys return every row
+     * of a page frame.
+     */
+    boolean isReadingEveryKey();
 }

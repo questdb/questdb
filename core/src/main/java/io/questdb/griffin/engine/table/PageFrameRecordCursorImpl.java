@@ -51,6 +51,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * that the per-row path of this scan stays small enough for the JIT to inline it into the loops that drive it.
  */
 public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+    // @TestOnly observability for the page frames that the gather of a read ordered by keys scans row by row rather
+    // than probing the index once per key.
+    @TestOnly
+    public static final AtomicLong testDenseScanFrames = new AtomicLong();
     // @TestOnly observability for the page frames the cursor opens a row cursor over, which shows whether a read ordered
     // by keys walks the page frames of a key that has no row there.
     @TestOnly
