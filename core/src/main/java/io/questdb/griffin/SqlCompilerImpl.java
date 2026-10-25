@@ -215,6 +215,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final SqlUtil.ViewWildcardSources viewWildcardSources = new SqlUtil.ViewWildcardSources();
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
@@ -598,16 +599,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(0, "SELECT query expected");
         }
         // The parsed model names the objects and the wildcards of the view, the optimised one resolves
-        // the columns it reads. Optimisation rewrites the model it is given, so the parsed one goes first.
-        SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies);
+        // the columns it reads, and which wildcards it keeps whole. Optimisation rewrites the model it is
+        // given, so the parsed one goes first.
+        SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
         try {
             final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
-            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies);
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
             return queryModel;
         } catch (Throwable e) {
             // like compileExecutionModel(): nothing generates the factories optimise() left in flight
             optimiser.freeTableFactoriesInFlight(e);
             throw e;
+        } finally {
+            viewWildcardSources.clear();
         }
     }
 
@@ -4646,21 +4650,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final IQueryModel queryModel;
             final boolean cacheable;
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = createViewOp.getViewDefinition().getDependencies();
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
+                    // The parser recorded the objects and the wildcards of the view, see
+                    // SqlParser.parseCreateView(), but whether a wildcard under a SELECT list that names its
+                    // columns reads every column only the optimised model tells. The walk of the parsed model
+                    // that collects such wildcards records the same objects and wildcards again.
+                    SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies, viewWildcardSources);
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
                 }
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-                // The parser recorded the objects and the wildcards of the view, see
-                // SqlParser.parseCreateView(). The optimised model resolves the columns it reads.
-                SqlUtil.collectTableColumnReads(engine, queryModel, createViewOp.getViewDefinition().getDependencies());
+                // the optimised model resolves the columns the view reads, and which wildcards it keeps whole
+                SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
                 // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
                 // same reason: a throw must free the table factories optimise() left in flight.
                 cacheable = queryModel.isCacheable();
@@ -4669,6 +4678,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // cursor functions to the model and generation has not taken them over yet.
                 optimiser.freeTableFactoriesInFlight(th);
                 throw th;
+            } finally {
+                viewWildcardSources.clear();
             }
 
             try {

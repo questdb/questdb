@@ -64,6 +64,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -298,11 +299,14 @@ public class SqlUtil {
      * branch of a set operation other than UNION ALL, such as {@code x} in
      * {@code SELECT a FROM (SELECT DISTINCT * FROM x)}.
      * <p>
-     * Any other wildcard under a SELECT list that names the columns it keeps records no {@code *}:
-     * the view reads only the columns that list names, such as {@code a} in
+     * Any other wildcard under a SELECT list that names the columns it keeps records no {@code *}
+     * here: the view reads only the columns that list names, such as {@code a} in
      * {@code SELECT a FROM (SELECT * FROM x)}. Reading a table through the view takes no permission
      * on the columns the map lists for it, so a {@code *} there would let a reader that overrides a
      * variable the view declares {@code OVERRIDABLE} read a column of the table the view does not.
+     * A list that names none of the columns of the sub-query under it keeps all of them, which only
+     * the optimised model tells, see
+     * {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}.
      * <p>
      * This records no other column. The parsed model has not resolved its column references, so it
      * cannot tell which table {@code t.a}, or {@code a} in a join, reads. The columns the view reads
@@ -317,8 +321,35 @@ public class SqlUtil {
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
+        collectTableAndColumnReferences(engine, model, depMap, null);
+    }
+
+    /**
+     * Collects into {@code depMap} what {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap)}
+     * does, and into {@code wildcardSources} the tables a wildcard selects through a sub-query, a CTE
+     * or a view whose SELECT list names the columns it keeps. Such a wildcard may still read every
+     * column of its tables: the optimiser keeps every column of a sub-query whose columns the query
+     * above it does not name, such as the one in {@code SELECT count() FROM (SELECT * FROM x)}, and of
+     * the left side of a LATERAL join. Only the optimised model tells, see
+     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}.
+     *
+     * @param engine          the engine, which resolves the table names
+     * @param model           the parsed SELECT of the view, before optimisation
+     * @param depMap          the dependency map of the view
+     * @param wildcardSources the tables whose {@code *} the optimised model decides, which this
+     *                        clears first, or null to collect none
+     */
+    public static void collectTableAndColumnReferences(
+            @NotNull CairoEngine engine,
+            @NotNull IQueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @Nullable ViewWildcardSources wildcardSources
+    ) {
         collectObjectReferences(engine, model, depMap);
-        collectWildcardReferences(engine, model, depMap, true);
+        if (wildcardSources != null) {
+            wildcardSources.clear();
+        }
+        collectWildcardReferences(engine, model, depMap, true, wildcardSources, 0);
     }
 
     /**
@@ -345,6 +376,30 @@ public class SqlUtil {
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
         collectTableColumnReads(engine, model, depMap, false);
+    }
+
+    /**
+     * Collects into {@code depMap} what {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap)}
+     * does, and {@code *} for the tables in {@code wildcardSources} whose wildcard the optimised model
+     * keeps whole: the optimiser keeps every column of the sub-query the wildcard sits in, so the
+     * view reads every column of the table, including one the table gains after the view is created.
+     *
+     * @param engine          the engine, which resolves the table names
+     * @param model           the SELECT of the view, after optimisation
+     * @param depMap          the dependency map of the view
+     * @param wildcardSources the tables {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
+     *                        collected from the parsed SELECT, or null
+     */
+    public static void collectTableColumnReads(
+            @NotNull CairoEngine engine,
+            @NotNull IQueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @Nullable ViewWildcardSources wildcardSources
+    ) {
+        collectTableColumnReads(engine, model, depMap, false);
+        if (wildcardSources != null) {
+            collectKeptWildcardReferences(engine, model, depMap, wildcardSources);
+        }
     }
 
     /**
@@ -2151,6 +2206,53 @@ public class SqlUtil {
         collectExpressionReferences(engine, expr.rhs, depMap);
     }
 
+    // Adds "*" for the tables of wildcardSources whose wildcard the optimised model keeps whole. The
+    // holder of a table is a model of the parsed FROM clause that holds a sub-query, a CTE or a view the
+    // wildcard selects the table through. Optimisation points the holder at the model that provides the
+    // columns of the sub-query, also when it then takes the holder itself out of the model. That model
+    // keeps every column when the query above it names none of them, and so gives it no top-down columns,
+    // and when the optimiser shares it, as it does the left side of a LATERAL join, see
+    // QueryModel.allowsColumnsChange(). The plan then reads every column of the table, and one the table
+    // gains later too, as the wildcard expands to it.
+    private static void collectKeptWildcardReferences(
+            @NotNull CairoEngine engine,
+            @NotNull IQueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @NotNull ViewWildcardSources wildcardSources
+    ) {
+        for (int i = 0, n = wildcardSources.tableNames.size(); i < n; i++) {
+            final IQueryModel sourceModel = wildcardSources.holders.getQuick(i).getNestedModel();
+            // a model the optimised model no longer reaches has no top-down columns, kept or not
+            if (sourceModel == null
+                    || (sourceModel.getTopDownColumns().size() > 0 && sourceModel.allowsColumnsChange())
+                    || !containsModel(model, sourceModel)) {
+                continue;
+            }
+            final TableToken tableToken = engine.getTableTokenIfExists(wildcardSources.tableNames.getQuick(i));
+            if (tableToken == null) {
+                continue;
+            }
+            final LowerCaseCharSequenceHashSet columns = depMap.get(tableToken.getTableName());
+            if (columns == null || columns.contains("*")) {
+                continue;
+            }
+            // The scan of a table whose wildcard the plan keeps whole reads every column of it. One that
+            // does not has met a rewrite this does not recognise, and the map keeps only its columns.
+            boolean isEveryColumnRead = true;
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                for (int j = 0, m = metadata.getColumnCount(); j < m; j++) {
+                    if (columns.excludes(metadata.getColumnName(j))) {
+                        isEveryColumnRead = false;
+                        break;
+                    }
+                }
+            }
+            if (isEveryColumnRead) {
+                columns.add("*");
+            }
+        }
+    }
+
     // Collects the objects a parsed model names: the tables and views it reads, the ones the sub-queries
     // in it read, a SHOW statement's object, and the objects the table-name functions in it name.
     private static void collectObjectReferences(
@@ -2374,12 +2476,20 @@ public class SqlUtil {
     // The parser keeps the SELECT list in a model of its own, whose nested model holds the FROM clause:
     // the table or sub-query read first, and the models joined to it. The walk visits every source of a
     // FROM clause once, and records nothing in a sub-query of an expression, whose scans the reader
-    // authorizes, or under a PIVOT, whose source is a FROM clause with no SELECT list.
+    // authorizes. The source of a PIVOT is a FROM clause with no SELECT list, so no wildcard selects
+    // from it, and the PIVOT reads only the columns it groups and aggregates.
+    // A wildcard under a SELECT list that names its columns may still read every column it selects, as
+    // the optimiser keeps every column of a sub-query whose columns the query above it names none of. Such
+    // a wildcard adds its tables to wildcardSources instead, see collectKeptWildcardReferences(), under
+    // the holders of the sub-queries that keep every column of the wildcard once the optimiser keeps every
+    // column of any of them: the ones from holderLo up on the holder stack.
     private static void collectWildcardReferences(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
-            boolean isEveryColumnKept
+            boolean isEveryColumnKept,
+            @Nullable ViewWildcardSources wildcardSources,
+            int holderLo
     ) {
         boolean isEveryRowCompared = false;
         for (IQueryModel branch = model; branch.getUnionModel() != null; branch = branch.getUnionModel()) {
@@ -2390,7 +2500,10 @@ public class SqlUtil {
         }
         final FunctionFactoryCache functionFactoryCache = engine.getFunctionFactoryCache();
         for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
-            final IQueryModel fromModel = branch.getNestedModel() != null ? branch.getNestedModel() : branch;
+            // a model with no SELECT list, such as the source of a PIVOT, is a FROM clause itself
+            final IQueryModel fromModel = branch.getColumns().size() > 0 && branch.getNestedModel() != null
+                    ? branch.getNestedModel()
+                    : branch;
             final boolean isEveryColumnRead = isEveryColumnKept
                     || isEveryRowCompared
                     || branch.isDistinct()
@@ -2399,23 +2512,57 @@ public class SqlUtil {
             final ObjList<IQueryModel> sources = fromModel.getJoinModels();
             for (int i = 0, n = sources.size(); i < n; i++) {
                 final IQueryModel source = sources.getQuick(i);
-                final boolean isSourceRead = isEveryColumnRead && isSelectedByWildcard(branch, source);
+                final boolean isSelected = isSelectedByWildcard(branch, source);
+                final boolean isSourceRead = isEveryColumnRead && isSelected;
                 final IQueryModel sourceModel = source.getNestedModel();
                 if (sourceModel != null) {
                     // the columns of a sub-query, a CTE or a view are the ones its own SELECT selects
-                    collectWildcardReferences(engine, sourceModel, depMap, isSourceRead);
+                    if (wildcardSources == null) {
+                        collectWildcardReferences(engine, sourceModel, depMap, isSourceRead, null, 0);
+                    } else {
+                        // Keeping every column of the branch keeps every column of a source its wildcard
+                        // selects, so such a source adds its holder to the ones of the branch. Any other
+                        // source starts holders of its own.
+                        final ObjList<IQueryModel> holderStack = wildcardSources.holderStack;
+                        final int sourceHolderLo = isSelected ? holderLo : holderStack.size();
+                        holderStack.add(source);
+                        collectWildcardReferences(engine, sourceModel, depMap, isSourceRead, wildcardSources, sourceHolderLo);
+                        holderStack.popLast();
+                    }
                     continue;
                 }
                 // a table-valued function has no table to select from
                 final ExpressionNode tableNameExpr = source.getTableNameExpr();
-                if (isSourceRead && tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                if (isSelected && tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
                     final CharSequence tableName = unquote(tableNameExpr.token);
                     if (engine.getTableTokenIfExists(tableName) != null) {
-                        addDependency(depMap, tableName, "*");
+                        if (isEveryColumnRead) {
+                            addDependency(depMap, tableName, "*");
+                        } else if (wildcardSources != null) {
+                            wildcardSources.add(holderLo, tableName);
+                        }
                     }
                 }
             }
         }
+    }
+
+    // Whether the optimised model reaches target. A model of the parsed SELECT can drop out of it, when
+    // optimisation replaces the models around it.
+    private static boolean containsModel(@Nullable IQueryModel model, @NotNull IQueryModel target) {
+        if (model == null) {
+            return false;
+        }
+        if (model == target) {
+            return true;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (containsModel(joinModels.getQuick(i), target)) {
+                return true;
+            }
+        }
+        return containsModel(model.getNestedModel(), target) || containsModel(model.getUnionModel(), target);
     }
 
     private static ExpressionNode getEqualsKey(ExpressionNode node) {
@@ -2573,6 +2720,40 @@ public class SqlUtil {
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return nextExpr(pool, ExpressionNode.LITERAL, token, position);
+    }
+
+    /**
+     * The tables a wildcard of a view's SELECT selects through sub-queries, CTEs or views whose SELECT
+     * lists name the columns they keep, each with a holder: a model of the parsed FROM clause that holds
+     * one of those sub-queries. The view reads every column of the table when the optimiser keeps every
+     * column of the sub-query a holder holds.
+     * {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
+     * fills this from the parsed SELECT, and
+     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
+     * reads it once optimisation has rewritten the SELECT, which keeps the holders.
+     */
+    public static final class ViewWildcardSources implements Mutable {
+        // the holders of the sub-queries the walk of the parsed SELECT is in, outermost first
+        private final ObjList<IQueryModel> holderStack = new ObjList<>();
+        private final ObjList<IQueryModel> holders = new ObjList<>();
+        private final ObjList<String> tableNames = new ObjList<>();
+
+        @Override
+        public void clear() {
+            holderStack.clear();
+            holders.clear();
+            tableNames.clear();
+        }
+
+        // Adds the table under every holder from holderLo up the holder stack: the optimiser keeping every
+        // column of the sub-query any of them holds keeps every column the wildcard selects from it.
+        private void add(int holderLo, CharSequence tableName) {
+            final String name = Chars.toString(tableName);
+            for (int i = holderLo, n = holderStack.size(); i < n; i++) {
+                holders.add(holderStack.getQuick(i));
+                tableNames.add(name);
+            }
+        }
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {

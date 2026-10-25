@@ -143,13 +143,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     false
             );
 
-            // the view reads no column the base table gains later
+            // The view reads no column the base table gains later, even when its SELECT list names every
+            // column the wildcard under it selects, so a reader cannot reach such a column through it.
             execute("CREATE VIEW v_narrowed AS (SELECT k, a FROM (SELECT * FROM x))");
+            execute("CREATE VIEW v_named AS (DECLARE OVERRIDABLE @c := a SELECT ts, k, @c AS a, b FROM (SELECT * FROM x))");
             drainWalAndViewQueues();
             execute("ALTER TABLE x ADD COLUMN e INT");
             execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
             drainWalAndViewQueues();
             Assert.assertEquals("{x=[a, k]}", dependenciesOf("v_narrowed"));
+            Assert.assertEquals("{x=[a, b, k, ts]}", dependenciesOf("v_named"));
             try (SqlExecutionContext context = denyBaseTableSelectContext()) {
                 assertQuery("SELECT * FROM v_narrowed")
                         .withContext(context)
@@ -161,6 +164,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                                 k1\t3
                                 k2\t5
                                 """);
+                assertQuery("DECLARE @c := e SELECT * FROM v_named")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=x, columns=e]");
             }
         });
     }
@@ -404,11 +411,128 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies("SELECT t.a, u.c FROM x t ASOF JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
             assertDependencies("SELECT t.a, u.c FROM x t LT JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
             assertDependencies("SELECT t.a, u.c FROM x t SPLICE JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
-            // the first table in join order provides the timestamp of a temporal join after an inner one
+            // The first table in join order provides the timestamp of a temporal join after an inner one, and
+            // the table joined to it by the inner join reads none, whether the temporal join comes after it
+            // or before it.
+            execute("CREATE TABLE z (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO z VALUES (0, 'k1', 9), (3_600_000_000, 'k1', 10)");
+            drainWalQueue();
             assertDependencies(
-                    "SELECT t.a, u.c, w.d FROM x t JOIN y u ON (k) ASOF JOIN y w ON (k)",
-                    "{x=[a, k, ts], y=[c, d, k, ts]}"
+                    "SELECT t.a, u.c, w.v FROM x t JOIN y u ON (k) ASOF JOIN z w ON (k)",
+                    "{x=[a, k, ts], y=[c, k], z=[k, ts, v]}"
             );
+            assertDependencies(
+                    "SELECT t.a, w.v, u.c FROM x t ASOF JOIN z w ON (k) JOIN y u ON (k)",
+                    "{x=[a, k, ts], y=[c, k], z=[k, ts, v]}"
+            );
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The optimiser keeps every column of a sub-query whose columns the query above it names none of,
+            // and of the left side of a LATERAL join, so the view reads every column the wildcard in such a
+            // sub-query selects, including one the table gains later.
+            assertDependencies("SELECT count() FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM (SELECT * FROM x))", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM x) WHERE a > 0", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT 1 AS one FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT *, a + 1 AS a1 FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT x.* FROM x JOIN y ON (k))", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies("WITH c AS (SELECT * FROM x) SELECT count() FROM c", "{x=[*, a, b, k, ts]}");
+            assertDependencies(
+                    "SELECT count() FROM (SELECT * FROM x UNION ALL SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies("SELECT y.c FROM y CROSS JOIN (SELECT * FROM x)", "{x=[*, a, b, k, ts], y=[c]}");
+            assertDependencies(
+                    "SELECT * FROM (SELECT count() FROM (SELECT * FROM x)) PIVOT (sum(count) FOR count IN (1))",
+                    "{x=[*, a, b, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT t.a, l.c FROM (SELECT * FROM x) t CROSS JOIN LATERAL (SELECT c, k FROM y u WHERE u.k = t.k LIMIT 1) l",
+                    "{x=[*, a, b, k, ts], y=[c, k]}"
+            );
+            execute("CREATE VIEW v_star AS (SELECT * FROM x)");
+            drainWalAndViewQueues();
+            assertDependencies("SELECT count() FROM v_star", "{v_star=[], x=[*, a, b, k, ts]}");
+
+            // a SELECT list that names its columns, every one of them included, reads no column added later
+            assertDependencies("SELECT count() FROM (SELECT ts, k, a, b FROM (SELECT * FROM x))", "{x=[a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT a, b FROM x)", "{x=[a, b]}");
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcardReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_star AS (SELECT * FROM x)");
+            execute("CREATE VIEW v_count AS (SELECT count() FROM (SELECT * FROM x) WHERE a > 1)");
+            execute("CREATE VIEW v_cross AS (SELECT y.c FROM y CROSS JOIN (SELECT * FROM x))");
+            execute("""
+                    CREATE VIEW v_lateral AS (
+                        SELECT t.a, l.c
+                        FROM (SELECT * FROM x) t
+                        CROSS JOIN LATERAL (SELECT c, k FROM y u WHERE u.k = t.k LIMIT 1) l
+                    )
+                    """);
+            execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
+            drainWalAndViewQueues();
+            execute("ALTER VIEW v_altered AS (SELECT count() FROM (SELECT * FROM x) WHERE a > 1)");
+            execute("CREATE VIEW v_outer AS (SELECT count() FROM v_star)");
+            drainWalAndViewQueues();
+
+            // each view reads the column x gains, and a principal with SELECT on the view only still reads it
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                for (String viewName : new String[]{"v_count", "v_altered"}) {
+                    assertQuery("SELECT * FROM " + viewName)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    2
+                                    """);
+                }
+                assertQuery("SELECT * FROM v_outer")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                3
+                                """);
+                assertQuery("SELECT * FROM v_cross ORDER BY c")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                c
+                                5
+                                5
+                                5
+                                7
+                                7
+                                7
+                                """);
+                assertQuery("SELECT * FROM v_lateral ORDER BY a")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tc
+                                1\t5
+                                3\t5
+                                """);
+            }
         });
     }
 
