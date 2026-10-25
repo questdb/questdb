@@ -304,9 +304,6 @@ public class O3FailureTest extends AbstractO3Test {
         // of the same commit wait in the queue. The failed column completes the last partition
         // itself, and the writer must not complete it a second time: that makes it stop draining
         // with a partition task still queued.
-        // On Windows Files.PAGE_SIZE is the 64 KiB allocation granularity: the append fits the page
-        // the writer has mapped, and the commit never makes the O3 mapping the facade fails.
-        Assume.assumeFalse(Os.isWindows());
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithoutPool(
                 O3FailureTest::testAppendLastPartitionOnlyColumnFailsWithPartitionsQueued0,
@@ -2710,6 +2707,10 @@ public class O3FailureTest extends AbstractO3Test {
         // Rows to merge into the first and the second partition, then rows newer than every row
         // of x, descending. The commit queues a task for each of the first two partitions and
         // appends to the last one in place, beyond the page the writer has mapped.
+        // An append that fits what is left of that page goes into the page itself, and the commit
+        // never makes the O3 mapping the facade fails. Files.PAGE_SIZE is 64 KiB on Windows and on
+        // Linux kernels with 64 KiB pages, so the row count follows the page size.
+        final int appendRowCount = Math.max(5_000, 2 * dataAppendPageSize / Long.BYTES);
         engine.execute(
                 "CREATE ATOMIC TABLE append AS (" +
                         "SELECT timestamp_sequence(1_800_000_000, 3_600_000_000)::" + timestampTypeName + " ts" +
@@ -2719,7 +2720,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " FROM long_sequence(10)" +
                         " UNION ALL " +
                         "SELECT timestamp_sequence(259_000_000_000, -1_000)::" + timestampTypeName + " ts" +
-                        " FROM long_sequence(5_000)" +
+                        " FROM long_sequence(" + appendRowCount + ")" +
                         ")",
                 sqlExecutionContext
         );
