@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DurableEpochManifest;
@@ -37,7 +38,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
+import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -54,6 +57,7 @@ import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -142,9 +146,72 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAdaptiveDropLeavesPurgeToSavePoint() throws Exception {
+        // While only the save points hold the dropped versions, no purge task can delete them before the next save
+        // point, so the DROP queues none and the save points after it queue the purge. A task per dropped
+        // partition would fill the purge queue (128 in production) and log an error for every partition past it.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // No save point inside the DROP's apply batch: the test takes them.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            // The message bus sizes the purge queue when it is built, so the production capacity needs its own engine.
+            engine.closeNameRegistry();
+            final LogCapture capture = new LogCapture();
+            try (
+                    CairoEngine e = new CairoEngine(configuration);
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(e);
+                    O3PartitionPurgeJob job = new O3PartitionPurgeJob(e, 1)
+            ) {
+                capture.start();
+                e.execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL", ctx);
+                e.execute("INSERT INTO t SELECT timestamp_sequence('2020-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(1_000)", ctx);
+                TestUtils.drainWalQueue(e);
+                final TableToken tt = e.verifyTableName("t");
+                final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000;
+                // Two save points that both name the partitions the DROP removes.
+                try (TableWriter w = e.getWriter(tt, "test")) {
+                    w.advanceDurableEpoch(nowMs);
+                    w.advanceDurableEpoch(nowMs + 1);
+                }
+                final ObjList<String> dropped = partitionDirsBefore(tt, "2021-05-15");
+                Assert.assertEquals(500, dropped.size());
+
+                final MPSequence purgePubSeq = e.getMessageBus().getO3PurgeDiscoveryPubSeq();
+                final long queuedBefore = purgePubSeq.current();
+                e.execute("ALTER TABLE t DROP PARTITION WHERE ts < '2021-05-15'", ctx);
+                TestUtils.drainWalQueue(e);
+                Assert.assertEquals("purge tasks the DROP queued", 0, purgePubSeq.current() - queuedBefore);
+                capture.drain();
+                capture.assertNotLogged("could not queue for purge, queue is full");
+                final StringSink failures = new StringSink();
+                checkOnDisk(failures, "after the DROP", tt, dropped, true);
+
+                try (TableWriter w = e.getWriter(tt, "test")) {
+                    w.advanceDurableEpoch(nowMs + 2);
+                }
+                job.drain(0);
+                checkOnDisk(failures, "the older save point names them", tt, dropped, true);
+
+                try (TableWriter w = e.getWriter(tt, "test")) {
+                    w.advanceDurableEpoch(nowMs + 3);
+                }
+                job.drain(0);
+                checkOnDisk(failures, "no save point names them", tt, dropped, false);
+                Assert.assertEquals("", failures.toString());
+                assertQuery("SELECT count() FROM t").withEngine(e).withContext(ctx).noLeakCheck().expectSize().noRandomAccess().returns("count\n500\n");
+            } finally {
+                capture.stop();
+                engine.reloadTableNames();
+            }
+        });
+    }
+
+    @Test
     public void testAdaptiveDropReadsEachSavePointOncePerPurgeTask() throws Exception {
-        // A DROP of K partitions queues about K purge tasks, and each one checks all K dropped versions against the
-        // save points. A task reads each save point's _txn copy at most once, so it opens at most two files per
+        // The save point after a DROP of K partitions queues a purge task, which checks all K dropped versions against
+        // the save points. A task reads each save point's _txn copy at most once, so it opens at most two files per
         // generation (header, then section), whatever K is.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
@@ -183,7 +250,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 tasks++;
                 maxOpens = Math.max(maxOpens, manifestOpens.getAndSet(0));
             }
-            Assert.assertTrue("purge tasks after the DROP: " + tasks, tasks > 1);
+            // Only the save point of the DROP's apply batch queues one: the DROP leaves the purge to it.
+            Assert.assertEquals("purge tasks after the DROP", 1, tasks);
             Assert.assertTrue("no task read a save point", maxOpens > 0);
             Assert.assertTrue("manifest opens in one task: " + maxOpens, maxOpens <= 4);
             checkOnDisk(failures, "the older save point names them", tt, dropped, true);
@@ -201,6 +269,34 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             checkOnDisk(failures, "no save point names them", tt, dropped, false);
             Assert.assertEquals("", failures.toString());
             assertQuery("SELECT count() FROM t").noLeakCheck().expectSize().noRandomAccess().returns("count\n202\n");
+        });
+    }
+
+    @Test
+    public void testAdaptiveDropWithReaderQueuesPurgeTaskPerPartition() throws Exception {
+        // A reader that holds an older txn can let go at any time, so a DROP under a reader queues a purge task per
+        // partition even while a save point also holds the dropped versions.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // No save point inside the DROP's apply batch: the test takes it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(5)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableWriter w = getWriter(tt)) {
+                w.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000);
+            }
+            final MPSequence purgePubSeq = engine.getMessageBus().getO3PurgeDiscoveryPubSeq();
+            try (TableReader ignore = getReader(tt)) {
+                final long queuedBefore = purgePubSeq.current();
+                execute("ALTER TABLE t DROP PARTITION WHERE ts < '2024-01-04'");
+                drainWalQueue();
+                Assert.assertEquals("purge tasks the DROP queued", 3, purgePubSeq.current() - queuedBefore);
+            }
+            engine.releaseAllReaders();
+            purgeJob.drain(0);
+            assertQuery("SELECT count() FROM t").expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -279,6 +375,36 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 checkOnDisk(failures, change + ", no save point names it", tt, left, false);
             }
             Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
+    public void testAdaptiveO3RewriteQueuesPurgeTaskUnderSavePoint() throws Exception {
+        // Only a DROP leaves the purge to the next save point. An O3 rewrite still queues a purge task at its commit
+        // while a save point holds the old version, so versions that repeated rewrites leave do not pile up on disk
+        // until the next save point.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // No save point inside the rewrite's apply batch: the test takes it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        // As in testAdaptiveLeftVersionGoesAfterNextSavePoint: the O3 insert must rewrite the partition.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            final TableToken tt = createAdaptiveDays("t", false);
+            try (TableWriter w = getWriter(tt)) {
+                w.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000);
+            }
+            final ObjList<String> left = versionDirs(tt);
+            final MPSequence purgePubSeq = engine.getMessageBus().getO3PurgeDiscoveryPubSeq();
+            final long queuedBefore = purgePubSeq.current();
+            execute("INSERT INTO t VALUES ('2024-01-01T01:00:00.000000Z', 4)");
+            drainWalQueue();
+            Assert.assertEquals("purge tasks the O3 rewrite queued", 1, purgePubSeq.current() - queuedBefore);
+            final StringSink failures = new StringSink();
+            checkOnDisk(failures, "the save point names it", tt, left, true);
+            purgeJob.drain(0);
+            checkOnDisk(failures, "the purge task ran, the save point names it", tt, left, true);
+            Assert.assertEquals("", failures.toString());
+            assertQuery("SELECT count() FROM t").expectSize().noRandomAccess().returns("count\n6\n");
         });
     }
 
@@ -868,6 +994,31 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testNosyncDropRemovesPartitionsAtOnce() throws Exception {
+        // Outside adaptive no save point holds a partition version, so a DROP without readers removes the dropped
+        // versions at once and queues no purge task.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(5)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            final ObjList<String> dropped = partitionDirsBefore(tt, "2024-01-04");
+            Assert.assertEquals(3, dropped.size());
+            engine.releaseAllReaders();
+            final MPSequence purgePubSeq = engine.getMessageBus().getO3PurgeDiscoveryPubSeq();
+            final long queuedBefore = purgePubSeq.current();
+            execute("ALTER TABLE t DROP PARTITION WHERE ts < '2024-01-04'");
+            drainWalQueue();
+            Assert.assertEquals("purge tasks the DROP queued", 0, purgePubSeq.current() - queuedBefore);
+            final StringSink failures = new StringSink();
+            checkOnDisk(failures, "after the DROP", tt, dropped, false);
+            Assert.assertEquals("", failures.toString());
+            assertQuery("SELECT count() FROM t").expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -1470,6 +1621,15 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 failures.put(context).put(": ").put(dirs.getQuick(i)).put(expected ? " is gone" : " is still on disk").put('\n');
             }
         }
+    }
+
+    // The partition directories on disk now whose names sort before the given partition.
+    private static ObjList<String> partitionDirsBefore(TableToken tt, String partitionName) throws Exception {
+        final ObjList<String> dirs = new ObjList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.list(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+            s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("20") && n.compareTo(partitionName) < 0).forEach(dirs::add);
+        }
+        return dirs;
     }
 
     private static void testPartitionExist(Path path, int len, boolean... existence) {

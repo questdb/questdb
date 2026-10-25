@@ -3085,7 +3085,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
-            processPartitionRemoveCandidates();
+            processPartitionRemoveCandidates(true);
         }
     }
 
@@ -4248,7 +4248,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (dropped) {
-            commitRemovePartitionOperation();
+            commitRemovePartitionOperation(true);
         }
         return dropped;
     }
@@ -7336,11 +7336,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.committedMasterRef = masterRef;
     }
 
-    private void commitRemovePartitionOperation() {
+    private void commitRemovePartitionOperation(boolean isDropPartition) {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
-        processPartitionRemoveCandidates();
+        processPartitionRemoveCandidates(isDropPartition);
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
@@ -9660,7 +9660,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // the live view its raw-WAL fast path, while under-reporting routes it
             // over rows the applied base no longer holds.
             hasTtlEvictedPartitionsSinceLastCommit = true;
-            commitRemovePartitionOperation();
+            commitRemovePartitionOperation(false);
         }
     }
 
@@ -14099,26 +14099,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void processPartitionRemoveCandidates() {
+        processPartitionRemoveCandidates(false);
+    }
+
+    private void processPartitionRemoveCandidates(boolean isDropPartition) {
         try {
             final int n = partitionRemoveCandidates.size();
             if (n > 0) {
-                processPartitionRemoveCandidates0(n);
+                processPartitionRemoveCandidates0(n, isDropPartition);
             }
         } finally {
             partitionRemoveCandidates.clear();
         }
     }
 
-    private void processPartitionRemoveCandidates0(int n) {
-        boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+    private void processPartitionRemoveCandidates0(int n, boolean isDropPartition) {
+        final long lastCommittedTxn = this.getTxn();
+        // One scan tells a reader or a checkpoint from a save point pin. Like hasEarlierTxnLocks(), it also pushes
+        // the scoreboard's max txn up to this txn.
+        final int holders = txnScoreboard.scanRangeHolders(0, lastCommittedTxn);
+        final boolean isHeldByReader = (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) != 0;
+        final boolean isHeldBySavePoint = (holders & TxnScoreboard.RANGE_HELD_BY_EPOCH) != 0
+                || isEpochPinnedInRange(0, lastCommittedTxn);
+        final boolean anyReadersBeforeCommittedTxn = isHeldByReader || isHeldBySavePoint;
         // When a backup checkpoint is in progress, defer partition removal to async purge.
         // The backup reads partition data from the live db directory, and removing old partition
         // versions while the checkpoint is snapshotting metadata can cause the backup to reference
         // partition directories that no longer exist.
-        boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+        // A DROP commits once per partition. While only a save point pin holds the dropped versions, no purge task
+        // can delete them before the next save point, and each save point queues one while a purge is owed
+        // (advanceDurableEpoch), so the DROP queues none.
+        final boolean isPurgeLeftToSavePoint = isDropPartition && isHeldBySavePoint && !isHeldByReader && !checkpointInProgress;
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
-        long lastCommittedTxn = this.getTxn();
 
         for (int i = 0; i < n; i += 2) {
             try {
@@ -14160,9 +14174,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (scheduleAsyncPurge) {
             partitionPurgeOwedTxn = lastCommittedTxn;
-            // Any more complicated case involve looking at what folders are present on disk before removing
-            // do it async in O3PartitionPurgeJob
-            if (schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
+            if (isPurgeLeftToSavePoint) {
+                LOG.debug().$("partition purge left to the next save point [table=").$(tableToken).I$();
+            } else if (schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
+                // Any more complicated case involve looking at what folders are present on disk before removing
+                // do it async in O3PartitionPurgeJob
                 LOG.debug().$("scheduled to purge partitions [table=").$(tableToken).I$();
             } else {
                 LOG.error().$("could not queue for purge, queue is full [table=").$(tableToken).I$();
