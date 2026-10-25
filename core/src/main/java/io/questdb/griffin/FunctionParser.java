@@ -1885,8 +1885,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         // Extract year from timestamp string to check nano range
         int year = extractYearFromTimestamp(timestampStr);
-        if (year >= 2262) {
-            // Year is beyond nano timestamp range, use original type
+        if (year > 2262) {
+            // Years after 2262 are beyond TIMESTAMP_NS range; keep the signature type.
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
