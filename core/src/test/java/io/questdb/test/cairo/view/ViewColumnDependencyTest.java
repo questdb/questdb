@@ -46,9 +46,9 @@ import java.util.TreeSet;
  * A view's dependency map lists, for every table the view reads, the columns the view reads from it.
  * A reader of the view needs no permission on those columns, see
  * {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}. These tests check that CREATE VIEW,
- * ALTER VIEW and CREATE OR REPLACE VIEW record exactly the columns the plan of the view reads, whichever
- * alias, join, CTE or nested view the SELECT reads them through, and that a principal with SELECT on the
- * view only reads it.
+ * ALTER VIEW and CREATE OR REPLACE VIEW record exactly the columns the plan of the view reads through
+ * the view, whichever alias, join, CTE or nested view the SELECT reads them through, and that a principal
+ * with SELECT on the view only reads it.
  */
 public class ViewColumnDependencyTest extends AbstractViewTest {
 
@@ -135,11 +135,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies("SELECT u.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[k], y=[*, c, d, k, ts]}");
             // PIVOT selects the columns it groups and aggregates, not the ones of its source
             assertDependencies("SELECT * FROM (SELECT * FROM x) PIVOT (sum(a) FOR k IN ('k1'))", "{x=[a, k]}");
-            // A sub-query in an expression selects no column into the view. The scan of y authorizes as
-            // the reader, so this does not read the view as a principal without permission on y.
+            // A sub-query in an expression selects no column into the view, and its scan of y authorizes
+            // as the reader, so the view lists no column of y, and a principal without permission on y
+            // does not read the view.
             assertDependencies(
                     "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT * FROM y))",
-                    "{x=[a, k], y=[k]}",
+                    "{x=[a, k], y=[]}",
                     false
             );
 
@@ -220,6 +221,21 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "SELECT t.* FROM x t CROSS JOIN LATERAL (SELECT * FROM y u WHERE u.k = t.k) l",
                     "{x=[*, a, b, k, ts], y=[k]}"
             );
+        });
+    }
+
+    @Test
+    public void testOverridableVariableReadsNoColumnOnlyASubQueryReads() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The sub-query reads b as the reader, and a read of the view with @m at 1 skips it. The
+            // scan of x that goes through the view reads no b, so a reader cannot read it by overriding @c.
+            final String viewSql = """
+                    DECLARE OVERRIDABLE @c := a, OVERRIDABLE @m := 1
+                    SELECT k, @c AS v FROM x WHERE @m = 1 OR a < (SELECT max(u.b) FROM x u)
+                    """;
+            assertDependencies(viewSql, "{x=[a, k]}");
+            assertOverrideDenied(viewSql, "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
         });
     }
 
@@ -392,12 +408,11 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     public void testSubQueryInExpression() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // The view records the columns its sub-query reads. The scan of y still authorizes as the
-            // reader, a sub-query in an expression does not read through the view, so this does not
-            // read the view as a principal without permission on y.
+            // A sub-query in an expression reads y as the reader, not through the view, so the view lists
+            // y with none of its columns, and a principal without permission on y does not read the view.
             assertDependencies(
                     "SELECT t.a FROM x t WHERE t.k IN (SELECT u.k FROM y u WHERE u.c > 0)",
-                    "{x=[a, k], y=[c, k]}",
+                    "{x=[a, k], y=[]}",
                     false
             );
         });
@@ -411,6 +426,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies("SELECT t.a, u.c FROM x t ASOF JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
             assertDependencies("SELECT t.a, u.c FROM x t LT JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
             assertDependencies("SELECT t.a, u.c FROM x t SPLICE JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            // a sub-query on either side of a temporal join reads the timestamp its SELECT does not name
+            assertDependencies("SELECT t.a, u.c FROM x t ASOF JOIN (SELECT k, c FROM y) u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT t.k, t.a FROM x t SPLICE JOIN (SELECT k, c FROM y) u ON (k)", "{x=[a, k, ts], y=[k, ts]}");
+            assertDependencies("SELECT t.a, u.c FROM (SELECT k, a FROM x) t ASOF JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
             // The first table in join order provides the timestamp of a temporal join after an inner one, and
             // the table joined to it by the inner join reads none, whether the temporal join comes after it
             // or before it.
@@ -631,7 +650,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // a sub-query in an expression reads no column through the view
             assertDependencies(
                     "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT DISTINCT * FROM y))",
-                    "{x=[a, k], y=[c, d, k, ts]}",
+                    "{x=[a, k], y=[]}",
                     false
             );
         });
@@ -646,6 +665,26 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "SELECT t.a, row_number() OVER (PARTITION BY t.k ORDER BY t.b) FROM x t",
                     "{x=[a, b, k]}"
             );
+        });
+    }
+
+    @Test
+    public void testWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String windowJoin = " FROM x t WINDOW JOIN y w ON (t.k = w.k) RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING";
+            // The aggregates of a WINDOW JOIN group no rows of their SELECT, so a SELECT list above it that
+            // names its columns keeps only those of the wildcard, and the view reads no other column of x.
+            assertDependencies("SELECT ts, s FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')', "{x=[k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT ts, s FROM (SELECT *, sum(w.c) s" + windowJoin + ')', "{x=[k, ts], y=[c, k, ts]}");
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := ts SELECT @c AS v, s FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')',
+                    "DECLARE @c := b SELECT * FROM v",
+                    "permission denied [table=x, columns=b]"
+            );
+            // the SELECT list of the view, and one that names none of the columns under it, keep them all
+            assertDependencies("SELECT t.*, sum(w.c) s" + windowJoin, "{x=[*, a, b, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')', "{x=[*, a, b, k, ts], y=[c, k, ts]}");
         });
     }
 
