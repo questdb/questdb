@@ -49,6 +49,10 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SwitchFunctionFactory implements FunctionFactory {
+    // NaN and both infinities are NULL for DOUBLE and FLOAT, so all of them have to
+    // land on the same key, otherwise a stored Infinity bypasses the NULL branch
+    private static final long DOUBLE_NULL_KEY = Double.doubleToLongBits(Double.NaN);
+    private static final int FLOAT_NULL_KEY = Float.floatToIntBits(Float.NaN);
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
     private static final IntMethod GET_CHAR = SwitchFunctionFactory::getChar;
     private static final LongMethod GET_DATE = SwitchFunctionFactory::getDate;
@@ -198,12 +202,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getDate(record);
     }
 
-    private static double getDouble(Function function, Record record) {
-        return function.getDouble(record);
+    private static long getDoubleKey(Function function, Record record) {
+        final double value = function.getDouble(record);
+        return Numbers.isNull(value) ? DOUBLE_NULL_KEY : Double.doubleToLongBits(value);
     }
 
-    private static float getFloat(Function function, Record record) {
-        return function.getFloat(record);
+    private static int getFloatKey(Function function, Record record) {
+        final float value = function.getFloat(record);
+        return Numbers.isNull(value) ? FLOAT_NULL_KEY : Float.floatToIntBits(value);
     }
 
     private static int getInt(Function function, Record record) {
@@ -295,7 +301,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final long key = Double.doubleToLongBits(getDouble(fun, null));
+            final long key = getDoubleKey(fun, null);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -306,7 +312,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         final Function elseB = getElseFunction(valueType, elseBranch);
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(Double.doubleToLongBits(getDouble(keyFunction, record)));
+            final int index = map.keyIndex(getDoubleKey(keyFunction, record));
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
@@ -335,7 +341,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final int key = Float.floatToIntBits(getFloat(fun, null));
+            final int key = getFloatKey(fun, null);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -346,7 +352,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         final Function elseB = getElseFunction(valueType, elseBranch);
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(Float.floatToIntBits(getFloat(keyFunction, record)));
+            final int index = map.keyIndex(getFloatKey(keyFunction, record));
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
