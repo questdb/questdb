@@ -2422,6 +2422,45 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetOperationOverNullColumn() throws Exception {
+        // a column that is NULL in both branches keeps type NULL, and a set operation that
+        // compares rows still copies it into the map key
+        assertQuery("SELECT 1 a, NULL b UNION SELECT 2, NULL")
+                .noRandomAccess()
+                .returns("""
+                        a\tb
+                        1\tnull
+                        2\tnull
+                        """);
+        assertQuery("SELECT 1 a, NULL b EXCEPT SELECT 2, NULL")
+                .returns("""
+                        a\tb
+                        1\tnull
+                        """);
+        assertQuery("SELECT 1 a, NULL b INTERSECT SELECT 1, NULL")
+                .returns("""
+                        a\tb
+                        1\tnull
+                        """);
+        assertQuery("SELECT 1 a, NULL b EXCEPT ALL SELECT 2, NULL")
+                .returns("""
+                        a\tb
+                        1\tnull
+                        """);
+        assertQuery("SELECT 1 a, NULL b INTERSECT ALL SELECT 1, NULL")
+                .returns("""
+                        a\tb
+                        1\tnull
+                        """);
+        assertQuery("SELECT NULL x UNION SELECT NULL")
+                .noRandomAccess()
+                .returns("""
+                        x
+                        null
+                        """);
+    }
+
+    @Test
     public void testSetOperationOverTextArrayFailsWithUnsupportedColumnType() throws Exception {
         // a set operation that compares rows copies them into a map key, and no record sink copies
         // text[]; each is refused at the position of its right-hand query
