@@ -40,6 +40,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -109,6 +110,11 @@ final class AccessPathPlanning {
     private final ObjList<Subquery> subqueries = new ObjList<>();
     private final IntList tableColumnIndexes;
     private final ConjunctTest unfoldedConjuncts = this::isUnfoldedConjunct;
+    /**
+     * The decorrelation domains with reads the walk has planned: the walk plans a domain where it first reaches the
+     * domain or one of its reads, as the generator builds it there, see {@link DomainReadPlan}.
+     */
+    private final ObjList<AggregatePlan> walkedProducers = new ObjList<>();
     private int captureLevel = -1;
     private int depth;
     private int falseComparisonPosition;
@@ -696,6 +702,12 @@ final class AccessPathPlanning {
      * node's consumer, then the operators of the node.
      */
     private void walk(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
+        if (plan instanceof AggregatePlan producer && producer.getReaderCount() > 0) {
+            if (walkedProducers.indexOf(producer) > -1) {
+                return;
+            }
+            walkedProducers.add(producer);
+        }
         switch (plan) {
             case ScanPlan scan -> planScan(scan, null, null, isTimestampRequired);
             // A client-side WAL UPDATE does not fuse its predicate, yet raises the bound errors WAL application raises.
@@ -705,6 +717,7 @@ final class AccessPathPlanning {
             }
             case LatestByPlan latest -> walkLatestBy(latest, isTimestampRequired);
             case AggregatePlan aggregate -> walkAggregate(aggregate, isTimestampRequired);
+            case DomainReadPlan read -> walk(read.getProducer(), false);
             case JoinPlan join -> walkJoin(join, isTimestampRequired);
             case WindowJoinPlan windowJoin -> walkWindowJoin(windowJoin, isTimestampRequired);
             case HorizonJoinPlan horizon -> walkHorizon(horizon, isTimestampRequired);
@@ -821,6 +834,7 @@ final class AccessPathPlanning {
     void plan(LogicalPlan root, int depth, boolean isTimestampRequired) throws SqlException {
         subqueries.clear();
         cursors.clear();
+        walkedProducers.clear();
         captureLevel = -1;
         horizonSlaveScan = null;
         isCapturing = false;

@@ -32,11 +32,13 @@ import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -408,9 +410,10 @@ final class Decorrelation implements OptimiserPass {
         mapping.reset(base);
         final OutputSchema output = operation.getOutput();
         final OutputSchema leftOutput = operation.getLeft().getOutput();
+        final boolean isCastRequired = SetOperationCasts.isCastRequired(operation);
         for (int i = output.getColumnCount(), k = 0, n = leftOutput.getColumnCount(); i < n; i++, k++) {
             final int columnId = context.newColumnId();
-            output.add(columnId, leftOutput.getColumnName(i), leftOutput.getColumnType(i), false);
+            output.add(columnId, leftOutput.getColumnName(i), SetOperationCasts.getOutputType(operation, i, isCastRequired), false);
             mapping.push(domains.outerIds().getQuick(k), columnId);
         }
         return operation;
@@ -468,7 +471,8 @@ final class Decorrelation implements OptimiserPass {
             case UnaryPlan block -> {
                 return decorrelateBlock(block, false, base);
             }
-            case ScanPlan _, FunctionSourcePlan _ -> throw SqlException.$(source.getPosition(), SOURCE_CORRELATION);
+            case ScanPlan _, FunctionSourcePlan _, DomainReadPlan _ ->
+                    throw SqlException.$(source.getPosition(), SOURCE_CORRELATION);
         }
     }
 
@@ -478,6 +482,7 @@ final class Decorrelation implements OptimiserPass {
         final int scalarAggregateBase = compensation.scalarMark();
         final int masterBase = ctx.masterOuterIds().size();
         ctx.beginStep(join, index);
+        domains.beginStep();
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
             keys.collectOuterAliases(join.getInputs().getQuick(i).getPostJoinFilter(), join, index);
         }
@@ -935,7 +940,7 @@ final class Decorrelation implements OptimiserPass {
         if (filter != null && !(source instanceof JoinPlan)) {
             keys.collectEqualities(filter.getPredicate(), source.getOutput(), null, base);
         }
-        final AggregatePlan domain = domains.buildDomain(source.getPosition());
+        final LogicalPlan domain = domains.buildDomain(source.getPosition());
         if (!(source instanceof JoinPlan join)) {
             final JoinPlan crossed = domains.crossDomain(source, domain, source.getPosition());
             final JoinInput domainStep = crossed.getInputs().getQuick(1);

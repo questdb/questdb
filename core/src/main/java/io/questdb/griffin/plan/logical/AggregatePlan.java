@@ -36,6 +36,7 @@ public final class AggregatePlan extends GroupingPlan {
     private final IntList sharedSourceIds = new IntList();
     private Algorithm algorithm;
     private HashJoinAggregation hashJoin;
+    private int readerCount;
     private int sharedConsumerCount;
     private LogicalPlan sharedHead;
     private SetOperationPlan sharedOperation;
@@ -49,11 +50,19 @@ public final class AggregatePlan extends GroupingPlan {
         sharedSourceIds.clear();
         algorithm = null;
         hashJoin = null;
+        readerCount = 0;
         sharedConsumerCount = 0;
         sharedHead = null;
         sharedOperation = null;
         sharedRead = null;
         sharedSource = null;
+    }
+
+    /**
+     * Records one more domain read of the decorrelation domain, see {@link #getReaderCount()}.
+     */
+    public void addReader() {
+        readerCount++;
     }
 
     /**
@@ -73,8 +82,17 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     /**
-     * The number of decorrelation domains of the query level whose shared source re-reads the aggregate, which order
-     * planning counts; the generator lets that many consumers share the rows it computes once.
+     * The number of domain reads of the decorrelation domain, see {@link DomainReadPlan}, which decorrelation and the
+     * plan copier count. Filter placement pushes no filter into a domain other consumers read.
+     */
+    public int getReaderCount() {
+        return readerCount;
+    }
+
+    /**
+     * The number of decorrelation domains of the query level whose shared source re-reads the aggregate, and of
+     * domain reads of the aggregate, which order planning counts; the generator lets that many consumers share the
+     * rows it computes once.
      */
     public int getSharedConsumerCount() {
         return sharedConsumerCount;

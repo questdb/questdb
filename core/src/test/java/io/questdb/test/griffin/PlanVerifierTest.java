@@ -34,6 +34,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -59,6 +60,7 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -344,6 +346,56 @@ public class PlanVerifierTest extends AbstractCairoTest {
         join.getInputs().getQuick(1).setDependent(true);
         verifier.verifyBound(join);
         assertFails(join, PlanVerifier.DEPENDENT_STEP, "JoinPlan");
+    }
+
+    @Test
+    public void testDomainRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, x INT)");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("""
+                            SELECT o.id, l.v FROM o JOIN LATERAL (
+                                SELECT a.id v FROM a WHERE a.x = o.x AND a.id > o.id
+                                UNION ALL
+                                SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                            ) l
+                            """, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final DomainReadPlan read = find(plan, DomainReadPlan.class);
+                Assert.assertNotNull(read);
+                Assert.assertEquals(DomainReadPlan.Algorithm.SHARED, read.getAlgorithm());
+                verifier.verifyAccessPaths(plan);
+
+                final AggregatePlan producer = read.getProducer();
+                final AggregatePlan.Algorithm algorithm = producer.getAlgorithm();
+                final int consumerCount = producer.getSharedConsumerCount();
+                producer.setAlgorithm(AggregatePlan.Algorithm.SERIAL);
+                producer.setSharedConsumerCount(0);
+                assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
+                producer.setAlgorithm(algorithm);
+                producer.setSharedConsumerCount(consumerCount);
+
+                final IntList producerIds = read.getProducerColumnIds();
+                final int producerId = producerIds.getQuick(1);
+                producerIds.setQuick(1, producerIds.getQuick(0));
+                assertFails(plan, PlanVerifier.DOMAIN_READ_COLUMNS, "DomainReadPlan");
+                producerIds.setQuick(1, producerId);
+
+                final AggregatePlan outside = AggregatePlan.FACTORY.newInstance().of(producer.getChild(), producer.getPosition());
+                outside.getGroupingExpressions().addAll(producer.getGroupingExpressions());
+                outside.getOutput().copyFrom(producer.getOutput());
+                outside.setAlgorithm(producer.getAlgorithm());
+                outside.setSharedConsumerCount(producer.getSharedConsumerCount());
+                read.setProducer(outside);
+                assertFails(plan, PlanVerifier.DOMAIN_READ_PRODUCER, "DomainReadPlan");
+                read.setProducer(producer);
+                verifier.verifyAccessPaths(plan);
+            }
+        });
     }
 
     @Test

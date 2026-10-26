@@ -32,7 +32,7 @@ import io.questdb.std.Mutable;
  * Clearing a node releases its own references, never its inputs or expressions.
  */
 public abstract sealed class LogicalPlan implements Mutable
-        permits UnaryPlan, FunctionSourcePlan, HorizonJoinPlan, JoinPlan, ScanPlan, SetOperationPlan, WindowJoinPlan {
+        permits UnaryPlan, DomainReadPlan, FunctionSourcePlan, HorizonJoinPlan, JoinPlan, ScanPlan, SetOperationPlan, WindowJoinPlan {
     private final OutputSchema output = new OutputSchema();
     private int position = -1;
 

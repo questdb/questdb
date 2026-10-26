@@ -74,6 +74,10 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
         return metadata;
     }
 
+    public final boolean isClosed() {
+        return closed;
+    }
+
     /**
      * Closes resources held by this factory. Subclasses should override to release resources.
      */

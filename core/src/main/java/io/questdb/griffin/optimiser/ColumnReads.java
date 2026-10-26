@@ -30,6 +30,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
@@ -163,7 +164,7 @@ final class ColumnReads implements Mutable {
      */
     void collectInputReads(LogicalPlan plan) {
         switch (plan) {
-            case ScanPlan _, FunctionSourcePlan _, LimitPlan _ -> {
+            case ScanPlan _, FunctionSourcePlan _, DomainReadPlan _, LimitPlan _ -> {
             }
             case SampleByPlan sample -> {
                 readColumnIds.add(sample.getTimestampColumnId());

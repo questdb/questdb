@@ -116,25 +116,21 @@ final class OuterJoinCarriers implements Mutable {
 
     /**
      * A domain of the outer columns whose columns {@link #slaveIds} holds, with a marker column when
-     * {@code isMarked}; the mapping stack stays as it was.
+     * {@code isMarked}, which only a domain of its own carries; the mapping stack stays as it was.
      */
-    private AggregatePlan carrierDomain(boolean isMarked, int position) throws SqlException {
-        final AggregatePlan domain = domains.buildDomain(position);
-        final int count = domains.outerIds().size();
-        final int lo = mapping.mark() - count;
-        slaveIds.clear();
-        for (int i = 0; i < count; i++) {
-            slaveIds.add(mapping.columnIdAt(lo + i));
+    private LogicalPlan carrierDomain(boolean isMarked, int position) throws SqlException {
+        if (!isMarked) {
+            final LogicalPlan domain = domains.buildDomain(position);
+            takeCarriers();
+            return domain;
         }
-        mapping.reset(lo);
-        slaveMarkerId = -1;
-        if (isMarked) {
-            context.getCallArguments().clear();
-            final FunctionExpression marker = (FunctionExpression) context.bindCall("count", position, domain.getChild().getOutput());
-            domain.getAggregates().add(marker);
-            slaveMarkerId = context.newColumnId();
-            domain.getOutput().add(slaveMarkerId, markerName(), marker.getDataType(), false);
-        }
+        final AggregatePlan domain = domains.buildProducer(position);
+        takeCarriers();
+        context.getCallArguments().clear();
+        final FunctionExpression marker = (FunctionExpression) context.bindCall("count", position, domain.getChild().getOutput());
+        domain.getAggregates().add(marker);
+        slaveMarkerId = context.newColumnId();
+        domain.getOutput().add(slaveMarkerId, markerName(), marker.getDataType(), false);
         return domain;
     }
 
@@ -157,7 +153,7 @@ final class OuterJoinCarriers implements Mutable {
             slaveMarkerId = -1;
             return;
         }
-        final AggregatePlan domain = carrierDomain(isMarked, position);
+        final LogicalPlan domain = carrierDomain(isMarked, position);
         final JoinInput domainStep = domains.crossInto(join, input, domain, position).getInputs().getQuick(1);
         for (int i = 0, n = outerIds.size(); i < n; i++) {
             final int columnId = keys.deferredColumn(input, outerIds.getQuick(i), deferredBase);
@@ -285,6 +281,21 @@ final class OuterJoinCarriers implements Mutable {
         }
         join.addMissingInputColumns();
         return join;
+    }
+
+    /**
+     * Takes the domain columns the mapping stack maps the outer columns of the domain just built to, as the slave
+     * carriers {@link #slaveIds} holds, without a marker, and pops them.
+     */
+    private void takeCarriers() {
+        final int count = domains.outerIds().size();
+        final int lo = mapping.mark() - count;
+        slaveIds.clear();
+        for (int i = 0; i < count; i++) {
+            slaveIds.add(mapping.columnIdAt(lo + i));
+        }
+        mapping.reset(lo);
+        slaveMarkerId = -1;
     }
 
     /**

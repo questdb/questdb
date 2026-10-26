@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -93,6 +94,9 @@ public final class PlanVerifier {
     public static final String DECORRELATION_CARRIER_UNRESOLVED = "decorrelation carrier is a column of neither its step nor a step before it";
     public static final String DECORRELATION_STEP_LOST = "join step that does not commute is missing from the plan after decorrelation";
     public static final String DEPENDENT_STEP = "dependent join step survives decorrelation";
+    public static final String DOMAIN_READ_ALGORITHM = "domain read reads a shared cursor its domain does not serve";
+    public static final String DOMAIN_READ_COLUMNS = "domain read column is paired with no key of its domain for the same outer column";
+    public static final String DOMAIN_READ_PRODUCER = "domain read reads a decorrelation domain outside the plan";
     public static final String DUPLICATE_COLUMN_ID = "output lists a column id twice";
     public static final String EXPRESSION_NULL = "expression is null";
     public static final String EXPRESSION_SHARED = "expression node appears twice in one expression tree";
@@ -157,6 +161,7 @@ public final class PlanVerifier {
     public static final String WINDOW_OUTPUT = "window output is not input columns followed by its function columns";
     public static final String WINDOW_SHAPE = "window functions, specs and column ids differ in length";
     private final ObjList<BoundExpression> checkedExpressions;
+    private final ObjList<DomainReadPlan> domainReads = new ObjList<>();
     private final IntList checkedReadIds;
     private final IntHashSet columnIds;
     private final DecorrelationVerifier decorrelation;
@@ -262,9 +267,9 @@ public final class PlanVerifier {
     }
 
     /**
-     * Verifies that the plan has no decorrelation domain that re-reads a join input when its statement records none,
-     * {@code hasSharedSources}: operator planning counts the consumers of shared sources only for a statement that
-     * records one, see {@link OperatorPlanning#countSharedConsumers}.
+     * Verifies that the plan has no decorrelation domain that re-reads a join input, and no domain read, when its
+     * statement records none, {@code hasSharedSources}: operator planning counts the consumers of shared sources only
+     * for a statement that records one, see {@link OperatorPlanning#countSharedConsumers}.
      */
     public void verifySharedSources(LogicalPlan root, boolean hasSharedSources) {
         if (hasSharedSources) {
@@ -327,6 +332,12 @@ public final class PlanVerifier {
         clear();
         try {
             plan(root);
+            for (int i = 0, n = domainReads.size(); i < n; i++) {
+                node = domainReads.getQuick(i);
+                if (visited.indexOf(domainReads.getQuick(i).getProducer()) < 0) {
+                    fail(DOMAIN_READ_PRODUCER);
+                }
+            }
         } finally {
             clear();
             this.root = null;
@@ -339,6 +350,7 @@ public final class PlanVerifier {
 
     private void clear() {
         columnIds.clear();
+        domainReads.clear();
         joinScope.clear();
         outerInputs.clear();
         visited.clear();
@@ -439,6 +451,29 @@ public final class PlanVerifier {
         if (invariant != null) {
             fail(invariant);
         }
+    }
+
+    /**
+     * Checks a domain read: each of its columns pairs with a distinct key of its producer named after the same outer
+     * column, of its type, and it reads a shared cursor only when the producer serves them. The producer must lie
+     * in the plan, which {@link #check} asserts once the walk has visited every node.
+     */
+    private void domainRead(DomainReadPlan read) {
+        final OutputSchema output = read.getOutput();
+        final OutputSchema producerOutput = read.getProducer().getOutput();
+        final IntList producerIds = read.getProducerColumnIds();
+        if (producerIds.size() != output.getColumnCount()) {
+            fail(DOMAIN_READ_COLUMNS);
+        }
+        for (int i = 0, n = producerIds.size(); i < n; i++) {
+            final int index = producerOutput.getColumnIndexById(producerIds.getQuick(i));
+            if (index < 0 || index >= read.getProducer().getGroupingExpressions().size() || producerOutput.getColumnType(index) != output.getColumnType(i)
+                    || !Chars.equals(producerOutput.getColumnName(index), output.getColumnName(i)) || producerIds.indexOf(producerIds.getQuick(i), 0, i) > -1) {
+                fail(DOMAIN_READ_COLUMNS, output.getColumnId(i));
+            }
+        }
+        domainReads.add(read);
+        failIfViolated(PhysicalChoiceVerifier.domainRead(read, isAccessPathRequired));
     }
 
     private void fill(FillPlan fill) {
@@ -819,6 +854,7 @@ public final class PlanVerifier {
             case ProjectPlan project -> project(project);
             case GroupingPlan grouping -> grouping(grouping);
             case DistinctPlan distinct -> forwards(distinct, OUTPUT_TIMESTAMP);
+            case DomainReadPlan read -> domainRead(read);
             case FillPlan fill -> fill(fill);
             case WindowPlan window -> window(window);
             case JoinPlan join -> join(join);
@@ -977,7 +1013,7 @@ public final class PlanVerifier {
     }
 
     private int sharedSource(LogicalPlan plan) {
-        if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null) {
+        if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null || plan instanceof DomainReadPlan) {
             node = plan;
             fail(SHARED_SOURCE_UNRECORDED);
         }

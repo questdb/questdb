@@ -682,7 +682,7 @@ final class ScalarCompensation implements Mutable {
         exposeCarriers(project);
         domains.coverMapping(base);
         final int domainBase = mapping.mark();
-        final AggregatePlan domain = domains.buildDomain(position);
+        final LogicalPlan domain = domains.buildDomain(position);
         final JoinPlan join = planNodes.joins.next().of(position);
         final JoinInput projectInput = planNodes.joinInputs.next().of(project, JoinKind.LEFT_OUTER, null, position);
         join.addInput(planNodes.joinInputs.next().of(domain, JoinKind.CROSS, ctx.domainAlias(), position));

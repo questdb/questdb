@@ -40,6 +40,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -84,7 +85,9 @@ import io.questdb.std.ObjList;
  * input, the timestamp a projection over a window join drops and whether a filter runs in parallel. The walk asks
  * {@link #requiresInputTimestamp} which inputs of a node must designate their timestamp and, before it plans a query
  * level, counts the decorrelation domains that re-read each aggregate, see {@link #countSharedConsumers}; it decides
- * how each domain reads its input from the join inputs the generator builds before it, see {@link #planSharedRead}.
+ * how each domain reads its input from the join inputs the generator builds before it, see {@link #planSharedRead}, and
+ * whether a domain read reads its producer through a shared cursor, when the producer's GROUP BY serves them and the
+ * generator keeps the producer's factory, see {@link #collectDiscardedDomains}, or builds the producer's plan again.
  * The generator builds exactly what it records. From the same properties it rejects a time series join, a SAMPLE BY and
  * an aggregate function whose input does not deliver the ascending designated timestamp order they require, and a
  * full-fat ASOF or LT join whose slave has a column the join cannot carry.
@@ -94,6 +97,8 @@ final class OperatorPlanning implements Mutable {
         if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null
                 && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target) {
             target.setSharedConsumerCount(target.getSharedConsumerCount() + 1);
+        } else if (plan instanceof DomainReadPlan read) {
+            read.getProducer().setSharedConsumerCount(read.getProducer().getSharedConsumerCount() + 1);
         }
         return TreeWalk.CONTINUE;
     };
@@ -105,6 +110,10 @@ final class OperatorPlanning implements Mutable {
     };
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
+    /**
+     * The decorrelation domains with reads whose factories the generator discards, see {@link #collectDiscardedDomains}.
+     */
+    private final ObjList<AggregatePlan> discardedDomains = new ObjList<>();
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
     private final HashJoinAggregationPlanning hashJoinPlanning;
     private final IntList readIds;
@@ -125,6 +134,7 @@ final class OperatorPlanning implements Mutable {
 
     @Override
     public void clear() {
+        discardedDomains.clear();
         generatedInputs.clear();
         hashJoinPlanning.clear();
         frameInputLo = 0;
@@ -221,6 +231,18 @@ final class OperatorPlanning implements Mutable {
             }
         }
         return true;
+    }
+
+    private static boolean isFalseConstant(BoundExpression predicate) {
+        return predicate instanceof ConstantExpression constant && constant.getLongValue() == 0;
+    }
+
+    /**
+     * True when the generator folds the step's filter {@code predicate} to constant false, see
+     * {@link PlanToFactoryRules#isPostJoinFilterFolded}.
+     */
+    private static boolean isFoldedFalse(JoinInput step, BoundExpression predicate) {
+        return predicate != null && isFalseConstant(predicate) && PlanToFactoryRules.isPostJoinFilterFolded(step, predicate);
     }
 
     /**
@@ -358,6 +380,50 @@ final class OperatorPlanning implements Mutable {
             return AggregatePlan.Algorithm.SERIAL;
         }
         return isFilterStolen ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.PARALLEL;
+    }
+
+    /**
+     * Records the decorrelation domains with reads under {@code plan} whose factories the generator builds and then
+     * replaces with an empty one, {@code isDiscarded} when an ancestor is replaced: under a filter or a join step's
+     * filter it folds to constant false, see {@link PlanToFactoryRules#isPostJoinFilterFolded}, in the master of a step
+     * whose master it empties, see {@link PlanToFactoryRules#isMasterEmptied}, in the input of a step whose slave it
+     * empties, see {@link PlanToFactoryRules#isSlaveEmptied}, and under an empty window join. Their reads build the
+     * domain's plan again. The generator fails a generation that frees a factory a shared cursor reads, so a discard
+     * this walk misses fails the statement instead of reading a freed domain.
+     */
+    private void collectDiscardedDomains(LogicalPlan plan, boolean isDiscarded) {
+        if (isDiscarded && plan instanceof AggregatePlan domain && domain.getReaderCount() > 0) {
+            discardedDomains.add(domain);
+        }
+        switch (plan) {
+            case FilterPlan filter ->
+                    collectDiscardedDomains(filter.getChild(), isDiscarded || isFalseConstant(filter.getPredicate()));
+            case JoinPlan join -> {
+                final ObjList<JoinInput> ordered = join.getOrderedInputs();
+                int discardedCount = 0;
+                for (int i = 1, n = ordered.size(); i < n; i++) {
+                    final JoinInput step = ordered.getQuick(i);
+                    if (PlanToFactoryRules.isMasterEmptied(step)) {
+                        discardedCount = Math.max(discardedCount, i);
+                    }
+                    if (isFoldedFalse(step, step.getOnResidual()) || isFoldedFalse(step, step.getPostJoinFilter())) {
+                        discardedCount = i + 1;
+                    }
+                }
+                for (int i = 0, n = ordered.size(); i < n; i++) {
+                    final JoinInput step = ordered.getQuick(i);
+                    if (step.getInput() != null) {
+                        collectDiscardedDomains(step.getInput(), isDiscarded || i < discardedCount || i > 0 && PlanToFactoryRules.isSlaveEmptied(step));
+                    }
+                }
+            }
+            default -> {
+                final boolean isInputDiscarded = isDiscarded || plan instanceof WindowJoinPlan windowJoin && windowJoin.isEmpty();
+                for (int i = 0, n = plan.inputCount(); i < n; i++) {
+                    collectDiscardedDomains(plan.inputAt(i), isInputDiscarded);
+                }
+            }
+        }
     }
 
     /**
@@ -1501,13 +1567,14 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Records on every aggregate of the query level how many decorrelation domains of the level re-read it through
-     * their shared source; the generator builds the consumers of each one and the aggregate shares its rows with them.
-     * A statement without such a domain leaves every count at zero.
+     * their shared source, and how many domain reads read it; the generator builds the consumers of each one and the
+     * aggregate shares its rows with them. A statement without such a domain leaves every count at zero.
      */
     void countSharedConsumers(LogicalPlan root) {
         if (context.hasSharedSources()) {
             root.walkTopDown(SHARED_CONSUMER_COUNTS);
             root.walkTopDown(SHARED_CONSUMERS);
+            collectDiscardedDomains(root, false);
         }
     }
 
@@ -1558,6 +1625,9 @@ final class OperatorPlanning implements Mutable {
                 planAggregate(aggregate);
                 planSharedRead(aggregate);
             }
+            case DomainReadPlan read -> read.setAlgorithm(discardedDomains.indexOf(read.getProducer()) < 0
+                    && PhysicalProperties.supportsSharedCursors(read.getProducer()) == PhysicalProperties.Capability.YES
+                    ? DomainReadPlan.Algorithm.SHARED : DomainReadPlan.Algorithm.REGENERATED);
             case SampleByPlan sample -> planSampleBy(sample);
             case FillPlan fill -> planFill(fill);
             case LatestByPlan latest -> planLatestBy(latest);

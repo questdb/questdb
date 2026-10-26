@@ -113,6 +113,16 @@ public final class SetOperationCasts {
         return expected;
     }
 
+    /**
+     * The type of column {@code index} of the set operation before symbol restoration: the type its branches cast to
+     * when the operation casts its branches, {@code isCastRequired}, see {@link #isCastRequired}, else the left
+     * branch's.
+     */
+    public static int getOutputType(SetOperationPlan plan, int index, boolean isCastRequired) throws SqlException {
+        final int leftType = plan.getLeft().getOutput().getColumnType(index);
+        return isCastRequired ? getUnionCastType(leftType, plan.getRight().getOutput().getColumnType(index)) : leftType;
+    }
+
     public static int getUnionCastType(int typeA, int typeB) throws SqlException {
         short tagA = tagOf(typeA);
         short tagB = tagOf(typeB);

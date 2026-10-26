@@ -30,6 +30,10 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +44,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.assertTrue;
 
 public class OsTest {
+    private static final int LC_BUILD_VERSION = 0x32;
+    private static final int MACH_HEADER_64_SIZE = 32;
+    private static final int MACOS_13 = 13 << 16;
+    private static final int MH_MAGIC_64 = 0xFEEDFACF;
 
     @Test
     public void rustSmokeTest() {
@@ -158,6 +166,16 @@ public class OsTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    /**
+     * CI builds the darwin-aarch64 libraries with MACOSX_DEPLOYMENT_TARGET=13.0. A library built
+     * elsewhere targets the build machine's macOS release, so it fails to load on older releases.
+     */
+    @Test
+    public void testShippedDarwinLibsLoadOnMacOs13() throws IOException {
+        assertDarwinMinOsAtMost13("/io/questdb/bin/darwin-aarch64/libquestdb.dylib");
+        assertDarwinMinOsAtMost13("/io/questdb/bin/darwin-aarch64/libquestdbr.dylib");
     }
 
     @Test
@@ -298,6 +316,30 @@ public class OsTest {
         long fromMXBean = Os.getMemorySizeFromMXBean();
         assertTrue("Could not obtain memory size from OperatingSystemMXBean",
                 fromMXBean > 0 && fromMXBean < (1L << 48));
+    }
+
+    private static void assertDarwinMinOsAtMost13(String resource) throws IOException {
+        final byte[] bytes;
+        try (InputStream is = OsTest.class.getResourceAsStream(resource)) {
+            Assert.assertNotNull("missing shipped native library: " + resource, is);
+            bytes = is.readAllBytes();
+        }
+        final ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        Assert.assertEquals(resource + " is not a 64-bit Mach-O library", MH_MAGIC_64, buf.getInt(0));
+        int offset = MACH_HEADER_64_SIZE;
+        for (int i = 0, n = buf.getInt(16); i < n; i++) {
+            if (buf.getInt(offset) == LC_BUILD_VERSION) {
+                final int minOs = buf.getInt(offset + 12);
+                Assert.assertTrue(
+                        resource + " requires macOS " + (minOs >>> 16) + '.' + ((minOs >>> 8) & 0xff)
+                                + "; ship the CI-built library",
+                        minOs <= MACOS_13
+                );
+                return;
+            }
+            offset += buf.getInt(offset + 4);
+        }
+        Assert.fail(resource + " has no LC_BUILD_VERSION load command");
     }
 
     private static void assertNotShipped(String resource) {

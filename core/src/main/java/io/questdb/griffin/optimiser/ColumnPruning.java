@@ -29,6 +29,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -271,6 +272,9 @@ final class ColumnPruning implements OptimiserPass {
                         || !isJoinSource() && (source != joinInputPlan || hasRequiredColumn(source.getOutput())))) {
                     pruneOutput(source);
                 }
+                return;
+            }
+            case DomainReadPlan _ -> {
                 return;
             }
             case SampleByPlan sample -> {

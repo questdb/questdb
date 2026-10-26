@@ -117,6 +117,7 @@ import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -244,6 +245,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    private PlanVisitor plannedPlanVisitor;
     // The re-parses of the statement left to absorb a table going out of date, shared by binding and code generation.
     private int remainingRecompileAttempts;
     private LogicalPlan root;
@@ -804,6 +806,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         optimiser.setFullFatJoins(value);
+    }
+
+    /**
+     * Walks every plan operator planning finished with {@code visitor}, before the generator builds it.
+     */
+    @TestOnly
+    public void setPlannedPlanVisitor(@Nullable PlanVisitor visitor) {
+        plannedPlanVisitor = visitor;
     }
 
     @TestOnly
@@ -5908,6 +5918,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             planTables.refresh(executionContext);
             optimiser.planAccessPaths(root, codeGenerator.getGenerationDepth(), executionContext.isTimestampRequired(), executionContext);
+            if (plannedPlanVisitor != null) {
+                root.walkTopDown(plannedPlanVisitor);
+            }
             factory = codeGenerator.generate(root, executionContext);
         } catch (Throwable th) {
             final Throwable failure = closePrepared(th);

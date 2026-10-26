@@ -1894,12 +1894,8 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                                                     table: refunds
                                                     columns: [id, k]
                                                 CROSS __qdb_outer_ref__0_1
-                                                  Aggregate
-                                                    keys: [k AS __qdb_outer_ref__0_k]
-                                                    values: []
-                                                    Scan
-                                                      table: orders
-                                                      columns: [k]
+                                                  DomainRead
+                                                    columns: [__qdb_outer_ref__0_k]
                             """);
         });
     }
@@ -5143,12 +5139,8 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                                                   table: b
                                                   columns: [id, k]
                                               CROSS __qdb_outer_ref__0_1
-                                                Aggregate
-                                                  keys: [id AS __qdb_outer_ref__0_id]
-                                                  values: []
-                                                  Scan
-                                                    table: p
-                                                    columns: [id]
+                                                DomainRead
+                                                  columns: [__qdb_outer_ref__0_id]
                             """);
         });
     }

@@ -336,12 +336,6 @@ final class JoinFactoryGenerator {
         return innerMetadata;
     }
 
-    private void addSharedSource(GenerationFrame frame, JoinInput input, RecordCursorFactory factory) {
-        frame.sharedSources.add(input);
-        frame.sharedFactories.add(factory);
-        frame.sharedConsumerCounts.add(1);
-    }
-
     private Plannable createCondition(JoinInput step) {
         conditionSink.clear();
         for (int i = 0, n = step.getKeys().size(); i < n; i++) {
@@ -1165,7 +1159,7 @@ final class JoinFactoryGenerator {
         CharSequence masterAlias = first.getBindingAlias();
         OutputSchema masterOutput = first.getOutput();
         try {
-            addSharedSource(frame, first, master);
+            frame.addShared(first.getInput(), master);
         } catch (Throwable th) {
             Misc.free(master, th);
             throw th;
@@ -1196,7 +1190,7 @@ final class JoinFactoryGenerator {
                 throw th;
             }
             try {
-                addSharedSource(frame, step, slave);
+                frame.addShared(step.getInput(), slave);
             } catch (Throwable th) {
                 Misc.free(slave, th);
                 Misc.free(master, th);

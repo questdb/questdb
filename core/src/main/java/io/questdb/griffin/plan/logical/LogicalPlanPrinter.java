@@ -320,6 +320,12 @@ public final class LogicalPlanPrinter {
                 printGrouping(sample, depth);
             }
             case DistinctPlan _ -> sink.put("Distinct\n");
+            case DomainReadPlan _ -> {
+                sink.put("DomainRead\n");
+                attribute(depth, "columns");
+                outputNames(plan.getOutput());
+                sink.put('\n');
+            }
             case FillPlan fill -> printFill(fill, depth);
             case WindowPlan window -> printWindow(window, depth);
             case JoinPlan join -> {

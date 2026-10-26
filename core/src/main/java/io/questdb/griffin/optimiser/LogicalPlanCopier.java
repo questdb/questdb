@@ -29,6 +29,7 @@ import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
@@ -67,14 +68,18 @@ import io.questdb.std.ObjList;
  * statement's plan-node pools, expressions from the level's {@link BoundExpressionRewriter} and column ids from the
  * {@link OptimiserContext} allocator, so copies live as long as the original; a changed expression is a fresh
  * description, unchanged ones are shared. A decorrelation domain that shares a source inside a copied subtree
- * shares that source's copy.
+ * shares that source's copy, and a copied domain read reads the copy of its producer when the subtree holds the
+ * producer, else the producer itself.
  */
 final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private final IntIntHashMap columnIds;
     private final OptimiserContext context;
     private final ObjList<JoinInput> copiedInputs = new ObjList<>();
+    private final ObjList<AggregatePlan> copiedProducers = new ObjList<>();
+    private final ObjList<DomainReadPlan> copiedReads = new ObjList<>();
     private final PlanVisitor nodeColumnIds = this::assignNodeColumnIds;
     private final ObjList<JoinInput> originalInputs = new ObjList<>();
+    private final ObjList<AggregatePlan> originalProducers = new ObjList<>();
     private final PlanNodePools planNodes;
     private final ObjList<AggregatePlan> sharingCopies = new ObjList<>();
     private IntIntHashMap remappedIds;
@@ -88,7 +93,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     @Override
     public void clear() {
         copiedInputs.clear();
+        copiedProducers.clear();
+        copiedReads.clear();
         originalInputs.clear();
+        originalProducers.clear();
         sharingCopies.clear();
         remappedIds = null;
     }
@@ -152,6 +160,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         if (aggregate.getSharedSource() != null) {
             clone.setSharedSource(aggregate.getSharedSource());
             sharingCopies.add(clone);
+        }
+        if (aggregate.getReaderCount() > 0) {
+            originalProducers.add(aggregate);
+            copiedProducers.add(clone);
         }
         return clone;
     }
@@ -259,6 +271,13 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case FillPlan fill -> cloneFill(fill);
             case WindowPlan window -> cloneWindow(window);
             case DistinctPlan distinct -> planNodes.distincts.next().of(distinct.getChild(), distinct.getPosition());
+            case DomainReadPlan read -> {
+                final DomainReadPlan readClone = planNodes.domainReads.next().of(read.getProducer(), read.getPosition());
+                readClone.getProducerColumnIds().addAll(read.getProducerColumnIds());
+                readClone.setAlgorithm(read.getAlgorithm());
+                copiedReads.add(readClone);
+                yield readClone;
+            }
             case LatestByPlan latest -> {
                 final LatestByPlan latestClone = planNodes.latestByPlans.next().of(latest.getChild(), latest.getTimestampColumnId(), latest.getPosition());
                 latestClone.getKeyColumnIds().addAll(latest.getKeyColumnIds());
@@ -442,6 +461,14 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 copy.setSharedSource(copiedInputs.getQuick(index));
             }
         }
+        for (int i = 0, n = copiedReads.size(); i < n; i++) {
+            final DomainReadPlan read = copiedReads.getQuick(i);
+            final int index = originalProducers.indexOf(read.getProducer());
+            if (index > -1) {
+                read.setProducer(copiedProducers.getQuick(index));
+            }
+            read.getProducer().addReader();
+        }
     }
 
     /**
@@ -450,7 +477,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     LogicalPlan copy(LogicalPlan plan) {
         columnIds.clear();
         copiedInputs.clear();
+        copiedProducers.clear();
+        copiedReads.clear();
         originalInputs.clear();
+        originalProducers.clear();
         sharingCopies.clear();
         plan.walkBottomUp(nodeColumnIds);
         final LogicalPlan copy = copyTree(plan);
@@ -484,6 +514,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 remapColumnIds(aggregate.getSharedInputIds(), columnIds);
                 remapColumnIds(aggregate.getSharedSourceIds(), columnIds);
             }
+            case DomainReadPlan read -> remapColumnIds(read.getProducerColumnIds(), columnIds);
             case WindowPlan window -> {
                 remapColumnIds(window.getFunctionColumnIds(), columnIds);
                 remapColumnIds(window.getQueryOrder().getColumnIds(), columnIds);

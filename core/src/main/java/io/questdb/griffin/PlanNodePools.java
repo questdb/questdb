@@ -33,6 +33,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -80,6 +81,7 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<ConstantExpression> constants;
     public final ObjectPool<CursorExpression> cursors;
     public final ObjectPool<DistinctPlan> distincts;
+    public final ObjectPool<DomainReadPlan> domainReads;
     public final ObjectPool<FillPlan> fills;
     public final ObjectPool<FilterPlan> filters;
     public final ObjectPool<FunctionSourcePlan> functionSources;
@@ -127,6 +129,7 @@ public final class PlanNodePools implements Mutable {
         this.constants = new ObjectPool<>(ConstantExpression.FACTORY, 4, expressionCapacity);
         this.cursors = new ObjectPool<>(CursorExpression.FACTORY, 4, expressionCapacity);
         this.distincts = new ObjectPool<>(DistinctPlan.FACTORY, 4, planCapacity);
+        this.domainReads = new ObjectPool<>(DomainReadPlan.FACTORY, 2, planCapacity);
         this.fills = new ObjectPool<>(FillPlan.FACTORY, 4, planCapacity);
         this.filters = new ObjectPool<>(FilterPlan.FACTORY, 4, planCapacity);
         this.functionSources = new ObjectPool<>(FunctionSourcePlan.FACTORY, 4, planCapacity);
@@ -165,6 +168,7 @@ public final class PlanNodePools implements Mutable {
         clearExpressions();
         aggregates.clear();
         distincts.clear();
+        domainReads.clear();
         fills.clear();
         filters.clear();
         functionSources.clear();

@@ -386,6 +386,7 @@ public final class PhysicalProperties {
                     ? derive(limit.getChild(), limit) : limited(derive(limit.getChild(), null));
             case DistinctPlan distinct -> distinct(distinct, derive(distinct.getChild(), null));
             case AggregatePlan aggregate -> aggregate(aggregate);
+            case DomainReadPlan read -> domainRead(read);
             case SampleByPlan sample -> computed(sampleByRandomAccess(sample), ScanDirection.FORWARD,
                     capability(derive(sample.getChild(), null), LONG_SEQUENCE));
             case FillPlan fill ->
@@ -414,6 +415,19 @@ public final class PhysicalProperties {
                 timestampIndex == UNKNOWN_TIMESTAMP ? Capability.UNKNOWN : Capability.of(timestampIndex >= 0));
         return choose(isTimeSeries, computed(Capability.YES, direction(input), capability(input, LONG_SEQUENCE)),
                 computed(Capability.NO, ScanDirection.FORWARD, capability(input, LONG_SEQUENCE)));
+    }
+
+    /**
+     * A domain read through a shared cursor of the producer's GROUP BY serves random access, scans forward and hides
+     * the base chain; one that builds the producer's plan again reads it through a selection, which keeps the
+     * producer's properties.
+     */
+    private static int domainRead(DomainReadPlan read) {
+        return switch (read.getAlgorithm()) {
+            case SHARED -> computed(Capability.YES, ScanDirection.FORWARD, Capability.NO);
+            case REGENERATED -> derive(read.getProducer(), null);
+            case null -> unknown(ScanDirection.UNKNOWN, Capability.UNKNOWN);
+        };
     }
 
     private static int filter(FilterPlan filter) {
@@ -879,6 +893,12 @@ public final class PhysicalProperties {
             return Capability.UNKNOWN;
         }
         return switch (plan) {
+            case DomainReadPlan read -> switch (read.getAlgorithm()) {
+                case SHARED -> Capability.NO;
+                case REGENERATED -> supportsLongTopK(read.getProducer(), null,
+                        read.getProducer().getOutput().getColumnIndexById(read.getProducerColumnIds().getQuick(columnIndex)));
+                case null -> Capability.UNKNOWN;
+            };
             case AggregatePlan aggregate -> {
                 if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY
                         || aggregate.getAlgorithm() == AggregatePlan.Algorithm.HASH_JOIN
@@ -933,6 +953,11 @@ public final class PhysicalProperties {
     private static Capability supportsSharedCursors(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case AggregatePlan aggregate -> aggregateSharedCursors(aggregate);
+            case DomainReadPlan read -> switch (read.getAlgorithm()) {
+                case SHARED -> Capability.NO;
+                case REGENERATED -> aggregateSharedCursors(read.getProducer());
+                case null -> Capability.UNKNOWN;
+            };
             case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter) ? Capability.NO
                     : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getChild(), null));
             case ProjectPlan project ->
@@ -1047,6 +1072,7 @@ public final class PhysicalProperties {
             case WindowJoinPlan windowJoin -> forwarded(timestamp(windowJoin.getMaster(), null, false), isSource);
             case JoinPlan join -> forwarded(joinTimestamp(join, join.getOrderedInputs().size()), isSource);
             case AggregatePlan aggregate -> isSource ? -1 : aggregateTimestampIndex(aggregate);
+            case DomainReadPlan _ -> -1;
             case ScanPlan scan -> isSource ? -1 : scanTimestampIndex(scan);
             case DistinctPlan _, FillPlan _ -> forwarded(plan.getOutput().getTimestampIndex(), isSource);
             case HorizonJoinPlan horizon -> forwarded(timestamp(horizon.getMaster(), null, false), isSource);

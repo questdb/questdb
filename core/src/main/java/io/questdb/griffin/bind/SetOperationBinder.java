@@ -72,9 +72,7 @@ final class SetOperationBinder {
         targetTypes.clear();
         plan.getSymbolColumns().clear();
         for (int i = 0, n = left.getColumnCount(); i < n; i++) {
-            int type = isCastRequired
-                    ? SetOperationCasts.getUnionCastType(left.getColumnType(i), right.getColumnType(i))
-                    : left.getColumnType(i);
+            int type = SetOperationCasts.getOutputType(plan, i, isCastRequired);
             if (isUnion && isSymbolColumn(plan.getLeft(), i) && isSymbolColumn(plan.getRight(), i)) {
                 plan.getSymbolColumns().add(i);
                 if (plan.isSymbolRestorationRequired()) {

@@ -61,6 +61,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
@@ -234,7 +235,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             frame.clear();
             projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
             projectionGenerator.collectColumnReferenceCounts(frame, root);
-            return generate(frame, root, executionContext);
+            return frame.claimedTree(generate(frame, root, executionContext));
+        } catch (Throwable th) {
+            Misc.free(frame, th);
+            throw th;
         } finally {
             generationDepth--;
         }
@@ -385,6 +389,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition(), masterSuffixLimit);
     }
 
+    /**
+     * Builds the factory of a decorrelation domain other consumers read, which the frame records for its reads, or
+     * takes the one a read built before the generator reached the domain.
+     */
+    private RecordCursorFactory generateProducer(GenerationFrame frame, AggregatePlan producer, SqlExecutionContext executionContext) throws SqlException {
+        final int entry = frame.sharedPlans.indexOf(producer);
+        if (entry > -1) {
+            return frame.claimProducer(entry);
+        }
+        final RecordCursorFactory factory = generateOperator(frame, producer, executionContext);
+        try {
+            frame.addShared(producer, factory);
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
+        }
+        return factory;
+    }
+
     private RecordCursorFactory generateUnary(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
@@ -501,6 +524,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             frame.sharedHeadTarget = null;
             return new SharedRecordCursorFactory(frame.sharedHeadFactory, frame.sharedHeadId);
         }
+        if (plan instanceof AggregatePlan producer && producer.getReaderCount() > 0) {
+            return generateProducer(frame, producer, executionContext);
+        }
+        return generateOperator(frame, plan, executionContext);
+    }
+
+    /**
+     * Builds the factory of the plan's own operator, see {@link #generate}: a decorrelation domain a read reaches before
+     * the generator reaches the domain builds the domain this way, as does a read that builds its producer's plan
+     * again.
+     */
+    RecordCursorFactory generateOperator(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = switch (plan) {
             case WindowPlan window -> windowGenerator.generateWindow(frame, window, null, executionContext);
             case ProjectPlan project when PlanToFactoryRules.generatedWindow(project) instanceof WindowPlan window ->
@@ -523,6 +558,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case AggregatePlan aggregate when PlanToFactoryRules.postingDistinctScan(aggregate) instanceof ScanPlan scan ->
                     scanGenerator.generatePostingDistinct(frame, aggregate, scan, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
+            case DomainReadPlan read -> aggregateGenerator.generateDomainRead(frame, read, executionContext);
             case HorizonJoinPlan horizon -> aggregateGenerator.generateHorizonJoin(frame, horizon, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);
             case WindowJoinPlan windowJoin ->

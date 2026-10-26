@@ -60,7 +60,6 @@ import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
-import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -82,6 +81,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
@@ -198,6 +198,32 @@ public final class AggregateFactoryGenerator {
         }
         metadata.setTimestampIndex(output.getTimestampIndex());
         return metadata;
+    }
+
+    /**
+     * Selects, from the factory built for the read's producer, the producer column each output column of the read
+     * pairs, under the read's names.
+     */
+    private static void selectProducerColumns(DomainReadPlan read, RecordMetadata producerMetadata, GenericRecordMetadata metadata, IntList mapping) {
+        final OutputSchema producerOutput = read.getProducer().getOutput();
+        final OutputSchema output = read.getOutput();
+        final IntList producerIds = read.getProducerColumnIds();
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            final int index = producerOutput.getColumnIndexById(producerIds.getQuick(i));
+            if (index < 0 || producerMetadata.getColumnType(index) != output.getColumnType(i)) {
+                throw new IllegalStateException("decorrelation domain factory differs from its read");
+            }
+            mapping.add(index);
+            metadata.add(TableColumnMetadata.copyOf(producerMetadata, index, SqlUtil.toColumnName(output.getColumnName(i))));
+        }
+    }
+
+    /**
+     * Reads the factory the frame holds for the shared plan at {@code entry} through the next shared cursor it serves,
+     * selecting its columns by {@code mapping}.
+     */
+    private static RecordCursorFactory selectShared(GenerationFrame frame, int entry, GenericRecordMetadata metadata, IntList mapping) {
+        return new SelectedRecordCursorFactory(metadata, mapping, frame.shareCursor(entry));
     }
 
     private static void sharedRecordFunctions(
@@ -368,7 +394,7 @@ public final class AggregateFactoryGenerator {
      */
     private RecordCursorFactory generateSharedHead(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
             throws SqlException {
-        final int entry = frame.sharedSources.indexOf(aggregate.getSharedSource());
+        final int entry = frame.sharedPlans.indexOf(aggregate.getSharedSource().getInput());
         final int index = frame.setOperationPlans.indexOf(aggregate.getSharedOperation());
         if (entry < 0 || index < 0) {
             throw new IllegalStateException("shared set operation is not generated before its consumer");
@@ -394,12 +420,11 @@ public final class AggregateFactoryGenerator {
      */
     private RecordCursorFactory generateSharedSource(GenerationFrame frame, AggregatePlan aggregate) {
         final JoinInput source = aggregate.getSharedSource();
-        final int entry = frame.sharedSources.indexOf(source);
+        final int entry = frame.sharedPlans.indexOf(source.getInput());
         if (entry < 0) {
             throw new IllegalStateException("shared source is not generated before its consumer");
         }
-        final RecordCursorFactory primary = frame.sharedFactories.getQuick(entry);
-        final RecordMetadata primaryMetadata = primary.getMetadata();
+        final RecordMetadata primaryMetadata = frame.sharedFactory(entry).getMetadata();
         final OutputSchema sourceOutput = source.getSourceOutput();
         final OutputSchema input = aggregate.getChild().getOutput();
         if (!sourceOutput.hasColumnTypesOf(primaryMetadata)) {
@@ -413,9 +438,7 @@ public final class AggregateFactoryGenerator {
             mapping.add(index);
             metadata.add(TableColumnMetadata.copyOf(primaryMetadata, index, SqlUtil.toColumnName(input.getColumnName(i))));
         }
-        final int sharedId = frame.sharedConsumerCounts.getQuick(entry);
-        frame.sharedConsumerCounts.setQuick(entry, sharedId + 1);
-        return new SelectedRecordCursorFactory(metadata, mapping, new SharedRecordCursorFactory(primary, sharedId));
+        return selectShared(frame, entry, metadata, mapping);
     }
 
     /**
@@ -662,6 +685,41 @@ public final class AggregateFactoryGenerator {
                     codeGenerator.generate(frame, PlanToFactoryRules.aggregateBase(aggregate), executionContext);
         };
         return generate(frame, aggregate, base, executionContext);
+    }
+
+    /**
+     * Reads the rows of the read's producer through the columns the read pairs: through a shared cursor of the factory
+     * the frame holds for the producer, which the read builds when the generator has not reached the producer yet, or
+     * from a factory it builds for the producer's plan again, see {@link DomainReadPlan.Algorithm}.
+     */
+    RecordCursorFactory generateDomainRead(GenerationFrame frame, DomainReadPlan read, SqlExecutionContext executionContext) throws SqlException {
+        final AggregatePlan producer = read.getProducer();
+        if (read.getAlgorithm() == DomainReadPlan.Algorithm.REGENERATED) {
+            final RecordCursorFactory base = codeGenerator.generateOperator(frame, producer, executionContext);
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            final IntList mapping = new IntList(read.getOutput().getColumnCount());
+            try {
+                selectProducerColumns(read, base.getMetadata(), metadata, mapping);
+            } catch (Throwable th) {
+                Misc.free(base, th);
+                throw th;
+            }
+            return new SelectedRecordCursorFactory(metadata, mapping, base);
+        }
+        int entry = frame.sharedPlans.indexOf(producer);
+        if (entry < 0) {
+            final RecordCursorFactory primary = codeGenerator.generateOperator(frame, producer, executionContext);
+            try {
+                entry = frame.addPendingProducer(producer, primary);
+            } catch (Throwable th) {
+                Misc.free(primary, th);
+                throw th;
+            }
+        }
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final IntList mapping = new IntList(read.getOutput().getColumnCount());
+        selectProducerColumns(read, frame.sharedFactory(entry).getMetadata(), metadata, mapping);
+        return selectShared(frame, entry, metadata, mapping);
     }
 
     RecordCursorFactory generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {

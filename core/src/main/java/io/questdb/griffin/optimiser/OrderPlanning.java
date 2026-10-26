@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -492,7 +493,7 @@ final class OrderPlanning implements OptimiserPass {
             case FillPlan fill -> requireNothing(fill.getChild(), requirement);
             case ScanPlan scan -> requireScan(scan, requirement.getOrderColumnId() >= 0
                     ? scanDirection(scan, requirement.getOrderColumnId(), requirement.getDirection()) : SortDirection.ASCENDING, requirements.next().inputOf(requirement));
-            case FunctionSourcePlan _ -> {
+            case FunctionSourcePlan _, DomainReadPlan _ -> {
             }
             case DistinctPlan distinct -> requireNothing(distinct.getChild(), requirement);
             case LimitPlan sortedLimit when LogicalPlans.hasSortUnderStableProjects(sortedLimit.getChild()) ->

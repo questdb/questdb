@@ -27,6 +27,7 @@ package io.questdb.griffin.optimiser;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
@@ -347,6 +348,19 @@ final class PhysicalChoiceVerifier {
             return PlanVerifier.AGGREGATE_ALGORITHM;
         }
         return isHorizon && algorithm == AggregatePlan.Algorithm.SERIAL ? serialHorizon((HorizonJoinPlan) aggregate.getChild(), isPlanned) : null;
+    }
+
+    /**
+     * Checks how a domain read reads its producer: through a shared cursor only when the producer's GROUP BY serves
+     * them; building the producer's plan again serves any read.
+     */
+    static String domainRead(DomainReadPlan read, boolean isPlanned) {
+        if (read.getAlgorithm() == null) {
+            return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        return read.getAlgorithm() == DomainReadPlan.Algorithm.SHARED
+                && PhysicalProperties.supportsSharedCursors(read.getProducer()) != PhysicalProperties.Capability.YES
+                ? PlanVerifier.DOMAIN_READ_ALGORITHM : null;
     }
 
     /**

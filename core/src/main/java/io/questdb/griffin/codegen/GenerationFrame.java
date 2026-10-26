@@ -26,6 +26,7 @@ package io.questdb.griffin.codegen;
 
 import io.questdb.griffin.IntervalExtractor;
 import io.questdb.griffin.ParquetPushdownExtractor;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -35,11 +36,11 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -65,6 +66,7 @@ import java.io.Closeable;
  * deeper, cannot overwrite them.
  */
 final class GenerationFrame implements Closeable, Mutable {
+    private static final String FREED_SHARED_FACTORY = "shared cursor reads a factory the generator freed";
     final IntList columnReferenceCounts = new IntList();
     final ObjList<BoundExpression> expressions = new ObjList<>();
     final ObjList<Function> functions = new ObjList<>(2);
@@ -83,7 +85,12 @@ final class GenerationFrame implements Closeable, Mutable {
     final ObjList<LogicalPlan> setOperationPlans = new ObjList<>();
     final IntList sharedConsumerCounts = new IntList();
     final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
-    final ObjList<JoinInput> sharedSources = new ObjList<>();
+    /**
+     * The plans whose factories the frame built and other consumers may share: the input of each join input and each
+     * decorrelation domain with readers; {@link #sharedFactories} holds their factories and
+     * {@link #sharedConsumerCounts} the next shared id of each.
+     */
+    final ObjList<LogicalPlan> sharedPlans = new ObjList<>();
     final BitSet symbolAsString = new BitSet();
     final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     final IntList windowFunctionPositions = new IntList();
@@ -93,8 +100,21 @@ final class GenerationFrame implements Closeable, Mutable {
     final WindowFactoryGenerator.WindowPartitionKeys windowPartitionKeys = new WindowFactoryGenerator.WindowPartitionKeys();
     final ObjList<WindowFunction> windowSpecFunctions = new ObjList<>();
     final ObjList<WindowMapSpec> windowSpecs = new ObjList<>();
+    /**
+     * The decorrelation domains whose factories a read built before the generator reached them, which the frame owns
+     * until the generator reaches them, see {@link #claimProducer}.
+     */
+    private final ObjList<LogicalPlan> pendingProducers = new ObjList<>();
     private final ObjList<PreparedFilter> preparedFilters = new ObjList<>();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
+    /**
+     * The entry of the factory each of {@link #sharedConsumers} reads.
+     */
+    private final IntList sharedConsumerEntries = new IntList();
+    /**
+     * The shared cursors the frame handed out, see {@link #shareCursor}.
+     */
+    private final ObjList<SharedRecordCursorFactory> sharedConsumers = new ObjList<>();
     Function limitHi;
     Function limitLo;
     /**
@@ -145,9 +165,12 @@ final class GenerationFrame implements Closeable, Mutable {
         expressions.clear();
         schema.clear();
         columnReferenceCounts.clear();
+        failure = freePendingProducers(failure);
         sharedConsumerCounts.clear();
+        sharedConsumerEntries.clear();
+        sharedConsumers.clear();
         sharedFactories.clear();
-        sharedSources.clear();
+        sharedPlans.clear();
         setOperationHeads.clear();
         setOperationPlans.clear();
         projectionScopeMetadata.clear();
@@ -170,6 +193,64 @@ final class GenerationFrame implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
+    }
+
+    /**
+     * Records the factory a domain read built for its producer before the generator reached the producer; the frame
+     * owns it until {@link #claimProducer}. Returns its entry.
+     */
+    int addPendingProducer(LogicalPlan producer, RecordCursorFactory factory) {
+        pendingProducers.add(producer);
+        return addShared(producer, factory);
+    }
+
+    /**
+     * Records the factory the frame built for a plan other consumers may share, once; returns its entry.
+     */
+    int addShared(LogicalPlan plan, RecordCursorFactory factory) {
+        final int entry = sharedPlans.indexOf(plan);
+        if (entry > -1) {
+            return entry;
+        }
+        sharedPlans.add(plan);
+        sharedFactories.add(factory);
+        sharedConsumerCounts.add(1);
+        return sharedPlans.size() - 1;
+    }
+
+    /**
+     * Hands the factory a domain read built for the producer at {@code entry} over to the producer's place in the
+     * factory tree.
+     */
+    RecordCursorFactory claimProducer(int entry) {
+        final int index = pendingProducers.indexOf(sharedPlans.getQuick(entry));
+        if (index < 0) {
+            throw new IllegalStateException("decorrelation domain is generated twice");
+        }
+        pendingProducers.remove(index);
+        return sharedFactories.getQuick(entry);
+    }
+
+    /**
+     * Fails a generation that left the factory of a decorrelation domain to no place in the factory tree, freeing it
+     * with {@code factory}, the tree, and one that freed a factory a shared cursor the tree keeps reads: a subtree the
+     * generator replaced with an empty factory held it.
+     */
+    RecordCursorFactory claimedTree(RecordCursorFactory factory) {
+        if (pendingProducers.size() > 0) {
+            final IllegalStateException failure = new IllegalStateException("decorrelation domain read without its domain");
+            Misc.free(factory, failure);
+            freePendingProducers(failure);
+            throw failure;
+        }
+        for (int i = 0, n = sharedConsumers.size(); i < n; i++) {
+            if (!sharedConsumers.getQuick(i).isClosed() && isFreed(sharedFactories.getQuick(sharedConsumerEntries.getQuick(i)))) {
+                final IllegalStateException failure = new IllegalStateException(FREED_SHARED_FACTORY);
+                Misc.free(factory, failure);
+                throw failure;
+            }
+        }
+        return factory;
     }
 
     int getReferenceCount(int columnId) {
@@ -250,5 +331,41 @@ final class GenerationFrame implements Closeable, Mutable {
             columnReferenceCounts.add(0);
         }
         columnReferenceCounts.setQuick(columnId, count);
+    }
+
+    /**
+     * Hands out the next shared cursor of the factory the frame built for the shared plan at {@code entry}.
+     */
+    RecordCursorFactory shareCursor(int entry) {
+        final int sharedId = sharedConsumerCounts.getQuick(entry);
+        final SharedRecordCursorFactory consumer = new SharedRecordCursorFactory(sharedFactory(entry), sharedId);
+        sharedConsumerCounts.setQuick(entry, sharedId + 1);
+        sharedConsumers.add(consumer);
+        sharedConsumerEntries.add(entry);
+        return consumer;
+    }
+
+    /**
+     * The factory the frame built for the shared plan at {@code entry}, which a shared cursor reads; fails when the
+     * generator freed it.
+     */
+    RecordCursorFactory sharedFactory(int entry) {
+        final RecordCursorFactory factory = sharedFactories.getQuick(entry);
+        if (isFreed(factory)) {
+            throw new IllegalStateException(FREED_SHARED_FACTORY);
+        }
+        return factory;
+    }
+
+    private static boolean isFreed(RecordCursorFactory factory) {
+        return factory instanceof AbstractRecordCursorFactory abstractFactory && abstractFactory.isClosed();
+    }
+
+    private Throwable freePendingProducers(Throwable failure) {
+        for (int i = 0, n = pendingProducers.size(); i < n; i++) {
+            failure = Misc.freeBestEffort(failure, sharedFactories.getQuick(sharedPlans.indexOf(pendingProducers.getQuick(i))));
+        }
+        pendingProducers.clear();
+        return failure;
     }
 }

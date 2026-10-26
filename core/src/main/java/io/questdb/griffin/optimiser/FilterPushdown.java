@@ -70,7 +70,8 @@ import io.questdb.std.ObjectPool;
 
 /**
  * Pushes join filters into join inputs and filters down the plan, derives transitive filters over
- * equi-join keys and narrows decorrelation domains with their master's filters.
+ * equi-join keys and narrows decorrelation domains with their master's filters. A filter of one consumer stays above a
+ * decorrelation domain other consumers read, see {@link AggregatePlan#getReaderCount()}.
  */
 final class FilterPushdown implements OptimiserPass {
     private static final int OFFSET_LEAVES = 3;
@@ -916,7 +917,7 @@ final class FilterPushdown implements OptimiserPass {
                     return result;
                 }
                 return spliceResidual(result, parent, filter, operation, pushSetConjuncts(operation, filter.getPredicate(), timestampIndex));
-            } else if (input instanceof AggregatePlan aggregate && !(aggregate.getChild() instanceof HorizonJoinPlan)) {
+            } else if (input instanceof AggregatePlan aggregate && !(aggregate.getChild() instanceof HorizonJoinPlan) && aggregate.getReaderCount() == 0) {
                 if (!mapGroupingKeys(aggregate) || isUnstable(filter.getPredicate())) {
                     return result;
                 }
