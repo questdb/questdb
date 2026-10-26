@@ -692,7 +692,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
-            if (hi - (long) lo < 4 || cs.getClass() != DirectString.class
+            if (hi - (long) lo < 4 || !DirectString.isRawView(cs)
                     || lo < 0 || hi > cs.length() || hi - (long) lo > buffer.getWriteNAvailable()) {
                 return Utf8Sink.super.escapeJsonStr(cs, lo, hi);
             }

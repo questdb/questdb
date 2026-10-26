@@ -79,7 +79,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
-        if (hi - (long) lo < 4 || pos < 0 || cs.getClass() != DirectString.class
+        if (hi - (long) lo < 4 || pos < 0 || !DirectString.isRawView(cs)
                 || lo < 0 || hi > cs.length() || hi - (long) lo > buffer.length - pos) {
             return MutableUtf8Sink.super.escapeJsonStr(cs, lo, hi);
         }

@@ -50,12 +50,14 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public static final int INSERT_BACKOFF = 1024;
+    private static final int HASH_MEMO_SIZE = 1024;
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
@@ -184,6 +186,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return offsetMem.isDeleted();
     }
 
+    @TestOnly
+    public boolean isHashMemoized(int key) {
+        return ownView.isHashMemoized(key);
+    }
+
     @Override
     public int keyOf(CharSequence value) {
         if (value != null) {
@@ -210,6 +217,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return cachedKey;
         }
         return keyOf(value);
+    }
+
+    @TestOnly
+    public void memoizeHash(int key, int hash) {
+        ownView.hashMemo()[key & (HASH_MEMO_SIZE - 1)] = memoEntry(key, hash);
     }
 
     public boolean needsReopen(long columnNameTxn) {
@@ -385,6 +397,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
+    private static long memoEntry(int key, int hash) {
+        return ((long) (key + 1) << 32) | (hash & 0xFFFFFFFFL);
+    }
+
     private void logCacheStopped() {
         NativeMemoryBudget budget = cacheEntry.getBudget();
         String reason = switch (cache.getStopReason()) {
@@ -432,9 +448,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private class SymbolTableView implements StaticSymbolTable {
-        private final DirectString csviewA = new DirectString();
-        private final DirectString csviewB = new DirectString();
+        private final CachedHashView csviewA = new CachedHashView();
+        private final CachedHashView csviewB = new CachedHashView();
         private final DirectString csviewInternal = new DirectString();
+        private final DirectString csviewOnce = new DirectString();
+        // Hash codes of hashed keys, each as memoEntry() at its key modulo the memo size.
+        private long[] hashMemo;
+        private long hashMemoGeneration;
         private int insertBackoff;
         private RowCursor rowCursor;
 
@@ -491,10 +511,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
         @Override
         public CharSequence valueOfOnce(int key) {
-            return SymbolMapReaderImpl.this.valueOf(key, csviewA);
+            return SymbolMapReaderImpl.this.valueOf(key, csviewOnce);
         }
 
-        private CharSequence cachedValueOf(int key, DirectString view) {
+        private CharSequence bindValueOf(int key, DirectString view) {
             if (key > maxCachedKey) {
                 return SymbolMapReaderImpl.this.valueOf(key, view);
             }
@@ -536,6 +556,61 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 }
             }
             return value;
+        }
+
+        private CharSequence cachedValueOf(int key, CachedHashView view) {
+            final CharSequence value = bindValueOf(key, view);
+            if (value != null) {
+                view.key = key;
+            }
+            return value;
+        }
+
+        private long[] hashMemo() {
+            if (hashMemo == null) {
+                hashMemo = new long[HASH_MEMO_SIZE];
+                hashMemoGeneration = symbolTableGeneration;
+            } else if (hashMemoGeneration != symbolTableGeneration) {
+                Arrays.fill(hashMemo, 0);
+                hashMemoGeneration = symbolTableGeneration;
+            }
+            return hashMemo;
+        }
+
+        private boolean isHashMemoized(int key) {
+            return hashMemo != null && hashMemoGeneration == symbolTableGeneration
+                    && (int) (hashMemo[key & (HASH_MEMO_SIZE - 1)] >>> 32) == key + 1;
+        }
+
+        /**
+         * The A and B value flyweights. The view sets the key on every bind, so the key names the
+         * bound value, and hashCode() reuses the hash that the view memoized for that key.
+         */
+        private final class CachedHashView extends DirectString {
+            private int key = -1;
+
+            @Override
+            public int hashCode() {
+                final int k = key;
+                if (k < 0) {
+                    return super.hashCode();
+                }
+                assert k >= symbolCount || Chars.equals(this, SymbolMapReaderImpl.this.valueOf(k, new DirectString()));
+                final long[] memo = hashMemo();
+                final int slot = k & (HASH_MEMO_SIZE - 1);
+                final long entry = memo[slot];
+                if ((int) (entry >>> 32) == k + 1) {
+                    return (int) entry;
+                }
+                final int h = super.hashCode();
+                memo[slot] = memoEntry(k, h);
+                return h;
+            }
+
+            @Override
+            protected boolean isRaw() {
+                return true;
+            }
         }
     }
 }

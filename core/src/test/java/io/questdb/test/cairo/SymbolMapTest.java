@@ -381,6 +381,71 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolTableViewsMemoizeHashCodes() throws Exception {
+        assertMemoryLeak(() -> {
+            // a slot value, a map value and an empty value, whose hash is 0
+            ObjList<String> values = new ObjList<>("a".repeat(30), "b".repeat(31), "");
+            ObjList<String> others = new ObjList<>("x", "y", "z");
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 8, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    for (int i = 0; i < values.size(); i++) {
+                        writer.put(values.getQuick(i));
+                    }
+                }
+                create(path, "y", 8, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "y", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    for (int i = 0; i < others.size(); i++) {
+                        writer.put(others.getQuick(i));
+                    }
+                }
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, values.size(), pool, 0)
+                ) {
+                    for (int key = 0; key < values.size(); key++) {
+                        final int expected = values.getQuick(key).hashCode();
+                        Assert.assertFalse(reader.isHashMemoized(key));
+                        // the first read returns the mapped value, the second the cached one
+                        for (int read = 0; read < 2; read++) {
+                            CharSequence value = reader.valueOf(key);
+                            Assert.assertTrue(DirectString.isRawView(value));
+                            Assert.assertEquals(expected, Chars.hashCode(value));
+                            Assert.assertTrue(reader.isHashMemoized(key));
+                        }
+                        Assert.assertEquals(expected, Chars.hashCode(reader.valueBOf(key)));
+                    }
+                    Assert.assertEquals(2, reader.getLowCacheSize());
+                    Assert.assertEquals(1, reader.getCacheSize());
+
+                    // Both flyweights read the memoized hash instead of hashing the chars.
+                    reader.memoizeHash(1, 42);
+                    CharSequence a = reader.valueOf(1);
+                    Assert.assertEquals(42, Chars.hashCode(a));
+                    Assert.assertEquals(42, Chars.hashCode(reader.valueBOf(1)));
+                    // A lookup that finds no value leaves the earlier binding and its key alone.
+                    Assert.assertNull(reader.valueOf(values.size()));
+                    Assert.assertEquals(42, Chars.hashCode(a));
+                    // Rebinding moves the key with the value.
+                    Assert.assertEquals(values.getQuick(0).hashCode(), Chars.hashCode(reader.valueOf(0)));
+                    Assert.assertEquals(values.getQuick(0).hashCode(), Chars.hashCode(a));
+                    // The translator's lookups bind no key.
+                    StaticSymbolTable view = reader.newSymbolTableView();
+                    Assert.assertEquals(values.getQuick(0).hashCode(), Chars.hashCode(view.valueOf(0)));
+                    Assert.assertEquals(values.getQuick(1).hashCode(), Chars.hashCode(view.valueOfOnce(1)));
+
+                    // Reopening the reader on another dictionary drops the memo.
+                    reader.of(configuration, path, "y", COLUMN_NAME_TXN_NONE, others.size(), pool, 0);
+                    for (int key = 0; key < others.size(); key++) {
+                        Assert.assertFalse(reader.isHashMemoized(key));
+                        Assert.assertEquals(others.getQuick(key).hashCode(), Chars.hashCode(reader.valueOf(key)));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSharedLowCacheBudgetRefusalStopsAdmissionAndLogsOnce() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
