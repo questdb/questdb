@@ -2070,6 +2070,38 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .withPlanContaining("AsOf Join Memoized Scan", "filter: s1=s2")
                     .returns(expected);
+            // An IN list, BETWEEN, < or > with another column on its other side, and > with a bind variable are
+            // false for a NULL slave column too, the last whatever value the bind variable holds, NULL included.
+            final String[][] cases = {
+                    {"s.px IN (0.5, 2.5)", expected},
+                    {"s.id BETWEEN 15 AND 25", "id\tid1\tpx\n4\t20\t2.5\n"},
+                    {"s.px < m.id", expected},
+                    {"m.id > s.px", expected},
+            };
+            for (String[] testCase : cases) {
+                assertQuery("SELECT m.id, s.id, s.px FROM " + join + " WHERE " + testCase[0])
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("filter: s1=s2", "condition: s.sym=m.s2")
+                        .withPlanNotContaining("sharedKeyCheck")
+                        .returns(testCase[1]);
+            }
+            bindVariableService.clear();
+            bindVariableService.setDouble("v", 1.0);
+            assertQuery("SELECT m.id, s.id, s.px FROM " + join + " WHERE s.px > :v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: s1=s2", "condition: s.sym=m.s2")
+                    .withPlanNotContaining("sharedKeyCheck")
+                    .returns("""
+                            id\tid1\tpx
+                            4\t20\t2.5
+                            """);
+            bindVariableService.setDouble("v", Double.NaN);
+            assertQuery("SELECT m.id, s.id, s.px FROM " + join + " WHERE s.px > :v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("id\tid1\tpx\n");
         });
     }
 
@@ -2145,8 +2177,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnWhereKeepsUnmatchedRows() throws Exception {
-        // These WHERE clauses keep some unmatched master rows, or depend on more than a slave column and
-        // a compile-time constant, so the join keeps both keys and its master key check.
+        // These WHERE clauses keep some unmatched master rows, or may keep them in another execution of the
+        // plan, so the join keeps both keys and its master key check.
         assertMemoryLeak(() -> {
             createSharedKeyWhereTables();
             final String select = "SELECT m.id, s.id, s.px FROM m ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE ";
@@ -2198,25 +2230,47 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             4\t20\t2.5
                             6\t40\t0.5
                             """);
-            assertQuery(select + "s.px < m.id")
+            // NULL IN (NULL, 2.5) and coalesce(NULL, 1.0) > 0.7 hold
+            final String unmatchedAnd4 = """
+                    id\tid1\tpx
+                    1\t30\tnull
+                    2\tnull\tnull
+                    3\tnull\tnull
+                    4\t20\t2.5
+                    5\tnull\tnull
+                    """;
+            assertQuery(select + "s.px IN (NULL, 2.5)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .withPlanContaining("sharedKeyCheck: true")
-                    .returns("""
-                            id\tid1\tpx
-                            4\t20\t2.5
-                            6\t40\t0.5
-                            """);
-            // a cached plan may run again with a NULL bind variable
+                    .returns(unmatchedAnd4);
+            assertQuery(select + "coalesce(s.px, 1.0) > 0.7")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns(unmatchedAnd4);
+            // a cached plan may run again with a NULL bind variable, and NULL >= NULL holds
             bindVariableService.clear();
             bindVariableService.setDouble("v", 1.0);
-            assertQuery(select + "s.px > :v")
+            assertQuery(select + "s.px >= :v")
                     .noLeakCheck()
                     .noRandomAccess()
                     .withPlanContaining("sharedKeyCheck: true")
                     .returns("""
                             id\tid1\tpx
                             4\t20\t2.5
+                            """);
+            bindVariableService.setDouble("v", Double.NaN);
+            assertQuery(select + "s.px >= :v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1\tpx
+                            1\t30\tnull
+                            2\tnull\tnull
+                            3\tnull\tnull
+                            5\tnull\tnull
                             """);
         });
     }
@@ -2253,7 +2307,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     {"q.y IS NOT NULL", "false"},
                     {"q.sh IS NOT NULL", "false"},
                     {"q.px IS NOT NULL OR t.id > 50", "false"},
-                    {"q.px > t.id", "false"},
+                    {"q.px > t.id", "true"},
+                    {"t.id < q.i", "true"},
+                    {"q.i IN (1, 2)", "true"},
+                    {"q.i BETWEEN 2 AND 3", "true"},
+                    {"q.i IN (NULL, 2)", "false"},
+                    {"coalesce(q.i, 2) = 2", "false"},
             };
             for (String keyType : new String[]{"SYMBOL", "INT", "VARCHAR", "DOUBLE"}) {
                 for (int round = 0; round < 2; round++) {

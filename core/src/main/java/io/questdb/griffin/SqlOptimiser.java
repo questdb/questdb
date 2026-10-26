@@ -310,9 +310,13 @@ public class SqlOptimiser implements Mutable {
     // Outer joins that addFilterOrEmitJoin keyed on an implied equality, because isNullExtensionRejected()
     // found that later conjuncts drop the rows they NULL-extend.
     private final IntHashSet nullRejectedKeyedOuterJoins = new IntHashSet();
-    // WHERE and INNER ON conjuncts of the level that compare one column with a constant, collected by
-    // collectNullRejectionConjuncts(): the model of the column, the position after which the conjunct
-    // filters, and the NULL_REJECTION_* state of the conjunct.
+    // The models whose NULL row the conjunct that collectNullRejectionCandidates() last read may reject,
+    // and the NULL_REJECTION_* state of each.
+    private final IntList nullRejectionCandidateModels = new IntList();
+    private final IntList nullRejectionCandidateStates = new IntList();
+    // WHERE and INNER ON conjuncts of the level that may reject the NULL row of a model, collected by
+    // collectNullRejectionConjuncts(): the conjunct, the model, the position after which the conjunct
+    // filters, and the NULL_REJECTION_* state of the conjunct for that model.
     private final IntList nullRejectionConjunctModels = new IntList();
     private final ObjList<ExpressionNode> nullRejectionConjunctNodes = new ObjList<>();
     private final IntList nullRejectionConjunctPositions = new IntList();
@@ -429,6 +433,9 @@ public class SqlOptimiser implements Mutable {
     // the life of the optimiser; the index and keyMoveAnswers bound it. clear() keeps it, so tests read
     // the delta around a compile.
     private long keyMoveEdgeReads;
+    // The number of NULL checks, function parses, that collectNullRejectedJoins() and isNullRejectedAfter()
+    // have run over the life of the optimiser. clear() keeps it, so tests read the delta around a compile.
+    private long nullRejectionChecks;
     // The execution context of the level whose join conditions optimiseJoins processes, for the NULL
     // checks of isNullRejectedAfter().
     private SqlExecutionContext nullRejectionContext;
@@ -572,6 +579,8 @@ public class SqlOptimiser implements Mutable {
         nullingExecPosByModel.clear();
         nullingPrefixBoundaries.clear();
         nullRejectedKeyedOuterJoins.clear();
+        nullRejectionCandidateModels.clear();
+        nullRejectionCandidateStates.clear();
         nullRejectionConjunctModels.clear();
         nullRejectionConjunctNodes.clear();
         nullRejectionConjunctPositions.clear();
@@ -624,6 +633,11 @@ public class SqlOptimiser implements Mutable {
     @TestOnly
     public long getKeyMoveEdgeReadsForTesting() {
         return keyMoveEdgeReads;
+    }
+
+    @TestOnly
+    public long getNullRejectionChecksForTesting() {
+        return nullRejectionChecks;
     }
 
     @TestOnly
@@ -3700,9 +3714,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Collects the ASOF and LT joins whose unmatched master rows a top-level WHERE conjunct drops: the
-    // conjunct compares one column of the join's slave with a constant and is false when that column
-    // is NULL. The joins of a model with a master-nulling join are skipped, because such a join could
-    // null-extend the master rows of the ASOF or LT join.
+    // conjunct is false on the NULL row of the join's slave, see collectNullRejectionCandidates(). The
+    // joins of a model with a master-nulling join are skipped, because such a join could null-extend the
+    // master rows of the ASOF or LT join.
     private void collectNullRejectedJoins(IQueryModel parent, ExpressionNode where, SqlExecutionContext sqlExecutionContext) {
         nullRejectedJoinIndexes.clear();
         if (where == null) {
@@ -3733,24 +3747,92 @@ public class SqlOptimiser implements Mutable {
                 }
                 continue;
             }
-            final int modelIndex = getConstantComparisonModelIndex(parent, node);
-            if (modelIndex < 1) {
-                continue;
-            }
-            final int joinType = joinModels.getQuick(modelIndex).getJoinType();
-            if ((joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
-                    && isNullRejectingPredicate(joinModels, modelIndex, node, node.lhs.type == LITERAL, sqlExecutionContext)) {
+            collectNullRejectionCandidates(parent, node);
+            for (int i = 0, n = nullRejectionCandidateModels.size(); i < n; i++) {
+                final int modelIndex = nullRejectionCandidateModels.getQuick(i);
+                final int joinType = joinModels.getQuick(modelIndex).getJoinType();
+                if (joinType != IQueryModel.JOIN_ASOF && joinType != IQueryModel.JOIN_LT) {
+                    continue;
+                }
+                if (nullRejectionCandidateStates.getQuick(i) == NULL_REJECTION_UNCHECKED) {
+                    nullRejectionChecks++;
+                    if (!isNullRejectingColumnPredicate(joinModels.getQuick(modelIndex), node, sqlExecutionContext)) {
+                        continue;
+                    }
+                }
                 nullRejectedJoinIndexes.add(modelIndex);
             }
         }
     }
 
-    // Collects the WHERE and INNER ON conjuncts of the level that compare one column with a constant, for
-    // isNullExtensionRejected(). It reads only the shape of each conjunct, so the NULL check of the column
-    // type runs only for the conjuncts that an implied key asks about. The positions record where each
-    // conjunct filters: after the INNER join that it belongs to, or after every join for WHERE. Only an
-    // INNER or CROSS join after an outer join can imply a key that addFilterOrEmitJoin turns into a filter,
-    // so a level without one collects nothing.
+    // Adds the model of the operand to the candidates of collectNullRejectionCandidates() when the
+    // operand is a bare column whose type has NULL
+    private void collectNullRejectingOperand(IQueryModel parent, ExpressionNode operand) throws SqlException {
+        if (operand.type != LITERAL) {
+            return;
+        }
+        final int modelIndex = validateColumnAndGetModelIndex(
+                parent,
+                null,
+                operand.token,
+                Chars.indexOfLastUnquoted(operand.token, '.'),
+                operand.position,
+                false
+        );
+        if (isNullableColumn(parent.getJoinModels().getQuick(modelIndex), operand)) {
+            nullRejectionCandidateModels.add(modelIndex);
+            nullRejectionCandidateStates.add(NULL_REJECTION_REJECTING);
+        }
+    }
+
+    // Collects into nullRejectionCandidateModels the models whose NULL row the conjunct may reject. A
+    // conjunct that reads the columns of one model is a candidate of that model: in the
+    // NULL_REJECTION_REJECTING state when hasNullRejectingOperand() decides it, which needs no function
+    // parse, and in the NULL_REJECTION_UNCHECKED state otherwise, in which isNullRejectingColumnPredicate()
+    // decides it, only when a caller asks. A conjunct that reads several models is false on the NULL row of
+    // one of them only through an operand that a NULL makes false whatever the other operands read, by the
+    // rules of isNullRejectingColumnPredicate(): a bare column on either side of < or >, and the bare value
+    // of BETWEEN. When the column type has NULL, such an operand rejects the NULL row of its model, and the
+    // model is a candidate in the NULL_REJECTION_REJECTING state. Each operand is checked against its own
+    // model: isNullRejectingColumnPredicate() reads every operand as a column of the one model that it is
+    // given. A conjunct that names an invalid column has no candidate, and processJoinConditions() reports
+    // the column.
+    private void collectNullRejectionCandidates(IQueryModel parent, ExpressionNode node) {
+        nullRejectionCandidateModels.clear();
+        nullRejectionCandidateStates.clear();
+        try {
+            tempIntHashSet.clear();
+            literalCollector.withModel(parent);
+            literalCollector.resetCounts();
+            traversalAlgo.traverse(node, literalCollector.to(tempIntHashSet));
+            if (tempIntHashSet.size() == 1) {
+                final int modelIndex = tempIntHashSet.get(0);
+                nullRejectionCandidateModels.add(modelIndex);
+                nullRejectionCandidateStates.add(hasNullRejectingOperand(parent.getJoinModels().getQuick(modelIndex), node)
+                        ? NULL_REJECTION_REJECTING
+                        : NULL_REJECTION_UNCHECKED);
+            } else if (tempIntHashSet.size() > 1) {
+                if (node.type == OPERATION && node.paramCount == 2 && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
+                    collectNullRejectingOperand(parent, node.lhs);
+                    collectNullRejectingOperand(parent, node.rhs);
+                } else if (SqlKeywords.isBetweenKeyword(node.token)) {
+                    // the parser gives BETWEEN its value and both bounds
+                    assert node.type == SET_OPERATION && node.paramCount == 3;
+                    collectNullRejectingOperand(parent, node.args.getLast());
+                }
+            }
+        } catch (SqlException ignored) {
+            nullRejectionCandidateModels.clear();
+            nullRejectionCandidateStates.clear();
+        }
+    }
+
+    // Collects the WHERE and INNER ON conjuncts of the level that may reject the NULL row of a model, see
+    // collectNullRejectionCandidates(), for isNullExtensionRejected(). It reads only the shape of each
+    // conjunct, so the NULL check runs only for the conjuncts that an implied key asks about. The positions
+    // record where each conjunct filters: after the INNER join that it belongs to, or after every join for
+    // WHERE. Only an INNER or CROSS join after an outer join can imply a key that addFilterOrEmitJoin turns
+    // into a filter, so a level without one collects nothing.
     private void collectNullRejectionConjuncts(IQueryModel parent, ExpressionNode where) {
         nullRejectionConjunctNodes.clear();
         nullRejectionConjunctModels.clear();
@@ -3830,12 +3912,12 @@ public class SqlOptimiser implements Mutable {
                 }
                 continue;
             }
-            final int modelIndex = getConstantComparisonModelIndex(parent, node);
-            if (modelIndex > -1) {
+            collectNullRejectionCandidates(parent, node);
+            for (int i = 0, n = nullRejectionCandidateModels.size(); i < n; i++) {
                 nullRejectionConjunctNodes.add(node);
-                nullRejectionConjunctModels.add(modelIndex);
+                nullRejectionConjunctModels.add(nullRejectionCandidateModels.getQuick(i));
                 nullRejectionConjunctPositions.add(position);
-                nullRejectionConjunctStates.add(NULL_REJECTION_UNCHECKED);
+                nullRejectionConjunctStates.add(nullRejectionCandidateStates.getQuick(i));
             }
         }
     }
@@ -6848,34 +6930,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Returns the index of the join model whose column the binary predicate compares with an operand that
-    // reads no column, or -1 for any other predicate. The column is the left operand when that operand is a
-    // LITERAL.
-    private int getConstantComparisonModelIndex(IQueryModel parent, ExpressionNode node) {
-        if (node.type != OPERATION || node.paramCount != 2 || node.lhs == null || node.rhs == null) {
-            return -1;
-        }
-        final boolean isColumnLhs = node.lhs.type == LITERAL && node.rhs.type != LITERAL;
-        if (!isColumnLhs && !(node.rhs.type == LITERAL && node.lhs.type != LITERAL)) {
-            return -1;
-        }
-        try {
-            tempIntHashSet.clear();
-            literalCollector.withModel(parent);
-            literalCollector.resetCounts();
-            traversalAlgo.traverse(isColumnLhs ? node.rhs : node.lhs, literalCollector.to(tempIntHashSet));
-            if (tempIntHashSet.size() > 0) {
-                // the constant side reads a column
-                return -1;
-            }
-            traversalAlgo.traverse(isColumnLhs ? node.lhs : node.rhs, literalCollector.to(tempIntHashSet));
-            return tempIntHashSet.size() == 1 ? tempIntHashSet.get(0) : -1;
-        } catch (SqlException ignored) {
-            // processJoinConditions() reports the invalid column
-            return -1;
-        }
-    }
-
     // Returns the key type of key k of the join context, see getJoinKeyEncoding(int, int).
     private int getJoinKeyEncoding(IQueryModel parent, JoinContext jc, int k) {
         final IQueryModel aModel = parent.getJoinModels().getQuick(jc.aIndexes.getQuick(k));
@@ -7266,6 +7320,22 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
+    }
+
+    // Returns true when the conjunct, which reads only columns of the table, is < or > with a bare column of
+    // the table on one side, or BETWEEN with a bare column of the table as its value, and the column type
+    // has NULL: a NULL operand makes the conjunct false whatever the other operands hold. The rules of
+    // isNullRejectingColumnPredicate() that need no function parse.
+    private boolean hasNullRejectingOperand(IQueryModel tableModel, ExpressionNode node) {
+        if (node.type == OPERATION && node.paramCount == 2 && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
+            return isNullableColumn(tableModel, node.lhs) || isNullableColumn(tableModel, node.rhs);
+        }
+        if (SqlKeywords.isBetweenKeyword(node.token)) {
+            // the parser rejects BETWEEN without its value and both bounds
+            assert node.paramCount == 3;
+            return isNullableColumn(tableModel, node.args.getLast());
+        }
+        return false;
     }
 
     // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
@@ -8149,28 +8219,38 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    // Returns true when a conjunct from collectNullRejectionConjuncts() filters after the join at position,
-    // compares a column of a model from loIndex to hiIndex, and is false on the NULL record of the column
-    // type. The NULL check of a conjunct runs once, on the first call that asks about it.
+    // Returns true when a conjunct from collectNullRejectionConjuncts() filters after the join at position
+    // and rejects the NULL row of a model from loIndex to hiIndex, see isNullRejectingColumnPredicate(). The
+    // conjuncts already known to reject go first, so the NULL check, a function parse, runs only when none of
+    // them qualifies, and once per conjunct, on the first call that asks about it.
     private boolean isNullRejectedAfter(IQueryModel parent, int loIndex, int hiIndex, int position) {
         for (int i = 0, n = nullRejectionConjunctNodes.size(); i < n; i++) {
-            final int modelIndex = nullRejectionConjunctModels.getQuick(i);
-            if (modelIndex < loIndex || modelIndex > hiIndex || nullRejectionConjunctPositions.getQuick(i) <= position) {
-                continue;
-            }
-            int state = nullRejectionConjunctStates.getQuick(i);
-            if (state == NULL_REJECTION_UNCHECKED) {
-                final ExpressionNode conjunct = nullRejectionConjunctNodes.getQuick(i);
-                state = isNullRejectingPredicate(parent.getJoinModels(), modelIndex, conjunct, conjunct.lhs.type == LITERAL, nullRejectionContext)
-                        ? NULL_REJECTION_REJECTING
-                        : NULL_REJECTION_NOT_REJECTING;
-                nullRejectionConjunctStates.setQuick(i, state);
-            }
-            if (state == NULL_REJECTION_REJECTING) {
+            if (nullRejectionConjunctStates.getQuick(i) == NULL_REJECTION_REJECTING && isNullRejectionConjunctAfter(i, loIndex, hiIndex, position)) {
                 return true;
             }
         }
+        for (int i = 0, n = nullRejectionConjunctNodes.size(); i < n; i++) {
+            if (nullRejectionConjunctStates.getQuick(i) == NULL_REJECTION_UNCHECKED && isNullRejectionConjunctAfter(i, loIndex, hiIndex, position)) {
+                nullRejectionChecks++;
+                final boolean isRejecting = isNullRejectingColumnPredicate(
+                        parent.getJoinModels().getQuick(nullRejectionConjunctModels.getQuick(i)),
+                        nullRejectionConjunctNodes.getQuick(i),
+                        nullRejectionContext
+                );
+                nullRejectionConjunctStates.setQuick(i, isRejecting ? NULL_REJECTION_REJECTING : NULL_REJECTION_NOT_REJECTING);
+                if (isRejecting) {
+                    return true;
+                }
+            }
+        }
         return false;
+    }
+
+    // Returns true when the conjunct at index i of collectNullRejectionConjuncts() filters after the join at
+    // position and may reject the NULL row of a model from loIndex to hiIndex
+    private boolean isNullRejectionConjunctAfter(int i, int loIndex, int hiIndex, int position) {
+        final int modelIndex = nullRejectionConjunctModels.getQuick(i);
+        return modelIndex >= loIndex && modelIndex <= hiIndex && nullRejectionConjunctPositions.getQuick(i) > position;
     }
 
     // Returns true when the node is a column of the table whose type has NULL
@@ -8182,28 +8262,20 @@ public class SqlOptimiser implements Mutable {
         return columnType >= 0 && !isTypeWithoutNull(columnType);
     }
 
-    // Returns true when the WHERE conjunct, which reads only columns of the table and is stable within an
-    // execution, is false on the NULL row of the table, whatever the values of its bind variables. That
-    // holds for < and > with a bare column of the table on one side, and for BETWEEN with a bare column as
-    // its value, when the column type has NULL: they are false for a NULL operand, whatever the other
-    // operands hold, while = <= and >= hold when both operands are NULL. It also holds for a conjunct that
-    // reads one column of the table, of a known type, whose other parts fold to constants, when the
-    // conjunct evaluates to false on the NULL record of the column type.
+    // Returns true when the conjunct, which reads only columns of the table, is false on the NULL row of the
+    // table, whatever the values of its bind variables and in every execution. That holds for < and > with a
+    // bare column of the table on one side, and for BETWEEN with a bare column as its value, when the column
+    // type has NULL: they are false for a NULL operand, whatever the other operands hold, while = <= and >=
+    // hold when both operands are NULL. It also holds for a conjunct that reads one column of the table, of a
+    // known type, whose other parts fold to constants, when the conjunct evaluates to false on the NULL
+    // record of the column type. A part that varies between rows or executions does not fold.
     private boolean isNullRejectingColumnPredicate(
             IQueryModel tableModel,
             ExpressionNode node,
             SqlExecutionContext sqlExecutionContext
     ) {
-        if (node.type == OPERATION && node.paramCount == 2 && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
-            if (isNullableColumn(tableModel, node.lhs) || isNullableColumn(tableModel, node.rhs)) {
-                return true;
-            }
-        } else if (SqlKeywords.isBetweenKeyword(node.token)) {
-            // the parser rejects BETWEEN without its value and both bounds
-            assert node.paramCount == 3;
-            if (isNullableColumn(tableModel, node.args.getLast())) {
-                return true;
-            }
+        if (hasNullRejectingOperand(tableModel, node)) {
+            return true;
         }
         final ExpressionNode column = findFirstLiteral(node);
         // the callers pass a conjunct that reads a column of the table
@@ -8258,26 +8330,6 @@ public class SqlOptimiser implements Mutable {
     ) {
         // Evaluate the pushed equality on an outer join's NULL record to preserve type-specific NULL semantics.
         return isNullRejectingComparison(joinModels, modelIndex, columnName, "=", constNode, true, sqlExecutionContext);
-    }
-
-    // Returns true when the predicate, which compares one column of the model at modelIndex with a
-    // compile-time constant, drops every row whose column is NULL.
-    private boolean isNullRejectingPredicate(
-            ObjList<IQueryModel> joinModels,
-            int modelIndex,
-            ExpressionNode predicate,
-            boolean isColumnLhs,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return isNullRejectingComparison(
-                joinModels,
-                modelIndex,
-                (isColumnLhs ? predicate.lhs : predicate.rhs).token,
-                predicate.token,
-                isColumnLhs ? predicate.rhs : predicate.lhs,
-                isColumnLhs,
-                sqlExecutionContext
-        );
     }
 
     // Returns true when every model the ON clause of the context-free join at index reads precedes it

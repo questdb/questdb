@@ -35,11 +35,13 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -14219,6 +14221,50 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyIgnoresConjunctWithInvalidColumn() throws Exception {
+        // A conjunct that names an invalid column takes no part in the NULL checks of the implied keys, and
+        // compiling the query reports the column.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinMixedTypeKey();
+            assertQuery("SELECT a0.id FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k"
+                    + " WHERE a0.nosuch IN (1, 2)")
+                    .noLeakCheck()
+                    .fails(104, "Invalid column: a0.nosuch");
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyKeepsMixedTypeKeyWhenNullExtendedRowsPass() throws Exception {
+        // Each WHERE conjunct below is true on a row that the RIGHT JOIN NULL-extends: NULL IN (NULL, 1),
+        // NULL NOT IN (3), coalesce(NULL, 3) > 2 and NULL >= NULL hold, the bind variables of an IN list or of
+        // >= may be NULL in another execution of the plan, and NULL NOT IN (a2.x) holds unless a2.x is NULL. The INNER join's implied key a1.k = a0.k
+        // would change those rows, so it must not replace the RIGHT JOIN key a0.j = a1.k, which compares LONG
+        // with INT and fails to compile. Keyed on a1.k = a0.k, the merge base returned the a1 rows 14 and 15
+        // NULL-extended for the first three conjuncts, which DuckDB does not return.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinMixedTypeKey();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 1);
+            bindVariableService.setInt(1, 2);
+            final String[] conjuncts = {
+                    "a0.x IN (NULL, 1)",
+                    "a0.x NOT IN (3)",
+                    "coalesce(a0.x, 3) > 2",
+                    "a0.x >= a2.x",
+                    "a0.x IN ($1, $2)",
+                    "a0.x >= $1",
+                    "a0.x NOT IN (a2.x)",
+            };
+            for (String conjunct : conjuncts) {
+                assertQuery("SELECT a0.id i0, a1.id i1, a2.id i2 FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k"
+                        + " JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k WHERE " + conjunct)
+                        .noLeakCheck()
+                        .fails(74, "join column type mismatch");
+            }
+        });
+    }
+
+    @Test
     public void testOuterJoinInnerDerivedKeyMergeKeysEarlierOuterJoinOnlyIfNullRejected() throws Exception {
         // WHERE b.u > 2 drops the rows that LEFT JOIN b NULL-extends, so b keys on c's implied key
         // a.w = b.k. Merged with b's own key b.k = d.y, it implies a.w = d.y. As a key of LEFT JOIN d,
@@ -14294,6 +14340,74 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyNullChecksRunOnlyWhenNeeded() throws Exception {
+        // c's keys imply a.w = b.k, a key of the INNER join b before RIGHT JOIN d, which asks whether WHERE
+        // drops the rows that d NULL-extends. a.x > 0 answers by its shape, without a NULL check, a function
+        // parse, so the IN list next to it needs none either. On its own, the IN list takes one check, as
+        // does a.x = 2, whose shape does not answer, however often the implied keys ask.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            final String query = "SELECT a.x, b.x, d.y, c.k FROM a JOIN b ON b.x > 1 RIGHT JOIN d ON d.y = a.x"
+                    + " JOIN c ON a.w = c.k AND b.k = c.k WHERE ";
+            final String[][] cases = {
+                    {"a.x IN (1, 2, 4, 5, 6) AND a.x > 0", "0"},
+                    {"a.x > 0 AND a.x IN (1, 2, 4, 5, 6)", "0"},
+                    {"a.x IN (1, 2, 4, 5, 6)", "1"},
+                    {"a.x = 2", "1"},
+            };
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (String[] testCase : cases) {
+                    final long checksBefore = compiler.getNullRejectionChecksForTesting();
+                    Misc.free(compiler.compile(query + testCase[0], sqlExecutionContext).getRecordCursorFactory());
+                    Assert.assertEquals(testCase[0], Long.parseLong(testCase[1]), compiler.getNullRejectionChecksForTesting() - checksBefore);
+                    // the implied key keys the INNER join b in each case
+                    assertQuery(query + testCase[0])
+                            .noLeakCheck()
+                            .assertsPlanContaining("condition: b.k=a.w");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnComparisonOfTwoModels() throws Exception {
+        // c's keys imply a.w = b.k. A comparison of a column of b with a column of c rejects the NULL row of b
+        // only through the operand that b holds: b.u > c.x does, as NULL > -7 is false, while b.sh > c.x does
+        // not, as SHORT has no NULL and the NULL row of b holds 0, which is greater than -5. b has a nullable
+        // column x too, so reading c.x as a column of b would take the second conjunct for the first. Keyed on
+        // a.w = b.k, the LEFT JOIN would NULL-extend the a row (5, null), which the c row (null, -5) matches,
+        // and b.sh > c.x would keep it. DuckDB returns the expected rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, w INT)");
+            execute("INSERT INTO a VALUES (4, 1), (5, null)");
+            execute("CREATE TABLE b (k INT, u INT, sh SHORT, x INT)");
+            execute("INSERT INTO b VALUES (1, 3, 1, 10)");
+            execute("CREATE TABLE c (k INT, x INT)");
+            execute("INSERT INTO c VALUES (1, -7), (null, -5)");
+            final String query = """
+                    SELECT a.x ax, a.w aw, b.k bk, b.sh bsh, c.k ck, c.x cx
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE %s
+                    ORDER BY ax
+                    """;
+            final String expected = """
+                    ax\taw\tbk\tbsh\tck\tcx
+                    4\t1\t1\t1\t1\t-7
+                    """;
+            assertQuery(query.formatted("b.u > c.x"))
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w")
+                    .returns(expected);
+            assertQuery(query.formatted("b.sh > c.x"))
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoin() throws Exception {
         // c's keys imply a.w = b.k. As a key of the INNER join b, which runs before RIGHT JOIN d, it would
         // drop a/b pairs that d matches, and d would NULL-extend its rows instead. WHERE a.x > 0 drops the
@@ -14317,6 +14431,35 @@ public class JoinTest extends AbstractCairoTest {
                             2\t1\t5\t1\t2\t1
                             2\t2\t2\t2\t2\t2
                             """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoinForInListAndBetween() throws Exception {
+        // The query of testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoin with an IN list
+        // and with BETWEEN in place of a.x > 0. They keep the same a rows and are false when a.x is NULL, so
+        // they drop the rows that RIGHT JOIN d NULL-extends, and b hashes on the key a.w = b.k there too.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            for (String conjunct : new String[]{"a.x IN (1, 2, 4, 5, 6)", "a.x BETWEEN 1 AND 6"}) {
+                assertQuery("""
+                        SELECT a.x ax, a.w aw, b.x bx, b.k bk, d.y dy, c.k ck
+                        FROM a
+                        JOIN b ON b.x > 1
+                        RIGHT JOIN d ON d.y = a.x
+                        JOIN c ON a.w = c.k AND b.k = c.k
+                        WHERE %s
+                        ORDER BY ax, aw, bx, bk, dy, ck
+                        """.formatted(conjunct))
+                        .noLeakCheck()
+                        .withPlanContaining("Hash Join Light", "condition: b.k=a.w")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                ax\taw\tbx\tbk\tdy\tck
+                                2\t1\t5\t1\t2\t1
+                                2\t2\t2\t2\t2\t2
+                                """);
+            }
         });
     }
 
@@ -14345,6 +14488,40 @@ public class JoinTest extends AbstractCairoTest {
                             4\t1\t5\t1\t4\t1
                             5\t2\t2\t2\t3\t2
                             """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedFullJoinForInListAndBetween() throws Exception {
+        // The query of testOuterJoinInnerDerivedKeyOnNullRejectedFullJoin with IN lists and with BETWEEN in
+        // place of a.x > 0 and b.u > 2. They keep the same rows and drop the rows that the FULL JOIN
+        // NULL-extends on either side, so the FULL JOIN runs as a hash join on a.w = b.k there too.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            final String[] conjuncts = {
+                    "a.x IN (1, 2, 4, 5, 6) AND b.u IN (3, 4)",
+                    "a.x BETWEEN 1 AND 6 AND b.u BETWEEN 3 AND 4",
+            };
+            for (String conjunct : conjuncts) {
+                assertQuery("""
+                        SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                        FROM a
+                        FULL JOIN b ON b.x > 1
+                        JOIN c ON a.w = c.k AND b.k = c.k
+                        WHERE %s
+                        ORDER BY ax, aw, bx, bk, bu, ck
+                        """.formatted(conjunct))
+                        .noLeakCheck()
+                        .withPlanContaining("Hash Full Outer Join Light", "condition: b.k=a.w")
+                        .withPlanNotContaining("Nested Loop")
+                        .returns("""
+                                ax\taw\tbx\tbk\tbu\tck
+                                2\t1\t5\t1\t4\t1
+                                2\t2\t2\t2\t3\t2
+                                4\t1\t5\t1\t4\t1
+                                5\t2\t2\t2\t3\t2
+                                """);
+            }
         });
     }
 
@@ -14524,6 +14701,272 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedRightJoinForInListAndBetween() throws Exception {
+        // The query of testOuterJoinInnerDerivedKeyOnNullRejectedRightJoin with an IN list and with BETWEEN
+        // in place of a.x > 0. They keep the same a rows and drop the rows that the RIGHT JOIN NULL-extends,
+        // so the RIGHT JOIN runs as a hash join on a.w = b.k there too.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            for (String conjunct : new String[]{"a.x IN (5, 7, 9)", "a.x BETWEEN 1 AND 9"}) {
+                assertQuery("""
+                        SELECT a.x ax, a.w aw, b.x bx, b.k bk, c.k ck
+                        FROM a
+                        RIGHT JOIN b ON b.x > 1
+                        JOIN c ON a.w = c.k AND b.k = c.k
+                        WHERE %s
+                        ORDER BY 1, 2, 3, 4, 5
+                        """.formatted(conjunct))
+                        .noLeakCheck()
+                        .withPlanContaining("Hash Right Outer Join Light", "condition: b.k=a.w")
+                        .withPlanNotContaining("Nested Loop")
+                        .returns("""
+                                ax\taw\tbx\tbk\tck
+                                5\t1\t2\t1\t1
+                                7\t3\t3\t3\t3
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyReplacesMixedTypeKey() throws Exception {
+        // The ON key of each outer join compares types that a hash join cannot key together: DOUBLE with INT,
+        // DATE with TIMESTAMP, LONG with INT. The INNER join implies a key of one type between the same two
+        // tables, and IN lists or BETWEEN drop the rows that the outer join NULL-extends: on a1 for the LEFT
+        // JOIN, on a0 for the RIGHT JOIN, on both for the FULL JOIN, also from the ON clause of the INNER
+        // join, which filters after the RIGHT JOIN as WHERE does. So the implied key replaces the ON key, as
+        // it does for a0.x >= 1. DuckDB returns the expected rows, and so does the merge base.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinMixedTypeKey();
+            final String[][] cases = {
+                    {
+                            """
+                            SELECT a0.id i0, a1.id i1, a2.id i2
+                            FROM s0 a0
+                            LEFT JOIN s1 a1 ON a0.d = a1.k
+                            JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k
+                            WHERE a1.x IN (1, 2)
+                            ORDER BY i0, i1, i2
+                            """,
+                            "Hash Left Outer Join Light", "condition: a1.k=a0.k",
+                            """
+                            i0\ti1\ti2
+                            1\t10\t20
+                            2\t11\t21
+                            5\t10\t20
+                            """
+                    },
+                    {
+                            """
+                            SELECT a0.id i0, a1.id i1, a2.id i2
+                            FROM s0 a0
+                            RIGHT JOIN s1 a1 ON a0.dt = a1.ts
+                            JOIN s2 a2 ON a2.ts = a1.ts AND a2.ts = a0.ts
+                            WHERE a0.x IN (1, 2)
+                            ORDER BY i0, i1, i2
+                            """,
+                            "Hash Right Outer Join Light", "condition: a1.ts=a0.ts",
+                            """
+                            i0\ti1\ti2
+                            1\t10\t20
+                            2\t11\t21
+                            """
+                    },
+                    {
+                            """
+                            SELECT a0.id i0, a1.id i1, a2.id i2
+                            FROM s0 a0
+                            FULL JOIN s1 a1 ON a0.j = a1.k
+                            JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k
+                            WHERE a0.x IN (1, 2) AND a1.x IN (1, 2)
+                            ORDER BY i0, i1, i2
+                            """,
+                            "Hash Full Outer Join Light", "condition: a1.k=a0.k",
+                            """
+                            i0\ti1\ti2
+                            1\t10\t20
+                            2\t11\t21
+                            """
+                    },
+                    {
+                            """
+                            SELECT a0.id i0, a1.id i1, a2.id i2
+                            FROM s0 a0
+                            RIGHT JOIN s1 a1 ON a0.j = a1.k
+                            JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k AND a0.x IN (1, 2)
+                            ORDER BY i0, i1, i2
+                            """,
+                            "Hash Right Outer Join Light", "condition: a1.k=a0.k",
+                            """
+                            i0\ti1\ti2
+                            1\t10\t20
+                            2\t11\t21
+                            """
+                    },
+                    {
+                            """
+                            SELECT a0.id i0, a1.id i1, a2.id i2
+                            FROM s0 a0
+                            RIGHT JOIN s1 a1 ON a0.j = a1.k
+                            JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k AND a0.x BETWEEN 2 AND 4
+                            ORDER BY i0, i1, i2
+                            """,
+                            "Hash Right Outer Join Light", "condition: a1.k=a0.k",
+                            """
+                            i0\ti1\ti2
+                            1\t10\t20
+                            3\t12\t23
+                            4\t13\t22
+                            """
+                    },
+            };
+            for (String[] testCase : cases) {
+                try {
+                    assertQuery(testCase[0])
+                            .noLeakCheck()
+                            .withPlanContaining(testCase[1], testCase[2])
+                            .returns(testCase[3]);
+                } catch (Throwable e) {
+                    throw new AssertionError(testCase[0], e);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyReplacesMixedTypeKeyForBindVariables() throws Exception {
+        // a0.x > $1 and a0.x BETWEEN $1 AND $2 are false when a0.x is NULL, whatever the bind variables
+        // hold, NULL included, so they drop the rows that the RIGHT JOIN NULL-extends in every execution of
+        // the plan, and the implied INT key a1.k = a0.k replaces the LONG = INT key a0.j = a1.k.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinMixedTypeKey();
+            final String query = "SELECT a0.id i0, a1.id i1, a2.id i2 FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k"
+                    + " JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k WHERE %s ORDER BY i0, i1, i2";
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 1);
+            assertQuery(query.formatted("a0.x > $1"))
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: a1.k=a0.k")
+                    .returns("""
+                            i0\ti1\ti2
+                            1\t10\t20
+                            3\t12\t23
+                            4\t13\t22
+                            """);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertQuery(query.formatted("a0.x > $1"))
+                    .noLeakCheck()
+                    .returns("i0\ti1\ti2\n");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 2);
+            bindVariableService.setInt(1, 3);
+            assertQuery(query.formatted("a0.x BETWEEN $1 AND $2"))
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: a1.k=a0.k")
+                    .returns("""
+                            i0\ti1\ti2
+                            1\t10\t20
+                            3\t12\t23
+                            """);
+            bindVariableService.setInt(0, 1);
+            bindVariableService.setInt(1, 1);
+            assertQuery(query.formatted("a0.x BETWEEN $1 AND $2"))
+                    .noLeakCheck()
+                    .returns("""
+                            i0\ti1\ti2
+                            2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyReplacesMixedTypeKeyForEachNullRejectingConjunct() throws Exception {
+        // The RIGHT JOIN key a0.j = a1.k compares LONG with INT, which a hash join cannot key, so the query
+        // compiles only when the INT key a1.k = a0.k, which the INNER join implies, replaces it. Each WHERE
+        // conjunct below is false when a0 is NULL, so it drops the rows that the RIGHT JOIN NULL-extends, as
+        // the column-to-constant comparison a0.x >= 1 does: an IN list, BETWEEN, also with a column of a1 as a
+        // bound, a comparison with another column of a2 or of a0, or with an expression of a1, and a function,
+        // a cast or arithmetic of the column. DuckDB returns the expected rows, and so does the merge base,
+        // which keyed the RIGHT JOIN on a1.k = a0.k.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinMixedTypeKey();
+            final String[][] cases = {
+                    {"a0.x >= 1", """
+                            1\t10\t20
+                            2\t11\t21
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    {"a0.x IN (1, 2)", """
+                            1\t10\t20
+                            2\t11\t21
+                            """},
+                    {"a0.x IN (3)", "3\t12\t23\n"},
+                    {"a0.x BETWEEN 2 AND 4", """
+                            1\t10\t20
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    {"a0.x > a2.x", """
+                            1\t10\t20
+                            4\t13\t22
+                            """},
+                    {"a0.k < a0.x", "1\t10\t20\n"},
+                    {"coalesce(a0.x, -1) > 2", """
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    {"abs(a0.x - 2) = 1", """
+                            2\t11\t21
+                            3\t12\t23
+                            """},
+                    {"a0.x::LONG = 1", "2\t11\t21\n"},
+                    {"a0.x * 2 = 4", "1\t10\t20\n"},
+                    {"a0.x BETWEEN a1.x AND 4", """
+                            1\t10\t20
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    {"a1.x + 1 > a0.x", """
+                            2\t11\t21
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    {"a0.ts IN '2024-01-01'", """
+                            1\t10\t20
+                            5\t10\t20
+                            """},
+                    {"2 < a0.x", """
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    // the IN list of a1, which the RIGHT JOIN preserves, rejects no row that it NULL-extends
+                    {"a0.x IN (1, 2) AND a1.x IN (1, 2)", """
+                            1\t10\t20
+                            2\t11\t21
+                            """},
+                    // a conjunct that reads no column rejects no NULL row, and leaves the IN list to do it
+                    {"a0.x IN (1, 2) AND now() > 0", """
+                            1\t10\t20
+                            2\t11\t21
+                            """},
+            };
+            final String query = "SELECT a0.id i0, a1.id i1, a2.id i2 FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k"
+                    + " JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k WHERE %s ORDER BY i0, i1, i2";
+            for (String[] testCase : cases) {
+                try {
+                    assertQuery(query.formatted(testCase[0]))
+                            .noLeakCheck()
+                            .withPlanContaining("Hash Right Outer Join Light", "condition: a1.k=a0.k")
+                            .returns("i0\ti1\ti2\n" + testCase[1]);
+                } catch (Throwable e) {
+                    throw new AssertionError("WHERE " + testCase[0], e);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOuterJoinInnerDerivedKeyStaysFilterBeforeTimeSeriesJoin() throws Exception {
         // The LT JOIN moves ahead of the non-equi RIGHT JOIN to read the timestamp of a. As a key of the
         // RIGHT JOIN, a.w = b.k would keep the LT JOIN behind it, where the RIGHT JOIN output has no
@@ -14546,6 +14989,55 @@ public class JoinTest extends AbstractCairoTest {
                             5\t1\t2\t1\t1\tnull
                             7\t3\t3\t3\t3\t30
                             """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterForConjunctsNullExtendedRowsPass() throws Exception {
+        // c's keys imply a.w = b.k, and each WHERE conjunct below is true on the row that LEFT JOIN b
+        // NULL-extends, in which b.u is NULL and b.f is false: NULL IN (NULL, 3), NULL NOT IN (1),
+        // coalesce(NULL, 3) > 2, NOT false, and b.u IN ($1, $2) with a NULL $1. The NULL-extended row of a
+        // (-1, null) survives each of them, so b keeps matching on a.x > b.u, with the implied key as a
+        // filter, as testOuterJoinInnerDerivedKeyStaysFilterWhenNullExtendedRowsSurvive shows for b.f = false.
+        // DuckDB returns the expected rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            bindVariableService.setInt(1, 3);
+            final String rowsOfU3 = """
+                    -1\tnull\tnull\tnull\tnull\tnull
+                    4\t1\t0\t1\t3\t1
+                    4\t1\t1\t1\t3\t1
+                    5\t2\t2\t2\t3\t2
+                    """;
+            final String[][] cases = {
+                    {"b.u IN (NULL, 3)", rowsOfU3},
+                    {"b.u NOT IN (1)", rowsOfU3},
+                    {"coalesce(b.u, 3) > 2", rowsOfU3},
+                    {"b.u IN ($1, $2)", rowsOfU3},
+                    {"NOT b.f", """
+                            -1\tnull\tnull\tnull\tnull\tnull
+                            4\t1\t1\t1\t3\t1
+                            """},
+            };
+            for (String[] testCase : cases) {
+                try {
+                    assertQuery("""
+                            SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                            FROM a
+                            LEFT JOIN b ON a.x > b.u
+                            JOIN c ON a.w = c.k AND b.k = c.k
+                            WHERE %s
+                            ORDER BY ax, aw, bx, bk, bu, ck
+                            """.formatted(testCase[0]))
+                            .noLeakCheck()
+                            .withPlanContaining("Nested Loop Left Join")
+                            .returns("ax\taw\tbx\tbk\tbu\tck\n" + testCase[1]);
+                } catch (Throwable e) {
+                    throw new AssertionError("WHERE " + testCase[0], e);
+                }
+            }
         });
     }
 
@@ -20665,6 +21157,42 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO c VALUES (1), (2), (null)");
         execute("CREATE TABLE d (y INT, v INT)");
         execute("INSERT INTO d VALUES (1, 2), (2, null), (0, 4), (null, 1), (6, 0)");
+    }
+
+    // s0, s1 and s2 share one layout. In every row d is j as a DOUBLE, ts is midnight of day k of January
+    // 2024 and dt is midnight of day j as a DATE, so a0.j = a1.k, a0.d = a1.k and a0.dt = a1.ts hold for the
+    // same pairs of rows, NULL with NULL included. j equals k except in rows 6 and 7 of s0.
+    private void createTablesForOuterJoinMixedTypeKey() throws SqlException {
+        for (String table : new String[]{"s0", "s1", "s2"}) {
+            execute("CREATE TABLE " + table + " (id INT, k INT, x INT, j LONG, d DOUBLE, ts TIMESTAMP, dt DATE)");
+        }
+        execute("""
+                INSERT INTO s0 VALUES
+                (1, 1, 2, 1, 1.0, '2024-01-01T00:00:00', '2024-01-01T00:00:00'),
+                (2, 2, 1, 2, 2.0, '2024-01-02T00:00:00', '2024-01-02T00:00:00'),
+                (3, 3, 3, 3, 3.0, '2024-01-03T00:00:00', '2024-01-03T00:00:00'),
+                (4, null, 4, null, null, null, null),
+                (5, 1, null, 1, 1.0, '2024-01-01T00:00:00', '2024-01-01T00:00:00'),
+                (6, 2, 1, 1, 1.0, '2024-01-02T00:00:00', '2024-01-01T00:00:00'),
+                (7, null, 1, 4, 4.0, null, '2024-01-04T00:00:00')
+                """);
+        execute("""
+                INSERT INTO s1 VALUES
+                (10, 1, 1, 1, 1.0, '2024-01-01T00:00:00', '2024-01-01T00:00:00'),
+                (11, 2, 2, 2, 2.0, '2024-01-02T00:00:00', '2024-01-02T00:00:00'),
+                (12, 3, 3, 3, 3.0, '2024-01-03T00:00:00', '2024-01-03T00:00:00'),
+                (13, null, 4, null, null, null, null),
+                (14, 4, 1, 4, 4.0, '2024-01-04T00:00:00', '2024-01-04T00:00:00'),
+                (15, 5, null, 5, 5.0, '2024-01-05T00:00:00', '2024-01-05T00:00:00')
+                """);
+        execute("""
+                INSERT INTO s2 VALUES
+                (20, 1, 0, 1, 1.0, '2024-01-01T00:00:00', '2024-01-01T00:00:00'),
+                (21, 2, 3, 2, 2.0, '2024-01-02T00:00:00', '2024-01-02T00:00:00'),
+                (22, null, 1, null, null, null, null),
+                (23, 3, null, 3, 3.0, '2024-01-03T00:00:00', '2024-01-03T00:00:00'),
+                (24, 4, 2, 4, 4.0, '2024-01-04T00:00:00', '2024-01-04T00:00:00')
+                """);
     }
 
     private void createTablesForOuterJoinOnImpliedKey() throws SqlException {
