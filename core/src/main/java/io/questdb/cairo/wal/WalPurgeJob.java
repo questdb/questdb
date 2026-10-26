@@ -856,12 +856,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return false;
         }
         final long t = clock.getTicks();
-        // Sweep the adaptive group commit's pending-flush registry on every pass, independent of the slower
-        // purge cadence, so an idle writer's last commit becomes durable about one window after it. A flush is
-        // not reported as busy work: that would reset the worker's idle back-off and keep it spinning.
+        // Check the adaptive group commit's pending-flush registry on every pass, independent of the slower
+        // purge cadence, so an idle writer's last commit becomes durable about one window after it. The writers'
+        // clock, not this job's, dates their batches. A flush is not reported as busy work: that would reset the
+        // worker's idle back-off and keep it spinning.
         final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
         if (groupWindowUs > 0) {
-            engine.getWalGroupCommitFlushQueue().sweep(groupWindowUs);
+            engine.getWalGroupCommitFlushQueue().sweepIfDue(groupWindowUs, configuration.getMicrosecondClock());
         }
         if (last + checkInterval < t) {
             last = t;

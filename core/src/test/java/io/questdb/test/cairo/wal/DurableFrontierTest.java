@@ -41,6 +41,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.crash.AbstractCrashConsistencyTest;
@@ -352,6 +353,105 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     /**
+     * Committers on four tables race two background flushers (one of them also forcing {@code sweep(0)}) on a clock
+     * that every commit moves, so registrations land before, during and after the flushers' walks. Once commits
+     * stop, one pass after the window must flush every writer: a batch start lost by a walk would leave its
+     * writer pending.
+     */
+    @Test
+    public void testConcurrentCommitsAndPassesFlushEveryIdleTail() throws Exception {
+        final long windowUs = 1_000;
+        final int tables = 4;
+        final int commitsPerTable = 100;
+        setGroupCommit(windowUs, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker[] trackers = new SeqTxnTracker[tables];
+            final WalWriter[] writers = new WalWriter[tables];
+            final long failedFlushesBefore = engine.getWalGroupCommitFlushQueue().getFailedFlushCount();
+            final AtomicLong clock = new AtomicLong(T0);
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final List<Thread> committers = new ArrayList<>();
+            final List<Thread> flushers = new ArrayList<>();
+            try {
+                for (int t = 0; t < tables; t++) {
+                    trackers[t] = createTable("t" + t);
+                    writers[t] = engine.getWalWriter(engine.verifyTableName("t" + t));
+                }
+                setCurrentMicros(clock.get());
+                for (int f = 0; f < 2; f++) {
+                    final boolean forces = f == 1;
+                    final Thread flusherThread = new Thread(() -> {
+                        try (ExposedFlusher flusher = new ExposedFlusher(engine)) {
+                            for (int i = 0; !stop.get(); i++) {
+                                flusher.flushNow();
+                                if (forces && i % 16 == 0) {
+                                    engine.getWalGroupCommitFlushQueue().sweep(0);
+                                }
+                            }
+                        } catch (Throwable th) {
+                            error.compareAndSet(null, th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    }, "group-commit-flusher-" + f);
+                    flushers.add(flusherThread);
+                    flusherThread.start();
+                }
+                for (int t = 0; t < tables; t++) {
+                    final WalWriter w = writers[t];
+                    final Thread committer = new Thread(() -> {
+                        try {
+                            for (int i = 0; i < commitsPerTable; i++) {
+                                setCurrentMicros(clock.addAndGet(windowUs / 8));
+                                commitRow(w, i * 1_000_000L, i);
+                            }
+                        } catch (Throwable th) {
+                            error.compareAndSet(null, th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    }, "group-commit-committer-" + t);
+                    committers.add(committer);
+                    committer.start();
+                }
+                for (int i = 0, n = committers.size(); i < n; i++) {
+                    committers.get(i).join();
+                }
+                stop.set(true);
+                for (int i = 0, n = flushers.size(); i < n; i++) {
+                    flushers.get(i).join();
+                }
+                if (error.get() != null) {
+                    throw new AssertionError("a committer or flusher failed", error.get());
+                }
+                // Every batch started at or before the highest clock value set; one pass a window later is due.
+                setCurrentMicros(clock.get() + windowUs);
+                try (ExposedFlusher flusher = new ExposedFlusher(engine)) {
+                    flusher.flushNow();
+                }
+                for (int t = 0; t < tables; t++) {
+                    Assert.assertEquals("the pass after the window must flush table t" + t,
+                            trackers[t].getSeqTxn(), trackers[t].getLocalDurableSeqTxn());
+                }
+                Assert.assertEquals("no background flush may fail",
+                        failedFlushesBefore, engine.getWalGroupCommitFlushQueue().getFailedFlushCount());
+            } finally {
+                stop.set(true);
+                for (int i = 0, n = committers.size(); i < n; i++) {
+                    committers.get(i).join();
+                }
+                for (int i = 0, n = flushers.size(); i < n; i++) {
+                    flushers.get(i).join();
+                }
+                for (int t = 0; t < tables; t++) {
+                    Misc.free(writers[t]);
+                }
+            }
+        });
+    }
+
+    /**
      * W&gt;0: a custom event on an otherwise idle writer (the ENT partition-seal shape) enters the writer's pending
      * batch, so the pool-return flush releases its pin; otherwise the frontier freezes below the event.
      */
@@ -411,6 +511,41 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         } finally {
             engine.resetDurabilityFailure();
         }
+    }
+
+    /**
+     * A pass drops a writer whose flush fails without a data sync failure (here a distressed writer), and still
+     * keeps a peer it found not yet due: the peer is flushed by the pass after its own window.
+     */
+    @Test
+    public void testDistressedWriterInPassKeepsPeersDue() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            createTable("a");
+            final SeqTxnTracker trackerB = createTable("b");
+            final long failedFlushesBefore = engine.getWalGroupCommitFlushQueue().getFailedFlushCount();
+            try (
+                    WalWriter a = engine.getWalWriter(engine.verifyTableName("a"));
+                    WalWriter b = engine.getWalWriter(engine.verifyTableName("b"));
+                    ExposedFlusher flusher = new ExposedFlusher(engine)
+            ) {
+                setCurrentMicros(T0 + 1000);
+                commitRow(a, 0, 1);
+                setCurrentMicros(T0 + 1000 + WINDOW_US / 2);
+                commitRow(b, 0, 1);
+                final long pendingB = trackerB.getSeqTxn();
+                markDistressed(a);
+                setCurrentMicros(T0 + 1000 + WINDOW_US);
+                flusher.flushNow();
+                Assert.assertEquals("test setup: the distressed writer's flush must fail in the pass",
+                        failedFlushesBefore + 1, engine.getWalGroupCommitFlushQueue().getFailedFlushCount());
+                Assert.assertTrue("a batch younger than the window must wait", trackerB.getLocalDurableSeqTxn() < pendingB);
+                setCurrentMicros(T0 + 1000 + WINDOW_US / 2 + WINDOW_US);
+                flusher.flushNow();
+                Assert.assertEquals("a peer of a writer whose flush failed must be flushed once due",
+                        pendingB, trackerB.getLocalDurableSeqTxn());
+            }
+        });
     }
 
     @Test
@@ -564,6 +699,49 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         }
     }
 
+    /**
+     * A pass whose walk stops at a data sync failure leaves the writers it did not reach due: once the failure is
+     * cleared, the next pass flushes them.
+     */
+    @Test
+    public void testFailedPassKeepsUnvisitedWritersDue() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        final FailingSeqFdatasyncFacade ff = new FailingSeqFdatasyncFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                final SeqTxnTracker trackerA = createTable("a");
+                final SeqTxnTracker trackerB = createTable("b");
+                engine.setDurabilityFailureHandler(failure -> {
+                });
+                try (
+                        WalWriter a = engine.getWalWriter(engine.verifyTableName("a"));
+                        WalWriter b = engine.getWalWriter(engine.verifyTableName("b"));
+                        ExposedFlusher flusher = new ExposedFlusher(engine)
+                ) {
+                    setCurrentMicros(T0 + 1000);
+                    commitRow(a, 0, 1);
+                    commitRow(b, 0, 1);
+                    final long pendingA = trackerA.getSeqTxn();
+                    final long pendingB = trackerB.getSeqTxn();
+                    // Runs the purge job's first broad sweep before the failure is armed.
+                    flusher.flushNow();
+                    setCurrentMicros(T0 + 1000 + WINDOW_US);
+                    ff.failNextSequencerFdatasync();
+                    assertDataSyncFailure(flusher::flushNow);
+                    Assert.assertTrue("test setup: the pass's first flush must have failed", ff.injected);
+                    Assert.assertEquals("test setup: the walk must stop at the failed writer", 0,
+                            countFlushed(trackerA, pendingA, trackerB, pendingB));
+                    engine.resetDurabilityFailure();
+                    flusher.flushNow();
+                    Assert.assertEquals("the writer the failed pass did not reach must be flushed by the next pass", 1,
+                            countFlushed(trackerA, pendingA, trackerB, pendingB));
+                }
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
     @Test
     public void testFencedSequencerCloseDoesNotFlushTheLogV1() throws Exception {
         // NOSYNC flushes the V1 log only at a clean sequencer close. Once that flush has failed, a later one can return
@@ -596,6 +774,132 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                     ff.count(p -> p.endsWith(WalUtils.TXNLOG_FILE_NAME))
             );
             Assert.assertEquals("a fenced log must not be marked flushed at close", hint, readSequencerLogHint(tt));
+        });
+    }
+
+    /**
+     * {@code sweep(0)}, the flush a role switch forces, flushes a batch the gated pass leaves inside its window.
+     */
+    @Test
+    public void testForcedSweepFlushesBeforeTheWindow() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker tracker = createTable("x");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("x")); ExposedFlusher flusher = new ExposedFlusher(engine)) {
+                setCurrentMicros(T0 + 1000);
+                commitRow(w, 0, 1);
+                final long pending = tracker.getSeqTxn();
+                setCurrentMicros(T0 + 2000);
+                flusher.flushNow();
+                Assert.assertTrue("a batch younger than the window must wait", tracker.getLocalDurableSeqTxn() < pending);
+                Assert.assertTrue("a forced sweep must report its flush", engine.getWalGroupCommitFlushQueue().sweep(0));
+                Assert.assertEquals("a forced sweep must flush the batch", pending, tracker.getLocalDurableSeqTxn());
+            }
+        });
+    }
+
+    /**
+     * The window is applied when the pass runs, not when the batch started: a batch that started under a larger
+     * window is flushed by the first pass after the window is lowered past its age.
+     */
+    @Test
+    public void testPassAppliesTheCurrentWindow() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker tracker = createTable("x");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("x")); ExposedFlusher flusher = new ExposedFlusher(engine)) {
+                setCurrentMicros(T0 + 1000);
+                commitRow(w, 0, 1);
+                final long pending = tracker.getSeqTxn();
+                setCurrentMicros(T0 + 1000 + WINDOW_US / 4);
+                flusher.flushNow();
+                Assert.assertTrue("a batch younger than the window must wait", tracker.getLocalDurableSeqTxn() < pending);
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US / 10));
+                Assert.assertEquals(WINDOW_US / 10, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                flusher.flushNow();
+                Assert.assertEquals("a lowered window must apply to a batch that started under the old one",
+                        pending, tracker.getLocalDurableSeqTxn());
+            }
+        });
+    }
+
+    /**
+     * A pass before any batch reaches its window must not enter a pending writer's monitor: the test holds the
+     * monitor, and the pass must still return. Once the window ends, the next pass flushes the batch.
+     */
+    @Test
+    public void testPassBeforeTheWindowEndsDoesNotEnterWriterMonitor() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker tracker = createTable("x");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("x")); ExposedFlusher flusher = new ExposedFlusher(engine)) {
+                setCurrentMicros(T0 + 1000);
+                commitRow(w, 0, 1);
+                final long pending = tracker.getSeqTxn();
+                setCurrentMicros(T0 + 1000 + WINDOW_US / 2);
+                // Runs the purge job's first broad sweep, and settles what earlier tests left in the queue.
+                flusher.flushNow();
+                final CountDownLatch passDone = new CountDownLatch(1);
+                final AtomicReference<Throwable> passError = new AtomicReference<>();
+                final Thread pass = new Thread(() -> {
+                    try {
+                        flusher.flushNow();
+                    } catch (Throwable th) {
+                        passError.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                        passDone.countDown();
+                    }
+                }, "group-commit-pass");
+                final boolean returnedWhileHeld;
+                //noinspection SynchronizationOnLocalVariableOrMethodParameter
+                synchronized (w) {
+                    pass.start();
+                    returnedWhileHeld = passDone.await(10, TimeUnit.SECONDS);
+                }
+                pass.join();
+                if (passError.get() != null) {
+                    throw new AssertionError("the pass failed", passError.get());
+                }
+                Assert.assertTrue("a pass before any window ends must not enter a pending writer's monitor", returnedWhileHeld);
+                Assert.assertTrue("a batch younger than the window must wait", tracker.getLocalDurableSeqTxn() < pending);
+                setCurrentMicros(T0 + 1000 + WINDOW_US);
+                flusher.flushNow();
+                Assert.assertEquals("the pass after the window must flush the batch", pending, tracker.getLocalDurableSeqTxn());
+            }
+        });
+    }
+
+    /**
+     * The clock steps back below a batch that started after the last pass, but stays above an older batch and
+     * above that pass's reading. The newer batch's age is negative, so the pass must flush it at once, as it flushes
+     * any batch after a backwards step; the older batch, still inside its window, waits.
+     */
+    @Test
+    public void testPassFlushesABatchStartedAboveABackwardClockStep() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker trackerA = createTable("a");
+            final SeqTxnTracker trackerB = createTable("b");
+            try (
+                    WalWriter a = engine.getWalWriter(engine.verifyTableName("a"));
+                    WalWriter b = engine.getWalWriter(engine.verifyTableName("b"));
+                    ExposedFlusher flusher = new ExposedFlusher(engine)
+            ) {
+                setCurrentMicros(T0 + 1_000);
+                commitRow(a, 0, 1);
+                setCurrentMicros(T0 + 10_000);
+                flusher.flushNow();
+                setCurrentMicros(T0 + 20_000);
+                commitRow(b, 0, 1);
+                final long pendingA = trackerA.getSeqTxn();
+                final long pendingB = trackerB.getSeqTxn();
+                setCurrentMicros(T0 + 15_000);
+                flusher.flushNow();
+                Assert.assertEquals("a batch that started after the clock's new reading must be flushed at once",
+                        pendingB, trackerB.getLocalDurableSeqTxn());
+                Assert.assertTrue("a batch younger than the window must wait", trackerA.getLocalDurableSeqTxn() < pendingA);
+            }
         });
     }
 
@@ -943,6 +1247,8 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     private static void assertNoFlushRace(String what, Runnable ingest) throws InterruptedException {
+        // The queue is the engine's, which every test of the class shares.
+        final long failedFlushesBefore = engine.getWalGroupCommitFlushQueue().getFailedFlushCount();
         final AtomicBoolean stop = new AtomicBoolean();
         final AtomicReference<Throwable> flusherError = new AtomicReference<>();
         final Thread flusherThread = new Thread(() -> {
@@ -967,7 +1273,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
             throw new AssertionError("background flusher raced " + what, flusherError.get());
         }
         Assert.assertEquals("the background flusher raced " + what + " (fdatasync of a closed fd)",
-                0L, engine.getWalGroupCommitFlushQueue().getFailedFlushCount());
+                failedFlushesBefore, engine.getWalGroupCommitFlushQueue().getFailedFlushCount());
     }
 
     /**
@@ -1019,6 +1325,10 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
         } finally {
             engine.resetDurabilityFailure();
         }
+    }
+
+    private static int countFlushed(SeqTxnTracker trackerA, long pendingA, SeqTxnTracker trackerB, long pendingB) {
+        return (trackerA.getLocalDurableSeqTxn() >= pendingA ? 1 : 0) + (trackerB.getLocalDurableSeqTxn() >= pendingB ? 1 : 0);
     }
 
     private static SeqTxnTracker createTable(String name) throws Exception {

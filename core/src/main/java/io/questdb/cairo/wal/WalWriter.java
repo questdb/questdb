@@ -2602,7 +2602,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         pendingDurableSeqTxn = seqTxn;
         // Register before the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
         // not, the writer is left registered so the background flusher can pick up the idle tail.
-        sequencer.getWalGroupCommitFlushQueue().register(this);
+        sequencer.getWalGroupCommitFlushQueue().register(this, pendingSinceMicros);
         final long windowUs = configuration.getAdaptiveCommitGroupWindowUs();
         final long nowMicros = configuration.getMicrosecondClock().getTicks();
         final long elapsedMicros = nowMicros - pendingSinceMicros;
@@ -2689,23 +2689,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * runs the batched flush, so the commit becomes durable within W after commits stop. Synchronized on the
      * writer monitor, as is {@link #flushPendingDurable()}, so it never flushes twice.
      *
-     * @return {@code true} if a flush was performed
+     * @return {@link WalGroupCommitFlushQueue#BATCH_FLUSHED} if a flush was performed,
+     * {@link WalGroupCommitFlushQueue#NO_PENDING_BATCH} if nothing was pending, otherwise the start of the batch
+     * left pending, which the queue keeps in its bounds
      */
-    synchronized boolean forceDurableIfPending(long windowUs) {
+    synchronized long forceDurableIfPending(long windowUs) {
         if (pendingDurableSeqTxn < 0) {
-            return false;
+            return WalGroupCommitFlushQueue.NO_PENDING_BATCH;
         }
         // Read under the monitor, which orders the read after recordPendingDurable's batch start, so a negative
         // age means the clock stepped back. A read taken by the caller before the sweep could predate the batch.
         final long nowMicros = configuration.getMicrosecondClock().getTicks();
         final long elapsedMicros = nowMicros - pendingSinceMicros;
         if (elapsedMicros >= 0 && elapsedMicros < windowUs) {
-            return false; // still within the window: leave it for a later sweep or the next commit
+            return pendingSinceMicros; // still within the window: leave it for a later sweep or the next commit
         }
         // A backwards wall-clock step is not evidence that the batch became younger. Flush immediately
         // rather than extending the idle-tail RPO until the clock catches up.
         flushPendingDurable();
-        return true;
+        return WalGroupCommitFlushQueue.BATCH_FLUSHED;
     }
 
     /**
