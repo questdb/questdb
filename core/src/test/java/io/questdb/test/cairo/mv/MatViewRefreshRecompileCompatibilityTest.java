@@ -75,6 +75,10 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest {
     private static final String NEGATIVE_LIMIT_ERROR = "negative LIMIT is not supported in a correlated lateral sub-query";
+    private static final String SQL_VIEW_INITIAL_ROWS = """
+            ts\tk\ta\tb\tc
+            2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t3.0
+            """;
     private final boolean parallel;
 
     public MatViewRefreshRecompileCompatibilityTest(boolean parallel) {
@@ -160,14 +164,62 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testIncrementalRefreshAcceptsChangedGeneratedColumnNames() throws Exception {
+        assertRefreshAcceptsChangedGeneratedColumnNames("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+    }
+
+    @Test
     public void testIncrementalRefreshKeepsBareZeroArgCallsInLegacyAggregatingDefinition() throws Exception {
         assertRefreshKeepsBareZeroArgCalls("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+    }
+
+    @Test
+    public void testRangeRefreshAcceptsChangedGeneratedColumnNames() throws Exception {
+        assertRefreshAcceptsChangedGeneratedColumnNames(
+                "REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-01-01T00:00:00Z' TO '2024-01-01T02:00:00Z'"
+        );
     }
 
     @Test
     public void testRangeRefreshKeepsBareZeroArgCallsInLegacyAggregatingDefinition() throws Exception {
         assertRefreshKeepsBareZeroArgCalls(
                 "REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-01-01T00:00:00Z' TO '2024-01-01T02:00:00Z'"
+        );
+    }
+
+    @Test
+    public void testRefreshAcceptsChangedGeneratedColumnNames() throws Exception {
+        assertRefreshAcceptsChangedGeneratedColumnNames("REFRESH MATERIALIZED VIEW mv FULL");
+    }
+
+    @Test
+    public void testRefreshAcceptsSqlViewColumnRenamedInPlace() throws Exception {
+        // The name changed at the same position, so refresh copies the column by position.
+        assertSqlViewChange(
+                "SELECT * FROM vagg",
+                "ALTER VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, avg(c) c2 FROM base SAMPLE BY 1h)",
+                "mv\tvalid\t\n",
+                """
+                        ts\tk\ta\tb\tc
+                        2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t3.0
+                        2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\t30.0
+                        """
+        );
+    }
+
+    @Test
+    public void testRefreshAcceptsSqlViewColumnReplacedInPlace() throws Exception {
+        // A name can't tell a replaced column from a redefinition of c under its own name, which refresh
+        // accepts as well, so the replacement lands in c.
+        assertSqlViewChange(
+                "SELECT * FROM vagg",
+                "ALTER VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, max(a) d FROM base SAMPLE BY 1h)",
+                "mv\tvalid\t\n",
+                """
+                        ts\tk\ta\tb\tc
+                        2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t1.0
+                        2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\t10.0
+                        """
         );
     }
 
@@ -527,6 +579,40 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
         );
     }
 
+    @Test
+    public void testRefreshRejectsSqlViewAddedColumn() throws Exception {
+        assertSqlViewChange(
+                "SELECT * FROM vagg",
+                "ALTER VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, avg(c) c, count() n FROM base SAMPLE BY 1h)",
+                "mv\tinvalid\t[-1]: materialized view query does not match view schema [view=mv, queryColumnCount=6, viewColumnCount=5]\n",
+                SQL_VIEW_INITIAL_ROWS
+        );
+    }
+
+    @Test
+    public void testRefreshRejectsSqlViewColumnsRotated() throws Exception {
+        assertSqlViewChange(
+                "SELECT * FROM vagg",
+                "ALTER VIEW vagg AS (SELECT ts, k, avg(c) c, avg(a) a, avg(b) b FROM base SAMPLE BY 1h)",
+                "mv\tinvalid\t[-1]: materialized view query does not match view schema [view=mv, columnIndex=2, queryColumn=c, viewColumn=a]\n",
+                SQL_VIEW_INITIAL_ROWS
+        );
+    }
+
+    @Test
+    public void testRefreshRejectsSqlViewColumnsSwapped() throws Exception {
+        // A query written without SELECT gets a wildcard from the parser, so both spellings take the
+        // SQL view's column order.
+        for (String viewQuery : new String[]{"SELECT * FROM vagg", "vagg"}) {
+            assertSqlViewChange(
+                    viewQuery,
+                    "ALTER VIEW vagg AS (SELECT ts, k, avg(b) b, avg(a) a, avg(c) c FROM base SAMPLE BY 1h)",
+                    "mv\tinvalid\t[-1]: materialized view query does not match view schema [view=mv, columnIndex=2, queryColumn=b, viewColumn=a]\n",
+                    SQL_VIEW_INITIAL_ROWS
+            );
+        }
+    }
+
     private void assertCreateLateralRejected(String viewQuery, String errorToken, String expectedError) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
@@ -557,6 +643,90 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
      * of the base table's rows: incremental because there is no earlier refresh to continue from, range
      * because the caller's bounds span the data.
      */
+    /**
+     * A view keeps the column names CREATE generated, while refresh compiles the stored query under the
+     * alias setting in force now. A view created by 8.2.3-8.3.3, which named {@code avg(v)} as
+     * {@code avg}, reaches refresh the same way as a view created with
+     * {@code cairo.sql.column.alias.expression.enabled=false} on a server that later enables it. With
+     * expression aliases enabled, CREATE requires an explicit alias for such a column, so the change
+     * only goes from disabled to enabled. Refresh copies the renamed column by position and the view
+     * stays valid.
+     */
+    private void assertRefreshAcceptsChangedGeneratedColumnNames(String refreshSql) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        record Case(String viewSql, String createSuffix, boolean expectSize, String expected) {
+        }
+        final String aggregatedRows = """
+                ts\tk\tavg
+                2024-01-01T00:00:00.000000Z\ta\t1.5
+                2024-01-01T01:00:00.000000Z\ta\t3.0
+                """;
+        final Case[] cases = {
+                new Case("SELECT ts, k, avg(v) FROM base SAMPLE BY 1h", "", true, aggregatedRows),
+                new Case("SELECT * FROM (SELECT ts, k, avg(v) FROM base SAMPLE BY 1h)", "", true, aggregatedRows),
+                new Case("WITH c AS (SELECT ts, k, avg(v) FROM base SAMPLE BY 1h) SELECT * FROM c", "", true, aggregatedRows),
+                new Case(
+                        "SELECT ts, k, v * 2 FROM base",
+                        "",
+                        true,
+                        """
+                                ts\tk\tcolumn
+                                2024-01-01T00:00:00.000000Z\ta\t2.0
+                                2024-01-01T00:30:00.000000Z\ta\t4.0
+                                2024-01-01T01:30:00.000000Z\ta\t6.0
+                                """
+                ),
+                // The policy reads the view's own column, which keeps its CREATE name.
+                new Case(
+                        "SELECT ts, k, avg(v) FROM base SAMPLE BY 1h",
+                        " EXPIRE ROWS WHEN avg < 2.0",
+                        false,
+                        """
+                                ts\tk\tavg
+                                2024-01-01T01:00:00.000000Z\ta\t3.0
+                                """
+                )
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2024-01-01T00:00:00Z', 'a', 1.0),
+                        ('2024-01-01T00:30:00Z', 'a', 2.0),
+                        ('2024-01-01T01:30:00Z', 'a', 3.0)
+                    """);
+            drainWalQueue();
+
+            for (Case c : cases) {
+                setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+                // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold and the refresh
+                // below compiles the stored query under the settings in force then.
+                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + c.viewSql + ") PARTITION BY DAY" + c.createSuffix);
+                drainWalQueue();
+                setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+
+                execute(refreshSql);
+                drainWalAndMatViewQueues();
+
+                // materialized_views reports a range-refreshed view as refreshing (questdb/questdb#7766), so this
+                // reads the invalidation reason rather than the status.
+                assertQuery("select view_name, invalidation_reason from materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_name\tinvalidation_reason\nmv\t\n");
+                assertQuery("mv")
+                        .timestamp("ts")
+                        .expectSize(c.expectSize)
+                        .noLeakCheck()
+                        .returns(c.expected);
+
+                execute("DROP MATERIALIZED VIEW mv");
+                drainWalQueue();
+            }
+        });
+    }
+
     private void assertRefreshKeepsBareZeroArgCalls(String refreshSql) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
@@ -639,6 +809,53 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             }
 
             recompileAsRefreshJobWould(predicate);
+        });
+    }
+
+    /**
+     * A materialized view that reads a SQL view through a top-level wildcard takes the SQL view's column
+     * order, so ALTER VIEW can change what the view's query projects at each position. The view refreshes
+     * once before the change and once after it, both times as a FULL refresh, which compiles the stored
+     * query.
+     */
+    private void assertSqlViewChange(String viewQuery, String alterViewSql, String expectedStatus, String expectedRows) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE, c DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 'x', 1.0, 2.0, 3.0)");
+            drainWalQueue();
+            execute("CREATE VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, avg(c) c FROM base SAMPLE BY 1h)");
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + viewQuery + ") PARTITION BY DAY");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(SQL_VIEW_INITIAL_ROWS);
+
+            execute(alterViewSql);
+            execute("INSERT INTO base VALUES ('2024-01-01T01:00:00Z', 'x', 10.0, 20.0, 30.0)");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\tinvalidation_reason\n" + expectedStatus);
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expectedRows);
+
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP VIEW vagg");
+            execute("DROP TABLE base");
+            drainWalQueue();
         });
     }
 

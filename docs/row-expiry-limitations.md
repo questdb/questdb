@@ -91,6 +91,48 @@ columns, or alias the extra one: `SELECT *, ts AS ts2 FROM base_price` works.
   unusual.
 - **Pinned by:** `MatViewTest.testPassthroughSelectStarRepeatingColumnRejected`.
 
+### Refresh copies a column renamed in place by position
+
+Refresh compiles a view's stored query again and copies its columns into the
+view by position. `MatViewRefreshJob.validateViewSchema()` refuses the refresh,
+and leaves the view invalid, when the query's column count differs from the
+view's or when a query column sits at a different position than the view column
+of the same name. A query column whose name matches no view column is copied
+into the view column at its position, and refresh logs
+`materialized view column name differs from query column name, copying by position`.
+
+Two cases reach that path:
+
+- Generated names. A view created by 8.2.3-8.3.3, or with
+  `cairo.sql.column.alias.expression.enabled=false`, stores `avg(price)` as
+  `avg`. With expression aliases enabled, the stored query produces
+  `avg(price)`. The view keeps refreshing.
+- A view that reads a SQL view through a top-level wildcard, such as
+  `SELECT * FROM vagg` or `vagg`, takes that SQL view's columns at each
+  position. After `ALTER VIEW` renames a column in place, or replaces it with a
+  different column at the same position, refresh copies the new column into the
+  old one's place. A swap or rotation of the SQL view's columns, or an added
+  column, leaves the view invalid.
+
+- **Why accepted:** a name cannot tell a renamed or replaced column from a
+  column redefined under its old name, as in
+  `ALTER VIEW vagg AS (SELECT ..., max(a) c ...)`, which an exact name
+  comparison accepts as well. Comparing exact names would leave every view with
+  a generated name invalid after an upgrade or a change of the alias setting,
+  with no repair short of DROP and CREATE, since `ALTER MATERIALIZED VIEW` cannot
+  rename a column. A generated name that collides with another view column's
+  name reads as a moved column and leaves the view invalid.
+- **Pinned by:**
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshAcceptsChangedGeneratedColumnNames`
+  (and its incremental and range variants),
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshAcceptsSqlViewColumnRenamedInPlace`,
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshAcceptsSqlViewColumnReplacedInPlace`,
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewColumnsSwapped`,
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewColumnsRotated`,
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewAddedColumn`.
+- **Follow-up:** expand an aggregating view's top-level wildcard at CREATE, as
+  for passthrough views, so a new view reads its SQL view's columns by name.
+
 ### Subqueries that read the base table in a view definition
 
 A definition such as `WHERE v = (SELECT max(v) FROM base)` passes CREATE but
