@@ -2795,6 +2795,117 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnChecksMasterKey() throws Exception {
+        // t.s1 = p.s AND t.s2 = p.s keeps both key pairs, see testHorizonJoinOnKeysSharingColumn(). A
+        // right row writes one value at both key positions, so only a left row whose s1 and s2 are
+        // equal, NULL included, can match. As ASOF JOIN does (sharedKeyCheck), the aggregating HORIZON
+        // JOINs must check that before they look the key up. Without the check, the lookup of a left
+        // row whose values differ scans the right-hand table back to its first row, at every ASOF
+        // position until one scan passes cairo.sql.horizon.join.bwd.scan.absolute.threshold. With the
+        // single offset 0, HORIZON JOIN matches as ASOF JOIN does, so the rows are those of
+        // AsOfJoinTest#testAsOfJoinOnKeysSharingSlaveColumnChecksMasterKey: rows 2 and 3 disagree, and
+        // 'C' of row 5 does not occur in prices. INT keys give the same rows, and so does a SYMBOL key
+        // next to a VARCHAR key, whose pairs compare strings.
+        assertMemoryLeak(() -> {
+            createKeysSharingSlaveColumnTables();
+            final String[] onClauses = {
+                    "t.s1 = p.s AND t.s2 = p.s",
+                    "t.k1 = p.k AND t.k2 = p.k",
+                    "t.s1 = p.s AND t.v2 = p.s"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String plan = isParallel ? "Async Horizon Join workers: 1 offsets: 1" : "Horizon Join offsets: 1";
+                for (String onClause : onClauses) {
+                    assertQuery("SELECT t.id, max(p.id) pid FROM trades t HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    id\tpid
+                                    1\t30
+                                    2\tnull
+                                    3\tnull
+                                    4\t20
+                                    5\tnull
+                                    6\t40
+                                    """);
+                    assertQuery("SELECT count(*) c, count(p.id) n, sum(p.id) s FROM trades t HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    c\tn\ts
+                                    6\t3\t90
+                                    """);
+                }
+                // keys that share no right-hand column need no check
+                assertQuery("SELECT t.id, max(p.id) pid FROM trades t HORIZON JOIN prices p ON (t.s1 = p.s) LIST (0s) AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(plan)
+                        .withPlanNotContaining("sharedKeyCheck")
+                        .returns("""
+                                id\tpid
+                                1\t30
+                                2\t30
+                                3\t40
+                                4\t20
+                                5\tnull
+                                6\t40
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnChecksMasterKeyMultiSlave() throws Exception {
+        // The multi-slave HORIZON JOINs must check the left key as the single-slave ones do, see
+        // testHorizonJoinOnKeysSharingSlaveColumnChecksMasterKey(), for a right-hand table whose column
+        // two keys share: both when it comes first, and the code generator parks its slave before it
+        // reaches the last HORIZON JOIN, and when it comes last. q, keyed by s1 or k1 alone, needs no
+        // check and matches every row whose key occurs in prices.
+        assertMemoryLeak(() -> {
+            createKeysSharingSlaveColumnTables();
+            final String[] joins = {
+                    "HORIZON JOIN prices p ON (t.s1 = p.s AND t.s2 = p.s) HORIZON JOIN prices q ON (t.s1 = q.s)",
+                    "HORIZON JOIN prices q ON (t.s1 = q.s) HORIZON JOIN prices p ON (t.s1 = p.s AND t.s2 = p.s)",
+                    "HORIZON JOIN prices p ON (t.k1 = p.k AND t.k2 = p.k) HORIZON JOIN prices q ON (t.k1 = q.k)",
+                    "HORIZON JOIN prices q ON (t.k1 = q.k) HORIZON JOIN prices p ON (t.k1 = p.k AND t.k2 = p.k)"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String plan = isParallel ? "Async Multi Horizon Join workers: 1 offsets: 1" : "Multi Horizon Join offsets: 1";
+                for (String join : joins) {
+                    assertQuery("SELECT t.id, max(p.id) pid, max(q.id) qid FROM trades t " + join + " LIST (0s) AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    id\tpid\tqid
+                                    1\t30\t30
+                                    2\tnull\t30
+                                    3\tnull\t40
+                                    4\t20\t20
+                                    5\tnull\tnull
+                                    6\t40\t40
+                                    """);
+                    assertQuery("SELECT count(*) c, count(p.id) pn, sum(p.id) ps, count(q.id) qn, sum(q.id) qs FROM trades t " + join + " LIST (0s) AS h")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    c\tpn\tps\tqn\tqs
+                                    6\t3\t90\t5\t160
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnBindVariableFilter() throws Exception {
         // the filter reads the bound value: TRUE keeps every right row, FALSE keeps none
         assertMemoryLeak(() -> {
@@ -10938,6 +11049,30 @@ public class HorizonJoinTest extends AbstractCairoTest {
         );
         execute("INSERT INTO bids SELECT ts, sym, bid FROM quotes");
         execute("INSERT INTO asks SELECT ts, sym, bid + 1 FROM quotes");
+    }
+
+    // The SYMBOL, INT and VARCHAR columns of trades hold the same pairs: 'A' is 1, 'B' is 2 and 'C' is
+    // 3. The two keys of a pair agree in rows 1, 4, 5 and 6, row 4 being NULL in both. 'C' occurs only
+    // in trades, and every row of prices precedes every row of trades.
+    private void createKeysSharingSlaveColumnTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s1 SYMBOL, s2 SYMBOL, v2 VARCHAR, k1 INT, k2 INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (id INT, s SYMBOL, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    (10, 'A', 1, '1970-01-01T00:00:00.000001Z'),
+                    (20, NULL, NULL, '1970-01-01T00:00:00.000002Z'),
+                    (30, 'A', 1, '1970-01-01T00:00:00.000005Z'),
+                    (40, 'B', 2, '1970-01-01T00:00:00.000006Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 'A', 'A', 'A', 1, 1, '1970-01-01T00:00:00.000010Z'),
+                    (2, 'A', 'B', 'B', 1, 2, '1970-01-01T00:00:00.000020Z'),
+                    (3, 'B', NULL, NULL, 2, NULL, '1970-01-01T00:00:00.000030Z'),
+                    (4, NULL, NULL, NULL, NULL, NULL, '1970-01-01T00:00:00.000040Z'),
+                    (5, 'C', 'C', 'C', 3, 3, '1970-01-01T00:00:00.000050Z'),
+                    (6, 'B', 'B', 'B', 2, 2, '1970-01-01T00:00:00.000060Z')
+                """);
     }
 
     private void createMasterSymbolSharedBySlaveColumnsTables() throws Exception {
