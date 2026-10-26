@@ -38,18 +38,11 @@ import org.junit.Test;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * An in-place parquet O3 update that shifts row-group positions must keep each
- * row group's {@code _pm} bloom filter attached to that row group. The bloom
- * bitsets captured by the write are in write order, while the {@code _pm} footer
- * is in final order; when they were joined by position, a shifted row group got
- * another group's bloom filter and {@code WHERE val = v} skipped the row group
- * that holds {@code v}, returning no rows.
- * <p>
- * Every test builds a 16-row parquet partition (4 row groups of 4 rows, bloom
- * filter on {@code val}), applies one O3 batch or replace commit in place, then
- * checks the equality filter for every value in the partition. A replace commit
- * that covers a whole row group drops it in place, which shifts every later row
- * group down by one position.
+ * An in-place parquet O3 update that shifts row-group positions must keep each row
+ * group's {@code _pm} bloom filter attached to it, or {@code WHERE val = v} skips the row
+ * group holding {@code v}. Each test applies one O3 batch or replace commit in place to a
+ * partition of 4 row groups of 4 rows with a bloom filter on {@code val}, then checks the
+ * equality filter for every value.
  */
 public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
 

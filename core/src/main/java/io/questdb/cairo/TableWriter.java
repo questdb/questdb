@@ -11525,11 +11525,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // appended row groups to the existing data.parquet and
                             // published partitionMutates=1 with the new file size. The
                             // directory and partition name txn stay; the row count and
-                            // the committed file length move. The Rust updater (update.rs
-                            // end()) zeroes every column_top in the file in update mode
-                            // too, so _cv must follow, the same invariant the rewrite
-                            // branch keeps. Otherwise _cv consumers (CONVERT TO NATIVE,
-                            // dedup, symbol index) treat present values as absent.
+                            // the committed file length move. update.rs end() zeroes every
+                            // column_top in the file, so _cv must follow, as on rewrite.
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
@@ -14468,10 +14465,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long slot = PARQUET_DECODE_COLUMN_SLOTS * columnIndex;
                     final boolean isFirstWrite = columnFdAndDataSize.get(slot + 4) == 0;
                     if (srcDataSize == 0 && srcAuxSize == 0) {
-                        // The decoder skips a row group that lies whole inside the column top the
-                        // file records, and resets the buffers. The native file gets nothing for
-                        // it: its rows join the native column top. The top is a prefix, so a
-                        // skipped row group never follows a written one.
+                        // The decoder skips a row group wholly inside the file's column top; its
+                        // rows join the native column top, so it can never follow a written one.
                         if (!isFirstWrite) {
                             throw CairoException.critical(0).put("parquet column chunk skipped after data [table=").put(tableToken.getTableName())
                                     .put(", column=").put(this.metadata.getColumnName(tableColIdx))
@@ -14621,11 +14616,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
-            // The native file of each decoded column starts after its column top: the row groups
-            // the decoder skipped plus, for a no-sentinel column, the leading NULLs of the first
-            // chunk. _cv must say so whatever it held: CONVERT TO PARQUET zeroes a column top
-            // below the row count, and a top that covers whole row groups leaves those rows out
-            // of the native file. A column the file holds no chunk of is NULL throughout.
+            // Set _cv to the native column top whatever it held: the skipped row groups plus,
+            // for a no-sentinel column, the first chunk's leading NULLs. A column with no
+            // chunk in the file is NULL throughout.
             for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
                 final long slot = PARQUET_DECODE_COLUMN_SLOTS * columnIndex;
                 final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
@@ -17449,10 +17442,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
             lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
-            // A replace-range commit can remove the parent of a split and keep the split. Re-create
-            // the parent, empty, at the floor timestamp and squash the splits into it below, so the
-            // caller gets a single partition at the floor. The parent's name txn is the current txn,
-            // so canSquashOverwritePartitionTail() lets the squash append into it in place.
+            // A replace-range commit can remove a split's parent. Re-create it empty at the floor,
+            // named by the current txn so canSquashOverwritePartitionTail() lets the squash below
+            // append into it in place.
             txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
             try {
                 setStateForTimestamp(other.trimTo(pathSize), lastLogicalPartitionTimestamp);
@@ -18686,11 +18678,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Publishes the index files an in-place parquet O3 update rebuilt. The O3 worker wrote
-     * them under the current txn as the new column name txn, next to the committed files.
-     * Moving _cv here commits the new name atomically with the parquet file size: pinned
-     * readers keep the old files, and a rollback leaves _cv on them. Queues the superseded
-     * version for purgeSupersededParquetIndexes.
+     * Publishes the index files an in-place parquet O3 update rebuilt under the current txn,
+     * moving _cv atomically with the parquet file size. Pinned readers keep the old files, and
+     * a rollback leaves _cv on them. Queues the superseded version for
+     * purgeSupersededParquetIndexes.
      */
     private void versionRebuiltParquetIndexes(long partitionTimestamp, long partitionNameTxn) {
         final long newColumnNameTxn = txWriter.txn;

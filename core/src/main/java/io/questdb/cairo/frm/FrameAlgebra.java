@@ -99,10 +99,9 @@ public class FrameAlgebra {
     }
 
     /**
-     * Checks that a dedup merge leaves one column unchanged, on raw buffers with no column
-     * tops. The merge index holds one entry per existing row: kept (side 1) or replaced by
-     * an O3 row (side 2). Compares replacements value by value, NULLs included. Same check
-     * as {@code TableWriter.checkDedupCommitIdenticalToPartition}, minus column tops.
+     * Checks that a dedup merge leaves one column unchanged, comparing each O3 row the merge
+     * index takes with the existing row it replaces, NULLs included. Same check as
+     * {@code TableWriter.checkDedupCommitIdenticalToPartition}, minus column tops.
      *
      * @param columnType     column type; the buffers use its native layout
      * @param rowCount       existing row count, also the merge index entry count

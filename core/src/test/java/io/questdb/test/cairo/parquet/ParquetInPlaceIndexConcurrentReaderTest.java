@@ -66,22 +66,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * Index MVCC of in-place parquet O3 under concurrency. The test thread commits a random
- * mix of in-place O3 inserts, replace commits (filter merges, DROPs, cross-partition
- * windows) and native appends to a table whose first two days are parquet with small row
- * groups, while reader threads query a symbol index (bitmap, posting or covering) and a
- * background thread runs {@link ColumnPurgeJob} and {@link PostingSealPurgeJob}
- * back to back. Readers open cursors while the writer is anywhere in its commit, between
- * writing the rebuilt index files and _cv and committing _txn included, and some stop in
- * the middle of an index scan until a later commit and the purge have run.
+ * Index MVCC of in-place parquet O3 under concurrency. The test thread commits random
+ * in-place O3 inserts, replace commits and native appends to parquet partitions, while
+ * readers query a symbol index (bitmap, posting or covering) at any point of a commit, some
+ * pausing mid-scan across later commits, and a background thread runs
+ * {@link ColumnPurgeJob} and {@link PostingSealPurgeJob}.
  * <p>
- * Each row's symbol is a function of its unique value {@code v}, so every row an index
- * cursor returns must carry the queried key and a matching {@code v}, whatever the
- * snapshot. When no commit ran while a reader opened its cursors (a seqlock around each
- * commit), the index cursor and a full-scan cursor of the same query read the same
- * snapshot and must return the same rows, also when drained after later commits. At the
- * end, with the readers gone, the purge must leave only the live index version on disk,
- * and the table must match its native twin.
+ * Every row an index cursor returns must match the queried key. When no commit overlapped
+ * a reader's cursor opening (seqlock), the index and full-scan cursors must return the same
+ * rows. At the end, only the live index version may remain on disk, and the table must
+ * match its native twin.
  */
 public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z

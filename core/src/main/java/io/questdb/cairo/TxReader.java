@@ -315,12 +315,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
-     * Returns the index of the first attached partition of the logical partition that contains
-     * {@code timestamp}, or -1 when there is none.
-     * <p>
-     * A replace-range commit can remove a split's parent and keep the split, e.g. keep
-     * '2024-02-24T12' without '2024-02-24'. {@link #getPartitionIndex(long)} looks up the
-     * floor exactly and misses such a partition, so resolve statement-named partitions here.
+     * Returns the index of the first attached partition of the logical partition containing
+     * {@code timestamp}, or -1. Unlike {@link #getPartitionIndex(long)}, finds a split whose
+     * parent a replace-range commit removed, e.g. '2024-02-24T12' without '2024-02-24'.
      */
     public int getLogicalPartitionFirstIndex(long timestamp) {
         final long logicalTimestamp = getPartitionFloor(timestamp);

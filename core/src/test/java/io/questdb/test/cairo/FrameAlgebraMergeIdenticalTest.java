@@ -42,13 +42,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * {@link FrameAlgebra#isColumnMergeIdentical}, the check that lets a parquet dedup commit
- * whose every row duplicates an existing row skip the merge. A false "identical" loses the
- * commit's values, so every case where the replacing value differs from the existing one,
- * NULL against a value and empty against NULL included, must report a difference, for
- * every column type a parquet partition holds and in every byte of a value. Each case
- * merges O3 rows into five existing rows: the merge index keeps rows 0, 2 and 4 and
- * replaces rows 1 and 3 with O3 rows 0 and 1.
+ * {@link FrameAlgebra#isColumnMergeIdentical} lets an all-duplicate parquet dedup commit
+ * skip the merge, so a false "identical" loses data. Any differing value (NULL vs value,
+ * empty vs NULL, any byte) must report a difference for every parquet column type. Each
+ * case keeps existing rows 0, 2, 4 and replaces rows 1, 3 with O3 rows 0, 1.
  */
 public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
     private static final int[] FIXED_TYPES = {

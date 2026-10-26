@@ -70,26 +70,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * An in-place parquet O3 update (partition name txn unchanged) rebuilds the
- * partition's symbol indexes (bitmap .k/.v, posting .pk/.pv, covering .pci/.pc)
- * for the new row layout. The rebuild must write new files under a new column
- * name txn, published through _cv with _txn, and never touch the committed
- * files. These tests pin what that gives:
+ * An in-place parquet O3 update rebuilds the partition's symbol indexes (bitmap, posting,
+ * covering) under a new column name txn, published through _cv with _txn, and never
+ * touches the committed files. These tests pin that:
  * <ul>
- * <li>a reader at the old txn keeps returning the old snapshot's rows through
- * the index, and a fresh reader sees the new rows;</li>
- * <li>a failure between the index rebuild and the _txn commit (the second
- * indexed column, or a covering sidecar of the first) leaves the committed
- * index answering from the committed layout until the retry converges;</li>
- * <li>the superseded files stay while a reader is pinned and are purged once it
- * closes;</li>
- * <li>a commit over two parquet partitions that fails in the second, after the
- * first was updated in place or removed, leaves both as committed;</li>
- * <li>the files of a failed rebuild that RESUME WAL FROM TXN skips stay as
- * orphans until VACUUM TABLE purges them.</li>
+ * <li>a pinned reader keeps its snapshot through the index; a fresh one sees new rows;</li>
+ * <li>a failure between the rebuild and the _txn commit leaves the committed index
+ * answering until the retry converges;</li>
+ * <li>superseded files stay while a reader is pinned and go once it closes;</li>
+ * <li>a two-partition commit failing in the second leaves both as committed;</li>
+ * <li>files of a failed rebuild that RESUME WAL skips stay until VACUUM TABLE.</li>
  * </ul>
- * Each test checks the rows before the path, so a failure names the wrong rows
- * first.
  */
 public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     private static final String IDX_BITMAP = "INDEX";

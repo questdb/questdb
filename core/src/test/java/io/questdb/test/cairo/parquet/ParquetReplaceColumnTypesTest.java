@@ -43,15 +43,10 @@ import java.util.Arrays;
 import java.util.Collection;
 
 /**
- * Replace commits and dedup commits on parquet partitions over every column type a
- * partition can hold, with a microsecond and a nanosecond designated timestamp. Each test
- * applies the same commits to a native twin and compares the tables. The window and row
- * timestamps are in the table's own unit: replace bounds, the timestamp-only no-op check,
- * the replace merge index and the rewrite gate all compare raw table-unit longs.
- * <p>
- * The parquet partitions hold 3 row groups of 4 rows a day, and the dead-bytes rewrite
- * gate is off, so a commit runs in place unless it says otherwise. A merge that leaves an
- * empty O3 slice (a filter-only merge) runs every column driver over an empty O3 range.
+ * Replace and dedup commits on parquet partitions over every column type, with micro and
+ * nano designated timestamps, compared against a native twin. Timestamps use the table's
+ * own unit, since the replace path compares raw longs. Partitions hold 3 row groups of 4
+ * rows a day with the dead-bytes rewrite gate off, so commits run in place by default.
  */
 @RunWith(Parameterized.class)
 public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {

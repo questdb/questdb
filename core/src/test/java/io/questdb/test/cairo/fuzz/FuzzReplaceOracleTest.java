@@ -34,14 +34,11 @@ import io.questdb.test.fuzz.FuzzTransaction;
 import org.junit.Test;
 
 /**
- * Pins the replace-commit oracle of {@link FuzzRunner}: every replace fuzz test treats
- * the non-WAL table it builds as the expected result. A WAL replace commit with bounds
- * [lo, hi) deletes the rows with lo &lt;= ts &lt; hi, so the windows below put their
- * edges exactly on existing rows: at lo, at hi - 1 and at hi. Rows the table holds
- * before the list starts go through {@code removeRowsReplacedByTransactions}, rows an
- * earlier transaction of the same list writes go through {@code calculateReplaceRanges}.
- * The non-WAL table must match a hand-written expectation, and the WAL table must match
- * the non-WAL table.
+ * Pins the replace-commit oracle of {@link FuzzRunner}, which takes the non-WAL table as
+ * the expected result. Replace windows [lo, hi) put their edges on existing rows (lo,
+ * hi - 1, hi), both pre-existing ({@code removeRowsReplacedByTransactions}) and written by
+ * an earlier transaction ({@code calculateReplaceRanges}). The non-WAL table must match a
+ * hand-written expectation, and the WAL table must match the non-WAL table.
  */
 public class FuzzReplaceOracleTest extends AbstractFuzzTest {
     private static final long DAY = MicrosTimestampDriver.floor("2022-02-24");

@@ -34,13 +34,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Dedup O3 merge into a parquet partition that spans several row groups, where
- * a dedup key column is missing from the parquet file (added after CONVERT) or
- * present in it with a stale partition-level column top. The dedup comparer runs
- * on row-group-local indexes, so the column top it receives must be in row-group
- * units: the whole row group for a missing column, zero for a decoded one. Each
- * test runs the same DDL/DML against a native twin "nat" and a parquet twin "pq"
- * and compares them.
+ * Dedup O3 merge into a multi-row-group parquet partition whose dedup key column is
+ * missing from the file (added after CONVERT) or has a stale partition-level column top.
+ * The comparer needs a row-group-local top. Each test compares parquet "pq" against its
+ * native twin "nat".
  */
 public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
     // 2024-01-01T00:00:00.000000Z
