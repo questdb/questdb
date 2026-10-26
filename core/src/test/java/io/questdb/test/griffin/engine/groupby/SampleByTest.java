@@ -9821,6 +9821,75 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByLimitWithTimestampCopies() throws Exception {
+        // GitHub issue #7746. The rewrite of SAMPLE BY into GROUP BY moves a copy of the timestamp, or an expression
+        // over it, to a wrapper, along with the ORDER BY that sorts the buckets. LIMIT stayed below the wrapper and
+        // took the buckets in the hash order of the GROUP BY, before the sort.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x::INT i, ('k' || (x % 2))::SYMBOL sym,
+                               timestamp_sequence('2024-01-28', 3_600_000_000) ts
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            assertQuery("SELECT dateadd('h', 1, ts) x, count() FROM t SAMPLE BY 1d LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tcount
+                            2024-01-28T01:00:00.000000Z\t24
+                            2024-01-29T01:00:00.000000Z\t24
+                            """);
+            assertQuery("SELECT count(), dateadd('h', 1, ts) x FROM t SAMPLE BY 1d LIMIT 1, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            count\tx
+                            24\t2024-01-29T01:00:00.000000Z
+                            24\t2024-01-30T01:00:00.000000Z
+                            """);
+            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .returns("""
+                            ts\tts2\tcount
+                            2024-01-28T00:00:00.000000Z\t2024-01-28T00:00:00.000000Z\t24
+                            2024-01-29T00:00:00.000000Z\t2024-01-29T00:00:00.000000Z\t24
+                            """);
+            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT -2")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .returns("""
+                            ts\tts2\tcount
+                            2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t24
+                            2024-01-31T00:00:00.000000Z\t2024-01-31T00:00:00.000000Z\t24
+                            """);
+            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d ORDER BY ts DESC LIMIT 2")
+                    .noLeakCheck()
+                    .timestampDesc("ts2")
+                    .expectSize()
+                    .returns("""
+                            ts\tts2\tcount
+                            2024-01-31T00:00:00.000000Z\t2024-01-31T00:00:00.000000Z\t24
+                            2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t24
+                            """);
+            assertQuery("SELECT ts, sym, ts AS ts2, count() FROM t SAMPLE BY 1d ORDER BY ts, sym LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tts2\tcount
+                            2024-01-28T00:00:00.000000Z\tk0\t2024-01-28T00:00:00.000000Z\t12
+                            2024-01-28T00:00:00.000000Z\tk1\t2024-01-28T00:00:00.000000Z\t12
+                            2024-01-29T00:00:00.000000Z\tk0\t2024-01-29T00:00:00.000000Z\t12
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
         String expected = "sum\tk\n";
         String ddl = "create table x" +
@@ -10012,75 +10081,6 @@ public class SampleByTest extends AbstractCairoTest {
                         62.5966045857722\t1970-01-04T05:00:02.800000Z
                         94.55893004802432\t1970-01-04T05:00:02.900000Z
                         """);
-    }
-
-    @Test
-    public void testSampleByLimitWithTimestampCopies() throws Exception {
-        // GitHub issue #7746. The rewrite of SAMPLE BY into GROUP BY moves a copy of the timestamp, or an expression
-        // over it, to a wrapper, along with the ORDER BY that sorts the buckets. LIMIT stayed below the wrapper and
-        // took the buckets in the hash order of the GROUP BY, before the sort.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT x::INT i, ('k' || (x % 2))::SYMBOL sym,
-                               timestamp_sequence('2024-01-28', 3_600_000_000) ts
-                        FROM long_sequence(96)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            assertQuery("SELECT dateadd('h', 1, ts) x, count() FROM t SAMPLE BY 1d LIMIT 2")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            x\tcount
-                            2024-01-28T01:00:00.000000Z\t24
-                            2024-01-29T01:00:00.000000Z\t24
-                            """);
-            assertQuery("SELECT count(), dateadd('h', 1, ts) x FROM t SAMPLE BY 1d LIMIT 1, 3")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            count\tx
-                            24\t2024-01-29T01:00:00.000000Z
-                            24\t2024-01-30T01:00:00.000000Z
-                            """);
-            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT 2")
-                    .noLeakCheck()
-                    .timestamp("ts2")
-                    .expectSize()
-                    .returns("""
-                            ts\tts2\tcount
-                            2024-01-28T00:00:00.000000Z\t2024-01-28T00:00:00.000000Z\t24
-                            2024-01-29T00:00:00.000000Z\t2024-01-29T00:00:00.000000Z\t24
-                            """);
-            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT -2")
-                    .noLeakCheck()
-                    .timestamp("ts2")
-                    .expectSize()
-                    .returns("""
-                            ts\tts2\tcount
-                            2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t24
-                            2024-01-31T00:00:00.000000Z\t2024-01-31T00:00:00.000000Z\t24
-                            """);
-            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d ORDER BY ts DESC LIMIT 2")
-                    .noLeakCheck()
-                    .timestampDesc("ts2")
-                    .expectSize()
-                    .returns("""
-                            ts\tts2\tcount
-                            2024-01-31T00:00:00.000000Z\t2024-01-31T00:00:00.000000Z\t24
-                            2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t24
-                            """);
-            assertQuery("SELECT ts, sym, ts AS ts2, count() FROM t SAMPLE BY 1d ORDER BY ts, sym LIMIT 3")
-                    .noLeakCheck()
-                    .timestamp("ts2")
-                    .expectSize()
-                    .returns("""
-                            ts\tsym\tts2\tcount
-                            2024-01-28T00:00:00.000000Z\tk0\t2024-01-28T00:00:00.000000Z\t12
-                            2024-01-28T00:00:00.000000Z\tk1\t2024-01-28T00:00:00.000000Z\t12
-                            2024-01-29T00:00:00.000000Z\tk0\t2024-01-29T00:00:00.000000Z\t12
-                            """);
-        });
     }
 
     @Test
