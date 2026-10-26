@@ -38,6 +38,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -59,6 +60,7 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             ObjList<Thread> threads = new ObjList<>();
             AtomicBoolean stopped = new AtomicBoolean();
             AtomicInteger errors = new AtomicInteger();
+            ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
 
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
@@ -83,6 +85,8 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
                                     }
                                     Os.pause();
                                 }
+                            } catch (Throwable th) {
+                                failures.add(th);
                             } finally {
                                 Path.clearThreadLocals();
                             }
@@ -95,8 +99,12 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
                     new Thread(() -> {
                         latch.countDown();
                         latch.await();
-                        while (!stopped.get()) {
-                            engine.getTxnScoreboardPool().releaseInactive();
+                        try {
+                            while (!stopped.get()) {
+                                engine.getTxnScoreboardPool().releaseInactive();
+                            }
+                        } catch (Throwable th) {
+                            failures.add(th);
                         }
                     })
             );
@@ -108,6 +116,9 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             stopped.set(true);
             threads.getLast().join();
 
+            if (!failures.isEmpty()) {
+                throw new AssertionError("a scoreboard thread failed", failures.peek());
+            }
             Assert.assertEquals(0, errors.get());
         });
     }
@@ -125,6 +136,7 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             engine.execute("create table x (i int)");
             TableToken token = engine.verifyTableName("x");
             AtomicInteger errors = new AtomicInteger();
+            ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
 
             for (int i = 0; i < threadCount; i++) {
                 int thread = i;
@@ -151,6 +163,8 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
                                     }
                                     Os.pause();
                                 }
+                            } catch (Throwable th) {
+                                failures.add(th);
                             } finally {
                                 Path.clearThreadLocals();
                             }
@@ -162,8 +176,12 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             threads.add(
                     new Thread(() -> {
                         latch.countDown();
-                        while (!stopped.get()) {
-                            engine.getTxnScoreboardPool().releaseInactive();
+                        try {
+                            while (!stopped.get()) {
+                                engine.getTxnScoreboardPool().releaseInactive();
+                            }
+                        } catch (Throwable th) {
+                            failures.add(th);
                         }
                     })
             );
@@ -175,6 +193,9 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             stopped.set(true);
             threads.getLast().join();
 
+            if (!failures.isEmpty()) {
+                throw new AssertionError("a scoreboard thread failed", failures.peek());
+            }
             Assert.assertEquals(0, errors.get());
         });
     }
