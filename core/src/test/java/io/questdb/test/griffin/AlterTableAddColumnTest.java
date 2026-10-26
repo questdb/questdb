@@ -38,6 +38,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Files;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -800,18 +801,20 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     @Test
     public void testAddSymbolIndexToNonEmptyPartitionFreshReaders() throws Exception {
         // The first commit after adding an indexed symbol column to a partition that has rows rolls the empty index
-        // back to the column top. A 4 KiB value page puts a page boundary inside the index's early blocks, so a
-        // reader opened after each commit, and on a WAL table the apply job's index writer reopen, meet any value
-        // size the writer published before the value file covered it.
+        // back to the column top. At the smallest value page the OS allows (4 KiB on Linux x86, 16 KiB on macOS arm64,
+        // 64 KiB on Windows), index blocks of a sixteenth of a page of values put a page boundary inside the index's
+        // second block, so a reader opened after each commit, and on a WAL table the apply job's index writer reopen,
+        // meet any value size the writer published before the value file covered it.
+        final long pageSize = Files.PAGE_SIZE;
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
         assertMemoryLeak(() -> {
             Assert.assertEquals(CommitMode.NOSYNC, configuration.getCommitMode());
-            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
             execute("create table y (ts timestamp, v long) timestamp(ts) partition by day" + (isWal ? " wal" : " bypass wal"));
             execute("insert into y select '2024-01-01'::timestamp + x, x from long_sequence(10)");
             drainWalQueue();
-            execute("alter table y add column s symbol index");
+            execute("alter table y add column s symbol index capacity " + pageSize / 16);
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("y");
             final long dayStart = MicrosTimestampDriver.floor("2024-01-01");
@@ -840,17 +843,19 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     @Test
     public void testAddSymbolIndexToNonEmptyPartitionRollback() throws Exception {
         // A rollback closes the active partition's index without truncating it and reopens it. Right after the first
-        // commit into a partition with rows, at a 4 KiB value page, the index's value size must already be covered
-        // by its value file, or the reopen fails, the writer is distressed and the partition cannot be opened again.
+        // commit into a partition with rows, at the smallest value page the OS allows and index blocks of a sixteenth
+        // of a page of values, the index's value size must already be covered by its value file, or the reopen fails,
+        // the writer is distressed and the partition cannot be opened again.
         Assume.assumeFalse(isWal);
+        final long pageSize = Files.PAGE_SIZE;
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
         assertMemoryLeak(() -> {
             Assert.assertEquals(CommitMode.NOSYNC, configuration.getCommitMode());
-            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
             execute("create table y (ts timestamp, v long) timestamp(ts) partition by day bypass wal");
             execute("insert into y select '2024-01-01'::timestamp + x, x from long_sequence(10)");
-            execute("alter table y add column s symbol index");
+            execute("alter table y add column s symbol index capacity " + pageSize / 16);
             final long ts = MicrosTimestampDriver.floor("2024-01-01T00:00:01");
             try (TableWriter writer = getWriter("y")) {
                 TableWriter.Row row = writer.newRow(ts);

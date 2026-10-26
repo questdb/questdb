@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
@@ -1472,15 +1473,18 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testRollbackOnEmptyIndexDiskFullKeepsHeaderCovered() throws Exception {
-        // At a 4 KiB value page a block of 1024 values (8208 bytes) is larger than the value file a new writer maps,
+        // At the smallest value page the OS allows (4 KiB on Linux x86, 16 KiB on macOS arm64, 64 KiB on Windows) a
+        // block of a quarter page of values (two pages and 16 bytes) is larger than the value file a new writer maps,
         // so the column-top rollback of an empty index has to grow the file before it publishes one block. When that
         // growth fails, the rollback must fail and leave the published size where the file still covers it.
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        final long pageSize = Files.PAGE_SIZE;
+        final int blockValueCount = (int) (pageSize / 4);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
         final ValueFileDiskFullFacade ff = new ValueFileDiskFullFacade();
         assertMemoryLeak(ff, () -> {
-            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
-            create(configuration, path.trimTo(plen), "x", 1024);
-            final long blockCapacity = 1024 * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
+            create(configuration, path.trimTo(plen), "x", blockValueCount);
+            final long blockCapacity = blockValueCount * 8L + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
                 Assert.assertTrue(valueFileLength() < blockCapacity);
                 ff.isDiskFull = true;
@@ -1518,12 +1522,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
         // The first commit after ADD COLUMN ... INDEX into a partition that has rows rolls the empty index back to
         // the column top, then adds keys. Every value size the writer publishes after that must be covered by the
         // value file: a reader opens the file after each add, and a writer reopens it after a close that does not
-        // truncate, which leaves the files as a kill would. A 4 KiB value page puts a page boundary inside the
-        // second block of 2064 bytes.
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        // truncate, which leaves the files as a kill would. At the smallest value page the OS allows, blocks of a
+        // sixteenth of a page of values (half a page and 16 bytes) put a page boundary inside the second block.
+        final long pageSize = Files.PAGE_SIZE;
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
         assertMemoryLeak(() -> {
-            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
-            create(configuration, path.trimTo(plen), "x", 256);
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
+            create(configuration, path.trimTo(plen), "x", (int) (pageSize / 16));
             final LongList values = new LongList();
             final int keyCount = 40;
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
@@ -1753,15 +1758,18 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testValueBlockAllocationDiskFullKeepsHeaderCovered() throws Exception {
-        // After the column-top rollback of an empty index the next block starts at 2064 and ends past the 4 KiB the
-        // writer has mapped, so adding the first key has to grow the value file. When that growth fails, the add must
-        // fail before it publishes the block.
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        // At the smallest value page the OS allows, with blocks of a sixteenth of a page of values (half a page and
+        // 16 bytes), the next block after the column-top rollback of an empty index ends past the one page the writer
+        // has mapped, so adding the first key has to grow the value file. When that growth fails, the add must fail
+        // before it publishes the block.
+        final long pageSize = Files.PAGE_SIZE;
+        final int blockValueCount = (int) (pageSize / 16);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
         final ValueFileDiskFullFacade ff = new ValueFileDiskFullFacade();
         assertMemoryLeak(ff, () -> {
-            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
-            create(configuration, path.trimTo(plen), "x", 256);
-            final long blockCapacity = 256 * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
+            create(configuration, path.trimTo(plen), "x", blockValueCount);
+            final long blockCapacity = blockValueCount * 8L + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
             final LongList values = new LongList();
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
                 writer.rollbackConditionally(10);
