@@ -1498,4 +1498,31 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             createPurgeJob().close();
         });
     }
+
+    @Test
+    public void testStrictlyMonotonicPurgeLogTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("tab1");
+            createTable("tab2");
+            drainWalQueue();
+
+            try (TableReader r1 = getReader("tab1");
+                 TableReader r2 = getReader("tab2")) {
+                update("UPDATE tab1 SET x = 100");
+                drainWalQueue();
+
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    purgeJob.run();
+
+                    update("UPDATE tab2 SET x = 100");
+                    drainWalQueue();
+
+                    purgeJob.run();
+                }
+            }
+
+            assertSql("true\n", "SELECT count(distinct ts) = count() FROM sys.column_versions_purge_log");
+        });
+    }
 }
+

@@ -74,6 +74,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
+    private long lastLogTimestamp = Long.MIN_VALUE;
     private SqlExecutionContextImpl sqlExecutionContext;
     private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
     private TableWriter writer;
@@ -186,7 +187,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     // Process incoming queue and put it on priority queue with next timestamp to rerun
     private boolean processInQueue() {
         boolean useful = false;
-        long microTime = clock.getTicks();
+        long microTime = Math.max(clock.getTicks(), lastLogTimestamp + 1);
         while (true) {
             long cursor = inSubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
@@ -202,7 +203,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             ColumnPurgeTask queueTask = inQueue.get(cursor);
             ColumnPurgeRetryTask purgeTaskRun = taskPool.pop();
             purgeTaskRun.copyFrom(queueTask, retryDelay, microTime + retryDelay);
-            purgeTaskRun.timestamp = microTime++;
+            purgeTaskRun.timestamp = microTime;
+            lastLogTimestamp = microTime++;
             inSubSequence.done(cursor);
 
             saveToStorage(purgeTaskRun);
@@ -257,6 +259,9 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 while (records.hasNext()) {
                     count++;
                     long ts = rec.getTimestamp(0);
+                    if (ts > lastLogTimestamp) {
+                        lastLogTimestamp = ts;
+                    }
                     if (ts != lastTs || task == null) {
                         if (task != null) {
                             if (taskInitialized) {
