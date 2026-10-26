@@ -381,7 +381,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolTableViewsMemoizeHashCodes() throws Exception {
+    public void testSymbolTableViewsKeepValueHashes() throws Exception {
         assertMemoryLeak(() -> {
             // a slot value, a map value and an empty value, whose hash is 0
             ObjList<String> values = new ObjList<>("a".repeat(30), "b".repeat(31), "");
@@ -405,21 +405,21 @@ public class SymbolMapTest extends AbstractCairoTest {
                 ) {
                     for (int key = 0; key < values.size(); key++) {
                         final int expected = values.getQuick(key).hashCode();
-                        Assert.assertFalse(reader.isHashMemoized(key));
+                        Assert.assertFalse(reader.hasValueHash(key));
                         // the first read returns the mapped value, the second the cached one
                         for (int read = 0; read < 2; read++) {
                             CharSequence value = reader.valueOf(key);
                             Assert.assertTrue(DirectString.isRawView(value));
                             Assert.assertEquals(expected, Chars.hashCode(value));
-                            Assert.assertTrue(reader.isHashMemoized(key));
+                            Assert.assertTrue(reader.hasValueHash(key));
                         }
                         Assert.assertEquals(expected, Chars.hashCode(reader.valueBOf(key)));
                     }
                     Assert.assertEquals(2, reader.getLowCacheSize());
                     Assert.assertEquals(1, reader.getCacheSize());
 
-                    // Both flyweights read the memoized hash instead of hashing the chars.
-                    reader.memoizeHash(1, 42);
+                    // Both flyweights read the stored hash instead of hashing the chars.
+                    reader.putValueHash(1, 42);
                     CharSequence a = reader.valueOf(1);
                     Assert.assertEquals(42, Chars.hashCode(a));
                     Assert.assertEquals(42, Chars.hashCode(reader.valueBOf(1)));
@@ -434,10 +434,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertEquals(values.getQuick(0).hashCode(), Chars.hashCode(view.valueOf(0)));
                     Assert.assertEquals(values.getQuick(1).hashCode(), Chars.hashCode(view.valueOfOnce(1)));
 
-                    // Reopening the reader on another dictionary drops the memo.
+                    // Reopening the reader on another dictionary drops the stored hashes.
                     reader.of(configuration, path, "y", COLUMN_NAME_TXN_NONE, others.size(), pool, 0);
                     for (int key = 0; key < others.size(); key++) {
-                        Assert.assertFalse(reader.isHashMemoized(key));
+                        Assert.assertFalse(reader.hasValueHash(key));
                         Assert.assertEquals(others.getQuick(key).hashCode(), Chars.hashCode(reader.valueOf(key)));
                     }
                 }
