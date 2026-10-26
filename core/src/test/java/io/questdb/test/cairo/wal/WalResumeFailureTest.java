@@ -30,8 +30,10 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -105,7 +107,7 @@ public class WalResumeFailureTest extends AbstractCairoTest {
     @Test
     public void testResumeFromTxnTxnFileFailureKeepsSuspension() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        final TableFileFault fault = new TableFileFault("/_txn", CairoException.ERRNO_FILE_DOES_NOT_EXIST);
+        final TableFileFault fault = new TableFileFault(Files.SEPARATOR + TableUtils.TXN_FILE_NAME, CairoException.ERRNO_FILE_DOES_NOT_EXIST);
         assertMemoryLeak(fault, () -> {
             Assert.assertEquals(CommitMode.NOSYNC, engine.getResolvedCommitMode());
             final TableToken token = createSuspendedTableWithSkippableTxn();
@@ -256,7 +258,8 @@ public class WalResumeFailureTest extends AbstractCairoTest {
             final String dir = dirName.get();
             if (isArmed && dir != null && failedFile.get() == null
                     && Utf8s.containsAscii(name, dir) && Utf8s.endsWithAscii(name, suffix)
-                    && !Utf8s.containsAscii(name, "/wal") && !Utf8s.containsAscii(name, "/txn_seq")) {
+                    && !Utf8s.containsAscii(name, Files.SEPARATOR + "wal")
+                    && !Utf8s.containsAscii(name, Files.SEPARATOR + "txn_seq")) {
                 failedFile.set(Utf8s.toString(name));
                 return -1;
             }

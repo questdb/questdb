@@ -1837,7 +1837,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
         // An earlier build could publish a block before the value file covered all of it: the file then ends past
         // the block's first cell, which the writer wrote first, but before the block's end. A writer stopped there
         // (a kill, or a close that does not truncate) leaves the file that way. It holds every written value, so
-        // readers open it, and a writer extends it, through both ways of opening a writer.
+        // readers open it, and a writer extends it, through both ways of opening a writer. Windows cannot map a
+        // read-only file past its end, so there a reader fails cleanly until a writer has extended the file, as it
+        // did before the length checks.
         TestUtils.assertMemoryLeak(() -> {
             final long valueMemSize = writeThreeKeysEndingWithSingleValueBlock();
             final long blockCapacity = 256 * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
@@ -1846,10 +1848,18 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final LongList values = new LongList();
 
             truncateValueFile(shortLength);
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                assertThat("[2,0]", reader.getCursor(0, 0, Long.MAX_VALUE), values);
-                assertThat("[1]", reader.getCursor(1, 0, Long.MAX_VALUE), values);
-                assertThat("[3]", reader.getCursor(2, 0, Long.MAX_VALUE), values);
+            if (Os.isWindows()) {
+                try (BitmapIndexBwdReader ignored = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    Assert.fail("Windows cannot map the value file past its end");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+            } else {
+                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    assertThat("[2,0]", reader.getCursor(0, 0, Long.MAX_VALUE), values);
+                    assertThat("[1]", reader.getCursor(1, 0, Long.MAX_VALUE), values);
+                    assertThat("[3]", reader.getCursor(2, 0, Long.MAX_VALUE), values);
+                }
             }
 
             final long keyFd = TableUtils.openRW(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());

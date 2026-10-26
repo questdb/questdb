@@ -95,7 +95,9 @@ public final class BitmapIndexUtils {
      * could stop there (a kill, or a close that does not truncate) with the file ending inside that last block,
      * past its first cell. Every cell after the first is written only later, through a write that extends the
      * file first, and readers read only cells below each key's count, so such a file is complete. Opening it
-     * zero-extends it in the writer and maps it in the reader, as builds before this check did.
+     * zero-extends it in the writer and maps it in the reader, as builds before this check did. Windows cannot map
+     * a read-only file past its end, so there the reader fails to map it until a writer has extended it, also as
+     * before this check.
      *
      * @param valueMemSize       value file size published in the key file header
      * @param blockValueCountMod values per block minus one, from the key file header
