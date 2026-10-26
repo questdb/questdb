@@ -571,9 +571,12 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   name through the first covering save point. The statement synchronously publishes another if needed, so every
   selectable recovery cut includes the removal before `.detached` is exposed and apply completes. This works
   even with periodic epochs disabled. It is apply/artifact completion, not the earlier WAL enqueue acknowledgement.
-  On any other table, a replica's included, it finishes at once. Finishing (`finishDetach`) links the final `.detached` name, syncs it and the table directory in `sync` and
-  `adaptive`, and deletes the temporary name; a `.detached` left half linked by a crash is completed file by file
-  (`linkMissingFiles`), so the finish can be repeated after any crash. At writer open, a temporary name whose txn the
+  On any other table, a replica's included, it finishes at once. Finishing (`finishDetach`) renames the temporary
+  name to `.detached`, which never crosses a file system because both names are in the table directory, and syncs
+  the table directory in `sync` and `adaptive`; a crash leaves one name or the other, never half of each. It never
+  replaces or merges into an existing `.detached`. A rename that fails after the commit cannot undo the DETACH, so
+  the statement fails with the folder its files are in (a WAL table suspends); the writer keeps it pending, and a
+  repeated DETACH, `RESUME WAL` or the next writer open renames it. At writer open, a temporary name whose txn the
   live `_txn` has not reached is a rollback leftover and is deleted; one it has reached gets its final name (on an
   enrolled table of a primary only once every on-disk candidate covers it). A failed required publication keeps
   the temporary copy and is retryable through RESUME; fallback below the removal replays DETACH from its original

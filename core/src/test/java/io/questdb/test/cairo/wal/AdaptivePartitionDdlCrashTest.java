@@ -122,22 +122,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
         @Override
         public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
-            // A link out of a partition directory or an .attachable one crosses to another device; a link between
-            // two detached names stays on the device that holds them.
-            if (crossDevice && !Utf8s.containsAscii(src.$(), DETACHED_NAME)) {
+            // A link out of a partition directory or an .attachable one crosses to another device.
+            if (crossDevice) {
                 return -1;
             }
             return afterMove(super.hardLinkDirRecursive(src, dst, dirMode), src.$(), dst.$());
-        }
-
-        @Override
-        public int hardLink(LPSZ src, LPSZ hardLink) {
-            final int result = super.hardLink(src, hardLink);
-            // The first file the DETACH links from its temporary name into .detached.
-            if (result == 0 && killInFinalLink && Utf8s.containsAscii(src, DETACHED_NAME) && Utf8s.containsAscii(hardLink, TableUtils.DETACHED_DIR_MARKER)) {
-                takeKillImage(tableDirOf(hardLink).getParent());
-            }
-            return result;
         }
 
         @Override
@@ -163,6 +152,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
+            // The rename that gives a committed DETACH its .detached name: the kill leaves the temporary name.
+            if (killBeforeFinalRename && Utf8s.containsAscii(from, TableUtils.DETACHING_DIR_MARKER) && Utf8s.endsWithAscii(to, TableUtils.DETACHED_DIR_MARKER)) {
+                takeKillImage(tableDirOf(to));
+            }
             return afterMove(super.rename(from, to), from, to);
         }
 
@@ -189,8 +182,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     private static volatile boolean killAfterMove;
     private static long savePointFd;
     private static java.nio.file.Path savePointFile;
-    // The process is killed in the middle of the link that gives a detached partition its final name.
-    private static volatile boolean killInFinalLink;
+    // The process is killed right before the rename that gives a detached partition its final name.
+    private static volatile boolean killBeforeFinalRename;
     // What a process kill leaves of the table directory; the next restart puts it back.
     private static java.nio.file.Path killImageRoot;
     private static Map<java.nio.file.Path, byte[]> killImageFiles;
@@ -581,7 +574,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     // The bytes of every file and the tree of the table directory, as a process kill at this moment leaves them.
     private static void takeKillImage(java.nio.file.Path tableDir) {
         killAfterMove = false;
-        killInFinalLink = false;
+        killBeforeFinalRename = false;
         killImageRoot = tableDir;
         killImageFiles = new HashMap<>();
         killImageLinks = new HashMap<>();
@@ -842,7 +835,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         crossDevice = false;
         killAfterMove = false;
         isSavePointKillArmed = false;
-        killInFinalLink = false;
+        killBeforeFinalRename = false;
     }
 
     private void importCsv(CairoEngine e) throws Exception {
@@ -982,7 +975,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
         crossDevice = operation == Operation.ATTACH_CROSS_DEVICE || operation == Operation.DETACH_CROSS_DEVICE;
         killAfterMove = history == History.KILLED_BEFORE_TXN || history == History.KILLED_BEFORE_TXN_NOSYNC;
-        killInFinalLink = history == History.KILLED_IN_DETACH_FINAL_LINK;
+        killBeforeFinalRename = history == History.KILLED_BEFORE_DETACH_FINAL_RENAME;
         isSavePointKillArmed = history == History.KILLED_AFTER_SAVE_POINT;
         savePointFd = -1;
         savePointFile = null;
@@ -1020,8 +1013,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         KILLED_BEFORE_TXN,
         // The save point after the operation fails, and the process is killed right after the statement.
         SAVE_POINT_FAILS_THEN_KILLED,
-        // The process is killed while a DETACH that its save point covers takes its final .detached name.
-        KILLED_IN_DETACH_FINAL_LINK,
+        // The process is killed right before a DETACH that its save point covers takes its final .detached name.
+        KILLED_BEFORE_DETACH_FINAL_RENAME,
         // Freeze after header durability, before a no-op's outer apply commits its seqTxn.
         KILLED_AFTER_SAVE_POINT,
         // As KILLED_BEFORE_TXN on a NOSYNC instance.
@@ -1044,7 +1037,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         boolean killed() {
-            return killedBeforeSavePoint() || this == KILLED_IN_DETACH_FINAL_LINK || this == KILLED_AFTER_SAVE_POINT;
+            return killedBeforeSavePoint() || this == KILLED_BEFORE_DETACH_FINAL_RENAME || this == KILLED_AFTER_SAVE_POINT;
         }
 
         boolean killedBeforeSavePoint() {
@@ -1052,7 +1045,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         // The kill histories an ATTACH runs in: outside ADAPTIVE it still renames .attachable, so a kill before its _txn
-        // commit loses the partition (as on base), and it makes no final link to kill in.
+        // commit loses the partition (as on base), and it has no final naming step, as DETACH has, to kill before.
         boolean killsAttach() {
             return this == KILLED_BEFORE_TXN || this == SAVE_POINT_FAILS_THEN_KILLED;
         }

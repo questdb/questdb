@@ -368,7 +368,10 @@ Found while this mode was built, reproduced on the current release line, and fil
   (section 11.2).
 - **DETACH PARTITION** first links the partition into a temporary directory, `<partition>.<txn>.detaching`, and
   gives it its `.detached` name only once the commit is final, in every mode. Before, a process killed between the
-  link and the commit left the partition attached next to a `.detached` copy, and a second DETACH was refused.
+  link and the commit left the partition attached next to a `.detached` copy, and a second DETACH was refused. If
+  the rename to `.detached` fails, or `.detached` already exists, the DETACH stays done: the statement fails with
+  the folder that holds the partition's files (a WAL table suspends), and a repeated DETACH, `RESUME WAL` or the
+  next writer open gives it the name.
 - **The partition purge job waits for a writer** in `sync`, and for WAL tables in `adaptive`: after a restart, `VACUUM
   TABLE` and the background purge leave a table's old partition versions alone until a writer has opened the table
   (`partition purge deferred to the next writer open`). `VACUUM TABLE` still reports success. The writer open removes
@@ -463,9 +466,9 @@ More detail:
   mode, when the table had WAL left to apply or a save point. A 2-million-row table converts in 33 ms with 200,000
   rows left to replay (11 ms of it the flush) and in 29 ms in `adaptive` (5 ms flush). With nothing left to apply,
   `nosync` pays nothing. It runs at the start that carries out the conversion, once.
-- **DETACH PARTITION**, in every mode, links the partition one more time (into its temporary name, then into
-  `.detached`) and removes one more directory. In `sync` it also flushes every file of the detached copy and three
-  directories. Not measured; DETACH is a rare statement.
+- **DETACH PARTITION**, in every mode, links the partition into its temporary name and then renames it to
+  `.detached`. In `sync` it also flushes every file of the detached copy, its directory, and the table directory
+  before the commit and again after the rename. Not measured; DETACH is a rare statement.
 - **An `adaptive` start** rewrites the header of each table's current save point and makes it durable before anything
   relies on it. On Linux that is one write per table and one `syncfs` per file system (the root and each volume) per
   start: 1,000 tables took 244 ms, of which the `syncfs` 51 ms. Elsewhere it is one `fsync` per table (5-8 ms each,

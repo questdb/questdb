@@ -309,7 +309,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
     private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
-    // Pairs of (partition timestamp, commit txn) of DETACHes under their temporary name until a save point covers them.
+    // Pairs of (partition timestamp, commit txn) of committed DETACHes still under their temporary name: until a save
+    // point covers them where partition moves are deferred, and until their rename succeeds where it failed.
+    // finishPendingDetaches() removes each one it names.
     private final LongList detachesAfterSavePoint = new LongList();
     private final DirectUtf8String directUtf8String = new DirectUtf8String();
     private final CairoEngine engine;
@@ -2605,11 +2607,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex < 0) {
             assert !txWriter.attachedPartitionsContains(timestamp);
-            // A retry after a failed covering publication still owns the temporary detached copy.
+            // A retry after a failed covering publication, or after a failed rename, still owns the temporary detached
+            // copy.
             for (int i = 0, n = detachesAfterSavePoint.size(); i < n; i += 2) {
                 if (detachesAfterSavePoint.getQuick(i) == timestamp) {
-                    completeDurableEpochAfter("detach retry");
-                    break;
+                    if (defersPartitionMoves()) {
+                        completeDurableEpochAfter("detach retry");
+                        break;
+                    }
+                    finishPendingDetaches();
+                    return AttachDetachStatus.OK;
                 }
             }
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
@@ -2638,6 +2645,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Path detachedPath = Path.PATH.get();
         // The length of this attempt's temporary detached copy until the commit names it, 0 when there is none to undo
         int undoDetachedPathLen = 0;
+        // Set when the rename to .detached fails after the commit, with the errno it failed with
+        boolean isNamingFailed = false;
+        int namingErrno = 0;
 
         try {
             // path: partition folder to be detached
@@ -2789,8 +2799,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (detachedPathLen > 0) {
                     if (defersPartitionMoves()) {
                         detachesAfterSavePoint.add(timestamp, detachTxn);
-                    } else {
-                        finishDetach(timestamp, detachTxn);
+                    } else if (!finishDetach(timestamp, detachTxn)) {
+                        namingErrno = ff.errno();
+                        isNamingFailed = true;
+                        detachesAfterSavePoint.add(timestamp, detachTxn);
                     }
                 }
                 // return at the end of the method after removing partition directory
@@ -2813,6 +2825,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
         removePartitionDirAfterSavePoint(timestamp, partitionNameTxn);
+        if (isNamingFailed) {
+            // The commit cannot be undone: the caller learns where the partition's files are
+            throw detachNotNamedException(timestamp, detachTxn, namingErrno);
+        }
         return AttachDetachStatus.OK;
     }
 
@@ -9126,6 +9142,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return enrolledAdaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled();
     }
 
+    // A committed DETACH whose rename to .detached failed: the partition is detached, its files are under the
+    // temporary name, and a repeated DETACH (RESUME WAL on a WAL table) or the next writer open renames it.
+    private CairoException detachNotNamedException(long timestamp, long detachTxn, int errno) {
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
+            other.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
+            path.put(DETACHED_DIR_MARKER);
+            final boolean isNameTaken = ff.exists(path.$());
+            final CairoException e = CairoException.critical(isNameTaken ? 0 : errno)
+                    .put("partition is detached, its files are in ").put(other).put("; ");
+            if (isNameTaken) {
+                e.put(path).put(" already exists, move it away, then QuestDB renames them");
+            } else {
+                e.put("QuestDB renames them to ").put(path);
+            }
+            return e.put(tableToken.isWal() ? " at RESUME WAL" : " when the DETACH is repeated")
+                    .put(" or at the next writer open [table=").put(tableToken.getTableName()).put(']');
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
         synchronized (parquetSealPurgeLock) {
             discardAbandonedDeferredPostingSealPurges0(currentTableTxn);
@@ -9757,25 +9797,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         purgingOperator.clear();
     }
 
-    // Gives a DETACH whose commit is final its .detached name: a second link, synced, then the temporary name goes.
+    // Gives a DETACH whose commit is final its .detached name by renaming its temporary name. Both names are
+    // <table directory>/<partition name> plus a suffix, built so in detachPartition (the temporary name), here and in
+    // purgeUnusedPartitionsAtOpen: the rename never leaves the table directory, so it never crosses a file system and
+    // moves the whole directory or nothing. The files and the temporary name were made durable before the commit.
+    // An existing .detached may be another copy, so it is never replaced or merged into.
     private boolean finishDetach(long timestamp, long detachTxn) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
             other.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
             path.put(DETACHED_DIR_MARKER);
-            // A crash in the middle of the link leaves .detached without some files; the temporary name has them all.
-            if (ff.exists(path.$()) ? !linkMissingFiles(other, path) : !linkOrCopyDir(other, path, detachedMkDirMode)) {
+            if (ff.exists(path.$())) {
+                LOG.critical().$("could not name detached partition, the name exists, it stays under its temporary name [from=")
+                        .$(other).$(", to=").$(path).I$();
+                return false;
+            }
+            final int commitMode = getFlushCommitMode();
+            if (TableUtils.renamePublish(ff, other.$(), path.$(), commitMode) != FILES_RENAME_OK) {
                 LOG.critical().$("could not name detached partition, it stays under its temporary name [from=").$(other)
                         .$(", to=").$(path).$(", errno=").$(ff.errno()).I$();
                 return false;
             }
-            if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
-                DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size(), false);
+            if (CommitMode.isPowerLossDurable(commitMode)) {
+                // Without it a power cut can bring back the temporary name, which only a later writer open renames
                 TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
-            }
-            if (!ff.rmdir(other)) {
-                LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
             }
             return true;
         } finally {
@@ -10139,13 +10185,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         finishPendingDetaches();
     }
 
+    // Where partition moves are not deferred, a pending DETACH is one whose rename failed, and it needs no coverage.
     private void finishPendingDetaches() {
         for (int i = detachesAfterSavePoint.size() - 2; i >= 0; i -= 2) {
+            final long timestamp = detachesAfterSavePoint.getQuick(i);
             final long detachTxn = detachesAfterSavePoint.getQuick(i + 1);
-            if (hasDurableEpochCoverage(detachTxn)) {
-                if (!finishDetach(detachesAfterSavePoint.getQuick(i), detachTxn)) {
-                    throw CairoException.nonCritical().put("could not finish detached partition; retry RESUME WAL [table=")
-                            .put(tableToken.getTableName()).put(']');
+            if (!defersPartitionMoves() || hasDurableEpochCoverage(detachTxn)) {
+                if (!finishDetach(timestamp, detachTxn)) {
+                    throw detachNotNamedException(timestamp, detachTxn, ff.errno());
                 }
                 detachesAfterSavePoint.removeIndexBlock(i, 2);
             }
@@ -11336,43 +11383,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         if (IndexType.isPosting(indexType)) {
             linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn, liveSealTxn);
-        }
-    }
-
-    // Links, or copies across devices, each file of `from` that `to` lacks or holds shorter: `from` is whole until `to`
-    // is, so repeating this after a crash in the middle of it, or of the removal of `from`, leaves `to` whole.
-    private boolean linkMissingFiles(Path from, Path to) {
-        final int fromLen = from.size();
-        final int toLen = to.size();
-        final long findPtr = ff.findFirst(from.$());
-        if (findPtr <= 0) {
-            return false;
-        }
-        try {
-            do {
-                final long name = ff.findName(findPtr);
-                final int type = ff.findType(findPtr);
-                // A file system that reports no entry type (DT_UNKNOWN) is asked whether the entry is a directory:
-                // skipping its files would let the caller remove `from` while `to` lacks them.
-                if (Files.notDots(name) && (type == Files.DT_FILE
-                        || (type == Files.DT_UNKNOWN && !ff.isDirOrSoftLinkDir(from.trimTo(fromLen).concat(name).$())))) {
-                    to.trimTo(toLen).concat(name);
-                    from.trimTo(fromLen).concat(name);
-                    if (ff.length(to.$()) != ff.length(from.$())) {
-                        if (ff.exists(to.$()) && !ff.removeQuiet(to.$())) {
-                            return false;
-                        }
-                        if (ff.hardLink(from.$(), to.$()) != 0 && (!ff.isCrossDeviceCopyError(ff.errno()) || ff.copy(from.$(), to.$()) < 0)) {
-                            return false;
-                        }
-                    }
-                }
-            } while (ff.findNext(findPtr) > 0);
-            return true;
-        } finally {
-            ff.findClose(findPtr);
-            from.trimTo(fromLen);
-            to.trimTo(toLen);
         }
     }
 
@@ -16263,8 +16273,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (!hasDurableEpochCoverage(detachTxn) || !finishDetach(timestamp, detachTxn)) {
                             detachesAfterSavePoint.add(timestamp, detachTxn);
                         }
-                    } else {
-                        finishDetach(timestamp, detachTxn);
+                    } else if (!finishDetach(timestamp, detachTxn)) {
+                        // An open has no caller to tell; the log names both directories, and a repeated DETACH of the
+                        // partition in this writer, or the next open, renames it
+                        detachesAfterSavePoint.add(timestamp, detachTxn);
                     }
                 }
             } finally {
