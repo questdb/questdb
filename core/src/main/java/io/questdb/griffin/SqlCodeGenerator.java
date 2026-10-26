@@ -315,6 +315,7 @@ import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinSharedKeyCheckTemplate;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
@@ -1945,10 +1946,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    // For every key position whose slave column occurs at an earlier position, collects the master
+    // column of the earliest such position when isEarliestPosition is true, and the master column of
+    // the position itself otherwise. Returns null when no slave key column repeats.
+    private static @Nullable ListColumnFilter collectSharedKeyMasterColumns(
+            ListColumnFilter slaveKeyColumns,
+            ListColumnFilter masterKeyColumns,
+            boolean isEarliestPosition
+    ) {
+        ListColumnFilter filter = null;
+        for (int k = 1, n = slaveKeyColumns.getColumnCount(); k < n; k++) {
+            final int slaveColumnIndex = slaveKeyColumns.getColumnIndexFactored(k);
+            for (int j = 0; j < k; j++) {
+                if (slaveKeyColumns.getColumnIndexFactored(j) == slaveColumnIndex) {
+                    if (filter == null) {
+                        filter = new ListColumnFilter();
+                    }
+                    filter.add(masterKeyColumns.getQuick(isEarliestPosition ? j : k));
+                    break;
+                }
+            }
+        }
+        return filter;
+    }
+
     // SymbolTranslatingRecord maps each master key column to one slave symbol table, so a master
-    // SYMBOL column that is matched against two slave columns cannot use symbol ids. HORIZON key
-    // copiers write each column once, so a slave SYMBOL column matched against a master SYMBOL and
-    // a master STRING column needs one encoding for both key positions; strings serve both.
+    // SYMBOL column that is matched against two slave columns cannot use symbol ids.
     private static boolean hasRepeatedSymbolKeyColumn(ListColumnFilter keyColumns, RecordMetadata metadata) {
         for (int k = 1, m = keyColumns.getColumnCount(); k < m; k++) {
             final int columnIndex = keyColumns.getColumnIndexFactored(k);
@@ -2069,6 +2092,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    // HORIZON key copiers encode a column the same way at every key position, so a slave SYMBOL column
+    // that is matched against a master SYMBOL column and a master column of another type needs one
+    // encoding for both positions, and strings serve both. A slave SYMBOL column that is matched only
+    // against master SYMBOL columns keeps symbol ids: SymbolTranslatingRecord translates each of them
+    // into the symbol table of that one slave column.
+    private static boolean isHorizonSymbolIdKeyAllowed(
+            ListColumnFilter masterKeyColumns,
+            RecordMetadata masterMetadata,
+            ListColumnFilter slaveKeyColumns,
+            RecordMetadata slaveMetadata
+    ) {
+        // SqlOptimiser.addFilterOrEmitJoin() keeps one HORIZON key pair of a master column that two
+        // slave columns share, and the implied slave equality filters the slave rows, so no master key
+        // column repeats here. SymbolTranslatingRecord would translate a repeated master SYMBOL column
+        // through one of its slave columns only, so such keys compare strings.
+        if (hasRepeatedSymbolKeyColumn(masterKeyColumns, masterMetadata)) {
+            assert false : "master SYMBOL column at two HORIZON JOIN key positions";
+            return false;
+        }
+        for (int k = 1, n = slaveKeyColumns.getColumnCount(); k < n; k++) {
+            final int slaveColumnIndex = slaveKeyColumns.getColumnIndexFactored(k);
+            if (slaveMetadata.getColumnType(slaveColumnIndex) != ColumnType.SYMBOL) {
+                continue;
+            }
+            for (int j = 0; j < k; j++) {
+                if (slaveKeyColumns.getColumnIndexFactored(j) == slaveColumnIndex
+                        && (masterMetadata.getColumnType(masterKeyColumns.getColumnIndexFactored(j)) != ColumnType.SYMBOL
+                        || masterMetadata.getColumnType(masterKeyColumns.getColumnIndexFactored(k)) != ColumnType.SYMBOL)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // Returns true when every column the expression reads resolves, as the function parser resolves it,
@@ -3768,6 +3826,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    // HORIZON JOIN counterpart of createSharedKeyCopier(): builds the copiers from the key filters and
+    // the encodings of the join's own master key copier, so the check compares the bytes that the key
+    // map compares. Returns null when no slave key column repeats.
+    private @Nullable HorizonJoinSharedKeyCheckTemplate createHorizonSharedKeyCheckTemplate(
+            RecordMetadata masterMetadata,
+            ListColumnFilter slaveKeyColumns,
+            ListColumnFilter masterKeyColumns,
+            BitSet writeSymbolAsString,
+            BitSet writeStringAsVarchar,
+            BitSet writeTimestampAsNanos
+    ) {
+        final ListColumnFilter earliestColumns = collectSharedKeyMasterColumns(slaveKeyColumns, masterKeyColumns, true);
+        if (earliestColumns == null) {
+            return null;
+        }
+        final ListColumnFilter laterColumns = collectSharedKeyMasterColumns(slaveKeyColumns, masterKeyColumns, false);
+        assert laterColumns != null;
+        return new HorizonJoinSharedKeyCheckTemplate(
+                configuration,
+                new RecordSinkTemplate(configuration, asm, masterMetadata, earliestColumns, writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos),
+                new RecordSinkTemplate(configuration, asm, masterMetadata, laterColumns, writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos)
+        );
+    }
+
     private @NotNull RecordSink createRecordCopierSlave(RecordMetadata slaveMetadata) {
         return RecordSinkFactory.getInstance(
                 configuration,
@@ -3788,19 +3870,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // agrees. Returns null when no slave key column repeats. Like createRecordCopierMaster(), call it
     // after convertSymbolJoinKeysToInt(), so both copiers encode the master columns the same way.
     private @Nullable RecordSink createSharedKeyCopier(RecordMetadata masterMetadata, boolean isEarliestPosition) {
-        ListColumnFilter filter = null;
-        for (int k = 1, n = listColumnFilterA.getColumnCount(); k < n; k++) {
-            final int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(k);
-            for (int j = 0; j < k; j++) {
-                if (listColumnFilterA.getColumnIndexFactored(j) == slaveColumnIndex) {
-                    if (filter == null) {
-                        filter = new ListColumnFilter();
-                    }
-                    filter.add(listColumnFilterB.getQuick(isEarliestPosition ? j : k));
-                    break;
-                }
-            }
-        }
+        final ListColumnFilter filter = collectSharedKeyMasterColumns(listColumnFilterA, listColumnFilterB, isEarliestPosition);
         if (filter == null) {
             return null;
         }
@@ -6462,6 +6532,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes asOfJoinKeyTypes = null;
             RecordSinkTemplate masterAsOfJoinMapSinkTemplate = null;
             RecordSinkTemplate slaveAsOfJoinMapSinkTemplate = null;
+            HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate = null;
             int[] masterSymbolKeyColumnIndices = null;
             int[] slaveSymbolKeyColumnIndices = null;
 
@@ -6484,7 +6555,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final BitSet asOfWriteTimestampAsNanosB = new BitSet();
                 IntList masterSymbolKeyCols = null;
                 IntList slaveSymbolKeyCols = null;
-                final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(masterKeyColumnFilter, masterMetadata) && !hasRepeatedSymbolKeyColumn(slaveKeyColumnFilter, slaveMetadata);
+                final boolean isSymbolIdKeyAllowed = isHorizonSymbolIdKeyAllowed(masterKeyColumnFilter, masterMetadata, slaveKeyColumnFilter, slaveMetadata);
 
                 for (int k = 0, m = slaveKeyColumnFilter.getColumnCount(); k < m; k++) {
                     final int columnIndexA = slaveKeyColumnFilter.getColumnIndexFactored(k);
@@ -6580,6 +6651,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         asOfWriteStringAsVarcharA,
                         asOfWriteTimestampAsNanosA
                 );
+                sharedKeyCheckTemplate = createHorizonSharedKeyCheckTemplate(
+                        masterMetadata,
+                        slaveKeyColumnFilter,
+                        masterKeyColumnFilter,
+                        asOfWriteSymbolAsStringB,
+                        asOfWriteStringAsVarcharB,
+                        asOfWriteTimestampAsNanosB
+                );
             }
 
             if (!supportsParallelism) {
@@ -6634,6 +6713,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             masterMetadata.getColumnCount(),
                             masterSymbolKeyColumnIndices,
                             slaveSymbolKeyColumnIndices,
+                            sharedKeyCheckTemplate,
                             columnSources,
                             columnIndices
                     );
@@ -6661,6 +6741,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
+                        sharedKeyCheckTemplate,
                         groupByColumnFilter,
                         columnSources,
                         columnIndices
@@ -6736,6 +6817,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
+                        sharedKeyCheckTemplate,
                         columnSources,
                         columnIndices,
                         resources,
@@ -6768,6 +6850,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata.getColumnCount(),
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
+                    sharedKeyCheckTemplate,
                     groupByColumnFilter,
                     columnSources,
                     columnIndices,
@@ -9548,6 +9631,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ArrayColumnTypes asOfJoinKeyTypes = null;
                 RecordSinkTemplate masterAsOfJoinMapSinkTemplate = null;
                 RecordSinkTemplate slaveAsOfJoinMapSinkTemplate = null;
+                HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate = null;
                 int[] masterSymbolKeyColumnIndices = null;
                 int[] slaveSymbolKeyColumnIndices = null;
 
@@ -9569,7 +9653,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final BitSet asOfWriteTimestampAsNanosB = new BitSet();
                     IntList masterSymbolKeyCols = null;
                     IntList slaveSymbolKeyCols = null;
-                    final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(masterKeyColumnFilter, masterMetadata) && !hasRepeatedSymbolKeyColumn(slaveKeyColumnFilter, slaveMeta);
+                    final boolean isSymbolIdKeyAllowed = isHorizonSymbolIdKeyAllowed(masterKeyColumnFilter, masterMetadata, slaveKeyColumnFilter, slaveMeta);
 
                     for (int k = 0, m = slaveKeyColumnFilter.getColumnCount(); k < m; k++) {
                         final int columnIndexA = slaveKeyColumnFilter.getColumnIndexFactored(k);
@@ -9654,6 +9738,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             configuration, asm, slaveMeta, slaveKeyColumnFilter,
                             asOfWriteSymbolAsStringA, asOfWriteStringAsVarcharA, asOfWriteTimestampAsNanosA
                     );
+                    sharedKeyCheckTemplate = createHorizonSharedKeyCheckTemplate(
+                            masterMetadata,
+                            slaveKeyColumnFilter,
+                            masterKeyColumnFilter,
+                            asOfWriteSymbolAsStringB,
+                            asOfWriteStringAsVarcharB,
+                            asOfWriteTimestampAsNanosB
+                    );
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
 
@@ -9666,7 +9758,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveAsOfJoinMapSinkTemplate,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
-                        slaveSymbolKeyColumnIndices
+                        slaveSymbolKeyColumnIndices,
+                        sharedKeyCheckTemplate
                 ));
                 final HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 state.setFilter(slaveFilters.getQuick(s));

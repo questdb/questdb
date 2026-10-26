@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -63,6 +64,8 @@ import org.junit.Test;
 
 public class HorizonJoinTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(HorizonJoinTest.class);
+    // the keys of createSharedKeyTypeTables() whose two left-hand columns share q.k
+    private static final String SHARED_KEY_ON = "t.k1 = q.k AND t.k2 = q.k";
     private final boolean isCompositePartitionEnabled;
     private final TestTimestampType leftTableTimestampType;
     private final boolean parallelHorizonJoinEnabled;
@@ -2902,6 +2905,165 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                     """);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnCheckBudget() throws Exception {
+        // The check copies the left-hand key values that share a right-hand column into native memory,
+        // which the hash join value budget bounds, as it bounds the key sink targets of an ASOF JOIN.
+        // A STRING key of 20 characters needs 44 bytes, past the 8-byte budget. A join whose keys share
+        // no right-hand column has no check and runs within the budget.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 8);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades AS (SELECT x id, rnd_str(20, 20, 0) k1, rnd_str(20, 20, 0) k2, "
+                            + "timestamp_sequence(1_000_000, 1_000_000)::#TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices AS (SELECT x id, rnd_str(20, 20, 0) k, "
+                            + "timestamp_sequence(0, 1_000_000)::#TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertExceptionNoLeakCheck(
+                        "SELECT count() c, count(p.id) n FROM trades t HORIZON JOIN prices p ON (t.k1 = p.k AND t.k2 = p.k) LIST (0s) AS h",
+                        0,
+                        "limit of 8 memory exceeded in HORIZON join (raise cairo.sql.hash.join.value.page.size or cairo.sql.hash.join.value.max.pages)"
+                );
+                assertQuery("SELECT count() c, count(p.id) n FROM trades t HORIZON JOIN prices p ON (t.k1 = p.k) LIST (0s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanNotContaining("sharedKeyCheck")
+                        .returns("""
+                                c\tn
+                                10\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnMatchesAsOfJoin() throws Exception {
+        // Every HORIZON JOIN factory over keys that share a right-hand column returns the rows of one
+        // full-fat ASOF JOIN of the shifted left-hand rows per offset, an independent implementation.
+        // The key types cover each encoding that the key loops pick: fixed-size keys, DOUBLE keys whose
+        // bits differ for 0.0 and -0.0, TIMESTAMP next to TIMESTAMP_NS, which compare nanoseconds, and
+        // every combination of SYMBOL, STRING and VARCHAR, which compare symbol ids or strings. About a
+        // quarter of the keys are NULL, which matches NULL, and about half of the left-hand rows hold
+        // two keys that differ. A filtered right-hand table runs the lookups that remember key misses.
+        assertMemoryLeak(() -> {
+            final ObjList<String[]> keyTypes = new ObjList<>();
+            keyTypes.add(new String[]{"INT", "INT", "INT"});
+            keyTypes.add(new String[]{"LONG", "LONG", "LONG"});
+            keyTypes.add(new String[]{"DOUBLE", "DOUBLE", "DOUBLE"});
+            keyTypes.add(new String[]{"TIMESTAMP", "TIMESTAMP_NS", "TIMESTAMP"});
+            keyTypes.add(new String[]{"TIMESTAMP_NS", "TIMESTAMP", "TIMESTAMP_NS"});
+            // every combination of the string types, so a mixed pair comes in either order
+            final String[] stringTypes = {"SYMBOL", "STRING", "VARCHAR"};
+            for (String masterType : stringTypes) {
+                for (String otherMasterType : stringTypes) {
+                    for (String slaveType : stringTypes) {
+                        keyTypes.add(new String[]{masterType, otherMasterType, slaveType});
+                    }
+                }
+            }
+            for (int i = 0, n = keyTypes.size(); i < n; i++) {
+                final String[] types = keyTypes.getQuick(i);
+                createSharedKeyTypeTables(types);
+                assertSharedKeyHorizonJoinsMatchAsOfJoin(SHARED_KEY_ON, true, "key types: " + String.join(", ", types));
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnMatchesAsOfJoinInEveryScanMode() throws Exception {
+        // As testHorizonJoinOnKeysSharingSlaveColumnMatchesAsOfJoin(), in each scan mode of the lookup:
+        // backward-only, where a key cache miss scans down to the first row, the relative switch, and a
+        // switch to forward scans at every position, after which a miss only reads the key cache.
+        assertMemoryLeak(() -> {
+            final String[][] keyTypes = {
+                    {"INT", "INT", "INT"},
+                    {"SYMBOL", "SYMBOL", "SYMBOL"},
+                    {"SYMBOL", "VARCHAR", "SYMBOL"}
+            };
+            // absolute threshold, min gap, switch factor
+            final long[][] thresholds = {
+                    {Long.MAX_VALUE, Long.MAX_VALUE, 2},
+                    {Long.MAX_VALUE, 16, 2},
+                    {0, 0, 1}
+            };
+            for (String[] types : keyTypes) {
+                createSharedKeyTypeTables(types);
+                for (long[] threshold : thresholds) {
+                    setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, threshold[0]);
+                    setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, threshold[1]);
+                    setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, threshold[2]);
+                    assertSharedKeyHorizonJoinsMatchAsOfJoin(SHARED_KEY_ON, true, "key types: " + String.join(", ", types)
+                            + ", thresholds: " + threshold[0] + ", " + threshold[1] + ", " + threshold[2]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnThreeKeysSharingSlaveColumnsMatchesAsOfJoin() throws Exception {
+        // Three key pairs: all three left-hand keys share q.k, two share q.k and k3 compares q.j alone,
+        // or k1 compares q.k alone and two share q.j. The check compares each left-hand key with the
+        // earliest left-hand key of its right-hand column, so it compares every group of keys at once.
+        assertMemoryLeak(() -> {
+            final String[][] keyTypes = {
+                    {"INT", "INT", "INT"},
+                    {"SYMBOL", "SYMBOL", "SYMBOL"},
+                    {"SYMBOL", "VARCHAR", "SYMBOL"}
+            };
+            final String[] onClauses = {
+                    "t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
+                    "t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.j",
+                    "t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j"
+            };
+            for (String[] types : keyTypes) {
+                createSharedKeyTypeTables(types);
+                for (String on : onClauses) {
+                    assertSharedKeyHorizonJoinsMatchAsOfJoin(on, false, "key types: " + String.join(", ", types) + ", ON " + on);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveSymbolColumnComparesSymbolIds() throws Exception {
+        // A right-hand SYMBOL column that two left-hand SYMBOL columns share compares symbol ids, as a
+        // single SYMBOL key does: SymbolTranslatingRecord translates each left-hand column into the
+        // symbol table of that right-hand column, and a left-hand symbol that the right-hand column
+        // lacks skips the lookup. A right-hand SYMBOL column that a SYMBOL and a VARCHAR column share
+        // needs one encoding at both positions, so these keys compare strings. A left-hand SYMBOL
+        // column that two right-hand columns share keeps one key pair, and the implied right-hand
+        // equality filters the right-hand rows, see testHorizonJoinOnMasterSymbolSharedBySlaveColumns().
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s1 SYMBOL, s2 SYMBOL, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (id INT, s SYMBOL, a SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.s2 = p.s", true);
+            assertSymbolIdKeys("t.s1 = p.s", true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.s2 = p.a", true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.v = p.s", false);
+            assertSymbolIdKeys("t.v = p.s AND t.s1 = p.s", false);
+            assertSymbolIdKeys("t.s1 = p.s AND t.s1 = p.a", true);
+            assertQuery("SELECT count() FROM trades t HORIZON JOIN prices p ON (t.s1 = p.s AND t.s1 = p.a) LIST (0s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("slave filter: s=a")
+                    .withPlanNotContaining("sharedKeyCheck")
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -10708,6 +10870,55 @@ public class HorizonJoinTest extends AbstractCairoTest {
         }
     }
 
+    private static <T> T findFactoryInTree(RecordCursorFactory factory, Class<T> type) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (type.isInstance(f)) {
+                return type.cast(f);
+            }
+        }
+        throw new AssertionError("expected " + type.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getSimpleName());
+    }
+
+    // The rows of the HORIZON JOIN of t and right q ON (on) LIST (-2m, 0m, 1m), and with isMulti of a
+    // second HORIZON JOIN of q r ON (t.k1 = r.k), as one ASOF JOIN of the shifted rows of t per
+    // offset. Column o holds the index of the offset.
+    private static String sharedKeyAsOfJoinReference(String right, String on, boolean isMulti) {
+        final int[] offsetsMinutes = {-2, 0, 1};
+        final StringSink sql = new StringSink();
+        for (int i = 0; i < offsetsMinutes.length; i++) {
+            if (i > 0) {
+                sql.put(" UNION ALL ");
+            }
+            sql.put("SELECT ").put(i).put(" o, t.id, q.id qid");
+            if (isMulti) {
+                sql.put(", r.id rid");
+            }
+            sql.put(" FROM (SELECT * FROM (SELECT dateadd('m', ").put(offsetsMinutes[i])
+                    .put(", ts) ts, id, k1, k2, k3 FROM t) TIMESTAMP(ts)) t ASOF JOIN ").put(right)
+                    .put(" q ON (").put(on).put(')');
+            if (isMulti) {
+                sql.put(" ASOF JOIN q r ON (t.k1 = r.k)");
+            }
+        }
+        return sql.toString();
+    }
+
+    // A value of the key type from a few values, NULL in about a quarter of the rows. TIMESTAMP and
+    // TIMESTAMP_NS draw the same instants, and DOUBLE draws 0.0 and -0.0, which a key map tells apart.
+    private static String sharedKeyValue(String type) {
+        final String value = switch (type) {
+            case "SYMBOL" -> "rnd_str('A', 'B', '\u00e9')";
+            case "INT" -> "rnd_int(1, 3, 0)";
+            case "LONG" -> "rnd_long(1, 3, 0)";
+            case "DOUBLE" -> "CASE WHEN rnd_boolean() THEN 1.5 WHEN rnd_boolean() THEN 0.0 ELSE -0.0 END";
+            case "TIMESTAMP" -> "rnd_long(0, 2, 0)::TIMESTAMP";
+            case "TIMESTAMP_NS" -> "(rnd_long(0, 2, 0) * 1_000)::TIMESTAMP_NS";
+            case "STRING", "VARCHAR" -> "rnd_str('A', 'B', '\u00e9', '')";
+            default -> throw new IllegalArgumentException("unsupported key type: " + type);
+        };
+        return "(CASE WHEN rnd_int(0, 3, 0) = 0 THEN NULL ELSE " + value + " END)::" + type;
+    }
+
     private void assertHorizonJoinFactory(String sql, Class<? extends RecordCursorFactory> factoryClass) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             TestUtils.assertFactoryInTree(factory, factoryClass, sql);
@@ -10943,6 +11154,115 @@ public class HorizonJoinTest extends AbstractCairoTest {
         }
     }
 
+    // Runs the HORIZON JOIN factories over t and q of createSharedKeyTypeTables() ON (on), serially and
+    // in parallel, against one full-fat ASOF JOIN per offset. Without isEveryFactory, only the
+    // aggregating factories without GROUP BY keys and the row-preserving ones run.
+    private void assertSharedKeyHorizonJoinsMatchAsOfJoin(String on, boolean isEveryFactory, String message) throws Exception {
+        final String reference = sharedKeyAsOfJoinReference("q", on, false);
+        printSql("SELECT id, qid FROM (" + reference + ") ORDER BY id, o", true);
+        final String rowsExpected = sink.toString();
+        printSql("SELECT count() c, count(qid) n, sum(qid) s FROM (" + reference + ")", true);
+        final String notKeyedExpected = sink.toString();
+        final String multiReference = sharedKeyAsOfJoinReference("q", on, true);
+        printSql("SELECT id, qid, rid FROM (" + multiReference + ") ORDER BY id, o", true);
+        final String multiRowsExpected = sink.toString();
+        printSql("SELECT id, count() c, count(qid) n, sum(qid) s FROM (" + reference + ") ORDER BY id", true);
+        final String keyedExpected = sink.toString();
+        printSql("SELECT count() c, count(qid) n, sum(qid) s FROM (" + sharedKeyAsOfJoinReference("(q WHERE id % 3 <> 0)", on, false) + ")", true);
+        final String filteredExpected = sink.toString();
+        printSql("SELECT id, count() c, sum(qid) s, sum(rid) r FROM (" + multiReference + ") ORDER BY id", true);
+        final String multiExpected = sink.toString();
+
+        final String list = " LIST (-2m, 0m, 1m) AS h";
+        final String join = " FROM t HORIZON JOIN q ON (" + on + ')';
+        final String rows = "SELECT t.id, q.id qid" + join + list;
+        final String notKeyed = "SELECT count() c, count(q.id) n, sum(q.id) s" + join + list;
+        // r has no key that shares a right-hand column, so it has no check
+        final String multiJoin = join + " HORIZON JOIN q r ON (t.k1 = r.k)";
+        final String multiRows = "SELECT t.id, q.id qid, r.id rid" + multiJoin + list;
+        final String keyed = "SELECT t.id, count() c, count(q.id) n, sum(q.id) s" + join + list + " ORDER BY t.id";
+        final String filtered = "SELECT count() c, count(q.id) n, sum(q.id) s FROM t HORIZON JOIN (q WHERE id % 3 <> 0) q ON (" + on + ')' + list;
+        final String multi = "SELECT t.id, count() c, sum(q.id) s, sum(r.id) r" + multiJoin + list + " ORDER BY t.id";
+        for (boolean isParallel : new boolean[]{false, true}) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+            try {
+                final Class<? extends RecordCursorFactory> projectionClass = isParallel
+                        ? AsyncHorizonJoinProjectionRecordCursorFactory.class
+                        : HorizonJoinProjectionRecordCursorFactory.class;
+                final Class<? extends RecordCursorFactory> notKeyedClass = isParallel
+                        ? AsyncHorizonJoinNotKeyedRecordCursorFactory.class
+                        : HorizonJoinNotKeyedRecordCursorFactory.class;
+                assertHorizonJoinFactory(rows, projectionClass);
+                assertQuery(rows)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(rowsExpected);
+                assertHorizonJoinFactory(notKeyed, notKeyedClass);
+                assertQuery(notKeyed)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(notKeyedExpected);
+                if (!isEveryFactory) {
+                    continue;
+                }
+                assertHorizonJoinFactory(multiRows, projectionClass);
+                assertQuery(multiRows)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(multiRowsExpected);
+                assertHorizonJoinFactory(keyed, isParallel ? AsyncHorizonJoinRecordCursorFactory.class : HorizonJoinRecordCursorFactory.class);
+                assertQuery(keyed)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(keyedExpected);
+                assertHorizonJoinFactory(filtered, notKeyedClass);
+                assertQuery(filtered)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("slave filter", "sharedKeyCheck: true")
+                        .returns(filteredExpected);
+                assertHorizonJoinFactory(multi, isParallel ? AsyncMultiHorizonJoinRecordCursorFactory.class : MultiHorizonJoinRecordCursorFactory.class);
+                assertQuery(multi)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(multiExpected);
+            } catch (AssertionError e) {
+                throw new AssertionError(message + (isParallel ? ", parallel" : ", serial") + ": " + e.getMessage(), e);
+            }
+        }
+    }
+
+    // Tells from the atoms of the parallel factories whether the key of prices p compares symbol ids:
+    // only then do the lookups copy the left-hand key from a SymbolTranslatingRecord.
+    private void assertSymbolIdKeys(String onClause, boolean isSymbolId) throws Exception {
+        final String single = "SELECT count() FROM trades t HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h";
+        try (RecordCursorFactory factory = select(single)) {
+            final AsyncHorizonJoinNotKeyedRecordCursorFactory horizon = findFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+            Assert.assertEquals(single, isSymbolId, horizon.getAtom().getMasterKeyRecord(-1, null) instanceof SymbolTranslatingRecord);
+        }
+        // p first, so the code generator parks its slave, and p last
+        final String[] multiSlaveQueries = {
+                "SELECT count() FROM trades t HORIZON JOIN prices p ON (" + onClause + ") HORIZON JOIN prices r ON (t.s1 = r.s) LIST (0s) AS h",
+                "SELECT count() FROM trades t HORIZON JOIN prices r ON (t.s1 = r.s) HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h"
+        };
+        for (int slaveIndex = 0; slaveIndex < multiSlaveQueries.length; slaveIndex++) {
+            final String sql = multiSlaveQueries[slaveIndex];
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncMultiHorizonJoinNotKeyedRecordCursorFactory horizon = findFactoryInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                Assert.assertEquals(sql, isSymbolId, horizon.getAtom().getMasterKeyRecord(-1, slaveIndex, null) instanceof SymbolTranslatingRecord);
+            }
+        }
+    }
+
     private void createHorizonJoinOnPredicateTables() throws Exception {
         executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
         executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
@@ -11134,6 +11454,24 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     (2, 'A', 'A', 3.0, '1970-01-01T00:00:00.000003Z'),
                     (3, 'B', 'C', 4.0, '1970-01-01T00:00:00.000004Z')
                 """);
+    }
+
+    // q holds 300 rows a minute apart, over 5 hourly partitions, and t 300 rows between them. k1 and k3
+    // of t take the first key type, k2 the second, and q.k and q.j the third.
+    private void createSharedKeyTypeTables(String[] types) throws Exception {
+        execute("DROP TABLE IF EXISTS t");
+        execute("DROP TABLE IF EXISTS q");
+        executeWithRewriteTimestamp(
+                "CREATE TABLE q AS (SELECT x id, " + sharedKeyValue(types[2]) + " k, " + sharedKeyValue(types[2]) + " j, "
+                        + "timestamp_sequence(0, 60_000_000)::#TIMESTAMP ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR",
+                rightTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE t AS (SELECT x id, " + sharedKeyValue(types[0]) + " k1, " + sharedKeyValue(types[1]) + " k2, "
+                        + sharedKeyValue(types[0]) + " k3, "
+                        + "timestamp_sequence(30_000_000, 60_000_000)::#TIMESTAMP ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR",
+                leftTableTimestampType.getTypeName()
+        );
     }
 
     private void createSlaveSymbolSharedByMasterColumnsTables() throws Exception {
