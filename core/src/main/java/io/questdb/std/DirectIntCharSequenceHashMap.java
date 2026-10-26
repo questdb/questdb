@@ -279,7 +279,9 @@ public class DirectIntCharSequenceHashMap extends DirectIntCharSequenceHashMapRh
         if (shift < 0) {
             return key & (-1 >>> (shift & 31));
         }
-        return (key * 0x9E3779B9) >>> shift;
+        int h = (key ^ (key >>> 16)) * 0x85EBCA6B;
+        h = (h ^ (h >>> 13)) * 0xC2B2AE35;
+        return (h ^ (h >>> 16)) >>> shift;
     }
 
     private long allocate(long bytes) {
