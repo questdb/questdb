@@ -197,7 +197,7 @@ public class SortPlanningTest extends AbstractCairoTest {
                             """
             );
             assertRowsOnly(
-                    "SELECT * FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id",
+                    "SELECT * FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id ORDER BY q.total, q.k",
                     """
                             k\ttotal\tid\tk1\ti
                             3\tnull\t3\t2\t3
@@ -205,7 +205,7 @@ public class SortPlanningTest extends AbstractCairoTest {
                             1\t7\t1\t1\t1
                             """
             );
-            assertRowsOnly("SELECT q.* FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id", expected);
+            assertRowsOnly("SELECT q.* FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id ORDER BY q.total, q.k", expected);
             assertRowsOnly(
                     "SELECT * FROM (SELECT k,sum(i) AS total FROM lp_order_agg GROUP BY k ORDER BY sum(i)+1,sum(i*2),k)",
                     """
