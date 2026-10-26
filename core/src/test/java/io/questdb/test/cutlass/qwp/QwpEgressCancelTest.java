@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
@@ -76,6 +77,83 @@ public class QwpEgressCancelTest extends AbstractQwpBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testCancelAfterPartialEmitDoesNotLeakRowsIntoNextQuery() throws Exception {
+        // A 256K send buffer splits each 16,384-row batch into a partial frame
+        // and a suffix frame, and a 1 KiB credit parks the stream after every
+        // frame. Cancelling at consecutive frames lands both with and without a
+        // suffix still buffered. The suffix must not ship as the next query's
+        // rows. failover=off keeps a reconnect from hiding the leak.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K")) {
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")
+                        .withInitialCredit(1024)) {
+                    client.connect();
+                    for (int cancelAt = 1; cancelAt <= 4; cancelAt++) {
+                        final int cancelAtBatch = cancelAt;
+                        final int[] batchCount = {0};
+                        final int[] firstBatchRows = {-1};
+                        final byte[] status = {-1};
+                        final boolean[] endSeen = {false};
+                        client.execute("SELECT x, x + 1, x + 2 FROM long_sequence(2_000_000)", new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                if (firstBatchRows[0] == -1) {
+                                    firstBatchRows[0] = batch.getRowCount();
+                                }
+                                if (++batchCount[0] == cancelAtBatch) {
+                                    client.cancel();
+                                }
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                                endSeen[0] = true;
+                            }
+
+                            @Override
+                            public void onError(byte s, String message) {
+                                status[0] = s;
+                            }
+                        });
+                        Assert.assertTrue("first frame must be a partial emit, rows=" + firstBatchRows[0],
+                                firstBatchRows[0] > 0 && firstBatchRows[0] < QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH);
+                        Assert.assertFalse("cancelAt=" + cancelAt, endSeen[0]);
+                        Assert.assertEquals("cancelAt=" + cancelAt, STATUS_CANCELLED, status[0]);
+
+                        final StringBuilder sink = new StringBuilder();
+                        client.execute("SELECT x, x + 1, x + 2 FROM long_sequence(3)", new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                for (int r = 0, n = batch.getRowCount(); r < n; r++) {
+                                    sink.append(batch.getLongValue(0, r)).append(',')
+                                            .append(batch.getLongValue(1, r)).append(',')
+                                            .append(batch.getLongValue(2, r)).append('\n');
+                                }
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte s, String message) {
+                                Assert.fail("follow-up query failed: " + message);
+                            }
+                        });
+                        Assert.assertEquals("cancelAt=" + cancelAt, """
+                                1,2,3
+                                2,3,4
+                                3,4,5
+                                """, sink.toString());
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -213,6 +291,73 @@ public class QwpEgressCancelTest extends AbstractQwpBootstrapTest {
                         }
                     });
                     Assert.assertEquals(1000, rows2[0]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancelSymbolQueryAfterFullFrameKeepsDictInSync() throws Exception {
+        // The client keeps the SYMBOL dictionary across queries and checks that
+        // each delta section starts at its own dictionary size. A cancel after
+        // an unsplit frame must drop only unsent rows, never dictionary entries
+        // that frame already delivered. failover=off keeps a reconnect from
+        // resetting both dictionaries and hiding a desync.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE syms AS (SELECT ('sym_' || x)::SYMBOL s, x FROM long_sequence(100_000))");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")
+                        .withInitialCredit(1)) {
+                    client.connect();
+                    final int[] firstBatchRows = {-1};
+                    final byte[] status = {-1};
+                    client.execute("SELECT s, x FROM syms", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            if (firstBatchRows[0] == -1) {
+                                firstBatchRows[0] = batch.getRowCount();
+                                client.cancel();
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte s, String message) {
+                            status[0] = s;
+                        }
+                    });
+                    Assert.assertEquals("first frame must be unsplit",
+                            QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH, firstBatchRows[0]);
+                    Assert.assertEquals(STATUS_CANCELLED, status[0]);
+
+                    final StringBuilder sink = new StringBuilder();
+                    client.execute("SELECT s, x FROM syms WHERE x <= 3", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0, n = batch.getRowCount(); r < n; r++) {
+                                sink.append(batch.getSymbol(0, r)).append(',')
+                                        .append(batch.getLongValue(1, r)).append('\n');
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte s, String message) {
+                            Assert.fail("follow-up query failed: " + message);
+                        }
+                    });
+                    Assert.assertEquals("""
+                            sym_1,1
+                            sym_2,2
+                            sym_3,3
+                            """, sink.toString());
                 }
             }
         });

@@ -240,6 +240,64 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     }
 
     @Test
+    public void testWeightedStddevFreqSampleByFillNegativeWeight() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_fill (value DOUBLE, weight DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // Hour 2 holds a negative weight and returns NULL. Hours 1 and 3 are gaps.
+            execute("""
+                    INSERT INTO test_fill VALUES
+                        (1.0, 1.0, '1970-01-01T00:00'),
+                        (2.0, 1.0, '1970-01-01T00:30'),
+                        (3.0, 1.0, '1970-01-01T00:45'),
+                        (1.0, 3.0, '1970-01-01T02:00'),
+                        (2.0, -1.0, '1970-01-01T02:15'),
+                        (3.0, 2.0, '1970-01-01T02:30'),
+                        (1.0, 1.0, '1970-01-01T04:00'),
+                        (2.0, 1.0, '1970-01-01T04:15'),
+                        (3.0, 1.0, '1970-01-01T04:30'),
+                        (4.0, 1.0, '1970-01-01T04:45'),
+                        (5.0, 1.0, '1970-01-01T04:50')
+                    """);
+            assertQuery("SELECT ts, round(weighted_stddev_freq(value, weight), 12) FROM test_fill SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tround
+                            1970-01-01T00:00:00.000000Z\t1.0
+                            1970-01-01T01:00:00.000000Z\t1.0
+                            1970-01-01T02:00:00.000000Z\tnull
+                            1970-01-01T03:00:00.000000Z\tnull
+                            1970-01-01T04:00:00.000000Z\t1.581138830084
+                            """);
+            assertQuery("SELECT ts, round(weighted_stddev_freq(value, weight), 12) FROM test_fill SAMPLE BY 1h FILL(LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tround
+                            1970-01-01T00:00:00.000000Z\t1.0
+                            1970-01-01T01:00:00.000000Z\tnull
+                            1970-01-01T02:00:00.000000Z\tnull
+                            1970-01-01T03:00:00.000000Z\tnull
+                            1970-01-01T04:00:00.000000Z\t1.581138830084
+                            """);
+            assertQuery("SELECT ts, round(weighted_stddev_freq(value, weight), 12) FROM test_fill SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tround
+                            1970-01-01T00:00:00.000000Z\t1.0
+                            1970-01-01T01:00:00.000000Z\tnull
+                            1970-01-01T02:00:00.000000Z\tnull
+                            1970-01-01T03:00:00.000000Z\tnull
+                            1970-01-01T04:00:00.000000Z\t1.581138830084
+                            """);
+        });
+    }
+
+    @Test
     public void testWeightedStddevFreqSomeNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT x::DOUBLE x FROM long_sequence(100))");
@@ -275,6 +333,56 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
                     .returns("""
                             weighted_stddev_freq
                             0.7071067811865476
+                            """);
+            // A negative weight makes the result NULL. The running weight sum never reaches zero here.
+            assertQuery("SELECT weighted_stddev_freq(x, CASE WHEN x = 1 THEN -1 ELSE x END) FROM long_sequence(11)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            weighted_stddev_freq
+                            null
+                            """);
+            // Negative zero is a zero weight, which skips the row.
+            assertQuery("""
+                    SELECT weighted_stddev_freq(
+                        x,
+                        CASE WHEN x < 3 THEN 1.0 ELSE x * -0.0 END
+                    ) FROM long_sequence(10)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            weighted_stddev_freq
+                            0.7071067811865476
+                            """);
+            // A NULL sample skips the row, whatever its weight.
+            assertQuery("""
+                    SELECT weighted_stddev_freq(
+                        CASE WHEN x = 5 THEN NULL ELSE x END,
+                        CASE WHEN x = 5 THEN -1 ELSE 1 END
+                    ) FROM long_sequence(10)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            weighted_stddev_freq
+                            3.2058973436118907
+                            """);
+            // A negative weight affects its own group only.
+            assertQuery("""
+                    SELECT x % 2 k, weighted_stddev_freq(x, CASE WHEN x = 7 THEN -1 ELSE 1 END)
+                    FROM long_sequence(10)
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tweighted_stddev_freq
+                            0\t3.1622776601683795
+                            1\tnull
                             """);
             // Weights sum to zero
             assertQuery("SELECT weighted_stddev_freq(x, x - 6) FROM long_sequence(11)")
