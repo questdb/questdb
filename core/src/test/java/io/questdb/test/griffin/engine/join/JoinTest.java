@@ -10014,6 +10014,164 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinWithKnownEmptySlaveOfFullFatLeftJoinKeepsRows() throws Exception {
+        // At the default settings a LEFT join takes a full-fat cursor when its slave has no random access, such
+        // as an INNER join. The empty b empties that INNER join, which then knows that it has no rows, see
+        // RecordCursor.isKnownEmpty(). The LEFT join still returns every row of l, and the INNER join over it
+        // keeps the rows that f matches, with and without a filter in ON.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String emptiedJoin = "(SELECT b.k FROM (SELECT * FROM b WHERE 1 = 2) b JOIN c ON c.y = b.k) j";
+            final String expected = """
+                    k\tjk\tfk
+                    2\tnull\t2
+                    4\tnull\t4
+                    """;
+            assertQuery("SELECT l.k, j.k jk, f.k fk FROM l LEFT JOIN " + emptiedJoin + " ON l.k = j.k JOIN f ON f.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: f.k=l.k
+                                    Hash Left Outer Join
+                                      condition: j.k=l.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: l
+                                        Hash
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: c.y=b.k
+                                                    Empty table
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: f
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT l.k, j.k jk, f.k fk FROM l LEFT JOIN " + emptiedJoin + " ON l.k = j.k AND l.k >= j.k JOIN f ON f.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: f.k=l.k
+                                    Hash Left Outer Join
+                                      condition: j.k=l.k
+                                      filter: l.k>=j.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: l
+                                        Hash
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: c.y=b.k
+                                                    Empty table
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: f
+                            """)
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinWithKnownEmptySlaveOfLeftJoinKeepsRows() throws Exception {
+        // A LEFT join returns every row of its master, so a slave that knows it has no rows, see
+        // RecordCursor.isKnownEmpty(), leaves the LEFT join with rows, unlike an INNER join. Each parent that asks
+        // the LEFT join whether it knows it is empty keeps its rows: an INNER join on either side of it, a CROSS
+        // join on either side, and a LEFT join keyed on l. The loops run the four cursors of the LEFT hash join:
+        // light and full-fat, with and without a filter in ON.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (String onFilter : new String[]{"", " AND l.k >= b.k"}) {
+                    final String leftJoin = "l LEFT JOIN (SELECT * FROM b WHERE 1 = 2) b ON l.k = b.k" + onFilter;
+                    // the master of an INNER join
+                    assertQuery("SELECT l.k, b.k bk, f.k fk FROM " + leftJoin + " JOIN f ON f.k = l.k")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            // the full-fat INNER join knows its size, the light one does not
+                            .expectSize(isFullFat)
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tbk\tfk
+                                    2\tnull\t2
+                                    4\tnull\t4
+                                    """);
+                    // the slave of an INNER join, which takes the full-fat cursor that knows its size, as the LEFT
+                    // join has no random access
+                    assertQuery("SELECT f.k, j.k jk, j.bk FROM f JOIN (SELECT l.k, b.k bk FROM " + leftJoin + ") j ON j.k = f.k")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tjk\tbk
+                                    2\t2\tnull
+                                    4\t4\tnull
+                                    """);
+                    // the slave of a CROSS join
+                    assertQuery("SELECT d.k dk, j.k, j.bk FROM d CROSS JOIN (SELECT l.k, b.k bk FROM " + leftJoin + ") j")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    dk\tk\tbk
+                                    7\t1\tnull
+                                    7\t2\tnull
+                                    7\t3\tnull
+                                    7\t4\tnull
+                                    100\t1\tnull
+                                    100\t2\tnull
+                                    100\t3\tnull
+                                    100\t4\tnull
+                                    """);
+                    // the master of a CROSS join, whose calculateSize() asks it; returns() checks the size against
+                    // the rows
+                    assertQuery("SELECT l.k, b.k bk, d.k dk FROM " + leftJoin + " CROSS JOIN d")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tbk\tdk
+                                    1\tnull\t7
+                                    1\tnull\t100
+                                    2\tnull\t7
+                                    2\tnull\t100
+                                    3\tnull\t7
+                                    3\tnull\t100
+                                    4\tnull\t7
+                                    4\tnull\t100
+                                    """);
+                    // the master of a LEFT join keyed on l
+                    assertQuery("SELECT l.k, b.k bk, f.k fk FROM " + leftJoin + " LEFT JOIN f ON f.k = l.k")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tbk\tfk
+                                    1\tnull\tnull
+                                    2\tnull\t2
+                                    3\tnull\tnull
+                                    4\tnull\t4
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJoiningSubqueriesWithDuplicateDottedColumnNames() throws Exception {
         // Two join sides project the same dotted alias; wildcard deduplication must keep the
         // second name quote-protected so it also strips to a clean display name ("a.b" / "a.b1",
