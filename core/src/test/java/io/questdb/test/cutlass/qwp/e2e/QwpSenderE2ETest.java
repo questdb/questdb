@@ -3189,6 +3189,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    @Test
+    public void testDuplicateDesignatedTimestampRejectedWhenNamedColumnIsFirst() throws Exception {
+        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_named_first", false);
+    }
+
+    @Test
+    public void testDuplicateDesignatedTimestampRejectedWhenUnnamedColumnIsFirst() throws Exception {
+        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_unnamed_first", true);
+    }
+
     /**
      * Regression: empty BINARY ingested via the Java client must round-trip
      * as an empty (non-null) value, not as NULL.
@@ -4713,16 +4723,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testDuplicateDesignatedTimestampRejectedWhenNamedColumnIsFirst() throws Exception {
-        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_named_first", false);
-    }
-
-    @Test
-    public void testDuplicateDesignatedTimestampRejectedWhenUnnamedColumnIsFirst() throws Exception {
-        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_unnamed_first", true);
-    }
-
-    @Test
     public void testTimestampMicrosBeyondCeilingIsTerminal() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_ts_micros_beyond_ceiling";
@@ -5036,7 +5036,34 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private void assertDuplicateDesignatedTimestampRejected(String table, boolean unnamedColumnFirst) throws Exception {
+    /**
+     * A designated timestamp the column cannot hold is refused by the storage layer, not by the
+     * QWP decoder. That refusal repeats under byte-identical replay, so the server must NACK it as
+     * a terminal SCHEMA_MISMATCH like every other per-value refusal, rather than as a retriable
+     * WRITE_ERROR that the client replays until its poison-frame detector gives up. The refused row
+     * never lands, and the table keeps accepting rows from a later producer.
+     */
+    private void assertDesignatedTimestampRefusalIsTerminal(
+            int port,
+            String table,
+            java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
+            String expectedMsgPart1,
+            String expectedMsgPart2
+    ) throws Exception {
+        assertCoercionError(port, table, sendAction, expectedMsgPart1, expectedMsgPart2);
+
+        try (QwpWebSocketSender sender = connectWs(port)) {
+            sender.table(table).longColumn("v", 2L).at(1_000_000L, ChronoUnit.MICROS);
+            sender.flush();
+        }
+        drainWalQueue();
+        assertQuery("SELECT v FROM " + table)
+                .noLeakCheck()
+                .expectSize()
+                .returns("v\n2\n");
+    }
+
+    private void assertDuplicateDesignatedTimestampRejected(String table, boolean isUnnamedColumnFirst) throws Exception {
         runInContext(port -> {
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
             long timestampNanos = 1_645_747_200_000_000_000L;
@@ -5045,7 +5072,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     port,
                     table,
                     (sender, tableName) -> {
-                        if (unnamedColumnFirst) {
+                        if (isUnnamedColumnFirst) {
                             sender.table(tableName)
                                     .longColumn("v", 1L)
                                     .at(timestampNanos, ChronoUnit.NANOS);
@@ -5080,33 +5107,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     .expectSize()
                     .returns("v\tts\n3\t2022-02-25T00:00:00.000000002Z\n");
         });
-    }
-
-    /**
-     * A designated timestamp the column cannot hold is refused by the storage layer, not by the
-     * QWP decoder. That refusal repeats under byte-identical replay, so the server must NACK it as
-     * a terminal SCHEMA_MISMATCH like every other per-value refusal, rather than as a retriable
-     * WRITE_ERROR that the client replays until its poison-frame detector gives up. The refused row
-     * never lands, and the table keeps accepting rows from a later producer.
-     */
-    private void assertDesignatedTimestampRefusalIsTerminal(
-            int port,
-            String table,
-            java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
-            String expectedMsgPart1,
-            String expectedMsgPart2
-    ) throws Exception {
-        assertCoercionError(port, table, sendAction, expectedMsgPart1, expectedMsgPart2);
-
-        try (QwpWebSocketSender sender = connectWs(port)) {
-            sender.table(table).longColumn("v", 2L).at(1_000_000L, ChronoUnit.MICROS);
-            sender.flush();
-        }
-        drainWalQueue();
-        assertQuery("SELECT v FROM " + table)
-                .noLeakCheck()
-                .expectSize()
-                .returns("v\n2\n");
     }
 
     private static void assertThrowsContains(Runnable action, String expectedMsgPart) {
