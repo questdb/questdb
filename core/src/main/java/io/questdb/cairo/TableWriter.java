@@ -381,8 +381,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
-    // What the last scan of the table directory found: (partition timestamp, -1) for each .attachable and
-    // (partition timestamp, commit txn) for each temporary DETACH name.
+    // What the running scan of the table directory found: (partition timestamp, -1) for each .attachable and
+    // (partition timestamp, commit txn) for each temporary DETACH name. Both scans, purgeUnusedPartitionsAtOpen and
+    // removeNonAttachedPartitions, clear it when they end.
     private final LongList partitionMovesFound = new LongList();
     // (timestamp, nameTxn) of partition directories the last durable epoch may still name; see
     // removePartitionDirAfterSavePoint().
@@ -3286,6 +3287,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public int getPartitionIndexByTimestamp(long timestamp) {
         return txWriter.getPartitionIndex(timestamp);
+    }
+
+    @TestOnly
+    public int getPartitionMovesFoundCount() {
+        return partitionMovesFound.size() / 2;
     }
 
     public long getPartitionNameTxn(int partitionIndex) {
@@ -17132,6 +17138,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.iterateDir(path.$(), removePartitionDirsNotAttached);
             processPartitionRemoveCandidates();
         } finally {
+            // Only the scan at writer open acts on the moves the scan finds
+            partitionMovesFound.clear();
             path.trimTo(pathSize);
         }
     }

@@ -3073,6 +3073,30 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackKeepsNoPartitionMoves() throws Exception {
+        // Every rollback rescans the table directory, which finds the .attachable below each time; only the scan
+        // at writer open acts on what it finds, so the rescan must not keep it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00.000000Z', 1)");
+            final TableToken token = engine.verifyTableName("t");
+            java.nio.file.Files.createDirectories(
+                    java.nio.file.Path.of(configuration.getDbRoot(), token.getDirName(), "2024-01-01" + configuration.getAttachPartitionSuffix())
+            );
+            final long ts = MicrosTimestampDriver.floor("2024-01-02T01:00:00.000000Z");
+            try (TableWriter writer = getWriter(token)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.putLong(1, i);
+                    row.append();
+                    writer.rollback();
+                }
+                Assert.assertEquals(0, writer.getPartitionMovesFoundCount());
+            }
+        });
+    }
+
+    @Test
     public void testRollbackNonPartitioned() {
         final int N = 20000;
         create(FF, PartitionBy.NONE, N);
