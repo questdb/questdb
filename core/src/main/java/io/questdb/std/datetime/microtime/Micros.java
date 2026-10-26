@@ -848,7 +848,7 @@ public final class Micros {
         // Initial year estimate relative to 1970
         // Use a reasonable approximation of days per year to avoid overflow
         // 365.25 days per year approximation
-        int yearsSinceEpoch = (int) (micros / AVG_YEAR_MICROS);
+        int yearsSinceEpoch = (int) Math.floorDiv(micros, AVG_YEAR_MICROS);
         int yearEstimate = 1970 + yearsSinceEpoch;
 
         // Handle negative years appropriately
