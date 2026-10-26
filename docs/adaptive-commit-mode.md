@@ -522,16 +522,8 @@ More detail:
 - **Outside Linux** a save point, the start's header flush and the COPY flush call `fsync` per file instead of one
   `syncfs`, which costs more with many files; only the figures marked "measured on Linux with that path forced"
   show how much.
-- **Enterprise.** The uploader ships a sequencer record only once a flush of the primary's log covers it, in every
-  commit mode: the next open cuts a record a power loss tore, and its transaction number is then reused with other
-  content. In `nosync` and `async`, where no commit flushes the log, the uploader flushes it itself before each upload
-  batch of a table that has new commits: one `fdatasync` of the log per busy table per throttle window (1 s by
-  default), under the table's sequencer lock, so a commit to that table can wait for one such flush per window. A
-  failed flush there holds that table's uploads until a restart, without stopping the engine. A primary whose local
-  log of a replicated table ends below what the object store holds for it refuses to start; the message names the
-  table, both transaction numbers and the remedies. The uploader also flushes every table's sequencer log once when
-  it starts (boot and promotion, in every mode), before it listens for commits; a commit made meanwhile is uploaded
-  once the flush is done.
+- **Enterprise.** The uploader flushes every table's sequencer log once when it starts (boot and promotion, in
+  `adaptive` and `sync`), before it listens for commits; a commit made meanwhile is uploaded once the flush is done.
   On Linux that is one `syncfs` plus a read of each table's last transaction (on the first such start after a
   `nosync` or `async` run that did not stop cleanly, also the one-off read and flush of each version 1 log, above): for 1,000 tables 37-109 ms in
   `adaptive` and 21-23 ms in `sync` when every table has one new commit, 2-8 ms when none has. Elsewhere each table
@@ -569,7 +561,7 @@ FROM wal_tables();
 
 | Column | Type | Meaning |
 |---|---|---|
-| `localDurableSeqTxn` | LONG | the highest sequence number whose WAL is on stable storage; -1 before the first. Advances in `adaptive` (and `sync`). On a replicating QuestDB Enterprise primary in `nosync` or `async` it follows the uploader's flushes of the sequencer log instead, and then means only that the log is on stable storage up to there: those modes do not flush the WAL data. |
+| `localDurableSeqTxn` | LONG | the highest sequence number whose WAL is on stable storage; -1 before the first. Advances in `adaptive` (and `sync`). |
 | `durableEpochSeqTxn` | LONG | the sequence number of the table's current save point. A crash replays from here. The WAL is kept from the save point before it, in case the start has to fall back to that one. |
 | `lastEpochTs` | TIMESTAMP | the last save-point publication time *this process* recorded; NULL when unknown. Not evidence that a save point is currently on disk: recovery does not restore this timestamp, and removing an epoch pin does not erase it. After a restart it stays NULL until the first WAL-apply batch publishes a save point — the writer-open check that certifies recovered coverage does not itself set it. |
 | `recoveryIncarnation` | LONG | how many times this process restored the table from its save point. |

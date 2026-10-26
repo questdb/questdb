@@ -707,55 +707,20 @@ bytes.
   not reconciled, so the rows it applied after the promotion flush have no flush and no save point until the table is
   resumed or the server restarts; a power loss in between can lose them (very unlikely; no cheap safe fix, since a
   writer the job stopped trusting must not publish a save point).
-- **The uploader waits for the durable frontier.** In every commit mode the uploader ships a sequencer record only
-  once a completed flush of the primary's log covers it, for V1 and V2 logs alike. The open cuts a torn log tail in
-  every mode (section 13), so a record no flush covered can be lost to a power loss and its transaction number
-  reused with other content; once the object store holds a record, the primary can no longer lose it. While it
-  waits the uploader logs `holding uploads past the local durable frontier [...]` once. The frontier is read
-  through the status up-call (`EntServerMain`'s `getLocalDurableSeqTxn`), once per upload batch, right before the
-  batch, on the uploader's tokio worker inside `block_in_place`, so a flush there does not stall the worker's other
-  tables.
-  - In `adaptive` and `sync` the commits move the frontier as they flush, and the up-call only reads it.
-  - In `nosync` and `async` no commit flushes the log, so the up-call proves the records committed since the last
-    proof: `WalUploader.coverTable` reads the last transaction, flushes the log from the first one past the
-    frontier (`TableSequencerAPI.fdatasyncTxnLog(token, frontier + 1)`, which also reaches the older V2 parts that
-    hold those transactions) and moves the frontier to the transaction it read. The cost is one `fdatasync` of the
-    log per busy table per upload batch, so at most one per throttle window (`replication.primary.throttle.window.
-    duration`, 1 s by default), taken under the table's sequencer write lock: a commit to that table can wait for
-    that flush once per window. A dropped table's log is flushed the same way before its drop ships, since these
-    modes do not flush the log at a drop. A failed flush (`EIO`, `ENOSPC`) does not stop the engine in these modes:
-    it fences the table's frontier (`SeqTxnTracker.fenceDurableFrontier`, final for the process), the up-call logs
-    `could not flush the sequencer log, holding the table's uploads until a restart [...]` once, and the table's
-    uploads stay held, so it stays pending and a demote refuses it, until a restart proves the log again. Its
-    commits, its apply and every other table go on. `wal_tables().localDurableSeqTxn` and the
-    `wal_apply_local_durable_seq_txn` gauge show this frontier on a replicating `nosync` or `async` primary, where it
-    means that the sequencer log is durable up to there: those modes do not flush the WAL data. The QWP `local`
-    tier is still not offered outside `adaptive`.
-  - An answer that cannot be proven holds the table: a live table the start flush left unproven (its scan skipped
-    the table, or its cover failed on an error that is not a flush failure) is proven at its first upload by the
-    same flush the start makes, and if that fails too the table stays held, with a log line naming the table and
-    the error, and is asked again after the uploader's retry window. The up-call answers "nothing to hold" only for
-    a table that is purged or whose drop a flush covered. A table an earlier run dropped whose sequencer `_meta` is
-    torn (a crash between the drop's log append and the `_meta` update) ships its drop after filesystem-wide
-    `syncfs` on Linux; elsewhere it ships with a critical line, without a `sync(2)` fallback. Holding it would
-    resurrect an acknowledged DROP on a fail-over.
-- **A local log behind the object store.** A live table whose local sequencer log ends below the object store's last
-  transaction for it lost records the replicas hold: a power loss under a release that shipped records before
-  flushing them, a local restore behind the store, or a replica started as primary before it caught up. Its next
-  commits would take those transaction numbers with other content, and the uploader would resume past them. The
-  uploader start refuses it: the startup scan (`process_startup_table`, from `WalUploader.triggerUploadMissed`)
-  fails the start as primary with `local sequencer log is behind the object store, refusing to start as primary
-  [t=..., local_txn=..., store_txn=...]`, naming the remedies (start the node as a replica so it downloads the
-  missing transactions, then promote it; take the table out of replication with `replication.disabled.tables`, then
-  drop it if it is not wanted; while the start is refused no SQL runs, so the table cannot be dropped first). The check skips the tables replicas do not follow, as the promote pre-flight does (the replication-
-  disabled and node-local tables), and a table whose local log ends in its drop, dropped or a rebase source in the
-  index, or not in the index. It reads the log after the Java open cut its torn tail: the scan opens each table's
-  sequencer (`TableSequencerAPI.getCurrentWalId`) before it reads the log, and no client write or job runs before
-  the scan at boot (the worker pools and the network servers depend on the replication component). A table the
-  scan did not judge (its log was missing then) is held instead, by the upload loop, with one critical line: its
-  uploads stop for the uploader's lifetime.
-- **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in every commit mode,
-  the uploader makes every table's sequencer log durable before its first upload, then moves each table's
+- **The uploader waits for the durable frontier.** In `adaptive` and `sync` mode the uploader ships a sequencer
+  record only once the local durable frontier covers it, for V1 and V2 logs alike, so a power loss can never make
+  the primary reuse a transaction number the object store already holds. While it waits it logs `holding uploads
+  past the local durable frontier [...]` once. The frontier is read through an up-call on the uploader's thread,
+  and an answer that cannot be proven holds the table: a live table the start flush left unproven (its scan skipped
+  the table, or its cover failed on an error that is not a flush failure) is proven at its first upload by the same
+  flush the start makes (`WalUploader.coverTable`), and if that fails too the table stays held, with a log line
+  naming the table and the error, and is asked again after the uploader's retry window. The up-call answers
+  "nothing to hold" only for a table that is purged or whose drop is marked after its log was flushed. A table an
+  earlier run dropped whose sequencer `_meta` is torn (a crash between the drop's log append and the `_meta`
+  update) ships its drop after filesystem-wide `syncfs` on Linux; elsewhere it ships with a critical line,
+  without a `sync(2)` fallback. Holding it would resurrect an acknowledged DROP on a fail-over.
+- **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and `sync`
+  mode, the uploader makes every table's sequencer log durable before its first upload, then moves each table's
   durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked volume on
   Linux, which reaches every part file; elsewhere each table's own flush, `TableSequencerAPI.fdatasyncTxnLog(token,
   0)`, which in a V2 log first flushes every part file it still keeps (listing `_txn_parts`, so a part kept behind
@@ -767,8 +732,7 @@ bytes.
   part 0 where `syncfs` is not filesystem-wide, and the table then reads as dropped at its first upload, with no
   sequencer open. On Linux the `syncfs` also runs when the scan skipped a live table (it logs a critical line with
   the cause), so that table's older V2 parts are durable before its first upload proves the open one. A data sync
-  failure stops the engine in `adaptive` and `sync`; in `nosync` and `async` it fences the frontier of the tables
-  it was to prove, which stay held until a restart. Any other failure leaves the table to its first upload, above. On Linux, 1,000 tables take
+  failure stops the engine; any other failure leaves the table to its first upload, above. On Linux, 1,000 tables take
   37-109 ms in `adaptive` and 21-23 ms in `sync` when every table has one new commit (the `syncfs` is 90-98% of it),
   2-8 ms when none has. The step reads each table's last transaction through `TableSequencerAPI.lastTxn`, which opens
   the log: on the first such start after a `nosync` or `async` run that open also reads and flushes each V1 log once
@@ -793,7 +757,7 @@ bytes.
   LOCAL client keeps getting real acknowledgements through the demote instead of stalling for over 10 seconds
   waiting on a frontier the snapshot never updates. Frames already collected for a blocked send retain their
   snapshot. The server sends on inbound traffic or PING, not directly from a flush callback. Uploaded progress
-  alone is not proof of local durability: uploads are gated on this local frontier in every mode, but
+  alone is not proof of local durability: ordinary `adaptive`/`sync` uploads are gated on this local frontier, but
   boot-index and carry-forward watermark seeding bypass that gate, so only freshly-uploaded transactions carry the
   proof.
 
