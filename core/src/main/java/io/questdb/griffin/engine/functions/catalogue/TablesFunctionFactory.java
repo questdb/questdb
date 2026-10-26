@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -41,6 +42,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
@@ -449,8 +451,22 @@ public class TablesFunctionFactory implements FunctionFactory {
                             tableMinTimestamp = Numbers.LONG_NULL;
                         }
                         tableMaxTimestamp = reader.getMaxTimestamp();
+                    } catch (TableReferenceOutOfDateException ignored) {
+                        loadTrackedTableStats();
+                    } catch (CairoException e) {
+                        if (!e.isTableDoesNotExist() && !e.isTableDropped()) {
+                            throw e;
+                        }
+                        loadTrackedTableStats();
                     }
                     hasTableStats = true;
+                }
+
+                private void loadTrackedTableStats() {
+                    rowCount = writeStats.getRowCount();
+                    writerTxn = writeStats.getWriterTxn();
+                    tableMinTimestamp = writeStats.getTableMinTimestamp();
+                    tableMaxTimestamp = writeStats.getTableMaxTimestamp();
                 }
 
                 private void of(CairoTable table, RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
