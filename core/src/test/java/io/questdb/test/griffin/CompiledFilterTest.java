@@ -212,33 +212,66 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testDateVariableIntervalInFilterFollowsClock() throws Exception {
-        // The JIT used to resolve $today when it compiled the filter, so a cached plan kept the
-        // bounds of the day it was compiled on. The JIT now declines date variables, and the Java
-        // filter resolves them each time the cursor opens.
+        // The JIT used to resolve date variables such as $today when it compiled the filter, so a
+        // cached plan kept the bounds of the moment it was compiled. The JIT now declines date
+        // variables, and the Java filter resolves them each time the cursor opens.
         assertMemoryLeak(() -> {
             createTemporalInTable();
-            final long day = 86_400_000_000L;
             final long jan2 = 1_704_153_600_000_000L;
-            for (String filter : new String[]{
-                    "dt IN '$today'", "dt IN ('$today')",
-                    "tm IN '$today'", "tm IN ('$today')",
-                    "tn IN '$today'", "tn IN ('$today')"
-            }) {
-                setCurrentMicros(jan2 + 3_600_000_000L);
-                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE " + filter)) {
-                    Assert.assertFalse(filter, factory.usesCompiledFilter());
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        println(factory, cursor);
-                    }
-                    TestUtils.assertEquals(filter, "k\n1\n2\n", sink);
-
-                    setCurrentMicros(jan2 + day + 3_600_000_000L);
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        println(factory, cursor);
-                    }
-                    TestUtils.assertEquals(filter, "k\n3\n", sink);
-                }
+            final long hour = 3_600_000_000L;
+            final long day = 24 * hour;
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterFollowsClock(c + " IN '$today'", jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " IN ('$today')", jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " NOT IN '$today'", jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                assertFilterFollowsClock(c + " NOT IN ('$today')", jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                assertFilterFollowsClock(c + " IN '$yesterday'", jan2 + hour, "k\n5\n", jan2 + day + hour, "k\n1\n2\n");
+                assertFilterFollowsClock(c + " IN '$tomorrow'", jan2 - day + hour, "k\n1\n2\n", jan2 + hour, "k\n3\n");
+                // 2024-01-02 is a Tuesday and 2024-01-03 a Wednesday.
+                assertFilterFollowsClock(c + " IN '[$today - 1bd]'", jan2 + day + hour, "k\n1\n2\n", jan2 + hour, "k\n5\n");
+                assertFilterFollowsClock(c + " IN '[$yesterday, $today]'", jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n1\n2\n3\n");
+                // $now moves within the day.
+                assertFilterFollowsClock(c + " IN '$now - 1h..$now'", jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n1\n");
+                assertFilterFollowsClock(c + " IN '$now - 1h..$now' AND k > 1", jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n");
+                assertFilterFollowsClock(c + " IN '$today' OR k = 5", jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n3\n5\n");
             }
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalOnDesignatedTimestampFollowsClock() throws Exception {
+        // The interval scan takes an IN on the designated timestamp from an AND chain, and has
+        // resolved date variables on every run since #6780. Under OR, the IN stays in the filter,
+        // which the JIT used to compile with the bounds of the moment it was compiled.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y VALUES
+                    (1, '2024-01-01T12:00:00.000000Z'),
+                    (2, '2024-01-02T00:30:00.000000Z'),
+                    (3, '2024-01-02T12:00:00.000000Z'),
+                    (4, '2024-01-03T00:30:00.000000Z'),
+                    (5, '2024-01-03T12:00:00.000000Z')
+                    """);
+            final long jan2 = 1_704_153_600_000_000L;
+            final long hour = 3_600_000_000L;
+            final long day = 24 * hour;
+            final long t1 = jan2 + hour;
+            final long t2 = jan2 + day + hour;
+            // Interval scan.
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today'", t1, "k\n2\n3\n", t2, "k\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN ('$today')", t1, "k\n2\n3\n", t2, "k\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today'", t1, "k\n1\n4\n5\n", t2, "k\n1\n2\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$yesterday'", t1, "k\n1\n", t2, "k\n2\n3\n");
+            // A range end exactly at midnight counts as a whole day, so the $now ranges start off it.
+            final long t3 = jan2 + 45 * 60_000_000L;
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now'", t3, "k\n2\n", jan2 + 12 * hour + hour / 2, "k\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' AND k > 2", t1, "k\n3\n", t2, "k\n4\n5\n");
+            // Filter.
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' OR k = 1", t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN ('$today') OR k = 1", t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today' OR k = 3", t1, "k\n1\n3\n4\n5\n", t2, "k\n1\n2\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now' OR k = 1", t3, "k\n1\n2\n", jan2 + 12 * hour + hour / 2, "k\n1\n3\n");
         });
     }
 
@@ -1718,6 +1751,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 assertFilterWithAndWithoutJit(c + " IN ('2024-01-02', '2024-01-03')", "k\n2\n3\n", true);
             }
             assertFilterWithAndWithoutJit("tm IN ('2024-01-02T12') OR dt IN ('2024-01-03') OR tn IN ('2024-01-01')", "k\n1\n3\n5\n", true);
+            // The interval scan takes an IN on the designated timestamp only from an AND chain, so under
+            // OR the JIT compiles it.
+            assertFilterWithAndWithoutJit("ts IN ('2024-01-01T01') OR k = 5", "k\n2\n5\n", true);
+            assertFilterWithAndWithoutJit("ts NOT IN ('2024-01-01T01') OR k = 2", "k\n1\n2\n3\n4\n5\n", true);
             // The Java filter runs an interval search over a timestamp expression, which the JIT used
             // to compile as an equality.
             assertFilterWithAndWithoutJit("(tm + 1) IN ('2024-01-02')", "k\n1\n2\n5\n", false);
@@ -1979,6 +2016,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
+    private void assertFilterFollowsClock(String filter, long micros1, String expected1, long micros2, String expected2) throws Exception {
+        assertFollowsClock("SELECT k FROM x WHERE " + filter, micros1, expected1, micros2, expected2);
+    }
+
+    // Compiles the query once at micros1 and runs it at micros1 and at micros2, as a plan from the
+    // query cache runs. A filter that holds the bounds of the compile time fails the second run.
     private void assertFilterWithAndWithoutJit(String filter, String expected, boolean isJitExpected) throws Exception {
         final String query = "SELECT k FROM x WHERE " + filter;
         try {
@@ -1992,6 +2035,24 @@ public class CompiledFilterTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
         }
+    }
+
+    private void assertFollowsClock(String query, long micros1, String expected1, long micros2, String expected2) throws Exception {
+        setCurrentMicros(micros1);
+        try (RecordCursorFactory factory = select(query)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                println(factory, cursor);
+            }
+            TestUtils.assertEquals(query, expected1, sink);
+
+            setCurrentMicros(micros2);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                println(factory, cursor);
+            }
+            TestUtils.assertEquals(query, expected2, sink);
+        }
+        // assertQuery() runs the query twice, compares the cursor size and checks for leaks.
+        assertQuery(query).noLeakCheck().returns(expected2);
     }
 
     private void assertSymbolFilter(String filter, String expected) throws Exception {
