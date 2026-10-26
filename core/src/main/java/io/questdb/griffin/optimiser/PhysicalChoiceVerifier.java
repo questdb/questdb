@@ -41,11 +41,13 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
+import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -60,6 +62,13 @@ import org.jetbrains.annotations.Nullable;
  * {@code isPlanned}, every choice the generator builds the node by is recorded.
  */
 final class PhysicalChoiceVerifier {
+    /**
+     * Stops at a node the generator must build once: a domain read, a decorrelation domain with reads and a
+     * decorrelation domain that reads its input through a shared cursor.
+     */
+    private static final PlanVisitor ONCE_GENERATED = plan -> plan instanceof DomainReadPlan
+            || plan instanceof AggregatePlan aggregate && (aggregate.getReaderCount() > 0 || isSharedReader(aggregate))
+            ? TreeWalk.STOP : TreeWalk.CONTINUE;
 
     private PhysicalChoiceVerifier() {
     }
@@ -99,14 +108,24 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the build side the join step records is one operator planning decides: a light INNER hash join step that
-     * the smaller input drives, over a master that is one input, where both inputs have a row bound, see
-     * {@link PhysicalProperties#rowBound}.
+     * Whether the join step records the input it hashes as operator planning settles it: none for a step that is not a
+     * light INNER hash join, or whose master side is undecided, and the slave for one whose master is fixed. A step the
+     * smaller input drives records the input to hash where its master is one input and both inputs have a row bound,
+     * see {@link PhysicalProperties#rowBoundScan}, and leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER},
+     * only where they do not, or where codegen decides the random access of the master.
      */
-    private static boolean isBuildSideDecided(JoinPlan join, int position, JoinInput step) {
-        return step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH && step.getJoinType() == JoinKind.INNER
-                && step.getMasterSide() == JoinInput.MasterSide.SMALLER && position == 1
-                && hasRowBound(join.getOrderedInputs().getQuick(0).getInput()) && hasRowBound(step.getInput());
+    private static boolean isBuildSideSettled(JoinPlan join, int position, JoinInput step) {
+        final JoinInput.BuildSide side = step.getBuildSide();
+        if (step.getAlgorithm() != JoinInput.Algorithm.LIGHT_HASH || step.getJoinType() != JoinKind.INNER || step.getMasterSide() == null) {
+            return side == null;
+        }
+        if (step.getMasterSide() == JoinInput.MasterSide.FIXED) {
+            return side == JoinInput.BuildSide.SLAVE;
+        }
+        final boolean isBounded = position == 1 && hasRowBound(join.getOrderedInputs().getQuick(0).getInput()) && hasRowBound(step.getInput());
+        return side == JoinInput.BuildSide.SMALLER
+                ? !isBounded || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
+                : side != null && isBounded;
     }
 
     /**
@@ -128,14 +147,15 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether one orientation of a fused GROUP BY is one the generator builds: an outer join builds the input it
-     * NULL-extends and alone applies an ON condition on the build, the joined rows pass no gate, and the operator
-     * reads each input as {@link HashJoinAggregationPlanning#inputRead} decides.
+     * Whether one orientation of a fused GROUP BY is one the generator builds: it builds its master or its slave, an
+     * outer join builds the input it NULL-extends and alone applies an ON condition on the build, the joined rows pass
+     * no gate, and the operator reads each input as {@link HashJoinAggregationPlanning#inputRead} decides.
      */
     private static boolean isHashJoinOrientation(HashJoinAggregation hashJoin) {
         final JoinKind kind = hashJoin.getJoinType();
         final boolean isMasterBuilt = hashJoin.getBuildSide() == JoinInput.BuildSide.MASTER;
-        final boolean isBuildFixed = kind == JoinKind.INNER || isMasterBuilt == (kind == JoinKind.RIGHT_OUTER);
+        final boolean isBuildFixed = hashJoin.getBuildSide() != JoinInput.BuildSide.SMALLER
+                && (kind == JoinKind.INNER || isMasterBuilt == (kind == JoinKind.RIGHT_OUTER));
         final BoundExpression postJoinFilter = hashJoin.getPostJoinFilter();
         return (kind == JoinKind.INNER || kind == JoinKind.LEFT_OUTER || kind == JoinKind.RIGHT_OUTER) && isBuildFixed
                 && (kind != JoinKind.INNER || hashJoin.getBuildOnFilter() == null) && hashJoin.getKeys().size() > 0
@@ -221,6 +241,15 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
+     * Whether the generator may build the producer's plan again for a domain read: the producer reads no shared cursor
+     * and nothing under it must be built once, see {@link #ONCE_GENERATED}, so building it again consumes no shared id
+     * and registers no decorrelation domain twice.
+     */
+    private static boolean isRegenerable(AggregatePlan producer) {
+        return !isSharedReader(producer) && producer.getChild().walkTopDown(ONCE_GENERATED);
+    }
+
+    /**
      * Whether the sort reads its input back by row id, which requires an input with random access.
      */
     private static boolean isRowIdSort(@Nullable SortPlan.Algorithm algorithm) {
@@ -243,10 +272,10 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan branch = aggregate.getSharedHead();
         if (operation == null || operation != LogicalPlans.unwrapColumnProjections(source.getInput())
                 || !(LogicalPlans.unwrapColumnProjections(aggregate.getChild()) instanceof SetOperationPlan)
-                || branch != OperatorPlanning.leadingBranch(aggregate.getChild())) {
+                || branch != LogicalPlans.leadingBranch(aggregate.getChild())) {
             return false;
         }
-        final LogicalPlan head = OperatorPlanning.leadingBranch(operation);
+        final LogicalPlan head = LogicalPlans.leadingBranch(operation);
         final OutputSchema output = branch.getOutput();
         final OutputSchema headOutput = head.getOutput();
         if (PhysicalProperties.supportsSharedCursors(head) != PhysicalProperties.Capability.YES || output.getColumnCount() != headOutput.getColumnCount()) {
@@ -258,6 +287,15 @@ final class PhysicalChoiceVerifier {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether the decorrelation domain reads its input through a shared cursor: of the factory of its shared source or
+     * of the head of the source's set operation.
+     */
+    private static boolean isSharedReader(AggregatePlan aggregate) {
+        final AggregatePlan.SharedRead read = aggregate.getSharedRead();
+        return read == AggregatePlan.SharedRead.SOURCE || read == AggregatePlan.SharedRead.SET_OPERATION_HEAD;
     }
 
     /**
@@ -384,16 +422,22 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Checks how a domain read reads its producer: through a shared cursor only when the producer's GROUP BY serves
-     * them; building the producer's plan again serves any read.
+     * Checks how a domain read reads its producer: through a shared cursor exactly when the producer's GROUP BY serves
+     * them, else by building the producer's plan again, which only a producer the generator may build again allows, see
+     * {@link #isRegenerable}.
      */
     static String domainRead(DomainReadPlan read, boolean isPlanned) {
-        if (read.getAlgorithm() == null) {
+        final DomainReadPlan.Algorithm algorithm = read.getAlgorithm();
+        if (algorithm == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return read.getAlgorithm() == DomainReadPlan.Algorithm.SHARED
-                && PhysicalProperties.supportsSharedCursors(read.getProducer()) != PhysicalProperties.Capability.YES
-                ? PlanVerifier.DOMAIN_READ_ALGORITHM : null;
+        final AggregatePlan producer = read.getProducer();
+        final boolean isServed = PhysicalProperties.supportsSharedCursors(producer) == PhysicalProperties.Capability.YES;
+        final boolean isValid = switch (algorithm) {
+            case SHARED -> isServed;
+            case REGENERATED -> !isServed && isRegenerable(producer);
+        };
+        return isValid ? null : PlanVerifier.DOMAIN_READ_ALGORITHM;
     }
 
     /**
@@ -498,7 +542,7 @@ final class PhysicalChoiceVerifier {
         if (scan != null && (!hasScanChoice || !isHintedTimeFrameScan(scan, step))) {
             return PlanVerifier.JOIN_ALGORITHM;
         }
-        if (step.getBuildSide() != null && !isBuildSideDecided(join, position, step)) {
+        if (!isBuildSideSettled(join, position, step)) {
             return PlanVerifier.JOIN_BUILD_SIDE;
         }
         return isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step)

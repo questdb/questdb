@@ -214,7 +214,11 @@ final class UpdateBinder implements Mutable {
     }
 
     /**
-     * Binds the UPDATE target table, opened for write, and records its identity and columns.
+     * Binds the UPDATE target table, opened for write, and records its identity and columns. Each source of write
+     * metadata lists only the live columns, in the order of the table's reader: the reader metadata for a non-WAL table
+     * and for the compilation WAL apply runs, and the pooled sequencer metadata for the client-side compilation of a
+     * WAL table, whose scan reads no rows. The scan's table indexes are therefore the positions its frame factories
+     * read and authorize.
      */
     ScanPlan bindTarget(QueryModel source, ExpressionNode tableName, TableToken token, SqlExecutionContext executionContext) throws SqlException {
         if (token.isView()) {

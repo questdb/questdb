@@ -51,7 +51,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final @Nullable JoinInput.BuildSide buildSide;
+    private final JoinInput.BuildSide buildSide;
     private final boolean isMasterFixed;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
@@ -74,7 +74,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             boolean isMasterFixed,
-            @Nullable JoinInput.BuildSide buildSide
+            JoinInput.BuildSide buildSide
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.isMasterFixed = isMasterFixed;
@@ -105,9 +105,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            final boolean isMasterBuilt = buildSide != null ? buildSide == JoinInput.BuildSide.MASTER
-                    : !isMasterFixed && masterFactory.recordCursorSupportsRandomAccess()
-                      && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size()) == JoinInput.BuildSide.MASTER;
+            final boolean isMasterBuilt = switch (buildSide) {
+                case MASTER -> true;
+                case SLAVE -> false;
+                case SMALLER -> masterFactory.recordCursorSupportsRandomAccess()
+                        && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER;
+            };
             if (isMasterBuilt) {
                 final RecordCursor temp = masterCursor;
                 masterCursor = slaveCursor;

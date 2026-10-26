@@ -94,7 +94,7 @@ public final class PlanVerifier {
     public static final String DECORRELATION_CARRIER_UNRESOLVED = "decorrelation carrier is a column of neither its step nor a step before it";
     public static final String DECORRELATION_STEP_LOST = "join step that does not commute is missing from the plan after decorrelation";
     public static final String DEPENDENT_STEP = "dependent join step survives decorrelation";
-    public static final String DOMAIN_READ_ALGORITHM = "domain read reads a shared cursor its domain does not serve";
+    public static final String DOMAIN_READ_ALGORITHM = "domain read reads its domain otherwise than the domain serves it";
     public static final String DOMAIN_READ_COLUMNS = "domain read column is paired with no key of its domain for the same outer column";
     public static final String DOMAIN_READ_PRODUCER = "domain read reads a decorrelation domain outside the plan";
     public static final String DUPLICATE_COLUMN_ID = "output lists a column id twice";
@@ -112,7 +112,7 @@ public final class PlanVerifier {
     public static final String INPUT_NULL = "input is null";
     public static final String INPUT_RANDOM_ACCESS = "physical choice reads an input by row id that lacks random access";
     public static final String JOIN_ALGORITHM = "join step algorithm contradicts its kind, keys or hints";
-    public static final String JOIN_BUILD_SIDE = "join step build side is recorded for a step whose smaller input does not drive it or whose inputs have no row bound";
+    public static final String JOIN_BUILD_SIDE = "join step build side contradicts its algorithm, its master side or the row bounds of its inputs";
     public static final String JOIN_FILTER_ORIGIN = "join filter conjunct origin is neither WHERE nor an input of the join";
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
@@ -456,8 +456,8 @@ public final class PlanVerifier {
 
     /**
      * Checks a domain read: each of its columns pairs with a distinct key of its producer named after the same outer
-     * column, of its type, and it reads a shared cursor only when the producer serves them. The producer must lie
-     * in the plan, which {@link #check} asserts once the walk has visited every node.
+     * column, of its type, and it reads its producer as {@link PhysicalChoiceVerifier#domainRead} allows. The producer
+     * must lie in the plan, which {@link #check} asserts once the walk has visited every node.
      */
     private void domainRead(DomainReadPlan read) {
         final OutputSchema output = read.getOutput();

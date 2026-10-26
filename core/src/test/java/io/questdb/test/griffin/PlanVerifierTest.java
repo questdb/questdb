@@ -372,12 +372,13 @@ public class PlanVerifierTest extends AbstractCairoTest {
 
                 final AggregatePlan producer = read.getProducer();
                 final AggregatePlan.Algorithm algorithm = producer.getAlgorithm();
-                final int consumerCount = producer.getSharedConsumerCount();
-                producer.setAlgorithm(AggregatePlan.Algorithm.SERIAL);
-                producer.setSharedConsumerCount(0);
+                read.setAlgorithm(DomainReadPlan.Algorithm.REGENERATED);
+                assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
+                producer.setAlgorithm(null);
+                verifier.verify(plan, PASS);
+                read.setAlgorithm(DomainReadPlan.Algorithm.SHARED);
                 assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
                 producer.setAlgorithm(algorithm);
-                producer.setSharedConsumerCount(consumerCount);
 
                 final IntList producerIds = read.getProducerColumnIds();
                 final int producerId = producerIds.getQuick(1);
@@ -393,6 +394,40 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 read.setProducer(outside);
                 assertFails(plan, PlanVerifier.DOMAIN_READ_PRODUCER, "DomainReadPlan");
                 read.setProducer(producer);
+                verifier.verifyAccessPaths(plan);
+            }
+        });
+    }
+
+    @Test
+    public void testDomainReadRegeneratedSharedReader() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (sym SYMBOL, id INT)");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("""
+                            SELECT g.s, l.id FROM (SELECT sym s, count() c FROM trades GROUP BY sym) g
+                            CROSS JOIN LATERAL (
+                                SELECT i.id FROM items i WHERE i.sym = g.s AND i.id > g.c
+                                UNION ALL
+                                SELECT k.id FROM items k WHERE k.sym = g.s AND k.id > g.c
+                            ) l
+                            """, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final DomainReadPlan read = find(plan, DomainReadPlan.class);
+                Assert.assertNotNull(read);
+                final AggregatePlan producer = read.getProducer();
+                Assert.assertEquals(AggregatePlan.SharedRead.SOURCE, producer.getSharedRead());
+                verifier.verifyAccessPaths(plan);
+
+                final AggregatePlan.Algorithm algorithm = producer.getAlgorithm();
+                producer.setAlgorithm(null);
+                read.setAlgorithm(DomainReadPlan.Algorithm.REGENERATED);
+                assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
+                producer.setAlgorithm(algorithm);
+                read.setAlgorithm(DomainReadPlan.Algorithm.SHARED);
                 verifier.verifyAccessPaths(plan);
             }
         });
@@ -526,9 +561,24 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts("SELECT a.ts, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k ORDER BY a.ts", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
-                Assert.assertNull(step.getBuildSide());
+                Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
                 step.setBuildSide(JoinInput.BuildSide.MASTER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
+            // Both tables bound their inputs, and the master supports random access, so the plan picks the input to hash.
+            assertAlgorithmContradicts("SELECT a.x, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.MasterSide.SMALLER, step.getMasterSide());
+                Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
+                step.setBuildSide(JoinInput.BuildSide.SMALLER);
+            }, PlanVerifier.JOIN_BUILD_SIDE);
+            // No table bounds the rows of long_sequence(), so execution picks the input to hash.
+            assertAlgorithmContradicts("SELECT a.x, l.x FROM bs_a a JOIN (SELECT x::INT k, x::INT x FROM long_sequence(3)) l ON a.k = l.k",
+                    JoinPlan.class, join -> {
+                        final JoinInput step = join.getOrderedInputs().getQuick(1);
+                        Assert.assertEquals(JoinInput.MasterSide.SMALLER, step.getMasterSide());
+                        Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                        step.setBuildSide(JoinInput.BuildSide.SLAVE);
+                    }, PlanVerifier.JOIN_BUILD_SIDE);
             final String union = "(SELECT k, x FROM bs_b UNION ALL SELECT k, x FROM bs_b)";
             // A full-fat hash join of a slave without random access always hashes its slave.
             assertAlgorithmContradicts("SELECT b.x, u.x FROM bs_b b JOIN " + union + " u ON b.k = u.k", JoinPlan.class, join -> {

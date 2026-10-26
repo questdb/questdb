@@ -1704,7 +1704,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory = Misc.free(factory);
                     walWriter.rollback();
                     if (i == maxRetries) {
-                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
+                        LOG.info().$("base table keeps changing, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
                                 .$(", msg=").$safe(e.getFlyweightMessage())
                                 .I$();

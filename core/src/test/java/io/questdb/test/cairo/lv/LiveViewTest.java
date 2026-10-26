@@ -1686,6 +1686,38 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefreshWithWhereSubqueryOverGrowingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE a (k INT, s SYMBOL)");
+            execute("CREATE TABLE b (k INT)");
+            execute("INSERT INTO a VALUES (1, 'base'), (2, 'other'), (3, 'x')");
+            execute("INSERT INTO b SELECT x::INT FROM long_sequence(9)");
+            // the join of the subquery hashes the 3 rows of a, a choice its scans keep while a holds at most 10 rows
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts "
+                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE g IN (SELECT a.s FROM a JOIN b ON a.k = b.k)");
+            execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 10, 'base')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                // the refresh keeps the compiled build side once a outgrows those row counts
+                execute("INSERT INTO a SELECT (x + 3)::INT, 'n' || x FROM long_sequence(20)");
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:02.000000Z', 20, 'base'), ('2026-01-01T00:00:03.000000Z', 30, 'other')");
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT x, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("""
+                        x\trn
+                        10\t1
+                        20\t2
+                        30\t1
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testRefreshWithSymbolColumnComparisonHandlesNullOnlyColumn() throws Exception {
         // Edge-case coverage for raw-WAL SYMBOL equality: the right column b carries a
         // committed NULL but zero distinct non-NULL symbols before the view exists, and the

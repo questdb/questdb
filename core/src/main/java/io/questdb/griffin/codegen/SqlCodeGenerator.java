@@ -52,7 +52,6 @@ import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
@@ -394,13 +393,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * takes the one a read built before the generator reached the domain.
      */
     private RecordCursorFactory generateProducer(GenerationFrame frame, AggregatePlan producer, SqlExecutionContext executionContext) throws SqlException {
-        final int entry = frame.sharedPlans.indexOf(producer);
+        final int entry = frame.sharedEntry(producer);
         if (entry > -1) {
             return frame.claimProducer(entry);
         }
         final RecordCursorFactory factory = generateOperator(frame, producer, executionContext);
         try {
-            frame.addShared(producer, factory);
+            frame.placeProducer(producer, factory);
         } catch (Throwable th) {
             Misc.free(factory, th);
             throw th;
@@ -411,6 +410,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateUnary(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
+        final int producerLo = frame.producerMark();
         final RecordCursorFactory base;
         if (plan instanceof FilterPlan filter && residual != null && PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan) {
             return scanGenerator.generateFiltered(frame, scan, residual, null, executionContext);
@@ -451,7 +451,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw th;
                     }
                 }
-                return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate,
+                return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, producerLo,
                         executionContext, hasUpdateScan(input), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL, null, false);
             }
             case ProjectPlan project -> {
@@ -522,7 +522,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         if (plan == frame.sharedHeadTarget) {
             frame.sharedHeadTarget = null;
-            return new SharedRecordCursorFactory(frame.sharedHeadFactory, frame.sharedHeadId);
+            return frame.shareCursor(frame.sharedHeadEntry);
         }
         if (plan instanceof AggregatePlan producer && producer.getReaderCount() > 0) {
             return generateProducer(frame, producer, executionContext);

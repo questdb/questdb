@@ -67,8 +67,7 @@ public final class TableDescriptor {
     }
 
     /**
-     * Whether ALTER COLUMN TYPE re-keyed a column of the table, so its writer index differs from the writer index of
-     * the column it replaced.
+     * Whether a column of the table is {@link io.questdb.cairo.TableColumnMetadata#isTypeConverted() type converted}.
      */
     public boolean hasConvertedColumns() {
         return hasConvertedColumns;

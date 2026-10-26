@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -45,7 +46,7 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // The cursor is empty, so it never iterates and never consults the circuit breaker on its own.
         // Honor cancellation once at open time, so a query that optimized down to an empty result still
         // observes a tripped breaker instead of silently ignoring it.

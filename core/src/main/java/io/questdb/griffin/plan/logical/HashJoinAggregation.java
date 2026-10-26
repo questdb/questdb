@@ -187,8 +187,8 @@ public final class HashJoinAggregation implements Mutable {
     }
 
     /**
-     * Whether the build may size its key table by its row count: the build table holds no more rows than the probe
-     * table.
+     * Whether the build may size its key table by its row count: the build input's row bound is no larger than the
+     * probe's, see {@link JoinInput.BuildSide#smaller}.
      */
     public boolean isKeyCapacityPresized() {
         return isKeyCapacityPresized;

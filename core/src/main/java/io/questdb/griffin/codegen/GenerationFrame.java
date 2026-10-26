@@ -36,10 +36,13 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.join.DomainKeepingEmptyRecordCursorFactory;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
+import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -81,16 +84,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final GenericRecordMetadata projectionScopeMetadata = new GenericRecordMetadata();
     final ParquetPushdownExtractor pushdown = new ParquetPushdownExtractor(expressions, intListB);
     final OutputSchema schema = new OutputSchema();
-    final ObjList<RecordCursorFactory> setOperationHeads = new ObjList<>();
-    final ObjList<LogicalPlan> setOperationPlans = new ObjList<>();
-    final IntList sharedConsumerCounts = new IntList();
-    final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
-    /**
-     * The plans whose factories the frame built and other consumers may share: the input of each join input and each
-     * decorrelation domain with readers; {@link #sharedFactories} holds their factories and
-     * {@link #sharedConsumerCounts} the next shared id of each.
-     */
-    final ObjList<LogicalPlan> sharedPlans = new ObjList<>();
     final BitSet symbolAsString = new BitSet();
     final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     final IntList windowFunctionPositions = new IntList();
@@ -101,12 +94,21 @@ final class GenerationFrame implements Closeable, Mutable {
     final ObjList<WindowFunction> windowSpecFunctions = new ObjList<>();
     final ObjList<WindowMapSpec> windowSpecs = new ObjList<>();
     /**
-     * The decorrelation domains whose factories a read built before the generator reached them, which the frame owns
-     * until the generator reaches them, see {@link #claimProducer}.
+     * The entries of the decorrelation domains whose factories a read built before the generator reached them, which
+     * the frame owns until the generator reaches them, see {@link #claimProducer}.
      */
-    private final ObjList<LogicalPlan> pendingProducers = new ObjList<>();
+    private final IntList pendingProducers = new IntList();
+    /**
+     * The entries of the decorrelation domains the generator placed in the factory tree, in the order it placed them,
+     * see {@link #producerMark}.
+     */
+    private final IntList placedProducers = new IntList();
     private final ObjList<PreparedFilter> preparedFilters = new ObjList<>();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
+    /**
+     * The next shared id of the factory at each entry.
+     */
+    private final IntList sharedConsumerCounts = new IntList();
     /**
      * The entry of the factory each of {@link #sharedConsumers} reads.
      */
@@ -115,6 +117,15 @@ final class GenerationFrame implements Closeable, Mutable {
      * The shared cursors the frame handed out, see {@link #shareCursor}.
      */
     private final ObjList<SharedRecordCursorFactory> sharedConsumers = new ObjList<>();
+    /**
+     * The factory the frame built for each of {@link #sharedPlans}.
+     */
+    private final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
+    /**
+     * The plans whose factories the frame built and other consumers may share, one entry each: the input of each join
+     * input, the head of each set operation and each decorrelation domain with readers.
+     */
+    private final ObjList<LogicalPlan> sharedPlans = new ObjList<>();
     Function limitHi;
     Function limitLo;
     /**
@@ -126,8 +137,15 @@ final class GenerationFrame implements Closeable, Mutable {
      * The master scan of the join a MASTER_SUFFIX LIMIT is generated over, matched by its output schema.
      */
     ScanPlan masterSuffixScan;
-    RecordCursorFactory sharedHeadFactory;
-    int sharedHeadId;
+    /**
+     * The entry of the set operation head whose shared cursor the generator builds in place of {@link #sharedHeadTarget}.
+     */
+    int sharedHeadEntry;
+    /**
+     * The leading branch of a decorrelation domain's input that the generator reads through a shared cursor of the
+     * head of the domain's shared source's set operation instead of generating it, see
+     * {@link AggregatePlan.SharedRead#SET_OPERATION_HEAD}.
+     */
     LogicalPlan sharedHeadTarget;
     private int preparedFilterCount;
 
@@ -166,13 +184,12 @@ final class GenerationFrame implements Closeable, Mutable {
         schema.clear();
         columnReferenceCounts.clear();
         failure = freePendingProducers(failure);
+        placedProducers.clear();
         sharedConsumerCounts.clear();
         sharedConsumerEntries.clear();
         sharedConsumers.clear();
         sharedFactories.clear();
         sharedPlans.clear();
-        setOperationHeads.clear();
-        setOperationPlans.clear();
         projectionScopeMetadata.clear();
         windowGroups.clear();
         windowMetadata.clear();
@@ -180,8 +197,7 @@ final class GenerationFrame implements Closeable, Mutable {
         windowPartitionKeys.clear();
         windowSpecFunctions.clear();
         windowSpecs.clear();
-        sharedHeadFactory = null;
-        sharedHeadId = 0;
+        sharedHeadEntry = 0;
         sharedHeadTarget = null;
         for (int i = 0; i < preparedFilterCount; i++) {
             failure = Misc.freeBestEffort(failure, preparedFilters.getQuick(i));
@@ -197,11 +213,12 @@ final class GenerationFrame implements Closeable, Mutable {
 
     /**
      * Records the factory a domain read built for its producer before the generator reached the producer; the frame
-     * owns it until {@link #claimProducer}. Returns its entry.
+     * owns it once this returns, until {@link #claimProducer}, and the caller owns it on failure. Returns its entry.
      */
     int addPendingProducer(LogicalPlan producer, RecordCursorFactory factory) {
-        pendingProducers.add(producer);
-        return addShared(producer, factory);
+        final int entry = addShared(producer, factory);
+        pendingProducers.add(entry);
+        return entry;
     }
 
     /**
@@ -220,14 +237,15 @@ final class GenerationFrame implements Closeable, Mutable {
 
     /**
      * Hands the factory a domain read built for the producer at {@code entry} over to the producer's place in the
-     * factory tree.
+     * factory tree, see {@link #placeProducer}.
      */
     RecordCursorFactory claimProducer(int entry) {
-        final int index = pendingProducers.indexOf(sharedPlans.getQuick(entry));
+        final int index = pendingProducers.indexOf(entry, 0, pendingProducers.size());
         if (index < 0) {
             throw new IllegalStateException("decorrelation domain is generated twice");
         }
-        pendingProducers.remove(index);
+        placedProducers.add(entry);
+        pendingProducers.removeIndex(index);
         return sharedFactories.getQuick(entry);
     }
 
@@ -253,8 +271,48 @@ final class GenerationFrame implements Closeable, Mutable {
         return factory;
     }
 
+    /**
+     * Replaces the factory, whose rows the generator proves empty, with an empty factory, consuming it, including on
+     * failure. When the factory holds decorrelation domains that other consumers share, the ones the generator placed
+     * from {@code producerLo} to {@code producerHi}, see {@link #producerMark}, the empty factory keeps the factory and
+     * opens those domains whenever it opens, so that their consumers keep reading them. The empty factory copies the
+     * metadata container: closeable metadata may own lookup state the copy must not retain once the factory closes.
+     */
+    RecordCursorFactory emptied(int producerLo, int producerHi, RecordCursorFactory factory) {
+        final RecordCursorFactory empty;
+        try {
+            final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+            ObjList<RecordCursorFactory> domains = null;
+            for (int i = producerLo; i < producerHi; i++) {
+                final int entry = placedProducers.getQuick(i);
+                if (((AggregatePlan) sharedPlans.getQuick(entry)).getSharedConsumerCount() > 0) {
+                    if (domains == null) {
+                        domains = new ObjList<>();
+                    }
+                    domains.add(sharedFactories.getQuick(entry));
+                }
+            }
+            if (domains != null) {
+                return new DomainKeepingEmptyRecordCursorFactory(metadata, factory, domains);
+            }
+            empty = new EmptyTableRecordCursorFactory(metadata);
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
+        }
+        return SqlCodeGenerator.closeAfter(factory, empty);
+    }
+
     int getReferenceCount(int columnId) {
         return columnId < columnReferenceCounts.size() ? columnReferenceCounts.getQuick(columnId) : 0;
+    }
+
+    /**
+     * Records the factory the generator built for a decorrelation domain at the domain's place in the factory tree,
+     * which domain reads may then share.
+     */
+    void placeProducer(LogicalPlan producer, RecordCursorFactory factory) {
+        placedProducers.add(addShared(producer, factory));
     }
 
     /**
@@ -288,6 +346,14 @@ final class GenerationFrame implements Closeable, Mutable {
      */
     void popPreparedFilter(Throwable primary) {
         Misc.free(preparedFilters.getQuick(--preparedFilterCount), primary);
+    }
+
+    /**
+     * The mark of the next decorrelation domain the generator places in the factory tree: a factory it builds from
+     * here on holds the domains it places from this mark on, see {@link #emptied}.
+     */
+    int producerMark() {
+        return placedProducers.size();
     }
 
     /**
@@ -346,6 +412,13 @@ final class GenerationFrame implements Closeable, Mutable {
     }
 
     /**
+     * The entry of the factory the frame built for {@code plan}, -1 when it has built none.
+     */
+    int sharedEntry(LogicalPlan plan) {
+        return sharedPlans.indexOf(plan);
+    }
+
+    /**
      * The factory the frame built for the shared plan at {@code entry}, which a shared cursor reads; fails when the
      * generator freed it.
      */
@@ -363,7 +436,7 @@ final class GenerationFrame implements Closeable, Mutable {
 
     private Throwable freePendingProducers(Throwable failure) {
         for (int i = 0, n = pendingProducers.size(); i < n; i++) {
-            failure = Misc.freeBestEffort(failure, sharedFactories.getQuick(sharedPlans.indexOf(pendingProducers.getQuick(i))));
+            failure = Misc.freeBestEffort(failure, sharedFactories.getQuick(pendingProducers.getQuick(i)));
         }
         pendingProducers.clear();
         return failure;

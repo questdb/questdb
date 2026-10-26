@@ -31,7 +31,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
-import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -75,6 +74,7 @@ import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Owns the order-sensitive physical operators. Once {@link AccessPathPlanning} has planned the inputs of a node, it
@@ -87,19 +87,17 @@ import io.questdb.std.ObjList;
  * {@link #requiresInputTimestamp} which inputs of a node must designate their timestamp and, before it plans a query
  * level, counts the decorrelation domains that re-read each aggregate, see {@link #countSharedConsumers}; it decides
  * how each domain reads its input from the join inputs the generator builds before it, see {@link #planSharedRead}, and
- * whether a domain read reads its producer through a shared cursor, when the producer's GROUP BY serves them and the
- * generator keeps the producer's factory, see {@link #collectDiscardedDomains}, or builds the producer's plan again.
- * The generator builds exactly what it records. From the same properties it rejects a time series join, a SAMPLE BY and
- * an aggregate function whose input does not deliver the ascending designated timestamp order they require, and a
- * full-fat ASOF or LT join whose slave has a column the join cannot carry.
+ * whether a domain read reads its producer through a shared cursor, when the producer's GROUP BY serves them, or builds
+ * the producer's plan again, see {@link #planDomainRead}. The generator builds exactly what it records. From the same
+ * properties it rejects a time series join, a SAMPLE BY and an aggregate function whose input does not deliver the
+ * ascending designated timestamp order they require, and a full-fat ASOF or LT join whose slave has a column the join
+ * cannot carry.
  */
 final class OperatorPlanning implements Mutable {
     private static final PlanVisitor SHARED_CONSUMERS = plan -> {
         if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null
                 && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target) {
             target.setSharedConsumerCount(target.getSharedConsumerCount() + 1);
-        } else if (plan instanceof DomainReadPlan read) {
-            read.getProducer().setSharedConsumerCount(read.getProducer().getSharedConsumerCount() + 1);
         }
         return TreeWalk.CONTINUE;
     };
@@ -111,10 +109,6 @@ final class OperatorPlanning implements Mutable {
     };
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
-    /**
-     * The decorrelation domains with reads whose factories the generator discards, see {@link #collectDiscardedDomains}.
-     */
-    private final ObjList<AggregatePlan> discardedDomains = new ObjList<>();
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
     private final HashJoinAggregationPlanning hashJoinPlanning;
     private final IntList readIds;
@@ -136,7 +130,6 @@ final class OperatorPlanning implements Mutable {
 
     @Override
     public void clear() {
-        discardedDomains.clear();
         generatedInputs.clear();
         hashJoinPlanning.clear();
         frameInputLo = 0;
@@ -236,18 +229,6 @@ final class OperatorPlanning implements Mutable {
         return true;
     }
 
-    private static boolean isFalseConstant(BoundExpression predicate) {
-        return predicate instanceof ConstantExpression constant && constant.getLongValue() == 0;
-    }
-
-    /**
-     * True when the generator folds the step's filter {@code predicate} to constant false, see
-     * {@link PlanToFactoryRules#isPostJoinFilterFolded}.
-     */
-    private static boolean isFoldedFalse(JoinInput step, BoundExpression predicate) {
-        return predicate != null && isFalseConstant(predicate) && PlanToFactoryRules.isPostJoinFilterFolded(step, predicate);
-    }
-
     /**
      * True when every key of the SAMPLE BY is its timestamp or one SYMBOL column and every aggregate is first() or
      * last() of a non-array column, the shape a SAMPLE BY reads from the index of its symbol key.
@@ -311,11 +292,26 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Decides how the generator reads the producer of a domain read: through a shared cursor of the factory it builds
+     * once for the producer when the producer's GROUP BY serves them, counting the read as one more consumer of the
+     * producer's rows, else from a factory it builds for the producer's plan again.
+     */
+    private static void planDomainRead(DomainReadPlan read) {
+        final AggregatePlan producer = read.getProducer();
+        if (PhysicalProperties.supportsSharedCursors(producer) == PhysicalProperties.Capability.YES) {
+            read.setAlgorithm(DomainReadPlan.Algorithm.SHARED);
+            producer.setSharedConsumerCount(producer.getSharedConsumerCount() + 1);
+        } else {
+            read.setAlgorithm(DomainReadPlan.Algorithm.REGENERATED);
+        }
+    }
+
+    /**
      * The aggregate a decorrelation domain re-reads through its shared source, as the generator finds it: under the
      * column projections and the leading branches of the set operations of the source's input.
      */
     private static LogicalPlan sharedTarget(LogicalPlan source) {
-        return LogicalPlans.unwrapColumnProjections(leadingBranch(source));
+        return LogicalPlans.unwrapColumnProjections(LogicalPlans.leadingBranch(source));
     }
 
     /**
@@ -383,62 +379,6 @@ final class OperatorPlanning implements Mutable {
             return AggregatePlan.Algorithm.SERIAL;
         }
         return isFilterStolen ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.PARALLEL;
-    }
-
-    /**
-     * Records the decorrelation domains with reads under {@code plan} whose factories the generator builds and then
-     * replaces with an empty one, {@code isDiscarded} when an ancestor is replaced: under a filter or a join step's
-     * filter it folds to constant false, see {@link PlanToFactoryRules#isPostJoinFilterFolded}, in the master of a step
-     * whose master it empties, see {@link PlanToFactoryRules#isMasterEmptied}, in the input of a step whose slave it
-     * empties, see {@link PlanToFactoryRules#isSlaveEmptied}, and under an empty window join. Their reads build the
-     * domain's plan again. The generator fails a generation that frees a factory a shared cursor reads, so a discard
-     * this walk misses fails the statement instead of reading a freed domain.
-     */
-    private void collectDiscardedDomains(LogicalPlan plan, boolean isDiscarded) {
-        if (isDiscarded && plan instanceof AggregatePlan domain && domain.getReaderCount() > 0) {
-            discardedDomains.add(domain);
-        }
-        switch (plan) {
-            case FilterPlan filter ->
-                    collectDiscardedDomains(filter.getChild(), isDiscarded || isFalseConstant(filter.getPredicate()));
-            case JoinPlan join -> {
-                final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                int discardedCount = 0;
-                for (int i = 1, n = ordered.size(); i < n; i++) {
-                    final JoinInput step = ordered.getQuick(i);
-                    if (PlanToFactoryRules.isMasterEmptied(step)) {
-                        discardedCount = Math.max(discardedCount, i);
-                    }
-                    if (isFoldedFalse(step, step.getOnResidual()) || isFoldedFalse(step, step.getPostJoinFilter())) {
-                        discardedCount = i + 1;
-                    }
-                }
-                for (int i = 0, n = ordered.size(); i < n; i++) {
-                    final JoinInput step = ordered.getQuick(i);
-                    if (step.getInput() != null) {
-                        collectDiscardedDomains(step.getInput(), isDiscarded || i < discardedCount || i > 0 && PlanToFactoryRules.isSlaveEmptied(step));
-                    }
-                }
-            }
-            default -> {
-                final boolean isInputDiscarded = isDiscarded || plan instanceof WindowJoinPlan windowJoin && windowJoin.isEmpty();
-                for (int i = 0, n = plan.inputCount(); i < n; i++) {
-                    collectDiscardedDomains(plan.inputAt(i), isInputDiscarded);
-                }
-            }
-        }
-    }
-
-    /**
-     * The fused GROUP BY builds the input its {@link HashJoinAggregation} records instead of the steps of the join,
-     * which therefore settle without an input to hash.
-     */
-    private void forgoBuildSides(JoinPlan join) {
-        for (int i = 0, n = undecidedSteps.size(); i < n; i++) {
-            if (join.getOrderedInputs().indexOf(undecidedSteps.getQuick(i)) > -1) {
-                undecidedMasters.setQuick(i, null);
-            }
-        }
     }
 
     /**
@@ -694,7 +634,6 @@ final class OperatorPlanning implements Mutable {
             final HashJoinAggregation hashJoin = hashJoinPlanning.plan(aggregate);
             if (hashJoin != null) {
                 aggregate.setHashJoin(hashJoin);
-                forgoBuildSides((JoinPlan) hashJoin.getAggregate().getChild());
                 return;
             }
         }
@@ -714,41 +653,29 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Records the input the light INNER hash join step over a master of one input hashes: the one with the smaller row
-     * bound, see {@link PhysicalProperties#rowBound}, where only a master with random access can be hashed. A step with
-     * an input of unknown bound leaves the choice to execution. The choice holds while the bound of the hashed input
-     * stays within twice the bound of the other one. The tables that bound them keep the row counts that guarantee it,
-     * the hashed one growing and the other shrinking by at most the same factor, so a cursor open past them compiles the
-     * statement again, and a new compile at the same row counts keeps them.
+     * Records the input the light INNER hash join step that the smaller input drives hashes: the one with the smaller
+     * row bound, see {@link OptimiserContext#rowBound}, the slave on a tie, where only a master with random access can
+     * be hashed, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. A step over a master of
+     * several inputs, {@code master} null, an input without a bound and a smaller master whose random access codegen
+     * decides leave the choice to execution, {@link JoinInput.BuildSide#SMALLER}.
      */
-    private void planBuildSide(JoinInput step, LogicalPlan master) {
-        final PlanTables tables = context.getPlanTables();
-        final LogicalPlan slave = step.getInput();
-        final long masterRows = PhysicalProperties.rowBound(master, tables);
-        final long slaveRows = PhysicalProperties.rowBound(slave, tables);
-        final JoinInput.BuildSide side = JoinInput.BuildSide.smaller(masterRows, slaveRows);
-        if (side == null || side == JoinInput.BuildSide.MASTER && !isRandomAccess(master)) {
+    private void planBuildSide(JoinInput step, @Nullable LogicalPlan master) {
+        if (master == null) {
+            step.setBuildSide(JoinInput.BuildSide.SMALLER);
             return;
+        }
+        final LogicalPlan slave = step.getInput();
+        final long masterRows = context.rowBound(master);
+        final long slaveRows = context.rowBound(slave);
+        JoinInput.BuildSide side = JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.SLAVE);
+        if (side == JoinInput.BuildSide.MASTER && !isRandomAccess(master)) {
+            side = JoinInput.BuildSide.SMALLER;
         }
         step.setBuildSide(side);
-        final boolean isMasterBuilt = side == JoinInput.BuildSide.MASTER;
-        final LogicalPlan built = isMasterBuilt ? master : slave;
-        final LogicalPlan probe = isMasterBuilt ? slave : master;
-        final ScanPlan builtScan = PhysicalProperties.rowBoundScan(built);
-        final ScanPlan probeScan = PhysicalProperties.rowBoundScan(probe);
-        // Both bounds read the rows of one table, which moves them together.
-        if (builtScan != null && probeScan != null && builtScan.getTableToken().equals(probeScan.getTableToken())) {
-            return;
-        }
-        final long builtRows = isMasterBuilt ? masterRows : slaveRows;
-        final long probeRows = isMasterBuilt ? slaveRows : masterRows;
-        final double product = (double) builtRows * probeRows;
-        final long maxBuiltRows = Math.max(builtRows, (long) Math.floor(Math.sqrt(2 * product)));
-        if (builtScan != null && PhysicalProperties.rowBoundLimit(built) > maxBuiltRows) {
-            builtScan.keepRowCountWithin(0, maxBuiltRows);
-        }
-        if (probeScan != null) {
-            probeScan.keepRowCountWithin(Math.min(probeRows, (long) Math.ceil(Math.sqrt(product / 2))), Long.MAX_VALUE);
+        if (side == JoinInput.BuildSide.MASTER) {
+            keepBuildSide(master, masterRows, slave, slaveRows);
+        } else if (side == JoinInput.BuildSide.SLAVE) {
+            keepBuildSide(slave, slaveRows, master, masterRows);
         }
     }
 
@@ -929,6 +856,7 @@ final class OperatorPlanning implements Mutable {
             if (step.getMasterSide() == null) {
                 if (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.NO) {
                     step.setMasterSide(JoinInput.MasterSide.FIXED);
+                    step.setBuildSide(JoinInput.BuildSide.SLAVE);
                 } else {
                     undecidedSteps.add(step);
                     undecidedMasters.add(inputIndex == 1 ? join.getOrderedInputs().getQuick(0).getInput() : null);
@@ -1000,17 +928,17 @@ final class OperatorPlanning implements Mutable {
     /**
      * Records the head of the set operation under the column projections of the shared source's input, a set operation
      * serving no shared cursor itself, as the source of the leading branch of the decorrelation domain's input, see
-     * {@link #leadingBranch}: when the head serves shared cursors and the domain's input is a set operation too, whose
+     * {@link LogicalPlans#leadingBranch}: when the head serves shared cursors and the domain's input is a set operation too, whose
      * leading branch lays out the head's column types. Returns whether it did.
      */
     private boolean planSharedHead(AggregatePlan aggregate, JoinInput source) {
         if (!(LogicalPlans.unwrapColumnProjections(source.getInput()) instanceof SetOperationPlan operation)
-                || PhysicalProperties.supportsSharedCursors(leadingBranch(operation)) != PhysicalProperties.Capability.YES
+                || PhysicalProperties.supportsSharedCursors(LogicalPlans.leadingBranch(operation)) != PhysicalProperties.Capability.YES
                 || !(LogicalPlans.unwrapColumnProjections(aggregate.getChild()) instanceof SetOperationPlan)) {
             return false;
         }
-        final OutputSchema head = leadingBranch(operation).getOutput();
-        final LogicalPlan branch = leadingBranch(aggregate.getChild());
+        final OutputSchema head = LogicalPlans.leadingBranch(operation).getOutput();
+        final LogicalPlan branch = LogicalPlans.leadingBranch(aggregate.getChild());
         final OutputSchema output = branch.getOutput();
         if (output.getColumnCount() != head.getColumnCount()) {
             return false;
@@ -1626,14 +1554,31 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The leading branch of the set operations under the column projections of the plan, or the plan itself; the
-     * generator builds the head of a set operation from it.
+     * Keeps a choice to hash {@code built}, bounded by {@code builtRows} rows, and probe it with {@code probe}, bounded by
+     * {@code probeRows}, no fewer. The choice holds while the hashed input holds at most twice the rows of the other
+     * one. The scans whose tables bound the two inputs, see {@link PhysicalProperties#rowBoundScan}, keep the row
+     * counts that guarantee it: the probed one at least half its rows and at least the square root of half the product
+     * of the two, and the hashed one at most twice that, so it may grow to at least the rows of the probed one. A cursor
+     * open past them compiles the statement again, and a compile at the same row counts keeps them. Inputs that one
+     * table bounds record none when the LIMITs of the hashed one allow no more rows than those of the other, as it then
+     * never holds more rows.
      */
-    static LogicalPlan leadingBranch(LogicalPlan plan) {
-        while (LogicalPlans.unwrapColumnProjections(plan) instanceof SetOperationPlan operation) {
-            plan = operation.getLeft();
+    static void keepBuildSide(LogicalPlan built, long builtRows, LogicalPlan probe, long probeRows) {
+        final ScanPlan builtScan = PhysicalProperties.rowBoundScan(built);
+        final ScanPlan probeScan = PhysicalProperties.rowBoundScan(probe);
+        final long builtLimit = PhysicalProperties.rowBoundLimit(built);
+        if (builtScan != null && probeScan != null && builtScan.getTableToken().equals(probeScan.getTableToken())
+                && builtLimit <= PhysicalProperties.rowBoundLimit(probe)) {
+            return;
         }
-        return plan;
+        final long minProbeRows = Math.max((long) Math.ceil(Math.sqrt((double) builtRows * probeRows / 2)), (probeRows + 1) / 2);
+        final long maxBuiltRows = 2 * minProbeRows;
+        if (builtScan != null && builtLimit > maxBuiltRows) {
+            builtScan.keepRowCountWithin(0, maxBuiltRows);
+        }
+        if (probeScan != null) {
+            probeScan.keepRowCountWithin(minProbeRows, Long.MAX_VALUE);
+        }
     }
 
     /**
@@ -1647,14 +1592,14 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Records on every aggregate of the query level how many decorrelation domains of the level re-read it through
-     * their shared source, and how many domain reads read it; the generator builds the consumers of each one and the
-     * aggregate shares its rows with them. A statement without such a domain leaves every count at zero.
+     * their shared source, to which {@link #planDomainRead} adds the domain reads that read it through a shared
+     * cursor; the generator builds the consumers of each one and the aggregate shares its rows with them. A statement
+     * without such a domain leaves every count at zero.
      */
     void countSharedConsumers(LogicalPlan root) {
         if (context.hasSharedSources()) {
             root.walkTopDown(SHARED_CONSUMER_COUNTS);
             root.walkTopDown(SHARED_CONSUMERS);
-            collectDiscardedDomains(root, false);
         }
     }
 
@@ -1705,9 +1650,7 @@ final class OperatorPlanning implements Mutable {
                 planAggregate(aggregate);
                 planSharedRead(aggregate);
             }
-            case DomainReadPlan read -> read.setAlgorithm(discardedDomains.indexOf(read.getProducer()) < 0
-                    && PhysicalProperties.supportsSharedCursors(read.getProducer()) == PhysicalProperties.Capability.YES
-                    ? DomainReadPlan.Algorithm.SHARED : DomainReadPlan.Algorithm.REGENERATED);
+            case DomainReadPlan read -> planDomainRead(read);
             case SampleByPlan sample -> planSampleBy(sample);
             case FillPlan fill -> planFill(fill);
             case LatestByPlan latest -> planLatestBy(latest);
@@ -1736,17 +1679,17 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Lets the smaller input drive every light INNER hash join whose order no decision read since
-     * {@link #planOperators} planned it, and decides the input it hashes where the row bounds of its inputs tell.
+     * {@link #planOperators} planned it, and records the input each one hashes: the slave of a step whose master a
+     * decision fixed, else the input {@link #planBuildSide} decides.
      */
     void settleMasterSides() {
         for (int i = 0, n = undecidedSteps.size(); i < n; i++) {
             final JoinInput step = undecidedSteps.getQuick(i);
             if (step.getMasterSide() == null) {
                 step.setMasterSide(JoinInput.MasterSide.SMALLER);
-                final LogicalPlan master = undecidedMasters.getQuick(i);
-                if (master != null) {
-                    planBuildSide(step, master);
-                }
+                planBuildSide(step, undecidedMasters.getQuick(i));
+            } else {
+                step.setBuildSide(JoinInput.BuildSide.SLAVE);
             }
         }
         undecidedMasters.clear();

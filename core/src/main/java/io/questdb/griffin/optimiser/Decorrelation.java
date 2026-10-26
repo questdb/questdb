@@ -34,7 +34,6 @@ import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
@@ -413,7 +412,7 @@ final class Decorrelation implements OptimiserPass {
         final boolean isCastRequired = SetOperationCasts.isCastRequired(operation);
         for (int i = output.getColumnCount(), k = 0, n = leftOutput.getColumnCount(); i < n; i++, k++) {
             final int columnId = context.newColumnId();
-            output.add(columnId, leftOutput.getColumnName(i), SetOperationCasts.getOutputType(operation, i, isCastRequired), false);
+            output.add(columnId, leftOutput.getColumnName(i), SetOperationCasts.getCastType(operation, i, isCastRequired), false);
             mapping.push(domains.outerIds().getQuick(k), columnId);
         }
         return operation;

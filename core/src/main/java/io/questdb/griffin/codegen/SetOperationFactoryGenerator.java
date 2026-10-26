@@ -122,7 +122,7 @@ import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
-import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
@@ -717,14 +717,17 @@ final class SetOperationFactoryGenerator {
         );
     }
 
+    /**
+     * Builds the set operation, recording in the frame the factory of its leading branch, the head a decorrelation
+     * domain may read the leading branch of its own input from, see {@link AggregatePlan.SharedRead#SET_OPERATION_HEAD}.
+     */
     RecordCursorFactory generate(GenerationFrame frame, SetOperationPlan operation, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory left = codeGenerator.generate(frame, operation.getLeft(), executionContext);
         RecordCursorFactory right;
         try {
-            final LogicalPlan leftBranch = LogicalPlans.unwrapColumnProjections(operation.getLeft());
-            final int leftHead = leftBranch instanceof SetOperationPlan ? frame.setOperationPlans.indexOf(leftBranch) : -1;
-            frame.setOperationPlans.add(operation);
-            frame.setOperationHeads.add(leftHead >= 0 ? frame.setOperationHeads.getQuick(leftHead) : left);
+            if (!(LogicalPlans.unwrapColumnProjections(operation.getLeft()) instanceof SetOperationPlan)) {
+                frame.addShared(operation.getLeft(), left);
+            }
             right = codeGenerator.generate(frame, operation.getRight(), executionContext);
             if (operation.getRightBranchSort() != null) {
                 right = sortUnionBranch(frame, right, operation.getRightBranchSort(),

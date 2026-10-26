@@ -1258,6 +1258,20 @@ public class MemoryCARWImplTest {
         }
     }
 
+    @Test
+    public void testTruncateZeroInitialSize() {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(1024, 3, MemoryTag.NATIVE_DEFAULT, null, 0)) {
+            mem.putLong(42);
+            Assert.assertEquals(8, mem.size());
+            mem.truncate();
+            Assert.assertEquals(1, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+            mem.putLong(7);
+            Assert.assertEquals(7, mem.getLong(0));
+            Assert.assertEquals(8, mem.size());
+        }
+    }
+
 
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();

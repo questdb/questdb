@@ -70,15 +70,15 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     /**
-     * Memory whose first allocation takes {@code initialSize} bytes, rounded up to a power of two, and which doubles
-     * until it holds one page, then grows by pages as memory with that page size does. An initial size of at least a
-     * page allocates a whole page first.
+     * Memory whose first allocation takes {@code initialSize} bytes, at least one, rounded up to a power of two, and
+     * which doubles until it holds one page, then grows by pages as memory with that page size does. An initial size of
+     * at least a page allocates a whole page first.
      */
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag, String maxPagesConfigKey, long initialSize) {
         this.memoryTag = memoryTag;
         this.maxPages = maxPages;
         this.maxPagesConfigKey = maxPagesConfigKey;
-        this.initialSize = initialSize;
+        this.initialSize = Math.max(initialSize, 1);
         setPageSize(pageSize);
     }
 

@@ -24,10 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -39,8 +44,12 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -48,6 +57,11 @@ import org.junit.Test;
 import java.io.IOException;
 
 public class WalUpdateTest extends AbstractCairoTest {
+    @Test
+    public void testNativeUpdateAuthorizesColumnsAfterDroppedColumn() throws Exception {
+        assertUpdateAuthorizesColumnsAfterDroppedColumn(false);
+    }
+
     @Test
     public void testNativeUpdateRemapsDeletedWriterColumns() throws Exception {
         assertMemoryLeak(() -> {
@@ -78,6 +92,11 @@ public class WalUpdateTest extends AbstractCairoTest {
                         """);
             }
         });
+    }
+
+    @Test
+    public void testWalUpdateAuthorizesColumnsAfterDroppedColumn() throws Exception {
+        assertUpdateAuthorizesColumnsAfterDroppedColumn(true);
     }
 
     @Test
@@ -136,6 +155,22 @@ public class WalUpdateTest extends AbstractCairoTest {
         });
     }
 
+    private static SecurityContext newRecordingSecurityContext(StringSink authorized) {
+        return new AllowAllSecurityContext() {
+            @Override
+            public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                for (int i = 0, n = columnNames.size(); i < n; i++) {
+                    authorized.put(columnNames.getQuick(i)).put(',');
+                }
+            }
+
+            @Override
+            public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+                authorized.put("*,");
+            }
+        };
+    }
+
     private void assertRows(CairoEngine statementEngine, SqlExecutionContext executionContext, String sql, String expected) throws Exception {
         try (
                 SqlCompiler compiler = statementEngine.getSqlCompiler();
@@ -143,6 +178,66 @@ public class WalUpdateTest extends AbstractCairoTest {
         ) {
             assertFactory(factory).withContext(executionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
         }
+    }
+
+    private void assertUpdateAuthorizesColumnsAfterDroppedColumn(boolean isWal) throws Exception {
+        assertMemoryLeak(() -> {
+            final StringSink statementAuthorized = new StringSink();
+            final StringSink applyAuthorized = new StringSink();
+            final SecurityContext applyContext = newRecordingSecurityContext(applyAuthorized);
+            final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+                @Override
+                public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                    return new SecurityContextFactory() {
+                        @Override
+                        public SecurityContext getInstance(@NotNull PrincipalContext principalContext, byte interfaceId) {
+                            return applyContext;
+                        }
+
+                        @Override
+                        public SecurityContext getRootContext() {
+                            return applyContext;
+                        }
+                    };
+                }
+            };
+            try (
+                    CairoEngine statementEngine = new CairoEngine(new DefaultTestCairoConfiguration(temp.newFolder().getAbsolutePath()) {
+                        @Override
+                        public @NotNull FactoryProvider getFactoryProvider() {
+                            return factoryProvider;
+                        }
+                    });
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(statementEngine, 1)
+                            .with(newRecordingSecurityContext(statementAuthorized))
+            ) {
+                statementEngine.load();
+                statementEngine.execute("CREATE TABLE lp_update (id INT, unused INT, source INT, copied INT, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"), executionContext);
+                statementEngine.execute("""
+                        INSERT INTO lp_update VALUES
+                            (1,0,10,0,'2020-01-01T00:00:00.000000Z'),
+                            (2,0,20,0,'2020-01-01T00:00:01.000000Z')
+                        """, executionContext);
+                drainWalQueue(statementEngine);
+                statementEngine.execute("ALTER TABLE lp_update DROP COLUMN unused", executionContext);
+                drainWalQueue(statementEngine);
+                statementAuthorized.clear();
+                applyAuthorized.clear();
+
+                statementEngine.execute("UPDATE lp_update SET copied = source WHERE ts > '2020-01-01T00:00:00.000000Z'", executionContext);
+                drainWalQueue(statementEngine);
+
+                TestUtils.assertEquals(isWal ? "" : "source,ts,", statementAuthorized);
+                TestUtils.assertEquals(isWal ? "source,ts," : "", applyAuthorized);
+                Assert.assertFalse(statementEngine.getTableSequencerAPI().isSuspended(statementEngine.verifyTableName("lp_update")));
+                assertRows(statementEngine, executionContext, "SELECT id,source,copied FROM lp_update ORDER BY id", """
+                        id	source	copied
+                        1	10	0
+                        2	20	20
+                        """);
+            }
+        });
     }
 
     private CairoEngine newUpdateCountingEngine(int[] updateCounts) throws IOException {

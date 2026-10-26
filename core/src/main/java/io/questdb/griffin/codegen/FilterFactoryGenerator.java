@@ -26,7 +26,6 @@ package io.questdb.griffin.codegen;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
@@ -43,7 +42,6 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.PlanTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
@@ -188,6 +186,7 @@ final class FilterFactoryGenerator {
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
+            int producerLo,
             SqlExecutionContext executionContext,
             boolean isUpdate,
             boolean isParallel,
@@ -196,7 +195,7 @@ final class FilterFactoryGenerator {
             boolean isConstantFolded
     ) throws SqlException {
         if (filter.isConstant() && isConstantFolded) {
-            return generateConstantFilter(base, filter);
+            return generateConstantFilter(frame, producerLo, base, filter);
         }
         if (filter.isRuntimeConstant()) {
             return new RuntimeConstGateRecordCursorFactory(base, filter);
@@ -305,29 +304,25 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Consumes the factory and a constant Boolean filter, including on failure. The empty result
-     * copies the metadata container before closing its source; closeable source metadata may own
-     * lookup state that the result must not retain.
+     * Consumes the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, and
+     * a constant Boolean filter, including on failure: keeps the factory when the filter is true, else replaces it with
+     * an empty one, see {@link GenerationFrame#emptied}.
      */
-    static RecordCursorFactory generateConstantFilter(RecordCursorFactory factory, Function filter) {
-        final RecordCursorFactory result;
+    static RecordCursorFactory generateConstantFilter(GenerationFrame frame, int producerLo, RecordCursorFactory factory, Function filter) {
+        final boolean isTrue;
         try {
-            result = filter.getBool(null)
-                    ? factory
-                    : new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(factory.getMetadata()));
+            isTrue = filter.getBool(null);
         } catch (Throwable th) {
             Misc.free(factory, th);
             Misc.free(filter, th);
             throw th;
         }
-
-        Throwable failure = result != factory ? Misc.freeBestEffort(null, factory) : null;
-        failure = Misc.freeBestEffort(failure, filter);
+        final Throwable failure = Misc.freeBestEffort(null, filter);
         if (failure != null) {
-            Misc.free(result, failure);
+            Misc.free(factory, failure);
             CairoException.rethrowCleanupFailure(failure);
         }
-        return result;
+        return isTrue ? factory : frame.emptied(producerLo, frame.producerMark(), factory);
     }
 
     /**
@@ -388,7 +383,8 @@ final class FilterFactoryGenerator {
 
     /**
      * Consumes both executable roots on entry, including on failure; builds the parallel filter when
-     * {@code isParallel}, as operator planning records it, else the serial one.
+     * {@code isParallel}, as operator planning records it, else the serial one. The base holds the decorrelation
+     * domains the generator placed from {@code producerLo} on, see {@link GenerationFrame#producerMark}.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
@@ -396,13 +392,14 @@ final class FilterFactoryGenerator {
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
+            int producerLo,
             SqlExecutionContext executionContext,
             boolean isUpdate,
             boolean isParallel,
             BoundExpression limitCount,
             boolean enablePreTouch
     ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, executionContext, isUpdate, isParallel, limitCount, enablePreTouch, true);
+        return generate(frame, predicate, input, base, filter, producerLo, executionContext, isUpdate, isParallel, limitCount, enablePreTouch, true);
     }
 
     /**
@@ -477,7 +474,7 @@ final class FilterFactoryGenerator {
 
     /**
      * Instantiates the filter the join step applies to its joined rows over the factory and filters the factory with
-     * it, see {@link #generatePostJoin(GenerationFrame, JoinInput, BoundExpression, RecordCursorFactory, Function, SqlExecutionContext)}.
+     * it, see {@link #generatePostJoin(GenerationFrame, JoinInput, BoundExpression, RecordCursorFactory, Function, int, SqlExecutionContext)}.
      * Consumes the factory on entry, including on failure.
      */
     RecordCursorFactory generatePostJoin(
@@ -485,6 +482,7 @@ final class FilterFactoryGenerator {
             JoinInput step,
             BoundExpression predicate,
             RecordCursorFactory base,
+            int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final Function filter;
@@ -494,12 +492,13 @@ final class FilterFactoryGenerator {
             Misc.free(base, th);
             throw th;
         }
-        return generatePostJoin(frame, step, predicate, base, filter, executionContext);
+        return generatePostJoin(frame, step, predicate, base, filter, producerLo, executionContext);
     }
 
     /**
-     * Filters the factory on one thread with the filter the join step applies to its joined rows, folding a constant
-     * as {@link PlanToFactoryRules#isPostJoinFilterFolded} decides. Consumes both executable roots on entry, including on
+     * Filters the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, on one
+     * thread with the filter the join step applies to its joined rows, folding a constant as
+     * {@link PlanToFactoryRules#isPostJoinFilterFolded} decides. Consumes both executable roots on entry, including on
      * failure.
      */
     RecordCursorFactory generatePostJoin(
@@ -508,9 +507,10 @@ final class FilterFactoryGenerator {
             BoundExpression predicate,
             RecordCursorFactory base,
             Function filter,
+            int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return generate(frame, predicate, step.getOutput(), base, filter, executionContext, false, false, null,
+        return generate(frame, predicate, step.getOutput(), base, filter, producerLo, executionContext, false, false, null,
                 false, PlanToFactoryRules.isPostJoinFilterFolded(step, predicate));
     }
 

@@ -122,10 +122,10 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * The input a light INNER hash join step hashes, which operator planning records for a step whose master side is
-     * {@link MasterSide#SMALLER} when it knows a row bound of both inputs, see {@link PhysicalProperties#rowBound}. Null
-     * for a step that always hashes its slave, and for one that leaves the choice to execution, which hashes the input
-     * whose cursor reports fewer rows.
+     * The input a light INNER hash join step hashes, which operator planning records once it settles the step: the
+     * slave of a step whose master side is {@link MasterSide#FIXED}, and for one the smaller input drives, the input
+     * with the smaller row bound or {@link BuildSide#SMALLER}, which leaves the choice to execution. Null for a step of
+     * another algorithm or kind, and for one operator planning has not settled.
      */
     public BuildSide getBuildSide() {
         return buildSide;
@@ -471,17 +471,23 @@ public final class JoinInput implements Mutable {
      * An outer join hashes the input it NULL-extends.
      */
     public enum BuildSide {
-        MASTER, SLAVE;
+        MASTER,
+        SLAVE,
+        /**
+         * The input whose cursor reports fewer rows when the light INNER hash join opens, a master only when its
+         * factory supports random access, and the slave when either cursor cannot tell.
+         */
+        SMALLER;
 
         /**
-         * The input to hash so that the hash holds the fewer rows: the master when it holds fewer rows than the slave,
-         * else the slave; null when either row count is unknown, -1.
+         * The input to hash so that the hash holds the fewer rows, {@code tie} when both inputs hold as many rows, and
+         * {@link #SMALLER} when either row count is unknown, -1.
          */
-        public static BuildSide smaller(long masterRows, long slaveRows) {
+        public static BuildSide smaller(long masterRows, long slaveRows, BuildSide tie) {
             if (masterRows < 0 || slaveRows < 0) {
-                return null;
+                return SMALLER;
             }
-            return masterRows < slaveRows ? MASTER : SLAVE;
+            return masterRows < slaveRows ? MASTER : masterRows > slaveRows ? SLAVE : tie;
         }
     }
 

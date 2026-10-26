@@ -40,33 +40,15 @@ import io.questdb.std.ObjList;
 /**
  * A table as one compilation plans it: the columns of the metadata version the binder bound, and the access facts of
  * the transaction the compiler read last. {@link PlanTables} copies both from a reader it releases at once, so the
- * binder, the optimiser and the code generator read this copy rather than a reader. The copy keeps the facts of every
- * column in flat lists, which the next compilation refills, and the factories the compilation generates get their own
- * copies of the columns they read: {@link #newColumnMetadata(int)} and {@link #getTableDescriptor()}.
+ * binder, the optimiser and the code generator read this copy rather than a reader. The copy keeps the facts of each
+ * column in a holder, which the next compilation refills, and the factories the compilation generates get their own
+ * copies of the columns they read: {@link #newColumnMetadata(int, String)} and {@link #getTableDescriptor()}.
  */
 public final class PlanTable implements Mutable, TableAccessInfo {
-    private static final int COVERED_HI = 9;
-    private static final int COVERED_LO = 8;
-    private static final int FACT_COUNT = 10;
-    private static final int FLAGS = 7;
-    private static final int FLAG_DEDUP_KEY = 1 << 9;
-    private static final int FLAG_SYMBOL_CACHE = 1 << 10;
-    private static final int FLAG_SYMBOL_TABLE_STATIC = 1 << 8;
-    private static final int INDEX_TYPE_MASK = 0xff;
-    private static final int INDEX_VALUE_BLOCK_CAPACITY = 4;
-    private static final int ORIGINAL_WRITER_INDEX = 2;
-    private static final int PARQUET_ENCODING_CONFIG = 6;
-    private static final int REPLACING_INDEX = 3;
-    private static final int SYMBOL_CAPACITY = 5;
-    private static final int TYPE = 0;
-    private static final int WRITER_INDEX = 1;
-    private final IntList columnFacts = new IntList();
     private final LowerCaseCharSequenceIntHashMap columnIndexes = new LowerCaseCharSequenceIntHashMap();
-    private final ObjList<String> columnNames = new ObjList<>();
-    private final IntList coveredWriterIndexes = new IntList();
-    private final IntList symbolCapacities = new IntList();
+    private final ObjList<Column> columns = new ObjList<>();
     private final IntList symbolColumnIndexes = new IntList();
-    private final IntList symbolCounts = new IntList();
+    private int columnCount;
     private TableDescriptor descriptor;
     private boolean hasConvertedColumns;
     private boolean hasParquetConvertedColumns;
@@ -78,17 +60,18 @@ public final class PlanTable implements Mutable, TableAccessInfo {
     private long rowCount;
     private TableToken tableToken;
     private int timestampIndex;
+    private int timestampType;
 
     @Override
     public void clear() {
-        columnNames.clear();
+        columnCount = 0;
         columnIndexes.clear();
         descriptor = null;
         tableToken = null;
     }
 
     public int getColumnCount() {
-        return columnNames.size();
+        return columnCount;
     }
 
     @Override
@@ -97,29 +80,23 @@ public final class PlanTable implements Mutable, TableAccessInfo {
     }
 
     public String getColumnName(int columnIndex) {
-        return columnNames.getQuick(columnIndex);
+        return columns.getQuick(columnIndex).name;
     }
 
     @Override
     public int getColumnType(int columnIndex) {
-        return fact(columnIndex, TYPE);
+        return columns.getQuick(columnIndex).type;
     }
 
     @Override
     public int getCoveredPosition(int keyColumnIndex, int columnIndex) {
-        final int lo = fact(keyColumnIndex, COVERED_LO);
-        final int writerIndex = getWriterIndex(columnIndex);
-        for (int i = lo, hi = fact(keyColumnIndex, COVERED_HI); i < hi; i++) {
-            if (coveredWriterIndexes.getQuick(i) == writerIndex) {
-                return i - lo;
-            }
-        }
-        return -1;
+        final IntList covered = columns.getQuick(keyColumnIndex).coveredWriterIndexes;
+        return covered.indexOf(getWriterIndex(columnIndex), 0, covered.size());
     }
 
     @Override
     public byte getIndexType(int columnIndex) {
-        return (byte) (fact(columnIndex, FLAGS) & INDEX_TYPE_MASK);
+        return columns.getQuick(columnIndex).indexType;
     }
 
     public long getMetadataVersion() {
@@ -145,12 +122,12 @@ public final class PlanTable implements Mutable, TableAccessInfo {
 
     @Override
     public int getSymbolCapacity(int columnIndex) {
-        return symbolCapacities.getQuick(columnIndex);
+        return columns.getQuick(columnIndex).symbolCapacity;
     }
 
     @Override
     public int getSymbolCount(int columnIndex) {
-        return symbolCounts.getQuick(columnIndex);
+        return columns.getQuick(columnIndex).symbolCount;
     }
 
     /**
@@ -158,8 +135,11 @@ public final class PlanTable implements Mutable, TableAccessInfo {
      */
     public TableDescriptor getTableDescriptor() {
         if (descriptor == null) {
-            descriptor = new TableDescriptor(new ObjList<>(columnNames), timestampIndex,
-                    timestampIndex > -1 ? getColumnType(timestampIndex) : ColumnType.NULL, hasConvertedColumns);
+            final ObjList<String> columnNames = new ObjList<>(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                columnNames.add(columns.getQuick(i).name);
+            }
+            descriptor = new TableDescriptor(columnNames, timestampIndex, timestampType, hasConvertedColumns);
         }
         return descriptor;
     }
@@ -174,12 +154,12 @@ public final class PlanTable implements Mutable, TableAccessInfo {
 
     @Override
     public int getWriterIndex(int columnIndex) {
-        return fact(columnIndex, WRITER_INDEX);
+        return columns.getQuick(columnIndex).writerIndex;
     }
 
     @Override
     public boolean hasCoveringIndex(int columnIndex) {
-        return fact(columnIndex, COVERED_HI) > fact(columnIndex, COVERED_LO);
+        return columns.getQuick(columnIndex).coveredWriterIndexes.size() > 0;
     }
 
     @Override
@@ -193,43 +173,14 @@ public final class PlanTable implements Mutable, TableAccessInfo {
 
     @Override
     public boolean isSymbolTableStatic(int columnIndex) {
-        return (fact(columnIndex, FLAGS) & FLAG_SYMBOL_TABLE_STATIC) != 0;
+        return columns.getQuick(columnIndex).isSymbolTableStatic;
     }
 
     /**
-     * A new copy of the column at {@code columnIndex}, for the metadata of a factory that reads it.
+     * A new copy of the column at {@code columnIndex} named {@code name}, for the metadata of a factory that reads it.
      */
-    public TableColumnMetadata newColumnMetadata(int columnIndex) {
-        final int flags = fact(columnIndex, FLAGS);
-        final TableColumnMetadata column = new TableColumnMetadata(
-                columnNames.getQuick(columnIndex),
-                fact(columnIndex, TYPE),
-                (byte) (flags & INDEX_TYPE_MASK),
-                fact(columnIndex, INDEX_VALUE_BLOCK_CAPACITY),
-                (flags & FLAG_SYMBOL_TABLE_STATIC) != 0,
-                null,
-                fact(columnIndex, WRITER_INDEX),
-                (flags & FLAG_DEDUP_KEY) != 0,
-                fact(columnIndex, REPLACING_INDEX),
-                (flags & FLAG_SYMBOL_CACHE) != 0,
-                fact(columnIndex, SYMBOL_CAPACITY),
-                fact(columnIndex, ORIGINAL_WRITER_INDEX)
-        );
-        column.setParquetEncodingConfig(fact(columnIndex, PARQUET_ENCODING_CONFIG));
-        final int lo = fact(columnIndex, COVERED_LO);
-        if (lo > -1) {
-            final int hi = fact(columnIndex, COVERED_HI);
-            final IntList covered = new IntList(hi - lo);
-            for (int i = lo; i < hi; i++) {
-                covered.add(coveredWriterIndexes.getQuick(i));
-            }
-            column.setCoveringColumnIndices(covered);
-        }
-        return column;
-    }
-
-    private int fact(int columnIndex, int fact) {
-        return columnFacts.getQuick(columnIndex * FACT_COUNT + fact);
+    public TableColumnMetadata newColumnMetadata(int columnIndex, String name) {
+        return columns.getQuick(columnIndex).newColumnMetadata(name);
     }
 
     int getPosition() {
@@ -247,49 +198,23 @@ public final class PlanTable implements Mutable, TableAccessInfo {
         metadataVersion = readerMetadata.getMetadataVersion();
         partitionBy = readerMetadata.getPartitionBy();
         timestampIndex = readerMetadata.getTimestampIndex();
-        final int columnCount = readerMetadata.getColumnCount();
-        columnNames.clear();
+        timestampType = readerMetadata.getTimestampType();
+        columnCount = readerMetadata.getColumnCount();
         columnIndexes.clear();
-        columnFacts.setPos(columnCount * FACT_COUNT);
-        coveredWriterIndexes.clear();
         symbolColumnIndexes.clear();
         hasConvertedColumns = false;
+        for (int i = columns.size(); i < columnCount; i++) {
+            columns.add(new Column());
+        }
         for (int i = 0; i < columnCount; i++) {
             final TableColumnMetadata column = readerMetadata.getColumnMetadata(i);
-            final String name = column.getColumnName();
-            final int type = column.getColumnType();
-            final int writerIndex = column.getWriterIndex();
-            final int originalWriterIndex = column.getOriginalWriterIndex();
-            final int facts = i * FACT_COUNT;
-            columnNames.add(name);
-            columnIndexes.put(name, i);
-            columnFacts.setQuick(facts + TYPE, type);
-            columnFacts.setQuick(facts + WRITER_INDEX, writerIndex);
-            columnFacts.setQuick(facts + ORIGINAL_WRITER_INDEX, originalWriterIndex);
-            columnFacts.setQuick(facts + REPLACING_INDEX, column.getReplacingIndex());
-            columnFacts.setQuick(facts + INDEX_VALUE_BLOCK_CAPACITY, column.getIndexValueBlockCapacity());
-            columnFacts.setQuick(facts + SYMBOL_CAPACITY, column.getSymbolCapacity());
-            columnFacts.setQuick(facts + PARQUET_ENCODING_CONFIG, column.getParquetEncodingConfig());
-            columnFacts.setQuick(facts + FLAGS, (column.getIndexType() & INDEX_TYPE_MASK)
-                    | (column.isSymbolTableStatic() ? FLAG_SYMBOL_TABLE_STATIC : 0)
-                    | (column.isDedupKeyFlag() ? FLAG_DEDUP_KEY : 0)
-                    | (column.isSymbolCacheFlag() ? FLAG_SYMBOL_CACHE : 0));
-            final IntList covered = column.getCoveringColumnIndices();
-            if (covered != null) {
-                columnFacts.setQuick(facts + COVERED_LO, coveredWriterIndexes.size());
-                coveredWriterIndexes.addAll(covered);
-                columnFacts.setQuick(facts + COVERED_HI, coveredWriterIndexes.size());
-            } else {
-                columnFacts.setQuick(facts + COVERED_LO, -1);
-                columnFacts.setQuick(facts + COVERED_HI, -1);
-            }
-            hasConvertedColumns |= writerIndex != originalWriterIndex;
-            if (ColumnType.isSymbol(type)) {
+            columns.getQuick(i).of(column);
+            columnIndexes.put(column.getColumnName(), i);
+            hasConvertedColumns |= column.isTypeConverted();
+            if (ColumnType.isSymbol(column.getColumnType())) {
                 symbolColumnIndexes.add(i);
             }
         }
-        symbolCounts.setAll(columnCount, 0);
-        symbolCapacities.setAll(columnCount, 0);
         readFacts(reader);
     }
 
@@ -305,8 +230,61 @@ public final class PlanTable implements Mutable, TableAccessInfo {
         for (int i = 0, n = symbolColumnIndexes.size(); i < n; i++) {
             final int columnIndex = symbolColumnIndexes.getQuick(i);
             final SymbolMapReader symbols = reader.getSymbolMapReader(columnIndex);
-            symbolCounts.setQuick(columnIndex, symbols.getSymbolCount());
-            symbolCapacities.setQuick(columnIndex, symbols.getSymbolCapacity());
+            final Column column = columns.getQuick(columnIndex);
+            column.symbolCount = symbols.getSymbolCount();
+            column.symbolCapacity = symbols.getSymbolCapacity();
+        }
+    }
+
+    /**
+     * The facts of one column: the metadata the binder bound, and the symbol table facts of the transaction the
+     * compiler read last, which {@link #readFacts} refreshes.
+     */
+    private static final class Column {
+        private final IntList coveredWriterIndexes = new IntList(0);
+        private int declaredSymbolCapacity;
+        private byte indexType;
+        private int indexValueBlockCapacity;
+        private boolean isDedupKey;
+        private boolean isSymbolCached;
+        private boolean isSymbolTableStatic;
+        private String name;
+        private int originalWriterIndex;
+        private int parquetEncodingConfig;
+        private int replacingIndex;
+        private int symbolCapacity;
+        private int symbolCount;
+        private int type;
+        private int writerIndex;
+
+        private TableColumnMetadata newColumnMetadata(String name) {
+            final TableColumnMetadata column = new TableColumnMetadata(name, type, indexType, indexValueBlockCapacity,
+                    isSymbolTableStatic, null, writerIndex, isDedupKey, replacingIndex, isSymbolCached, declaredSymbolCapacity,
+                    originalWriterIndex);
+            column.setParquetEncodingConfig(parquetEncodingConfig);
+            return column;
+        }
+
+        private void of(TableColumnMetadata column) {
+            name = column.getColumnName();
+            type = column.getColumnType();
+            indexType = column.getIndexType();
+            indexValueBlockCapacity = column.getIndexValueBlockCapacity();
+            isSymbolTableStatic = column.isSymbolTableStatic();
+            writerIndex = column.getWriterIndex();
+            isDedupKey = column.isDedupKeyFlag();
+            replacingIndex = column.getReplacingIndex();
+            isSymbolCached = column.isSymbolCacheFlag();
+            declaredSymbolCapacity = column.getSymbolCapacity();
+            originalWriterIndex = column.getOriginalWriterIndex();
+            parquetEncodingConfig = column.getParquetEncodingConfig();
+            coveredWriterIndexes.clear();
+            final IntList covered = column.getCoveringColumnIndices();
+            if (covered != null) {
+                coveredWriterIndexes.addAll(covered);
+            }
+            symbolCount = 0;
+            symbolCapacity = 0;
         }
     }
 }

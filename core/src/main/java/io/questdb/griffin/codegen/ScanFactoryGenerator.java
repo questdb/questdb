@@ -316,7 +316,7 @@ final class ScanFactoryGenerator {
             stolenFilter.of(residual, scan.getOutput(), filter, isParallel && FilterFactoryGenerator.isJitApplicable(scan.isUpdate(), executionContext));
             return base;
         }
-        return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, executionContext,
+        return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, frame.producerMark(), executionContext,
                 scan.isUpdate(), isParallel, scan.getFilterLimit(), scan.isResidualPreTouched());
     }
 
@@ -464,11 +464,8 @@ final class ScanFactoryGenerator {
                                                             PlanTable table) {
         final ColumnExpression key = (ColumnExpression) aggregate.getGroupingExpressions().getQuick(0);
         final int index = scan.getSourceColumnIndexes().getQuick(scan.getOutput().getColumnIndexById(key.getColumnId()));
-        final TableColumnMetadata column = table.newColumnMetadata(index);
-        final GenericRecordMetadata metadata = new GenericRecordMetadata().add(new TableColumnMetadata(
-                Chars.toString(aggregate.getOutput().getColumnName(0)), key.getDataType(), column.getIndexType(),
-                column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), null, column.getWriterIndex(),
-                false, 0, column.isSymbolCacheFlag(), column.getSymbolCapacity()));
+        final GenericRecordMetadata metadata = new GenericRecordMetadata()
+                .add(table.newColumnMetadata(index, Chars.toString(aggregate.getOutput().getColumnName(0))));
         final IntList indexes = new IntList();
         indexes.add(index);
         if (scanIntervals != null && table.getTimestampIndex() != index) {
@@ -486,11 +483,9 @@ final class ScanFactoryGenerator {
         final IntList indexes = new IntList(scan.getOutput().getColumnCount());
         final IntList shifts = new IntList(scan.getOutput().getColumnCount());
         for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
-            // UPDATE binds writer metadata, whose deleted-column slots are not
-            // the dense reader positions. Resolve the final layout by bound name.
-            final int sourceIndex = table.getColumnIndex(scan.getOutput().getColumnName(i));
+            final int sourceIndex = scan.getSourceColumnIndexes().getQuick(i);
             indexes.add(sourceIndex);
-            metadata.add(table.newColumnMetadata(sourceIndex));
+            metadata.add(table.newColumnMetadata(sourceIndex, table.getColumnName(sourceIndex)));
             shifts.add(Numbers.msb(ColumnType.sizeOf(table.getColumnType(sourceIndex))));
         }
         metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));

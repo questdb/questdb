@@ -247,28 +247,23 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 Assert.assertEquals(sql + '\n' + plan, isBuildChoice, plan.contains("Hash Join Group By Build Choice"));
                                 Assert.assertTrue(sql + '\n' + plan, plan.contains("inputSwapped: true"));
                                 Assert.assertEquals(sql, 10, builtRows(factory, context));
-                                // At twice the rows of d, a reused factory that builds f keeps building it,
-                                // and the build choice builds d, which has fewer rows in its intervals.
-                                insertFactRows(1_990, "2020-01-02");
-                                Assert.assertEquals(sql, isBuildChoice ? 1_000 : 2_000, builtRows(factory, context));
+                                // The scans keep the build of f while f holds at most 1_000 rows, as many
+                                // as d, and d at least 500, so the build never holds more than twice the
+                                // probe's rows. The build choice keeps building f on the tie.
+                                insertFactRows(990, "2020-01-02");
+                                Assert.assertEquals(sql, 1_000, builtRows(factory, context));
                                 insertFactRows(1, "2020-01-03");
-                                if (isBuildChoice) {
-                                    // The orientation that builds d does not presize, and asks for nothing.
-                                    Assert.assertEquals(sql, 1_000, builtRows(factory, context));
-                                } else {
-                                    // f has more than twice the rows of d: the factory asks the caches
-                                    // to compile the query again rather than build f.
-                                    try {
-                                        builtRows(factory, context);
-                                        Assert.fail(sql + ": a factory that would build the larger table must ask for a recompile");
-                                    } catch (TableReferenceOutOfDateException e) {
-                                        TestUtils.assertContains(e.getFlyweightMessage(), "[table=f]");
-                                        Assert.assertNull(context.getMemoryTracker());
-                                        Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                                    }
+                                // Past that, the factory asks the caches to compile the query again.
+                                try {
+                                    builtRows(factory, context);
+                                    Assert.fail(sql + ": a factory past the row counts its build holds for must ask for a recompile");
+                                } catch (TableReferenceOutOfDateException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "row count has changed [table=f]");
+                                    Assert.assertNull(context.getMemoryTracker());
+                                    Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                 }
                             }
-                            // A new compile builds d.
+                            // f now holds more rows than d, so a new compile builds d.
                             assertDifferential(sql, context, true);
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 final String plan = plan(factory, context);
@@ -353,32 +348,33 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     assertBuildSize(sql, 500, 10, 1_024 * 8 + 500 * 16, context);
                     try (RecordCursorFactory factory = engine.select(sql, context)) {
                         Assert.assertEquals(sql, 500, builtRows(factory, context));
-                        // Twice the rows of pa keep the presized key table of a reused factory.
-                        execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(1_500)");
+                        // The scans keep the presized build of pb while pb holds at most 1_000 rows, as
+                        // many as pa, and pa at least 500.
+                        execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(500)");
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(sql, 4_096 * 8 + 2_000 * 16, fused(factory).getAtom().getFrozenBuild().getSizeInBytes());
+                            Assert.assertEquals(sql, 2_048 * 8 + 1_000 * 16, fused(factory).getAtom().getFrozenBuild().getSizeInBytes());
                         }
-                        // A new compile of the RIGHT join keeps the ordinary plan, which hashes pa, once
-                        // pb, the table before the join, holds more rows than pa. The LEFT join keeps
-                        // building pb.
-                        assertDifferential(sql, context, !isRight);
+                        // A new compile fuses both joins while pb holds no more rows than pa.
+                        assertDifferential(sql, context, true);
                         execute("INSERT INTO pb VALUES (1, 1)");
                         try {
                             builtRows(factory, context);
-                            Assert.fail(sql + ": a factory that presizes for the larger table must ask for a recompile");
+                            Assert.fail(sql + ": a factory past the row counts its presized build holds for must ask for a recompile");
                         } catch (TableReferenceOutOfDateException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "[table=pb]");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "row count has changed [table=pb]");
                             Assert.assertNull(context.getMemoryTracker());
                             Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                         }
                     }
                     if (isRight) {
-                        // The new compile keeps the ordinary plan.
+                        // A new compile of the RIGHT join keeps the ordinary plan, which hashes pa, as pb,
+                        // the table before the join, holds more rows than pa.
                         assertDifferential(sql, context, false);
                     } else {
-                        // A new compile lets the key table grow to the ten keys.
-                        assertBuildSize(sql, 2_001, 10, 64 * 8 + 2_001 * 16, context);
+                        // A new compile of the LEFT join keeps building pb and lets its key table grow to
+                        // the ten keys.
+                        assertBuildSize(sql, 1_001, 10, 64 * 8 + 1_001 * 16, context);
                     }
                 }
             }
@@ -411,13 +407,15 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 0\t5\t1\t10.0
                                 1\t5\t1\t1.0
                                 """);
-                        // At twice the rows of p, a reused factory keeps the fused plan, while a new
-                        // compile keeps the ordinary plan.
-                        execute("INSERT INTO b SELECT (x % 10 + 1)::INT, 100 + x, 'y' || x FROM long_sequence(10)");
+                        // The scans keep the fused plan while b holds at most 16 rows and p at least 8,
+                        // the square root of half the product of the two row counts. At 16 rows, a
+                        // reused factory keeps the fused plan, while a new compile, whose build would
+                        // hold more rows than p, keeps the ordinary plan.
+                        execute("INSERT INTO b SELECT (x % 10 + 1)::INT, 100 + x, 'y' || x FROM long_sequence(6)");
                         final String expected = """
                                 k\tc\tm\ts
                                 0\t5\t2\t111.0
-                                1\t6\t2\t111.0
+                                1\t5\t1\t1.0
                                 """;
                         assertFactory(factory).withContext(context).expectSize().returns(expected);
                         assertQuery(sql)
@@ -426,9 +424,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 .withPlanNotContaining("Hash Join Group By")
                                 .expectSize()
                                 .returns(expected);
-                        // Past twice the rows of p, the factory asks the caches to compile the query
-                        // again, as the HTTP and PG query caches run a cached factory, and the new
-                        // compile keeps the ordinary plan.
+                        // Past 16 rows, the factory asks the caches to compile the query again, as the
+                        // HTTP and PG query caches run a cached factory, and the new compile keeps the
+                        // ordinary plan.
                         execute("INSERT INTO b VALUES (5, 1_000, 'z1')");
                         int recompileCount = 0;
                         while (true) {
@@ -436,7 +434,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 result(factory, context);
                                 break;
                             } catch (TableReferenceOutOfDateException e) {
-                                TestUtils.assertContains(e.getFlyweightMessage(), "[table=b]");
+                                TestUtils.assertContains(e.getFlyweightMessage(), "row count has changed [table=b]");
                                 Assert.assertNull(context.getMemoryTracker());
                                 Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                 Assert.assertEquals(sql, 0, recompileCount++);
@@ -450,7 +448,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         assertFactory(factory).withContext(context).expectSize().returns("""
                                 k\tc\tm\ts
                                 0\t5\t2\t111.0
-                                1\t6\t3\t1111.0
+                                1\t5\t2\t1001.0
                                 """);
                     } finally {
                         Misc.free(factory);
@@ -1224,15 +1222,15 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             // A second row of key 5 and of the NULL key.
                             execute("INSERT INTO cb VALUES (5, 5, 'S5', 'V5', 7, '2020-01-02'), (NULL, NULL, NULL, NULL, 8, '2020-01-02')");
                             assertCountExecution(factory, 800, true, context);
-                            // The probe goes empty under a build that still repeats its keys. The build
-                            // table then holds more than twice the rows of the probe table, so the factory
-                            // asks for a recompile rather than build the larger table.
+                            // The probe goes empty under a build that still repeats its keys. The probe
+                            // table then holds fewer rows than its scan keeps for the build of cb, so the
+                            // factory asks for a recompile rather than build the larger table.
                             execute("TRUNCATE TABLE ca");
                             try {
                                 assertCountExecution(factory, 0, true, context);
                                 Assert.fail(on + ": a factory that would build the larger table must ask for a recompile");
                             } catch (TableReferenceOutOfDateException e) {
-                                TestUtils.assertContains(e.getFlyweightMessage(), "[table=cb]");
+                                TestUtils.assertContains(e.getFlyweightMessage(), "row count has changed [table=ca]");
                                 Assert.assertNull(context.getMemoryTracker());
                                 Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             }
@@ -1783,8 +1781,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             factory = engine.select(sql, context);
                         }
                     }
-                    // big outgrew twice the rows of tiny, and the new compile keeps the ordinary plan,
-                    // which hashes tiny.
+                    // big outgrew the rows its scan keeps for the build, and the new compile keeps the
+                    // ordinary plan, which hashes tiny.
                     Assert.assertEquals(1, recompileCount);
                     final String recompiledPlan = plan(factory, context);
                     Assert.assertTrue(recompiledPlan, recompiledPlan.contains("Hash Right Outer Join Light"));

@@ -27,6 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Function;
@@ -35,6 +38,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanTable;
+import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.StrBindVariable;
@@ -242,6 +247,49 @@ public class PlanTablesTest extends AbstractCairoTest {
                     Assert.assertTrue(e.isTableDoesNotExist());
                 }
                 Assert.assertEquals(0, engine.getBusyReaderCount());
+            }
+        });
+    }
+
+    @Test
+    public void testFactoryColumnCopiesAgree() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        s SYMBOL CAPACITY 512 NOCACHE,
+                        v DOUBLE PARQUET(plain, zstd(3)),
+                        x INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, s)
+                    """);
+            execute("ALTER TABLE t ALTER COLUMN x TYPE LONG");
+            execute("ALTER TABLE t ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final PlanTables tables = new PlanTables();
+            final PlanTable table = tables.acquire(token, 0, sqlExecutionContext);
+            try (TableReader reader = engine.getReader(token)) {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                Assert.assertEquals(metadata.getMetadataVersion(), table.getMetadataVersion());
+                Assert.assertEquals(metadata.getColumnCount(), table.getColumnCount());
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    assertColumnCopy(TableColumnMetadata.copyOf(metadata, i, metadata.getColumnName(i)),
+                            table.newColumnMetadata(i, table.getColumnName(i)));
+                }
+                final TableColumnMetadata s = metadata.getColumnMetadata(metadata.getColumnIndex("s"));
+                Assert.assertTrue(s.isCovering());
+                Assert.assertTrue(s.isDedupKeyFlag());
+                Assert.assertFalse(s.isSymbolCacheFlag());
+                Assert.assertEquals(512, s.getSymbolCapacity());
+                Assert.assertNotEquals(0, metadata.getColumnMetadata(metadata.getColumnIndex("v")).getParquetEncodingConfig());
+                Assert.assertTrue(metadata.getColumnMetadata(metadata.getColumnIndex("x")).isTypeConverted());
+                Assert.assertTrue(table.hasCoveringIndex(metadata.getColumnIndex("s")));
+                Assert.assertEquals(0, table.getCoveredPosition(metadata.getColumnIndex("s"), metadata.getColumnIndex("v")));
+                Assert.assertEquals(-1, table.getCoveredPosition(metadata.getColumnIndex("s"), metadata.getColumnIndex("x")));
+                Assert.assertTrue(table.getTableDescriptor().hasConvertedColumns());
+                Assert.assertEquals(metadata.getTimestampType(), table.getTableDescriptor().getTimestampType());
+            } finally {
+                tables.clear();
             }
         });
     }
@@ -573,6 +621,26 @@ public class PlanTablesTest extends AbstractCairoTest {
             }
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
+    }
+
+    private static void assertColumnCopy(TableColumnMetadata expected, TableColumnMetadata actual) {
+        TestUtils.assertEquals(expected.getColumnName(), actual.getColumnName());
+        Assert.assertEquals(expected.getColumnType(), actual.getColumnType());
+        Assert.assertEquals(expected.getIndexType(), actual.getIndexType());
+        Assert.assertEquals(expected.getIndexValueBlockCapacity(), actual.getIndexValueBlockCapacity());
+        Assert.assertEquals(expected.isSymbolTableStatic(), actual.isSymbolTableStatic());
+        Assert.assertNull(expected.getMetadata());
+        Assert.assertNull(actual.getMetadata());
+        Assert.assertEquals(expected.getWriterIndex(), actual.getWriterIndex());
+        Assert.assertEquals(expected.isDedupKeyFlag(), actual.isDedupKeyFlag());
+        Assert.assertEquals(expected.getReplacingIndex(), actual.getReplacingIndex());
+        Assert.assertEquals(expected.isSymbolCacheFlag(), actual.isSymbolCacheFlag());
+        Assert.assertEquals(expected.getSymbolCapacity(), actual.getSymbolCapacity());
+        Assert.assertEquals(expected.getOriginalWriterIndex(), actual.getOriginalWriterIndex());
+        Assert.assertEquals(expected.isTypeConverted(), actual.isTypeConverted());
+        Assert.assertEquals(expected.getParquetEncodingConfig(), actual.getParquetEncodingConfig());
+        Assert.assertNull(expected.getCoveringColumnIndices());
+        Assert.assertNull(actual.getCoveringColumnIndices());
     }
 
     private static long compileAllocatedBytes(com.sun.management.ThreadMXBean threadMXBean, SqlCompiler compiler, String sql) throws Exception {

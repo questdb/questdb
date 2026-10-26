@@ -165,7 +165,8 @@ public class TableColumnMetadata implements Plannable {
 
     /**
      * A copy of column {@code index} of {@code metadata} named {@code name}, which a metadata owner that changes its
-     * columns in place cannot change.
+     * columns in place cannot change. The copy describes the column to the factory that reads it, so it leaves out the
+     * columns a covering index of the column covers, which only table metadata lists.
      */
     public static TableColumnMetadata copyOf(RecordMetadata metadata, int index, String name) {
         final TableColumnMetadata source = metadata.getColumnMetadata(index);
@@ -184,9 +185,6 @@ public class TableColumnMetadata implements Plannable {
                 source.getOriginalWriterIndex()
         );
         copy.setParquetEncodingConfig(source.getParquetEncodingConfig());
-        if (source.getCoveringColumnIndices() != null) {
-            copy.setCoveringColumnIndices(new IntList(source.getCoveringColumnIndices()));
-        }
         return copy;
     }
 
@@ -257,6 +255,14 @@ public class TableColumnMetadata implements Plannable {
 
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
+    }
+
+    /**
+     * Whether ALTER COLUMN TYPE re-keyed the column, so its writer index differs from the writer index of the column
+     * it replaced.
+     */
+    public boolean isTypeConverted() {
+        return writerIndex != originalWriterIndex;
     }
 
     public void markDeleted() {

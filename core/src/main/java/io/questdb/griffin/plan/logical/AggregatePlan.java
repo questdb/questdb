@@ -90,9 +90,10 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     /**
-     * The number of decorrelation domains of the query level whose shared source re-reads the aggregate, and of
-     * domain reads of the aggregate, which order planning counts; the generator lets that many consumers share the
-     * rows it computes once.
+     * The number of consumers that read the rows the generator computes once for the aggregate through shared
+     * cursors, which {@code OperatorPlanning} counts: the decorrelation domains of the query level whose shared source
+     * re-reads the aggregate, and the domain reads of a decorrelation domain that read it through a shared cursor,
+     * see {@link DomainReadPlan.Algorithm#SHARED}. A domain read that builds the domain's plan again reads none.
      */
     public int getSharedConsumerCount() {
         return sharedConsumerCount;
@@ -139,6 +140,15 @@ public final class AggregatePlan extends GroupingPlan {
 
     public IntList getSharedSourceIds() {
         return sharedSourceIds;
+    }
+
+    /**
+     * Whether other consumers read the aggregate's rows: decorrelation domains that re-read it through their shared
+     * source, see {@link #getSharedConsumerCount()}, or domain reads of the decorrelation domain, see
+     * {@link #getReaderCount()}, which read it through shared cursors whenever its GROUP BY serves them.
+     */
+    public boolean hasSharedConsumers() {
+        return sharedConsumerCount > 0 || readerCount > 0;
     }
 
     public AggregatePlan of(LogicalPlan input, int position) {

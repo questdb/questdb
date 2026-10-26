@@ -1307,23 +1307,21 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
-     * Adds the table column at {@code columnIndex} to the output of the scan, unless the column is deleted.
+     * Adds the table column at {@code columnIndex} to the output of the scan.
      */
     void bindScanColumn(ScanPlan scan, int columnIndex, CharSequence name, int type, boolean isSymbolTableStatic, boolean isIndexed,
                         boolean isTimestamp) {
-        if (type > 0) {
-            final OutputSchema output = scan.getOutput();
-            output.add(ctx.planNodes.nextColumnId(), name, type, true);
-            output.setSymbolTableStatic(output.getColumnCount() - 1, isSymbolTableStatic);
-            scan.getSourceColumnIndexes().add(columnIndex);
-            if (isIndexed) {
-                scan.getIndexedColumnIds().add(output.getColumnId(output.getColumnCount() - 1));
-            }
-            if (isTimestamp) {
-                output.setTimestampIndex(output.getColumnCount() - 1);
-                scan.setNativeTimestamp(output.getTimestampColumnId(), type);
-                ctx.scope().intrinsicTimestampColumnIds.add(output.getTimestampColumnId());
-            }
+        final OutputSchema output = scan.getOutput();
+        output.add(ctx.planNodes.nextColumnId(), name, type, true);
+        output.setSymbolTableStatic(output.getColumnCount() - 1, isSymbolTableStatic);
+        scan.getSourceColumnIndexes().add(columnIndex);
+        if (isIndexed) {
+            scan.getIndexedColumnIds().add(output.getColumnId(output.getColumnCount() - 1));
+        }
+        if (isTimestamp) {
+            output.setTimestampIndex(output.getColumnCount() - 1);
+            scan.setNativeTimestamp(output.getTimestampColumnId(), type);
+            ctx.scope().intrinsicTimestampColumnIds.add(output.getTimestampColumnId());
         }
     }
 

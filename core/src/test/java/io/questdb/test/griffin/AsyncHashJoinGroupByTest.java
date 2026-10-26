@@ -48,7 +48,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.Vm;
@@ -83,6 +82,7 @@ import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.Job;
@@ -281,13 +281,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 inner.assertResults(AGGREGATES + INNER);
                 outer.assertResults(AGGREGATES + OUTER);
                 execute("truncate table r");
-                // The fixtures compiled while both tables held five rows. With r empty, the row of p
-                // is more than twice the rows of r: the INNER join would build the larger table, and
-                // both joins would size the key table by its rows, so an execution throws
-                // TableReferenceOutOfDateException, on which the holder of the factory compiles the
-                // query again.
-                inner.assertRecompile();
-                outer.assertRecompile();
+                // The fixtures compile their scans alone, which keep no row counts for the build to
+                // hold under, so they build p over the empty probe.
+                inner.assertResults(AGGREGATES + INNER);
+                outer.assertResults(AGGREGATES + OUTER);
                 // A LEFT join compiled now still builds p, without presizing, and probes the empty r.
                 try (Fixture emptyProbe = new Fixture(AGGREGATES + OUTER)) {
                     emptyProbe.assertResults(AGGREGATES + OUTER);
@@ -1395,7 +1392,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 b.queryFactory = null;
             }
             try {
-                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyedFactory);
+                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyedFactory, JoinInput.BuildSide.SLAVE);
                 Assert.fail("orientations with different outputs must be rejected");
             } catch (IllegalArgumentException expected) {
                 Assert.assertEquals("fused hash join orientations disagree on output", expected.getMessage());
@@ -3163,17 +3160,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Assert.assertEquals(isSharded, factory.getAtom().isSharded());
                     cursor.toTop();
                 }
-            }
-        }
-
-        // Checks that an execution throws TableReferenceOutOfDateException, on which the holder of the
-        // factory compiles the query again, and leaves no slot taken.
-        void assertRecompile() throws Exception {
-            try (RecordCursor ignore = getCursor()) {
-                Assert.fail("expected a request to compile the query again");
-            } catch (TableReferenceOutOfDateException expected) {
-                Assert.assertEquals(0, factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                Assert.assertNull(sqlExecutionContext.getMemoryTracker());
             }
         }
 

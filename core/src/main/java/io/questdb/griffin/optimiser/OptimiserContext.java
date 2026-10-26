@@ -37,7 +37,9 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -126,13 +128,6 @@ final class OptimiserContext implements Mutable {
         return functionSources;
     }
 
-    /**
-     * The tables of the statement, whose access facts code generation reads too.
-     */
-    PlanTables getPlanTables() {
-        return planTables;
-    }
-
     BoundExpressionRewriter getRewriter() {
         return rewriter;
     }
@@ -164,6 +159,20 @@ final class OptimiserContext implements Mutable {
 
     void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
+    }
+
+    /**
+     * An upper bound of the rows the factory of the plan returns, -1 when unknown: the row count of the table whose scan
+     * bounds them, see {@link PhysicalProperties#rowBoundScan}, capped by the LIMITs along the way, see
+     * {@link PhysicalProperties#rowBoundLimit}.
+     */
+    long rowBound(LogicalPlan plan) {
+        final ScanPlan scan = PhysicalProperties.rowBoundScan(plan);
+        final long limit = PhysicalProperties.rowBoundLimit(plan);
+        if (scan != null) {
+            return Math.min(getTableAccessInfo(scan).getRowCount(), limit);
+        }
+        return limit < Long.MAX_VALUE ? limit : -1;
     }
 
     private ColumnExpression column(OutputSchema output, int columnId, int position) {

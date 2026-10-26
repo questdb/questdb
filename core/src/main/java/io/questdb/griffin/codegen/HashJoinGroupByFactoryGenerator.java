@@ -82,7 +82,7 @@ final class HashJoinGroupByFactoryGenerator {
             if (!HashJoinGroupByBuildChoiceRecordCursorFactory.isSameOutput(primary.getMetadata(), alternate.getMetadata())) {
                 throw new IllegalStateException("hash join orientations have different output metadata");
             }
-            return new HashJoinGroupByBuildChoiceRecordCursorFactory(primary, alternate);
+            return new HashJoinGroupByBuildChoiceRecordCursorFactory(primary, alternate, hashJoin.getBuildSide());
         } catch (Throwable th) {
             Misc.free(alternate, th);
             Misc.free(primary, th);

@@ -68,9 +68,11 @@ import io.questdb.std.ObjectPool;
  * Decides for {@link OperatorPlanning} whether the GROUP BY of an aggregate fuses into the INNER, LEFT or RIGHT hash
  * join of two tables under it, and records how on a {@link HashJoinAggregation}. Each input is a table scan, under a
  * filter and column projections; the generator reads its page frames, or steals its parallel filter and reads the
- * frames under it. The build input is fixed for an outer join, the input it NULL-extends, and is the table with fewer
- * rows for an INNER join; when an interval scan can change which input holds fewer rows, the decision also records the
- * other build, which each execution may pick. The filters between the aggregate and the join run as the ordinary plan
+ * frames under it. The build input is fixed for an outer join, the input it NULL-extends, and is the input with the
+ * smaller row bound for an INNER join, see {@link OptimiserContext#rowBound}; when an interval scan can change which
+ * input holds fewer rows, the decision also records the other build, which each execution may pick. A build that holds
+ * no more rows than its probe sizes its key table by its rows, and its scans keep the row counts under which it does,
+ * see {@link OperatorPlanning#keepBuildSide}. The filters between the aggregate and the join run as the ordinary plan
  * runs them: a runtime constant that gates the join gates both inputs once per execution, every other filter runs
  * over the joined rows, and an outer join's ON condition on the build alone runs over the build rows.
  */
@@ -376,9 +378,13 @@ final class HashJoinAggregationPlanning implements Mutable {
         if (keyFilter != null && (!isParallelStable(keyFilter) || !onlyReads(keyFilter, buildOutput))) {
             return null;
         }
-        final boolean isPresized = (isMasterBuilt ? masterRows : slaveRows) <= (isMasterBuilt ? slaveRows : masterRows);
+        final boolean isPresized = JoinInput.BuildSide.smaller(masterRows, slaveRows, side) == side;
         if (onFilter != null && (!isParallelStable(onFilter) || !onlyReads(onFilter, buildOutput) || !isPresized && isExpensive(onFilter))) {
             return null;
+        }
+        if (isPresized) {
+            OperatorPlanning.keepBuildSide(hashJoin.getBuildInput(), isMasterBuilt ? masterRows : slaveRows,
+                    hashJoin.getProbeInput(), isMasterBuilt ? slaveRows : masterRows);
         }
         hashJoin.setFilters(onFilter, postJoinFilter, isPresized);
         return hashJoin;
@@ -518,11 +524,11 @@ final class HashJoinAggregationPlanning implements Mutable {
 
     /**
      * The fusion of the aggregate's GROUP BY into the hash join under it, or null when the shape keeps the ordinary
-     * plan. Reads the row counts of the tables from the access facts {@link OptimiserContext#getTableAccessInfo} holds.
+     * plan. Bounds the rows of its inputs as {@link OptimiserContext#rowBound} does.
      */
     HashJoinAggregation plan(AggregatePlan aggregate) throws SqlException {
         clear();
-        if (aggregate.getSharedSource() != null || aggregate.getSharedConsumerCount() > 0 || aggregate.getAggregates().size() == 0
+        if (aggregate.getSharedSource() != null || aggregate.hasSharedConsumers() || aggregate.getAggregates().size() == 0
                 || !OperatorPlanning.hasParallelFunctions(aggregate)) {
             return null;
         }
@@ -562,12 +568,14 @@ final class HashJoinAggregationPlanning implements Mutable {
         }
         final ScanPlan masterScan = frameScan(master);
         final ScanPlan slaveScan = frameScan(slave);
-        final long masterRows = context.getTableAccessInfo(masterScan).getRowCount();
-        final long slaveRows = context.getTableAccessInfo(slaveScan).getRowCount();
+        final long masterRows = context.rowBound(master);
         // A RIGHT join builds its master, while the ordinary plan hashes its slave, the preserved input, after the
-        // filters and intervals of the slave: the fusion holds only when its build holds no more rows than those.
-        if (kind == JoinKind.RIGHT_OUTER && (masterRows > slaveRows || hasFilter(slave)
-                || context.getExecutionContext().isOverriddenIntrinsics(slaveScan.getTableToken()) || masterScan.getTableToken().isLiveView())) {
+        // filters and intervals of the slave: the fusion holds only when its build holds no more rows than those. A
+        // slave without them returns at least the rows of its table, as does a live view, which also returns the rows
+        // its table does not hold yet.
+        final long slaveRows = kind == JoinKind.RIGHT_OUTER ? context.getTableAccessInfo(slaveScan).getRowCount() : context.rowBound(slave);
+        if (kind == JoinKind.RIGHT_OUTER && (JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.MASTER) != JoinInput.BuildSide.MASTER
+                || hasFilter(slave) || context.getExecutionContext().isOverriddenIntrinsics(slaveScan.getTableToken()))) {
             return null;
         }
         masterOutput = HashJoinAggregation.frameOutput(master);
@@ -577,7 +585,10 @@ final class HashJoinAggregationPlanning implements Mutable {
         }
         final JoinInput.BuildSide side = switch (kind) {
             case RIGHT_OUTER -> JoinInput.BuildSide.MASTER;
-            case INNER -> JoinInput.BuildSide.smaller(masterRows, slaveRows);
+            // An input without a row bound, a live view, keeps the slave built.
+            case INNER ->
+                    JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER
+                            ? JoinInput.BuildSide.MASTER : JoinInput.BuildSide.SLAVE;
             default -> JoinInput.BuildSide.SLAVE;
         };
         final HashJoinAggregation hashJoin = orientation(aggregate, join, side, master, masterRead, masterRows, slave, slaveRead, slaveRows);

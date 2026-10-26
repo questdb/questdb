@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -41,7 +40,6 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.HashJoinGroupByFunctions;
@@ -546,7 +544,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             probeSymbols = symbolTableSource;
             // The open scan serves the build input's symbol tables; build() walks its frames.
             buildFrames.open(buildFactory, executionContext);
-            checkTableRowCounts(symbolTableSource, executionContext);
             final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
             isBuildFiltersInitialized = true;
             buildFilterContext.initFilters(buildSymbols, executionContext);
@@ -886,56 +883,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         // A build without payload columns stores no row ids and never asks the frames for one.
         frozen = isKeyStaged ? mapBuild.freeze(buildFrames) : intBuild.freeze(buildFrames);
-    }
-
-    /**
-     * Throws {@link TableReferenceOutOfDateException}, on which the query caches and the other
-     * holders of a compiled factory compile the query again, when the tables have changed size
-     * since the planner chose from their sizes, so much that the choice now costs far more memory
-     * than a new compile's plan would. The planner compared the tables' {@link TableReader#size()},
-     * and so does this check, through the readers of the two open scans:
-     * <ul>
-     * <li>The planner presizes the key table by the build's rows when the build table had no more
-     * rows than the probe table, as every INNER join that builds its smaller table does. Once the
-     * build table holds more than twice the probe table's rows, an INNER join builds more than
-     * twice the rows that a new compile would, and any join sizes its key table for rows whose
-     * keys repeat. The factor of two keeps tables of about equal size from recompiling every few
-     * inserts. The alternate orientation of {@link HashJoinGroupByBuildChoiceRecordCursorFactory}
-     * builds the table that the primary probes, which held at least as many rows at compile time.
-     * The planner presizes its key table only when the two tables held equal rows, and this rule
-     * then checks the alternate as it checks the primary. An outer join's ON condition on the
-     * build alone that reads a variable-size column, and does more than compare columns,
-     * constants and bind variables, takes the fused plan only under the presize condition, since
-     * the build runs it on every build row, and so does one that passes a STRING, VARCHAR, BINARY
-     * or ARRAY value that it computes from a build column to anything but a comparison, so the
-     * new compile also returns such a query to the ordinary plan.</li>
-     * <li>A RIGHT join takes the fused plan only under the presize condition, so the first rule
-     * returns it to the ordinary plan once its build table holds more than twice the preserved
-     * table's rows. A reused factory keeps building the larger table while it holds between one
-     * and two times the preserved table's rows.</li>
-     * </ul>
-     * A new compile reads the same sizes and passes this check, so a recompile repeats only when
-     * the tables change again in between. An input that is not a table scan offers no reader, and
-     * keeps the compile-time choice. So does an execution whose context
-     * {@link SqlExecutionContext#isTableRowCountChangeTolerated() tolerates} row count changes,
-     * such as a queued export, which runs a factory that nothing compiles again.
-     */
-    private void checkTableRowCounts(SymbolTableSource probeScan, SqlExecutionContext executionContext) {
-        if (executionContext.isTableRowCountChangeTolerated()
-                || !(probeScan instanceof TablePageFrameCursor probeCursor)
-                || !(buildFrames.getSymbolTableSource() instanceof TablePageFrameCursor buildCursor)) {
-            return;
-        }
-        final TableReader probeReader = probeCursor.getTableReader();
-        final TableReader buildReader = buildCursor.getTableReader();
-        if (probeReader == null || buildReader == null) {
-            return;
-        }
-        final long buildRows = buildReader.size();
-        // Row counts stay far below 2^62, so twice the probe rows cannot overflow.
-        if (isKeyCapacityPresized && buildRows > 2 * probeReader.size()) {
-            throw TableReferenceOutOfDateException.of(buildReader.getTableToken());
-        }
     }
 
     /**

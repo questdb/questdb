@@ -2530,7 +2530,7 @@ public final class TestUtils {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final TableColumnMetadata column = metadata.getColumnMetadata(i);
             columnNames.add(column.getColumnName());
-            hasConvertedColumns |= column.getWriterIndex() != column.getOriginalWriterIndex();
+            hasConvertedColumns |= column.isTypeConverted();
         }
         return new TableDescriptor(columnNames, metadata.getTimestampIndex(), metadata.getTimestampType(), hasConvertedColumns);
     }

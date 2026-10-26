@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
@@ -46,7 +47,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * alternate one builds the other input. An interval can leave either input the smaller one,
  * and which one it leaves can change with every execution, through bind variables or
  * {@code now()}. {@link #getCursor(SqlExecutionContext)} counts the rows each input's intervals
- * select and runs the orientation that builds fewer of them.
+ * select and runs the orientation that builds fewer of them, see {@link JoinInput.BuildSide#smaller}.
  * <p>
  * The counts are upper bounds: they ignore row filters, which only the scan evaluates. A tie
  * or an input whose count is unknown keeps the primary orientation. Takes ownership of both
@@ -54,19 +55,25 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 public final class HashJoinGroupByBuildChoiceRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursor.Counter counter = new RecordCursor.Counter();
+    private final JoinInput.BuildSide primaryBuildSide;
     private AsyncHashJoinGroupByRecordCursorFactory alternate;
     // The cursor of the last execution, whichever orientation returned it.
     private RecordCursor cursor;
     private boolean isAlternateChosen;
     private AsyncHashJoinGroupByRecordCursorFactory primary;
 
+    /**
+     * @param primaryBuildSide the input of the join, its master or its slave, that the primary orientation builds
+     */
     public HashJoinGroupByBuildChoiceRecordCursorFactory(
             AsyncHashJoinGroupByRecordCursorFactory primary,
-            AsyncHashJoinGroupByRecordCursorFactory alternate
+            AsyncHashJoinGroupByRecordCursorFactory alternate,
+            JoinInput.BuildSide primaryBuildSide
     ) {
         super(primary.getMetadata());
         this.primary = primary;
         this.alternate = alternate;
+        this.primaryBuildSide = primaryBuildSide;
         if (!isSameOutput(primary.getMetadata(), alternate.getMetadata())) {
             final IllegalArgumentException failure = new IllegalArgumentException("fused hash join orientations disagree on output");
             Misc.free(this, failure);
@@ -111,7 +118,13 @@ public final class HashJoinGroupByBuildChoiceRecordCursorFactory extends Abstrac
         // Each orientation probes the input the other one builds.
         final long primaryBuildRows = countRows(alternate.getBaseFactory(), executionContext);
         final long alternateBuildRows = countRows(primary.getBaseFactory(), executionContext);
-        isAlternateChosen = primaryBuildRows > -1 && alternateBuildRows > -1 && alternateBuildRows < primaryBuildRows;
+        final boolean isMasterBuiltByPrimary = primaryBuildSide == JoinInput.BuildSide.MASTER;
+        final JoinInput.BuildSide side = JoinInput.BuildSide.smaller(
+                isMasterBuiltByPrimary ? primaryBuildRows : alternateBuildRows,
+                isMasterBuiltByPrimary ? alternateBuildRows : primaryBuildRows,
+                primaryBuildSide
+        );
+        isAlternateChosen = side != primaryBuildSide && side != JoinInput.BuildSide.SMALLER;
         cursor = (isAlternateChosen ? alternate : primary).getCursor(executionContext);
         return cursor;
     }

@@ -197,6 +197,16 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         return true;
     }
 
+    /**
+     * The refresh keeps the view's compiled factory across cycles and compiles it again only by re-deriving the view
+     * from the whole base table, so it keeps the hash join build sides the compile chose from row counts, which cost
+     * memory and time but never change the rows, however the tables grow.
+     */
+    @Override
+    public boolean isTableRowCountChangeTolerated() {
+        return true;
+    }
+
     public void of(TableReader baseTableReader) {
         this.baseTableReader = baseTableReader;
     }

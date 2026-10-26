@@ -31,8 +31,11 @@ import io.questdb.std.ObjectFactory;
 /**
  * A further consumer of a decorrelation domain the same LATERAL step built once: a leaf that reads the rows of the
  * producer domain instead of a copy of it. It defines its own output columns, one for each outer column, each paired
- * with the producer's column for the same outer column, see {@link #getProducerColumnIds()}. Tree walks stop at it, so
- * no pass reaches the producer through it.
+ * with the producer's column for the same outer column, see {@link #getProducerColumnIds()}. It has no inputs, so tree
+ * walks and rewrites stop at it and never reach the producer through it: the producer stays at its own place in the
+ * tree, where they reach it once. Only a pass that relates the read to its producer follows {@link #getProducer()}:
+ * access path planning, which plans the producer where it first reaches it, operator planning and physical properties,
+ * which read the producer's planned facts, the plan copier, the verifiers and the generator.
  */
 public final class DomainReadPlan extends LogicalPlan {
     public static final ObjectFactory<DomainReadPlan> FACTORY = DomainReadPlan::new;
@@ -99,10 +102,19 @@ public final class DomainReadPlan extends LogicalPlan {
     }
 
     /**
-     * How the generator reads the rows of the producer: through a shared cursor of the factory it builds for the
-     * producer once, which serves shared cursors, or from a factory it builds for the producer's plan again.
+     * How the generator reads the rows of the producer, as operator planning records it.
      */
     public enum Algorithm {
-        REGENERATED, SHARED
+        /**
+         * From a factory the generator builds for the producer's plan again, when the producer serves no shared
+         * cursors, such as a posting-index distinct: the producer's plan then reads no shared factory and holds no
+         * decorrelation domain, so building it again is free of side effects.
+         */
+        REGENERATED,
+        /**
+         * Through a shared cursor of the factory the generator builds once for the producer, whose GROUP BY serves
+         * them.
+         */
+        SHARED
     }
 }

@@ -114,11 +114,11 @@ public final class SetOperationCasts {
     }
 
     /**
-     * The type of column {@code index} of the set operation before symbol restoration: the type its branches cast to
-     * when the operation casts its branches, {@code isCastRequired}, see {@link #isCastRequired}, else the left
-     * branch's.
+     * The type the set operation's branches cast column {@code index} to when the operation casts its branches,
+     * {@code isCastRequired}, see {@link #isCastRequired}, else the left branch's type. It leaves out the SYMBOL type
+     * the binder restores on a UNION column both branches read as SYMBOL.
      */
-    public static int getOutputType(SetOperationPlan plan, int index, boolean isCastRequired) throws SqlException {
+    public static int getCastType(SetOperationPlan plan, int index, boolean isCastRequired) throws SqlException {
         final int leftType = plan.getLeft().getOutput().getColumnType(index);
         return isCastRequired ? getUnionCastType(leftType, plan.getRight().getOutput().getColumnType(index)) : leftType;
     }

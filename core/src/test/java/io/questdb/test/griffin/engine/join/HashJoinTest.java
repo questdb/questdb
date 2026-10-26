@@ -508,21 +508,56 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHashJoinLightKeepsExecutionChoiceForUnboundedInput() throws Exception {
+    public void testHashJoinLightBuildsSmallerSortedInput() throws Exception {
         assertMemoryLeak(() -> {
             createBuildSideTables();
-            // a sort has no row bound, so the plan keeps hashing the slave and execution compares the cursor sizes
+            // a sort returns the rows of its input, so the 3 rows of o bound it and the join hashes it
             assertQuery("SELECT s.id, a.id FROM (SELECT id, x FROM o ORDER BY id DESC) s JOIN a ON a.x = s.x")
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
                                 Hash Join Light
                                   condition: a.x=s.x
-                                    Encode sort light
-                                      keys: [id desc]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: o
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Encode sort light
+                                          keys: [id desc]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t1
+                            3\t2
+                            1\t3
+                            2\t4
+                            3\t5
+                            1\t6
+                            2\t7
+                            3\t8
+                            1\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightKeepsExecutionChoiceForUnboundedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            // no table bounds the rows of long_sequence(), so the plan leaves the choice to execution, which compares
+            // the cursor sizes
+            assertQuery("SELECT s.id, a.id FROM (SELECT x::INT id, x::INT x FROM long_sequence(3)) s JOIN a ON a.x = s.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: a.x=s.x
+                                    VirtualRecord
+                                      functions: [x::int,x::int]
+                                        long_sequence count: 3
                                     Hash
                                         PageFrame
                                             Row forward scan
@@ -544,17 +579,48 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinLightRecompilesWhenSelfJoinLimitCapsProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT id, (x % 3)::INT k FROM long_sequence(10))");
+            final String sql = "SELECT a.id, b.id FROM (SELECT id, k FROM t LIMIT 100) a JOIN t b ON a.k = b.k";
+            try (RecordCursorFactory factory = select(sql)) {
+                // both inputs hold the 10 rows of t, so the join hashes b, which grows with t past the LIMIT on a
+                execute("INSERT INTO t SELECT (x + 10)::INT, (x % 3)::INT FROM long_sequence(300)");
+                assertOutOfDate(factory, "t");
+            }
+            // a holds 100 rows and b 310, so the join hashes a, which never holds more rows than b
+            assertQuery(sql).assertsPlanContaining("""
+                            Hash
+                                Limit value: 100 skip-rows: 0 take-rows: 100
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                    """);
+            try (RecordCursorFactory factory = select(sql)) {
+                execute("INSERT INTO t SELECT (x + 310)::INT, (x % 3)::INT FROM long_sequence(1_000)");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.drainCursor(cursor);
+                }
+                execute("TRUNCATE TABLE t");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinLightRecompilesWhenTableSizesReverseBuildSide() throws Exception {
         assertMemoryLeak(() -> {
             createBuildSideTables();
             final String sql = "SELECT o.id, a.id FROM o JOIN a ON a.x = o.x";
             try (RecordCursorFactory factory = select(sql)) {
-                // o holds 3 rows and a 9, so the join hashes o while o holds at most 7 rows and a at least 4
-                execute("INSERT INTO o SELECT (x + 3)::INT, (x % 3 + 1)::INT FROM long_sequence(4)");
+                // o holds 3 rows and a 9, so the join hashes o while o holds at most 10 rows and a at least 5
+                execute("INSERT INTO o SELECT (x + 3)::INT, (x % 3 + 1)::INT FROM long_sequence(7)");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.drainCursor(cursor);
                 }
-                execute("INSERT INTO o SELECT (x + 7)::INT, (x % 3 + 1)::INT FROM long_sequence(3)");
+                execute("INSERT INTO o VALUES (11, 1)");
                 assertOutOfDate(factory, "o");
                 // a context that runs the factory it has keeps the choice
                 try (
@@ -569,7 +635,7 @@ public class HashJoinTest extends AbstractCairoTest {
                     TestUtils.drainCursor(cursor);
                 }
             }
-            // o now holds 10 rows, so the join hashes a while a holds at most 13 rows and o at least 7
+            // o now holds 11 rows, so the join hashes a while a holds at most 16 rows and o at least 8
             assertQuery(sql).assertsPlanContaining("""
                             Hash
                                 PageFrame

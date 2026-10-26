@@ -36,7 +36,6 @@ import io.questdb.std.Misc;
 public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final int baseOrder;
     private final RuntimeIntrinsicIntervalModel intervalModel;
-    private final int timestampIndex;
     private IntervalBwdPartitionFrameCursor bwdCursor;
     private IntervalFwdPartitionFrameCursor fwdCursor;
 
@@ -51,7 +50,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             boolean updateQuery
     ) {
         super(tableToken, metadataVersion, table, viewName, viewPosition, updateQuery);
-        this.timestampIndex = table.getTimestampIndex();
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;
     }
@@ -69,6 +67,7 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
+            final int timestampIndex = getTableDescriptor().getTimestampIndex();
             reader.setActiveColumns(columnIndexes, timestampIndex);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {

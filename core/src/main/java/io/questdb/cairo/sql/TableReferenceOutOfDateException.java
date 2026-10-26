@@ -88,6 +88,13 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    public static TableReferenceOutOfDateException ofRowCountChange(TableToken tableToken) {
+        TableReferenceOutOfDateException ex = new TableReferenceOutOfDateException();
+        ex.message.clear();
+        ex.message.put("cached query plan cannot be used because table row count has changed [table=").put(tableToken.getTableName()).put(']');
+        return ex;
+    }
+
     @Override
     public CharSequence getFlyweightMessage() {
         return message;

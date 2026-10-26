@@ -57,7 +57,6 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -66,7 +65,6 @@ import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunction
 import io.questdb.griffin.engine.functions.cast.CastVarcharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
@@ -1058,8 +1056,10 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Joins the step at {@code position} of the join's ordered inputs to its master. Consumes both input factories on
-     * entry, including failure.
+     * Joins the step at {@code position} of the join's ordered inputs to its master. The master holds the
+     * decorrelation domains the generator placed from {@code producerLo} to {@code slaveProducerLo}, see
+     * {@link GenerationFrame#producerMark}, and the slave those it placed from {@code slaveProducerLo} on. Consumes both
+     * input factories on entry, including failure.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
@@ -1069,6 +1069,8 @@ final class JoinFactoryGenerator {
             CharSequence masterAlias,
             RecordCursorFactory master,
             RecordCursorFactory slave,
+            int producerLo,
+            int slaveProducerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final JoinInput step = join.getOrderedInputs().getQuick(position);
@@ -1121,17 +1123,14 @@ final class JoinFactoryGenerator {
                 final JoinKeyLayout joinKeys = frame.joinKeys;
                 resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
                 joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
-                // Copy before closing: a derived slave may own closeable join metadata.
                 if (PlanToFactoryRules.isSlaveEmptied(step)) {
-                    final RecordCursorFactory empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(slaveMetadata));
-                    final RecordCursorFactory oldSlave = slave;
-                    slave = empty;
-                    oldSlave.close();
+                    final RecordCursorFactory emptied = slave;
+                    slave = null;
+                    slave = frame.emptied(slaveProducerLo, frame.producerMark(), emptied);
                 } else if (PlanToFactoryRules.isMasterEmptied(step)) {
-                    final RecordCursorFactory empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(masterMetadata));
-                    final RecordCursorFactory oldMaster = master;
-                    master = empty;
-                    oldMaster.close();
+                    final RecordCursorFactory emptied = master;
+                    master = null;
+                    master = frame.emptied(producerLo, slaveProducerLo, emptied);
                 }
                 final Plannable condition = createCondition(step);
                 isTransferred = true;
@@ -1148,14 +1147,15 @@ final class JoinFactoryGenerator {
             throw th;
         }
         if (residualFilter != null) {
-            return filterGenerator.generatePostJoin(frame, step, step.getOnResidual(), joined, residualFilter, executionContext);
+            return filterGenerator.generatePostJoin(frame, step, step.getOnResidual(), joined, residualFilter, producerLo, executionContext);
         }
-        return postJoinFilter == null ? joined : filterGenerator.generatePostJoin(frame, step, postJoinFilter, joined, executionContext);
+        return postJoinFilter == null ? joined : filterGenerator.generatePostJoin(frame, step, postJoinFilter, joined, producerLo, executionContext);
     }
 
     RecordCursorFactory generateJoin(GenerationFrame frame, JoinPlan join, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final JoinInput first = ordered.getQuick(0);
+        final int producerLo = frame.producerMark();
         RecordCursorFactory master = codeGenerator.generate(frame, first.getInput(), executionContext);
         CharSequence masterAlias = first.getBindingAlias();
         OutputSchema masterOutput = first.getOutput();
@@ -1171,18 +1171,19 @@ final class JoinFactoryGenerator {
                 master = generateUnnest(step.getUnnest(), masterOutput, master,
                         masterAlias, step.getBindingAlias(), executionContext);
                 if (step.getPostJoinFilter() != null) {
-                    master = filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), master, executionContext);
+                    master = filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), master, producerLo, executionContext);
                 }
                 masterOutput = step.getOutput();
                 masterAlias = null;
                 continue;
             }
             if (step.getAlgorithm() == JoinInput.Algorithm.TEMPORAL_STOLEN_FILTER) {
-                master = generateStolenFilterTemporal(frame, step, masterOutput, masterAlias, master, executionContext);
+                master = generateStolenFilterTemporal(frame, step, masterOutput, masterAlias, master, producerLo, executionContext);
                 masterOutput = step.getOutput();
                 masterAlias = null;
                 continue;
             }
+            final int slaveProducerLo = frame.producerMark();
             RecordCursorFactory slave;
             try {
                 slave = codeGenerator.generate(frame, step.getInput(), executionContext);
@@ -1208,9 +1209,11 @@ final class JoinFactoryGenerator {
             master = switch (step.getJoinType()) {
                 case ASOF, LT ->
                         generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slave.getMetadata(), null, null,
-                                executionContext);
-                case SPLICE -> generateSplice(frame, step, masterOutput, masterAlias, master, slave, executionContext);
-                default -> generate(frame, join, i, masterOutput, masterAlias, master, slave, executionContext);
+                                producerLo, executionContext);
+                case SPLICE ->
+                        generateSplice(frame, step, masterOutput, masterAlias, master, slave, producerLo, executionContext);
+                default ->
+                        generate(frame, join, i, masterOutput, masterAlias, master, slave, producerLo, slaveProducerLo, executionContext);
             };
             masterOutput = step.getOutput();
             masterAlias = null;
@@ -1637,7 +1640,8 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes both factories on entry.
+     * Consumes both factories on entry. The joined factories hold the decorrelation domains the generator placed from
+     * {@code producerLo} on, see {@link GenerationFrame#producerMark}.
      */
     RecordCursorFactory generateSplice(
             GenerationFrame frame,
@@ -1646,6 +1650,7 @@ final class JoinFactoryGenerator {
             CharSequence masterAlias,
             RecordCursorFactory master,
             RecordCursorFactory slave,
+            int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         boolean isTransferred = false;
@@ -1669,7 +1674,7 @@ final class JoinFactoryGenerator {
             final RecordCursorFactory joined = generateJoinSplice(frame, step.getAlgorithm() == JoinInput.Algorithm.FULL_FAT_SPLICE, master,
                     masterMetadata, masterAlias, slave, slaveMetadata, step.getBindingAlias(), step.getPosition(), condition);
             return step.getPostJoinFilter() == null ? joined
-                    : filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), joined, executionContext);
+                    : filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), joined, producerLo, executionContext);
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.free(master, th);
@@ -1681,8 +1686,9 @@ final class JoinFactoryGenerator {
 
     /**
      * Builds the ASOF join step that steals the filter of its slave: the join reads the time frames under the filter,
-     * through the columns of the selection the generator builds the slave from, if any. Consumes the master, including
-     * on failure.
+     * through the columns of the selection the generator builds the slave from, if any. The joined factories hold the
+     * decorrelation domains the generator placed from {@code producerLo} on, see {@link GenerationFrame#producerMark}.
+     * Consumes the master, including on failure.
      */
     RecordCursorFactory generateStolenFilterTemporal(
             GenerationFrame frame,
@@ -1690,6 +1696,7 @@ final class JoinFactoryGenerator {
             OutputSchema masterOutput,
             CharSequence masterAlias,
             RecordCursorFactory master,
+            int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ProjectPlan projection = PlanToFactoryRules.temporalSlaveProjection(step.getInput());
@@ -1718,7 +1725,7 @@ final class JoinFactoryGenerator {
                 }
             }
             factory = generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slaveMetadata, crossIndex, prepared,
-                    executionContext);
+                    producerLo, executionContext);
         } catch (Throwable th) {
             frame.popPreparedFilter(th);
             throw th;
@@ -1728,7 +1735,8 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes both factories on entry.
+     * Consumes both factories on entry. The joined factories hold the decorrelation domains the generator placed from
+     * {@code producerLo} on, see {@link GenerationFrame#producerMark}.
      */
     RecordCursorFactory generateTemporal(
             GenerationFrame frame,
@@ -1740,6 +1748,7 @@ final class JoinFactoryGenerator {
             RecordMetadata slaveMetadata,
             @Nullable IntList slaveCrossIndex,
             @Nullable PreparedFilter stolenFilter,
+            int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         boolean isTransferred = false;
@@ -1778,7 +1787,7 @@ final class JoinFactoryGenerator {
                     : restoreTemporalOutput(joined, masterMetadata.getColumnCount(), step.getInput().getOutput(), slaveMetadata.getTimestampIndex(),
                     slaveKeyIndexes, step.getOutput());
             return step.getPostJoinFilter() == null ? restored
-                    : filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), restored, executionContext);
+                    : filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), restored, producerLo, executionContext);
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.free(master, th);
@@ -1906,6 +1915,7 @@ final class JoinFactoryGenerator {
 
     RecordCursorFactory generateWindowJoin(GenerationFrame frame, WindowJoinPlan windowJoin, ProjectPlan projection, SqlExecutionContext executionContext)
             throws SqlException {
+        final int producerLo = frame.producerMark();
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         final boolean isFilterStolen = steps.size() > 0 && steps.getQuick(0).getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER;
         final PreparedFilter prepared = frame.pushPreparedFilter(isFilterStolen);
@@ -1929,17 +1939,7 @@ final class JoinFactoryGenerator {
             throw th;
         }
         frame.popPreparedFilter(prepared);
-        if (windowJoin.isEmpty()) {
-            final RecordCursorFactory empty;
-            try {
-                empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(master.getMetadata()));
-            } catch (Throwable th) {
-                Misc.free(master, th);
-                throw th;
-            }
-            return SqlCodeGenerator.closeAfter(master, empty);
-        }
-        return master;
+        return windowJoin.isEmpty() ? frame.emptied(producerLo, frame.producerMark(), master) : master;
     }
 
     RecordCursorFactory generateWindowJoin(

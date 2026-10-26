@@ -560,10 +560,13 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             assertRowBound("SELECT * FROM t LIMIT 1, 3", "t", Long.MAX_VALUE);
             bindVariableService.setLong("n", 2);
             assertRowBound("SELECT * FROM t LIMIT :n", "t", Long.MAX_VALUE);
-            // a GROUP BY without keys returns a row for an empty input, and a sort has no bound of its own
+            // a sort and a window return the rows of their input
+            assertRowBound("SELECT * FROM (SELECT * FROM t ORDER BY x) LIMIT 2", "t", 2);
+            assertRowBound("SELECT * FROM t ORDER BY x", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT ts, x, row_number() OVER (ORDER BY x DESC) n FROM t", "t", Long.MAX_VALUE);
+            // a GROUP BY without keys returns a row for an empty input, and a set operation reads two inputs
             assertRowBound("SELECT count() FROM t", null, Long.MAX_VALUE);
-            assertRowBound("SELECT * FROM (SELECT * FROM t ORDER BY x) LIMIT 2", null, 2);
-            assertRowBound("SELECT * FROM t ORDER BY x", null, Long.MAX_VALUE);
+            assertRowBound("SELECT * FROM (SELECT * FROM t UNION ALL SELECT * FROM t) LIMIT 2", null, 2);
             assertQuery("SELECT * FROM (SELECT * FROM t LIMIT 3) LIMIT 2")
                     .timestamp("ts")
                     .expectSize()

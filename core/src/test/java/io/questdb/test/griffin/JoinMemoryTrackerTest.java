@@ -790,9 +790,6 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // (now tracker-bound) past the limit, so getCursor() breaches with isOutOfMemory() set. Without
         // the binding the RecordArray escapes the limit and the open completes, firing Assert.fail.
         // assertMemoryLeak additionally guards the of()-throw path: the partial RecordArray must be freed.
-        // Shrink the RecordArray page so the breach comes from accumulating ~32K offset rows under the
-        // 512 KiB limit rather than from the default 16 MiB first page.
-        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp)");
@@ -838,10 +835,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     public void testMarkoutHorizonRepeatedCursorRunsReleaseAllocations() throws Exception {
         // The reuse loop cycles the markout cursor's slave RecordArray (now tracker-bound) across
         // of()/close(); assertMemoryLeak is the load-bearing check that its malloc/free stays symmetric
-        // on the per-query counter.
-        // Shrink the RecordArray page so the small offset grid stays well under the 512 KiB limit
-        // (the default 16 MiB first page would breach on the first row).
-        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        // on the per-query counter. The RecordArray starts at the light join's value page and holds the
+        // small offset grid well under the 512 KiB limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp), (3, 2_000_000::timestamp)");

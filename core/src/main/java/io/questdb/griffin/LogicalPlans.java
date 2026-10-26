@@ -784,6 +784,17 @@ public final class LogicalPlans {
     }
 
     /**
+     * The leading branch of the set operations under the column projections of the plan, or the plan itself; the
+     * generator builds the head of a set operation from it.
+     */
+    public static LogicalPlan leadingBranch(LogicalPlan plan) {
+        while (unwrapColumnProjections(plan) instanceof SetOperationPlan operation) {
+            plan = operation.getLeft();
+        }
+        return plan;
+    }
+
+    /**
      * The LONG value a LIMIT bound function returns for the constant.
      */
     public static long limitValue(ConstantExpression constant) {

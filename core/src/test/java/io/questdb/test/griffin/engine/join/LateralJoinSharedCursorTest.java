@@ -27,10 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.plan.logical.DomainReadPlan;
-import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.MutationStep;
@@ -1465,23 +1462,100 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     3\t30
                     3\t31
                     """;
-            assertDiscardedDomain(DISCARDED_BY_FILTER, bRows);
-            assertDiscardedDomain(DISCARDED_BY_JOIN_FILTER, bRows);
-            assertDiscardedDomain(DISCARDED_BY_EMPTIED_SLAVE, cAndBRows);
-            assertDiscardedDomain(DISCARDED_BY_EMPTIED_MASTER, cAndBRows);
-            assertDiscardedDomain(DISCARDED_BY_EMPTY_WINDOW_JOIN, bRows);
+            assertDiscardedDomain(DISCARDED_BY_FILTER, "(Shared)", bRows);
+            assertDiscardedDomain(DISCARDED_BY_JOIN_FILTER, "(Shared)", bRows);
+            assertDiscardedDomain(DISCARDED_BY_EMPTIED_SLAVE, "(Shared)", cAndBRows);
+            assertDiscardedDomain(DISCARDED_BY_EMPTIED_MASTER, "(Shared)", cAndBRows);
+            assertDiscardedDomain(DISCARDED_BY_EMPTY_WINDOW_JOIN, "(Shared)", bRows);
         });
     }
 
     @Test
-    public void testSharedDomainDiscardedSharedReadFails() throws Exception {
+    public void testSharedDomainDiscardedOpenFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createSharedDomainTables();
+            assertSharedDomainOpenFails("""
+                    SELECT o.id, l.v FROM (SELECT x, min(id) id FROM o WHERE s ~ $1 GROUP BY x) o JOIN LATERAL (
+                        SELECT v FROM (SELECT a.id v FROM a WHERE a.x = o.x AND a.id > o.id) WHERE false
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """, "INSERT INTO o VALUES (4, 5, 'q')", "p|q", """
+                    id\tv
+                    1\t21
+                    1\t23
+                    3\t24
+                    4\t20
+                    """);
+        });
+    }
+
+    @Test
+    public void testSharedDomainDiscardedSharedSource() throws Exception {
         assertMemoryLeak(() -> {
             createDiscardTables();
-            assertDiscardedDomainSharedReadFails(DISCARDED_BY_FILTER);
-            assertDiscardedDomainSharedReadFails(DISCARDED_BY_JOIN_FILTER);
-            assertDiscardedDomainSharedReadFails(DISCARDED_BY_EMPTIED_SLAVE);
-            assertDiscardedDomainSharedReadFails(DISCARDED_BY_EMPTIED_MASTER);
-            assertDiscardedDomainSharedReadFails(DISCARDED_BY_EMPTY_WINDOW_JOIN);
+            final String bRows = """
+                    id\tv
+                    1\t21
+                    1\t21
+                    1\t23
+                    1\t23
+                    3\t24
+                    3\t24
+                    """;
+            final String sharedRead = " ".repeat(40) + "(Shared)\n" + " ".repeat(44) + "GroupBy vectorized: false\n"
+                    + " ".repeat(46) + "keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]";
+            final String cAndBRows = """
+                    id\tv
+                    1\t21
+                    1\t21
+                    1\t23
+                    1\t23
+                    1\t30
+                    1\t31
+                    2\t30
+                    2\t31
+                    3\t24
+                    3\t24
+                    3\t30
+                    3\t31
+                    """;
+            assertDiscardedDomain("""
+                    SELECT o.id, l.v FROM (SELECT x, min(id) id FROM o GROUP BY x) o JOIN LATERAL (
+                        SELECT v FROM (SELECT a.id v FROM a WHERE a.x = o.x AND a.id > o.id) WHERE false
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """, sharedRead, bRows);
+            assertDiscardedDomain("""
+                    SELECT o.id, l.v FROM (SELECT x, min(id) id FROM o GROUP BY x) o JOIN LATERAL (
+                        SELECT a.id v FROM a JOIN c ON a.id = c.id WHERE a.x = o.x AND a.id > o.id AND false
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """, sharedRead, bRows);
+            assertDiscardedDomain("""
+                    SELECT o.id, l.v FROM (SELECT x, min(id) id FROM o GROUP BY x) o JOIN LATERAL (
+                        SELECT c.id v FROM c LEFT JOIN (SELECT a.id, a.x FROM a WHERE a.x = o.x AND a.id > o.id) aa ON c.id = aa.id AND false
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """, sharedRead, cAndBRows);
+            assertDiscardedDomain("""
+                    SELECT o.id, l.v FROM (SELECT x, min(id) id FROM o GROUP BY x) o JOIN LATERAL (
+                        SELECT c.id v FROM (SELECT a.id, a.x FROM a WHERE a.x = o.x AND a.id > o.id) aa RIGHT JOIN c ON c.id = aa.id AND false
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.x = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """, sharedRead, cAndBRows);
         });
     }
 
@@ -1615,6 +1689,134 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             2\t12
                             3\t11
                             3\t24
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedDomainOuterJoinFalseResidual() throws Exception {
+        assertMemoryLeak(() -> {
+            createTradesItemsTables();
+            final String outerGroupBy = enableParallelGroupBy ? "GroupBy vectorized: true workers: 1" : "GroupBy vectorized: false";
+            assertQuery("""
+                    SELECT g.s, l.id FROM (SELECT sym s, count() c FROM trades GROUP BY sym) g
+                    CROSS JOIN LATERAL (
+                        SELECT i.id FROM items i LEFT JOIN items j ON j.id = i.id AND false WHERE i.sym = g.s AND i.id > g.c
+                        UNION ALL
+                        SELECT k.id FROM items k WHERE k.sym = g.s AND k.id > g.c
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [s, id]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: l.__qdb_outer_ref__0_s=g.s and l.__qdb_outer_ref__0_c=g.c
+                                        SelectedRecord
+                                            %1$s
+                                              keys: [sym]
+                                              values: [count(*)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                        Hash
+                                            Union All
+                                                SelectedRecord
+                                                    Hash Left Outer Join Light
+                                                      condition: j.id=i.id
+                                                      filter: false
+                                                        Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_c<id
+                                                            Hash Join Light
+                                                              condition: __qdb_outer_ref__0_s=sym
+                                                              symbolKeyJoin: true
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: items
+                                                                Hash
+                                                                    GroupBy vectorized: false
+                                                                      keys: [__qdb_outer_ref__0_s,__qdb_outer_ref__0_c]
+                                                                        SelectedRecord
+                                                                            (Shared)
+                                                                                SelectedRecord
+                                                                                    %1$s
+                                                                                      keys: [sym]
+                                                                                      values: [count(*)]
+                                                                                        PageFrame
+                                                                                            Row forward scan
+                                                                                            Frame forward scan on: trades
+                                                        Hash
+                                                            Empty table
+                                                SelectedRecord
+                                                    Filter filter: __qdb_outer_ref__0_1.__qdb_outer_ref__0_c<id
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_s=sym
+                                                          symbolKeyJoin: true
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: items
+                                                            Hash
+                                                                SelectedRecord
+                                                                    (Shared)
+                                                                        GroupBy vectorized: false
+                                                                          keys: [__qdb_outer_ref__0_s,__qdb_outer_ref__0_c]
+                                                                            SelectedRecord
+                                                                                (Shared)
+                                                                                    SelectedRecord
+                                                                                        %1$s
+                                                                                          keys: [sym]
+                                                                                          values: [count(*)]
+                                                                                            PageFrame
+                                                                                                Row forward scan
+                                                                                                Frame forward scan on: trades
+                            """.formatted(outerGroupBy))
+                    .returns("""
+                            s\tid
+                            a\t3
+                            a\t3
+                            b\t2
+                            b\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedDomainOuterJoinFalseResidualNested() throws Exception {
+        assertMemoryLeak(() -> {
+            createTradesItemsTables();
+            assertQuery("""
+                    SELECT m.s, m.id, l2.w FROM (
+                        SELECT g.s, l.id FROM (SELECT sym s, count() c FROM trades GROUP BY sym) g
+                        CROSS JOIN LATERAL (
+                            SELECT i.id FROM items i WHERE i.sym = g.s AND i.id > g.c
+                            UNION ALL
+                            SELECT k.id FROM items k WHERE k.sym = g.s AND k.id > g.c
+                        ) l
+                    ) m CROSS JOIN LATERAL (
+                        SELECT i.id w FROM items i LEFT JOIN items j ON j.id = i.id AND false WHERE i.sym = m.s AND i.id < m.id
+                        UNION ALL
+                        SELECT k.id w FROM items k WHERE k.sym = m.s AND k.id < m.id
+                    ) l2 ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(" ".repeat(40) + "(Shared)\n" + " ".repeat(44) + "GroupBy vectorized: false\n"
+                            + " ".repeat(46) + "keys: [__qdb_outer_ref__1_s,__qdb_outer_ref__1_id]")
+                    .returns("""
+                            s\tid\tw
+                            a\t3\t1
+                            a\t3\t1
+                            a\t3\t1
+                            a\t3\t1
+                            a\t3\t2
+                            a\t3\t2
+                            a\t3\t2
+                            a\t3\t2
+                            b\t2\t1
+                            b\t2\t1
+                            b\t2\t1
+                            b\t2\t1
                             """);
         });
     }
@@ -2249,6 +2451,18 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
         execute("INSERT INTO b VALUES (20, 5, 'p'), (21, 1, 'p'), (22, 7, 'q'), (23, 1, 'q'), (24, 3, 'p')");
     }
 
+    private static void createTradesItemsTables() throws SqlException {
+        execute("CREATE TABLE trades (sym SYMBOL, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE items (sym SYMBOL, id INT)");
+        execute("""
+                INSERT INTO trades VALUES
+                ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                ('b', 2, '2024-01-01T01:00:00.000000Z'),
+                ('a', 3, '2024-01-02T00:00:00.000000Z')
+                """);
+        execute("INSERT INTO items VALUES ('a', 1), ('a', 2), ('a', 3), ('b', 1), ('b', 2)");
+    }
+
     private void assertConsumerOpenFails(String source, String expected) throws Exception {
         execute("CREATE TABLE trades (sym SYMBOL, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE items (sym SYMBOL, id INT)");
@@ -2279,29 +2493,12 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
         execute("DROP TABLE items");
     }
 
-    private void assertDiscardedDomain(String sql, String expected) throws Exception {
+    private void assertDiscardedDomain(String sql, CharSequence sharedRead, String expected) throws Exception {
         assertQuery(sql)
                 .noLeakCheck()
                 .expectSize()
-                .withPlanContaining("Empty table")
-                .withPlanNotContaining("(Shared)")
+                .withPlanContaining("Empty table", sharedRead)
                 .returns(expected);
-    }
-
-    private void assertDiscardedDomainSharedReadFails(String sql) throws Exception {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            compiler.setPlannedPlanVisitor(plan -> {
-                if (plan instanceof DomainReadPlan read) {
-                    read.setAlgorithm(DomainReadPlan.Algorithm.SHARED);
-                }
-                return TreeWalk.CONTINUE;
-            });
-            try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.fail("a shared read of a discarded domain must fail");
-            } catch (IllegalStateException e) {
-                TestUtils.assertContains(e.getMessage(), "shared cursor reads a factory the generator freed");
-            }
-        }
     }
 
     private void assertRightJoinOpenFails(String sql, String pattern) throws Exception {

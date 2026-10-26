@@ -210,7 +210,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         final long rowCount = reader.size();
         if ((rowCount < minRowCount || rowCount > maxRowCount) && !executionContext.isTableRowCountChangeTolerated()) {
             Misc.free(reader);
-            throw TableReferenceOutOfDateException.of(tableToken);
+            throw TableReferenceOutOfDateException.ofRowCountChange(tableToken);
         }
         return reader;
     }
