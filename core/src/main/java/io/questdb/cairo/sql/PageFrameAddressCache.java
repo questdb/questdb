@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
@@ -82,10 +83,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList coveredKeys = new IntList();
     private final LongList coveredRowHis = new LongList();
     private final LongList coveredRowLos = new LongList();
+    // Per custom-capable frame, PageFrame.DEDUP_KEY_PAGE_CELLS longs for each of the
+    // dedupKeyPageCount non-timestamp dedup keys; see PageFrame#getDedupKeyPage.
+    private final LongList dedupKeyPages = new LongList();
     private final LongList designatedTimestampPageAddresses = new LongList();
     private final LongList designatedTimestampPageSizes = new LongList();
     private final LongList designatedTimestampPageTops = new LongList();
     private final ByteList frameFormats = new ByteList();
+    // Per-frame lower bound on the decoded row count (PageFrame#getRowCountLo). The upper
+    // bound is the declared span in frameSizes; the two are equal for an exact frame.
+    private final LongList frameRowCountLos = new LongList();
     private final LongList frameSizes = new LongList();
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
@@ -98,11 +105,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     private int columnCount;
+    // Dedup key pages per frame; fixed by the first frame of the cursor.
+    private int dedupKeyPageCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
     private boolean hasCustomFrames;
     private boolean hasDecodedFrames;
+    private boolean hasInexactFrames;
 
     public PageFrameAddressCache() {
         this.auxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
@@ -118,6 +128,18 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             // first call for this frame, so no patching is needed here.
             return;
         }
+
+        // Validate the row-count bounds before touching any list: a rejected frame must leave
+        // the parallel per-frame lists in step, or the next add() for this index would find a
+        // half-filed entry and silently skip the frame.
+        final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
+        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
+        final int parquetRowGroup = frame.getParquetRowGroup();
+        final boolean customDecode = parquetRowGroup >= 0
+                && partitionFrameState != 0
+                && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup);
+        final long rowCountLo = rowCountLo(frame, frameSize, customDecode);
+        final int keyPageCount = checkDedupKeyPageCount(frame, frameSizes.size() == 0);
 
         // Covered-frame stash (mirrors the parquet stash below) built in the SAME pass as the
         // native page addresses, so a plain (non-covered) frame pays no second per-column loop.
@@ -174,22 +196,28 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         // all tests + CI, so this turns that silent corruption into a loud failure.
         assert coveredMetadataConsistent(frame, covered, format);
 
-        frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
+        frameSizes.add(frameSize);
+        frameRowCountLos.add(rowCountLo);
+        if (rowCountLo != frameSize) {
+            hasInexactFrames = true;
+        }
         frameFormats.add(format);
         ParquetDecoder decoder = frame.getParquetDecoder();
         parquetDecoders.add(decoder);
-        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
         if (hasCustomFrames) {
             // Keep frame indexes aligned across ordinary and custom frames in this cursor.
             designatedTimestampPageAddresses.add(frame.getDesignatedTimestampPageAddress());
             designatedTimestampPageSizes.add(frame.getDesignatedTimestampPageSize());
             designatedTimestampPageTops.add(frame.getDesignatedTimestampPageTop());
             partitionFrameStates.add(partitionFrameState);
+            dedupKeyPageCount = keyPageCount;
+            for (int key = 0; key < keyPageCount; key++) {
+                for (int cell = 0; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
+                    dedupKeyPages.add(frame.getDedupKeyPage(key, cell));
+                }
+            }
         }
-        final int parquetRowGroup = frame.getParquetRowGroup();
-        if (parquetRowGroup >= 0
-                && partitionFrameState != 0
-                && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup)) {
+        if (customDecode) {
             hasDecodedFrames = true;
         }
         assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
@@ -260,10 +288,13 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     @Override
     public void clear() {
         frameSizes.clear();
+        frameRowCountLos.clear();
         frameFormats.clear();
         designatedTimestampPageAddresses.clear();
         designatedTimestampPageSizes.clear();
         designatedTimestampPageTops.clear();
+        dedupKeyPages.clear();
+        dedupKeyPageCount = 0;
         parquetDecoders.clear();
         partitionFrameStates.clear();
         parquetRowGroups.clear();
@@ -285,6 +316,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         external = false;
         hasCoveredFrames = false;
         hasDecodedFrames = false;
+        hasInexactFrames = false;
     }
 
     @Override
@@ -380,6 +412,17 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return coveredRowLos.getQuick(frameIndex);
     }
 
+    /**
+     * One {@code PageFrame.DEDUP_KEY_PAGE_*} cell of a dedup key page of a custom-capable frame.
+     */
+    public long getDedupKeyPage(int frameIndex, int key, int cell) {
+        return dedupKeyPages.getQuick((frameIndex * dedupKeyPageCount + key) * PageFrame.DEDUP_KEY_PAGE_CELLS + cell);
+    }
+
+    public int getDedupKeyPageCount() {
+        return hasCustomFrames ? dedupKeyPageCount : 0;
+    }
+
     public long getDesignatedTimestampPageAddress(int frameIndex) {
         return hasCustomFrames ? designatedTimestampPageAddresses.getQuick(frameIndex) : 0;
     }
@@ -400,6 +443,27 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return frameFormats.getQuick(frameIndex);
     }
 
+    /**
+     * Upper bound on the frame's decoded row count: the declared input span. Same as
+     * {@link #getFrameSize(int)}; see {@link PageFrame#getRowCountHi()}.
+     */
+    public long getFrameRowCountHi(int frameIndex) {
+        return frameSizes.getQuick(frameIndex);
+    }
+
+    /**
+     * Lower bound on the frame's decoded row count; see {@link PageFrame#getRowCountLo()}.
+     */
+    public long getFrameRowCountLo(int frameIndex) {
+        return frameRowCountLos.getQuick(frameIndex);
+    }
+
+    /**
+     * Declared input span of the frame, {@code partitionHi - partitionLo}. This is the
+     * exact decoded row count only when {@link #isFrameRowCountExact(int)}; otherwise
+     * it is an upper bound and the decoded count must be read from
+     * {@link PageFrameMemory#getRowCount()}.
+     */
     public long getFrameSize(int frameIndex) {
         return frameSizes.getQuick(frameIndex);
     }
@@ -514,6 +578,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     /**
+     * Whether at least one cached frame reports an inexact row count. False for every
+     * cache over plain native, parquet and covered frames, which lets consumers keep
+     * their declared-count shortcuts without a per-frame check.
+     */
+    public boolean hasInexactFrames() {
+        return hasInexactFrames;
+    }
+
+    /**
      * Whether column {@code col} of {@code frameIndex} is served from the
      * posting-index sidecar (matches {@code PageFrame#getColumnSource(col) ==
      * DataSource.COVERED} for the frame that was added). False for any column
@@ -526,6 +599,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public boolean isExternal() {
         return external;
+    }
+
+    /**
+     * Whether the declared span of the frame is its exact decoded row count; see
+     * {@link PageFrame#isExactRowCount()}.
+     */
+    public boolean isFrameRowCountExact(int frameIndex) {
+        return frameRowCountLos.getQuick(frameIndex) == frameSizes.getQuick(frameIndex);
     }
 
     public boolean isVarSizeColumn(int columnIndex) {
@@ -582,6 +663,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * skeleton native frame has no partition-decoder window until its partition is open.
      */
     public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
+        // Validate before patching anything, as in add().
+        final long frameSize = frameSizes.getQuick(frameIndex);
+        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
+        final int parquetRowGroup = frame.getParquetRowGroup();
+        final boolean customDecode = parquetRowGroup >= 0
+                && partitionFrameState != 0
+                && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup);
+        final long rowCountLo = rowCountLo(frame, frameSize, customDecode);
+        final int keyPageCount = checkDedupKeyPageCount(frame, false);
+
         final int offset = frameIndex * columnCount;
         if (frame.getFormat() == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -599,22 +690,70 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 designatedTimestampPageAddresses.setQuick(frameIndex, frame.getDesignatedTimestampPageAddress());
                 designatedTimestampPageSizes.setQuick(frameIndex, frame.getDesignatedTimestampPageSize());
                 designatedTimestampPageTops.setQuick(frameIndex, frame.getDesignatedTimestampPageTop());
+                final int keyOffset = frameIndex * keyPageCount * PageFrame.DEDUP_KEY_PAGE_CELLS;
+                for (int key = 0; key < keyPageCount; key++) {
+                    for (int cell = 0; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
+                        dedupKeyPages.setQuick(keyOffset + key * PageFrame.DEDUP_KEY_PAGE_CELLS + cell, frame.getDedupKeyPage(key, cell));
+                    }
+                }
             }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
         }
-        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
         if (hasCustomFrames) {
             partitionFrameStates.setQuick(frameIndex, partitionFrameState);
         }
-        final int parquetRowGroup = frame.getParquetRowGroup();
         parquetRowGroups.setQuick(frameIndex, parquetRowGroup);
         parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());
         parquetRowGroupHis.setQuick(frameIndex, frame.getParquetRowGroupHi());
-        if (parquetRowGroup >= 0
-                && partitionFrameState != 0
-                && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup)) {
+        if (customDecode) {
             hasDecodedFrames = true;
         }
+        frameRowCountLos.setQuick(frameIndex, rowCountLo);
+        if (rowCountLo != frameSize) {
+            hasInexactFrames = true;
+        }
+    }
+
+    // Validates that every frame of the cursor carries the same number of dedup key pages, so
+    // the per-frame stride stays fixed. Pure validation, as rowCountLo().
+    private int checkDedupKeyPageCount(@Transient PageFrame frame, boolean first) {
+        if (!hasCustomFrames) {
+            return 0;
+        }
+        final int count = frame.getDedupKeyPageCount();
+        if (count < 0 || (!first && count != dedupKeyPageCount)) {
+            throw CairoException.critical(0)
+                    .put("inconsistent page frame dedup key page count [expected=").put(dedupKeyPageCount)
+                    .put(", actual=").put(count)
+                    .put(']');
+        }
+        return count;
+    }
+
+    // Validates the frame's row-count bounds and returns the lower one: the hi bound must be
+    // the declared span and the lo bound must sit within [0, hi]. Only a frame that goes
+    // through a custom (partition-state) decode can be inexact, because that is the one path
+    // able to report how many rows it actually produced; a native, plain parquet or covered
+    // frame is served as is and must declare its exact span. Anything else is a broken frame
+    // producer, which must fail loud rather than feed consumers an impossible or unverifiable
+    // estimate. Pure validation: the caller records the result once every other check passed.
+    private long rowCountLo(@Transient PageFrame frame, long frameSize, boolean customDecode) {
+        final long hi = frame.getRowCountHi();
+        final long lo = frame.getRowCountLo();
+        if (hi != frameSize || lo < 0 || lo > hi) {
+            throw CairoException.critical(0)
+                    .put("invalid page frame row count bounds [lo=").put(lo)
+                    .put(", hi=").put(hi)
+                    .put(", declared=").put(frameSize)
+                    .put(']');
+        }
+        if (lo != hi && !customDecode) {
+            throw CairoException.critical(0)
+                    .put("page frame without a custom decode cannot report an inexact row count [lo=").put(lo)
+                    .put(", hi=").put(hi)
+                    .put(']');
+        }
+        return lo;
     }
 }

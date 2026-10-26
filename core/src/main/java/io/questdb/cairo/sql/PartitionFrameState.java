@@ -32,6 +32,8 @@ import io.questdb.std.Unsafe;
  */
 public final class PartitionFrameState {
     private static final int HEADER_BASE_ROWS = 5;
+    private static final int HEADER_DEDUP_KEYS_ADDR = 6;
+    private static final int HEADER_DEDUP_KEY_COUNT = 7;
     private static final int HEADER_HAS_CUSTOM_FRAMES = 3;
     private static final int HEADER_LOGICAL_ROWS = 2;
     private static final int HEADER_SUBFRAME_SIZE = 4;
@@ -42,6 +44,12 @@ public final class PartitionFrameState {
     public static final int SUMMARY_LOGICAL_ROWS = 2;
     public static final int SUMMARY_LONGS = 4;
     public static final long WINDOW_HAS_DELTA = 1;
+    /**
+     * Set when the window's logical row count is only an upper bound: decoding may drop
+     * rows (e.g. duplicate resolution), so frames over this window must report
+     * {@code getRowCountLo() == 0} and consumers must use the decoded row count.
+     */
+    public static final long WINDOW_ROW_COUNT_INEXACT = 2;
 
     private PartitionFrameState() {
     }
@@ -52,6 +60,29 @@ public final class PartitionFrameState {
 
     public static long getBaseRowCount(long state, int window) {
         return summaryValue(state, window, SUMMARY_BASE_ROWS);
+    }
+
+    /**
+     * Column ID (original writer index) of the i-th non-timestamp dedup key. Frames over an
+     * inexact window must supply these columns to the decoder even when the query does not
+     * select them, because duplicate resolution compares them.
+     */
+    public static int getDedupKeyColumnId(long state, int index) {
+        return (int) dedupKeyCell(state, index, 0);
+    }
+
+    /**
+     * Number of non-timestamp dedup keys the table declares; zero without dedup.
+     */
+    public static int getDedupKeyCount(long state) {
+        return Math.toIntExact(headerValue(state, HEADER_DEDUP_KEY_COUNT));
+    }
+
+    /**
+     * Column type of the i-th non-timestamp dedup key.
+     */
+    public static int getDedupKeyType(long state, int index) {
+        return (int) dedupKeyCell(state, index, 1);
     }
 
     public static long getLogicalPartitionRowCount(long state) {
@@ -75,14 +106,47 @@ public final class PartitionFrameState {
     }
 
     /**
+     * Whether any window of this bound state has an inexact row count, i.e. decoding
+     * the partition may drop rows; see {@link #isExactRowCount(long, int)}.
+     */
+    public static boolean hasInexactWindows(long state) {
+        for (int window = 0, n = getWindowCount(state); window < n; window++) {
+            if (!isExactRowCount(state, window)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Data summaries exist only after TableReader binds the snapshot for data-frame access.
      */
     public static boolean isBound(long state) {
         return headerValue(state, HEADER_SUMMARIES_ADDR) != 0;
     }
 
+    /**
+     * Whether the window's logical row count is exact. A missing proof is never treated as
+     * exact: the Rust binding sets {@link #WINDOW_ROW_COUNT_INEXACT} whenever it cannot show
+     * that decoding will yield every logical row.
+     */
+    public static boolean isExactRowCount(long state, int window) {
+        return (summaryValue(state, window, SUMMARY_FLAGS) & WINDOW_ROW_COUNT_INEXACT) == 0;
+    }
+
     public static boolean requiresMaterialization(long state, int window) {
         return (summaryValue(state, window, SUMMARY_FLAGS) & WINDOW_HAS_DELTA) != 0;
+    }
+
+    private static long dedupKeyCell(long state, int index, int cell) {
+        final long addr = headerValue(state, HEADER_DEDUP_KEYS_ADDR);
+        final int count = getDedupKeyCount(state);
+        if (addr == 0 || index < 0 || index >= count) {
+            throw CairoException.critical(0)
+                    .put("invalid partition frame state dedup key index [index=").put(index)
+                    .put(", count=").put(count).put(']');
+        }
+        return Unsafe.getLong(addr + ((long) index * 2 + cell) * Long.BYTES);
     }
 
     private static long headerValue(long state, int cell) {

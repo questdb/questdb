@@ -355,11 +355,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
+        // A frame whose row count is inexact reports its decoded count once populated.
+        frameRowCount = task.getFrameRowCount();
         record.init(frameMemory);
 
         // The list will hold only group by value slots.
@@ -503,11 +505,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
+        // A frame whose row count is inexact reports its decoded count once populated.
+        frameRowCount = task.getFrameRowCount();
         record.init(frameMemory);
 
         // The list will hold only group by value slots.
@@ -652,11 +656,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
+        // A frame whose row count is inexact reports its decoded count once populated.
+        frameRowCount = task.getFrameRowCount();
         record.init(frameMemory);
 
         // The list will hold only group by value slots.
@@ -863,11 +869,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
+        // A frame whose row count is inexact reports its decoded count once populated.
+        frameRowCount = task.getFrameRowCount();
         record.init(frameMemory);
 
         // The list will hold only group by value slots.
@@ -1046,11 +1054,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
+        // A frame whose row count is inexact reports its decoded count once populated.
+        frameRowCount = task.getFrameRowCount();
         record.init(frameMemory);
 
         // The list will hold only group by value slots.
@@ -1296,6 +1306,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         } else {
             frameMemory = task.populateFrameMemory();
         }
+        // A frame whose row count is inexact reports its decoded count once populated.
+        frameRowCount = task.getFrameRowCount();
         record.init(frameMemory);
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();

@@ -384,7 +384,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         final PageFrameSequence<AsyncJitFilterAtom> frameSequence = task.getFrameSequence(AsyncJitFilterAtom.class);
         final AsyncJitFilterAtom atom = frameSequence.getAtom();
         final DirectLongList rows = task.getFilteredRows();
@@ -399,8 +399,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+                // A frame whose row count is inexact reports its decoded count once populated.
+                frameRowCount = task.getFrameRowCount();
             } else {
                 frameMemory = task.populateFrameMemory();
+                // A frame whose row count is inexact reports its decoded count once populated.
+                frameRowCount = task.getFrameRowCount();
             }
             record.init(frameMemory);
 

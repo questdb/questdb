@@ -245,7 +245,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
         @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
 
@@ -261,6 +261,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             record.init(frameMemory);
 
             atom.resetLocalStats(slotId);
@@ -494,7 +496,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
         @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence == frameSequence;
@@ -520,8 +522,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             } else {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             }
             record.init(frameMemory);
 

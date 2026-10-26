@@ -74,7 +74,8 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public boolean supportsSizeCalculation() {
-        return true;
+        // Metadata-only sizes over-count a snapshot whose frames may drop duplicates on decode.
+        return !reader.hasInexactRowCount();
     }
 
     @Override

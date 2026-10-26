@@ -42,17 +42,25 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        // An exact frame walks its declared span, as before. Only a frame whose count is
+        // inexact needs the decoded count, which the pool reports after materialization.
+        // The declared span is taken from the frame rather than the memory because a skip
+        // pass can hand out coarser frames than the address cache filed on an earlier pass,
+        // and the cache entry under this index is then not the frame being walked.
+        final long rowCount = pageFrame.isExactRowCount()
+                ? pageFrame.getPartitionHi() - pageFrame.getPartitionLo()
+                : pageFrameMemory.getRowCount();
         if (isForwardScan()) {
             if (fwdCursor == null) {
                 fwdCursor = new PageFrameFwdRowCursor();
             }
-            return fwdCursor.of(pageFrame);
+            return fwdCursor.of(rowCount);
         }
 
         if (bwdCursor == null) {
             bwdCursor = new PageFrameBwdRowCursor();
         }
-        return bwdCursor.of(pageFrame);
+        return bwdCursor.of(rowCount);
     }
 
     @Override

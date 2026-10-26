@@ -494,6 +494,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getDedupKeyPage(int key, int cell) {
+            return baseFrame.getDedupKeyPage(key, cell);
+        }
+
+        @Override
+        public int getDedupKeyPageCount() {
+            return baseFrame.getDedupKeyPageCount();
+        }
+
+        @Override
         public long getDesignatedTimestampPageAddress() {
             return baseFrame.getDesignatedTimestampPageAddress();
         }
@@ -573,6 +583,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseFrame.getPartitionLo();
         }
 
+        @Override
+        public long getRowCountHi() {
+            return baseFrame.getRowCountHi();
+        }
+
+        @Override
+        public long getRowCountLo() {
+            return baseFrame.getRowCountLo();
+        }
+
         public SelectedPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;
@@ -630,6 +650,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public boolean hasCustomFrames() {
             return baseCursor.hasCustomFrames();
+        }
+
+        @Override
+        public boolean hasInexactFrames() {
+            return baseCursor.hasInexactFrames();
         }
 
         @Override

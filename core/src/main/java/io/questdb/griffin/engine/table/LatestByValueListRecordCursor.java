@@ -189,13 +189,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long rowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            for (long row = rowCount - 1; row >= 0; row--) {
                 recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (foundKeys.add(key)) {
@@ -214,13 +212,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long rowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            for (long row = rowCount - 1; row >= 0; row--) {
                 recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && foundKeys.add(key)) {
@@ -287,13 +283,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long rowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            for (long row = rowCount - 1; row >= 0; row--) {
                 recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
@@ -312,13 +306,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long rowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            for (long row = rowCount - 1; row >= 0; row--) {
                 recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
@@ -338,13 +330,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long rowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            for (long row = rowCount - 1; row >= 0; row--) {
                 recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
@@ -364,13 +354,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long rowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            for (long row = rowCount - 1; row >= 0; row--) {
                 recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {

@@ -60,6 +60,16 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
     long decodeSubframe(RowGroupBuffers buffers, int rowLo, int rowHi);
 
     /**
+     * Returns the exact number of output rows the decode owning {@code resource} produced,
+     * including zero, or {@code -1} when the decoder does not report it. A frame whose
+     * declared row count is not exact ({@link PageFrame#isExactRowCount()}) may only be
+     * decoded by a decoder that reports this count.
+     */
+    default long decodedRowCount(long resource) {
+        return -1;
+    }
+
+    /**
      * Materialize the requested remaining columns in the supplied order for a previously
      * discovered subframe. Install the views into {@code buffers} at {@code columnOffset}
      * and return the owning, non-zero decode-resource handle. Columns must belong to the

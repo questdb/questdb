@@ -220,7 +220,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
         @SuppressWarnings("unchecked") final AsyncMultiHorizonJoinNotKeyedAtom atom =
@@ -244,8 +244,12 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             } else {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             }
             record.init(frameMemory);
 
@@ -422,7 +426,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
         @SuppressWarnings("unchecked") final AsyncMultiHorizonJoinNotKeyedAtom atom =
@@ -440,6 +444,8 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             final AsyncFilterContext filterCtx = atom.getFilterContext();
             frameMemoryPool = filterCtx.getMemoryPool(slotId);
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             record.init(frameMemory);
 
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);

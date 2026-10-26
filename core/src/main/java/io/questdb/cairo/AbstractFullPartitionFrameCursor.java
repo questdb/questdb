@@ -94,7 +94,8 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     @Override
     public long size() {
-        return reader.getLogicalRowCount();
+        // Declared rows over-count a snapshot whose frames may drop duplicates on decode.
+        return reader.hasInexactRowCount() ? -1 : reader.getLogicalRowCount();
     }
 
     @Override

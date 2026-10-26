@@ -782,6 +782,34 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.hasAnyDelta();
     }
 
+    /**
+     * Returns whether reading this snapshot may yield fewer rows than its partitions
+     * declare: a dedup table with delta partitions whose windows the binding could not
+     * prove duplicate-free (see {@link PartitionFrameState#isExactRowCount(long, int)}).
+     * Row-count shortcuts over declared spans (cursor sizes, skips, LIMIT clamps) must
+     * not be taken while this is true; every such frame must be decoded to be counted.
+     * Binds the delta partition states, exactly as counting their logical rows does.
+     */
+    public boolean hasInexactRowCount() {
+        if (!hasAnyDelta()) {
+            return false;
+        }
+        // The designated timestamp is a dedup key exactly when dedup is enabled.
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0 || !metadata.isDedupKey(timestampIndex)) {
+            return false;
+        }
+        for (int i = 0; i < partitionCount; i++) {
+            if (txFile.getPartitionHasDelta(i)) {
+                final long state = getOrOpenPartitionFrameState(i);
+                if (state != 0 && PartitionFrameState.hasInexactWindows(state)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public boolean hasParquetPartitions() {
         if (hasParquetPartitions) {
             return true;
@@ -2066,6 +2094,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     changed = true;
                 } else if (forceTruncate && openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
                     closePartition(partitionIndex);
+                } else {
+                    // A Delta partition's new Runs can add symbol values without touching its mappings.
+                    changed = true;
                 }
                 txPartitionIndex++;
                 partitionIndex++;
