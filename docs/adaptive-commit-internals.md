@@ -719,6 +719,34 @@ bytes.
   earlier run dropped whose sequencer `_meta` is torn (a crash between the drop's log append and the `_meta`
   update) ships its drop after filesystem-wide `syncfs` on Linux; elsewhere it ships with a critical line,
   without a `sync(2)` fallback. Holding it would resurrect an acknowledged DROP on a fail-over.
+- **`nosync` and `async` do not wait.** Their commits flush no sequencer record, and the uploader ships each record
+  in its next upload batch, before any flush covers it, as it did before adaptive commit: a flush per upload batch
+  would make commits wait behind it under the table's sequencer lock (in a paired run of 100 busy tables, 1
+  commit in 1,000 went from 0.5 ms to 16.8 ms). The open cuts a torn log tail in every mode (section 13), so after a
+  power loss the primary's log can end below what the object store holds for a table. Its next commits would then
+  reuse those transaction numbers with other content; the start refusal below stops that, and the node then needs a
+  manual step before it runs as primary again.
+- **A local log behind the object store.** A live table whose local sequencer log ends below the object store's last
+  transaction for it lost records the replicas hold: a power loss of a `nosync` or `async` primary (above), a local
+  restore behind the store, or a replica started as primary before it caught up. Its next commits would take those
+  transaction numbers with other content, and the uploader would resume past them. The uploader start refuses it:
+  the startup scan (`process_startup_table`, from `WalUploader.triggerUploadMissed`) fails the start as primary with
+  `local sequencer log is behind the object store, refusing to start as primary [t=..., local_txn=...,
+  store_txn=...]`, naming the first such table and the remedies: start the node as a replica so it downloads the
+  missing transactions, then promote it (this clears every table at once); or take the table out of replication
+  with `replication.disabled.tables`, then drop it if it is not wanted (while the start is refused no SQL runs, so
+  the table cannot be dropped first). A table taken out of replication this way must never be put back: its
+  replicas hold a different history. Rebase it (`ALTER TABLE ... REBASE WAL`) to replicate it again. The check
+  skips the tables replicas do not follow, as the promote pre-flight does (the replication-disabled and node-local
+  tables), and a table whose local log ends in its drop, dropped or a rebase source in the index, or not in the
+  index. A drop whose record a power loss lost is no exception: the name registry's drop is synced before the
+  record is appended, so the table stays dropped on the primary. The check reads the log after the Java open cut
+  its torn tail: the scan opens each table's sequencer (`TableSequencerAPI.getCurrentWalId`) before it reads the
+  log, and no client write or job runs before the scan at boot (the worker pools and the network servers depend on
+  the replication component). A table the scan did not judge (its log was missing then, or it was replication-
+  disabled and a config reload put it back) is held instead, by the upload loop, with one critical line `local
+  sequencer log is behind the object store, holding the table's uploads [...]`: its uploads stop for the uploader's
+  lifetime, also once its new commits pass the store's last transaction.
 - **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and `sync`
   mode, the uploader makes every table's sequencer log durable before its first upload, then moves each table's
   durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked volume on

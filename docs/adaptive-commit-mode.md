@@ -532,8 +532,13 @@ More detail:
   against 6.6 s, measured on Linux with that path forced), and the log of each table an earlier run dropped is
   flushed the same way at that start. A table that kept a long backlog it could not upload pays
   one flush per 5,000 kept transactions at that start. A table the start could not flush (a transient error that is
-  not a flush failure) is flushed at its first upload instead, and held until then. The role switch and the restore
-  add flushes too:
+  not a flush failure) is flushed at its first upload instead, and held until then. In `nosync` and `async` the
+  uploader ships sequencer records before any flush covers them, as before adaptive commit, so after a power loss a
+  replicating primary's log can end below what the object store holds. That primary then refuses to start, naming
+  the table and both transaction numbers. Start it as a replica so it downloads the missing transactions, then
+  promote it; or take the table out of replication with `replication.disabled.tables`, and never put it back (its
+  replicas hold a different history; rebase it with `ALTER TABLE ... REBASE WAL` to replicate it again). The role
+  switch and the restore add flushes too:
   - a demotion opens the writer of each enrolled table (when none is pooled) and flushes the table before it removes
     its save point: one `syncfs` and two `fsync` per table on Linux, about 19 ms per table, so about 19 s for 1,000
     enrolled tables before the instance starts replicating;
