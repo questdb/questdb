@@ -769,19 +769,25 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
+            // the restricted join map overflows on either input, whichever one the plan hashes
             execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
-                    " from long_sequence(10)) timestamp(ts1)");
+                    " from long_sequence(10_000)) timestamp(ts1)");
             execute("create table tb2 as (select" +
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
-                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " timestamp_sequence(9_990_000_000_000, 1000000000) ts2" +
                     " from long_sequence(1000)) timestamp(ts2)");
             assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
                     .noRandomAccess()
-                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
+                    .returns("""
+                            sym1\tsym2
+                            PEHN\tVKU
+                            HYRX\tGTH
+                            PEHN\tVKU
+                            """);
 
             assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
                     .noLeakCheck()

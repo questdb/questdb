@@ -59,6 +59,7 @@ import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.join.SymbolKeyTranslatingRecord;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
@@ -1078,7 +1079,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     }
 
     private static boolean isMasterBuilt(HashJoinAggregation candidate) {
-        return candidate.getBuildSide() == HashJoinAggregation.BuildSide.MASTER;
+        return candidate.getBuildSide() == JoinInput.BuildSide.MASTER;
     }
 
     private static String describeKeys(HashJoinAggregation candidate) {

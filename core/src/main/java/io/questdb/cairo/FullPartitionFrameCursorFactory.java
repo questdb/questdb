@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,13 +49,13 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     public FullPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            RecordMetadata metadata,
+            TableDescriptor table,
             int order,
             String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
+        super(tableToken, metadataVersion, table, viewName, viewPosition, updateQuery);
         this.baseOrder = order;
     }
 
@@ -137,14 +137,14 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             if (fwdRangeCursor == null) {
                 fwdRangeIntervals = new LongList(2);
                 fwdRangeIntervalModel = new RuntimeIntervalModel(
-                        ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
+                        ColumnType.getTimestampDriver(getTableDescriptor().getTimestampType()),
                         PartitionBy.NONE,
                         fwdRangeIntervals
                 );
                 fwdRangeCursor = new IntervalFwdPartitionFrameCursor(
                         reader.getConfiguration(),
                         fwdRangeIntervalModel,
-                        getMetadata().getTimestampIndex()
+                        getTableDescriptor().getTimestampIndex()
                 );
             }
             stampRange(fwdRangeIntervals, timestampLo, timestampHi);
@@ -188,14 +188,14 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             if (bwdRangeCursor == null) {
                 bwdRangeIntervals = new LongList(2);
                 bwdRangeIntervalModel = new RuntimeIntervalModel(
-                        ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
+                        ColumnType.getTimestampDriver(getTableDescriptor().getTimestampType()),
                         PartitionBy.NONE,
                         bwdRangeIntervals
                 );
                 bwdRangeCursor = new IntervalBwdPartitionFrameCursor(
                         reader.getConfiguration(),
                         bwdRangeIntervalModel,
-                        getMetadata().getTimestampIndex()
+                        getTableDescriptor().getTimestampIndex()
                 );
             }
             stampRange(bwdRangeIntervals, timestampLo, timestampHi);

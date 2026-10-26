@@ -422,7 +422,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         // the table's own timestamp, or any timestamp of a table that has none: the frames follow the
         // table's partitions, and a table without a designated timestamp has only one.
         final int timestampIndex = getMetadata().getTimestampIndex();
-        final int tableTimestampIndex = partitionFrameCursorFactory.getMetadata().getTimestampIndex();
+        final int tableTimestampIndex = partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
         return framingSupported && supportsRandomAccess
                 && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
                 && timestampIndex != -1

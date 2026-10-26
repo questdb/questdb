@@ -514,6 +514,40 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testInitialSizeDoublesUpToPageThenGrowsByPages() {
+        final int pageSize = 1024;
+        final int maxPages = 3;
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT, null, 64)) {
+            Assert.assertEquals(0, mem.size());
+            Assert.assertEquals(pageSize, mem.getPageSize());
+            final StringSink sizes = new StringSink();
+            long size = 0;
+            int n = 0;
+            try {
+                while (true) {
+                    mem.putByte((byte) n);
+                    n++;
+                    if (mem.size() != size) {
+                        size = mem.size();
+                        sizes.put(size).put(' ');
+                    }
+                }
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages (3) breached in VirtualMemory");
+            }
+            TestUtils.assertEquals("64 128 256 512 1024 2048 3072 ", sizes);
+            Assert.assertEquals(pageSize * maxPages, n);
+            for (int i = 0; i < n; i++) {
+                Assert.assertEquals((byte) i, mem.getByte(i));
+            }
+
+            mem.truncate();
+            Assert.assertEquals(64, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+        }
+    }
+
+    @Test
     public void testInt() {
         try (MemoryARW mem = new MemoryCARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte((byte) 1);

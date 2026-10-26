@@ -49,7 +49,7 @@ public final class HashJoinAggregation implements Mutable {
     private BoundExpression buildOnFilter;
     private OutputSchema buildOutput;
     private InputRead buildRead;
-    private BuildSide buildSide;
+    private JoinInput.BuildSide buildSide;
     private BoundExpression gate;
     private boolean isKeyCapacityPresized;
     private JoinKind joinType;
@@ -130,7 +130,7 @@ public final class HashJoinAggregation implements Mutable {
         return buildRead;
     }
 
-    public BuildSide getBuildSide() {
+    public JoinInput.BuildSide getBuildSide() {
         return buildSide;
     }
 
@@ -197,7 +197,7 @@ public final class HashJoinAggregation implements Mutable {
     public HashJoinAggregation of(
             AggregatePlan aggregate,
             JoinKind joinType,
-            BuildSide buildSide,
+            JoinInput.BuildSide buildSide,
             LogicalPlan probeInput,
             InputRead probeRead,
             CharSequence probeAlias,
@@ -231,14 +231,6 @@ public final class HashJoinAggregation implements Mutable {
 
     public void setGate(BoundExpression gate) {
         this.gate = gate;
-    }
-
-    /**
-     * Which input of the join, its master or its slave, the operator builds; the other one it probes. An outer join
-     * builds the input it NULL-extends.
-     */
-    public enum BuildSide {
-        MASTER, SLAVE
     }
 
     /**

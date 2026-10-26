@@ -549,6 +549,33 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowBoundFollowsInputsThatKeepOrDropRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertRowBound("SELECT * FROM t", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT ts, x + 1 y FROM t WHERE x > 1", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT x, count() FROM t GROUP BY x", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT DISTINCT x FROM t", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT * FROM (SELECT * FROM t LIMIT 3) LIMIT 2", "t", 2);
+            assertRowBound("SELECT * FROM t LIMIT 1, 3", "t", Long.MAX_VALUE);
+            bindVariableService.setLong("n", 2);
+            assertRowBound("SELECT * FROM t LIMIT :n", "t", Long.MAX_VALUE);
+            // a GROUP BY without keys returns a row for an empty input, and a sort has no bound of its own
+            assertRowBound("SELECT count() FROM t", null, Long.MAX_VALUE);
+            assertRowBound("SELECT * FROM (SELECT * FROM t ORDER BY x) LIMIT 2", null, 2);
+            assertRowBound("SELECT * FROM t ORDER BY x", null, Long.MAX_VALUE);
+            assertQuery("SELECT * FROM (SELECT * FROM t LIMIT 3) LIMIT 2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T01:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testSharedConsumerCountMakesSharedCursorsKnown() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -951,6 +978,19 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             Assert.assertEquals(Capability.NO, PhysicalProperties.isLongSequence(plan));
             Assert.assertFalse(factory.followedOrderByAdvice());
         }
+    }
+
+    private static void assertRowBound(String sql, String table, long limit) throws Exception {
+        assertPlanned(engine, sqlExecutionContext, sql, LogicalPlan.class, plan -> {
+            final ScanPlan scan = PhysicalProperties.rowBoundScan(plan);
+            if (table == null) {
+                Assert.assertNull(sql, scan);
+            } else {
+                Assert.assertNotNull(sql, scan);
+                Assert.assertEquals(sql, table, scan.getTableToken().getTableName());
+            }
+            Assert.assertEquals(sql, limit, PhysicalProperties.rowBoundLimit(plan));
+        });
     }
 
     private static void createTable() throws Exception {

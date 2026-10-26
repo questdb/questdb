@@ -96,6 +96,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
             this.slaveChain = new RecordChain(slaveFactory.getMetadata(),
                     slaveChainSink,
+                    configuration.getSqlHashJoinLightValuePageSize(),
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages());
             this.columnSplit = columnSplit;

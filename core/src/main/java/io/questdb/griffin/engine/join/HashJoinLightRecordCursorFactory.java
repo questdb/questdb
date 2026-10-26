@@ -45,11 +45,13 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final @Nullable JoinInput.BuildSide buildSide;
     private final boolean isMasterFixed;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
@@ -71,10 +73,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             Plannable joinContext,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            boolean isMasterFixed
+            boolean isMasterFixed,
+            @Nullable JoinInput.BuildSide buildSide
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.isMasterFixed = isMasterFixed;
+        this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         try {
@@ -101,21 +105,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            boolean swapped = false;
-            if (!isMasterFixed && masterFactory.recordCursorSupportsRandomAccess()) {
-                long masterSize = masterCursor.size();
-                long slaveSize = slaveCursor.size();
-
-                if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                    RecordCursor temp = masterCursor;
-                    masterCursor = slaveCursor;
-                    slaveCursor = temp;
-                    swapped = true;
-                }
+            final boolean isMasterBuilt = buildSide != null ? buildSide == JoinInput.BuildSide.MASTER
+                    : !isMasterFixed && masterFactory.recordCursorSupportsRandomAccess()
+                      && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size()) == JoinInput.BuildSide.MASTER;
+            if (isMasterBuilt) {
+                final RecordCursor temp = masterCursor;
+                masterCursor = slaveCursor;
+                slaveCursor = temp;
             }
 
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-            cursor.of(masterCursor, slaveCursor, executionContext, swapped);
+            cursor.of(masterCursor, slaveCursor, executionContext, isMasterBuilt);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -149,8 +149,13 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
-        sink.child(masterFactory);
-        sink.child("Hash", slaveFactory);
+        if (buildSide == JoinInput.BuildSide.MASTER) {
+            sink.child(slaveFactory);
+            sink.child("Hash", masterFactory);
+        } else {
+            sink.child(masterFactory);
+            sink.child("Hash", slaveFactory);
+        }
     }
 
     private static void populateRowIDHashMap(

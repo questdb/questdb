@@ -46,6 +46,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -797,11 +798,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
-        public RecordMetadata getMetadata() {
-            return delegate.getMetadata();
-        }
-
-        @Override
         public int getOrder() {
             return delegate.getOrder();
         }
@@ -809,6 +805,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions() {
             return delegate.getPushdownFilterConditions();
+        }
+
+        @Override
+        public TableDescriptor getTableDescriptor() {
+            return delegate.getTableDescriptor();
         }
 
         @Override
@@ -836,6 +837,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
         ) {
             delegate.setPushdownFilterCondition(partitionTableVersion, pushdownFilterConditions);
+        }
+
+        @Override
+        public void setRowCountRange(long minRowCount, long maxRowCount) {
+            delegate.setRowCountRange(minRowCount, maxRowCount);
         }
 
         @Override

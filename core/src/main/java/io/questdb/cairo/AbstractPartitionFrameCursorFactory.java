@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
@@ -46,26 +46,28 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final IntHashSet authorizedColumns = new IntHashSet();
     private final IntList checkedColumnIndexes = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final RecordMetadata metadata;
     private final long metadataVersion;
+    private final TableDescriptor table;
     private final TableToken tableToken;
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    private long maxRowCount = Long.MAX_VALUE;
+    private long minRowCount;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private long pushdownPartitionTableVersion = -1;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            RecordMetadata metadata,
+            TableDescriptor table,
             @Nullable String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
-        this.metadata = metadata;
+        this.table = table;
         this.viewName = viewName;
         this.viewPosition = viewPosition;
         this.updateQuery = updateQuery;
@@ -77,13 +79,13 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    public @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions() {
+        return pushdownFilterConditions;
     }
 
     @Override
-    public @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions() {
-        return pushdownFilterConditions;
+    public TableDescriptor getTableDescriptor() {
+        return table;
     }
 
     @Override
@@ -108,6 +110,12 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     ) {
         this.pushdownPartitionTableVersion = partitionTableVersion;
         this.pushdownFilterConditions = pushdownFilterConditions;
+    }
+
+    @Override
+    public void setRowCountRange(long minRowCount, long maxRowCount) {
+        this.minRowCount = minRowCount;
+        this.maxRowCount = maxRowCount;
     }
 
     @Override
@@ -159,7 +167,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             if (depCols == null || !depCols.contains("*")) {
                 columnNames.clear();
                 for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                    final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
+                    final String columnName = table.getColumnName(columnIndexes.getQuick(i));
                     if (depCols == null || !depCols.contains(columnName)) {
                         columnNames.add(columnName);
                     }
@@ -171,7 +179,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         } else if (columnIndexes.size() > 0) {
             columnNames.clear();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
+                final String columnName = table.getColumnName(columnIndexes.getQuick(i));
                 columnNames.add(columnName);
             }
             securityContext.authorizeSelect(tableToken, columnNames);
@@ -198,6 +206,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
                 }
                 pushdownPartitionTableVersion = currentPartitionTableVersion;
             }
+        }
+        final long rowCount = reader.size();
+        if ((rowCount < minRowCount || rowCount > maxRowCount) && !executionContext.isTableRowCountChangeTolerated()) {
+            Misc.free(reader);
+            throw TableReferenceOutOfDateException.of(tableToken);
         }
         return reader;
     }

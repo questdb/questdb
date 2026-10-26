@@ -824,7 +824,8 @@ final class JoinFactoryGenerator {
                             context,
                             masterSymbolKeyCols,
                             slaveSymbolKeyCols,
-                            step.getMasterSide() == JoinInput.MasterSide.FIXED
+                            step.getMasterSide() == JoinInput.MasterSide.FIXED,
+                            step.getBuildSide()
                     );
                 }
 

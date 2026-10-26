@@ -112,6 +112,7 @@ public final class PlanVerifier {
     public static final String INPUT_NULL = "input is null";
     public static final String INPUT_RANDOM_ACCESS = "physical choice reads an input by row id that lacks random access";
     public static final String JOIN_ALGORITHM = "join step algorithm contradicts its kind, keys or hints";
+    public static final String JOIN_BUILD_SIDE = "join step build side is recorded for a step whose smaller input does not drive it or whose inputs have no row bound";
     public static final String JOIN_FILTER_ORIGIN = "join filter conjunct origin is neither WHERE nor an input of the join";
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
@@ -122,7 +123,7 @@ public final class PlanVerifier {
     public static final String JOIN_SLAVE_VALUE_TYPE = "full-fat temporal join stores a slave column its map value cannot hold";
     public static final String JOIN_TIMESTAMP = "join designated timestamp is not the one its steps designate";
     public static final String LATEST_BY_ALGORITHM = "LATEST BY over a table scan has an algorithm for a derived input";
-    public static final String LIMIT_APPLICATION = "LIMIT application contradicts the sort or the scan under it";
+    public static final String LIMIT_APPLICATION = "LIMIT application contradicts the sort, the scan or the join under it";
     public static final String NODE_SHARED = "node is reached through two paths";
     public static final String OPERAND_COLUMN = "LIMIT, SAMPLE BY or FILL operand reads a column";
     public static final String ORDER_KEYS = "order keys and directions differ in length";

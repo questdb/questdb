@@ -46,6 +46,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Mutable {
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
+    private final long initialSize;
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
     private final String maxPagesConfigKey;
@@ -65,9 +66,19 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag, String maxPagesConfigKey) {
+        this(pageSize, maxPages, memoryTag, maxPagesConfigKey, pageSize);
+    }
+
+    /**
+     * Memory whose first allocation takes {@code initialSize} bytes, rounded up to a power of two, and which doubles
+     * until it holds one page, then grows by pages as memory with that page size does. An initial size of at least a
+     * page allocates a whole page first.
+     */
+    public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag, String maxPagesConfigKey, long initialSize) {
         this.memoryTag = memoryTag;
         this.maxPages = maxPages;
         this.maxPagesConfigKey = maxPagesConfigKey;
+        this.initialSize = initialSize;
         setPageSize(pageSize);
     }
 
@@ -221,8 +232,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         }
 
         final long oldSize = size();
-        long newPageCount = getNewPageCount(requiredSize, oldSize);
-        long newSize = newPageCount << sizeMsb;
+        long newSize = getNewSize(requiredSize, oldSize);
 
         // sometimes the resize request ends up being the same
         // as existing memory size
@@ -230,7 +240,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
             return;
         }
 
-        if (newPageCount > maxPages) {
+        if (((newSize - 1) >>> sizeMsb) + 1 > maxPages) {
             LimitOverflowException ex = LimitOverflowException.instance();
             ex.put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
             if (maxPagesConfigKey != null) {
@@ -245,8 +255,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         } catch (CairoException e) {
             if (e.isOutOfMemory()) {
                 // allocate exact number of pages, without doubling
-                newPageCount = getNewPageCount(requiredSize, 0);
-                newSize = newPageCount << sizeMsb;
+                newSize = getNewSize(requiredSize, 0);
                 newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
             } else {
                 throw e;
@@ -269,6 +278,15 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
             return Math.max(Math.min(oldPageCount * 2, maxPages / 2), minPageCount);
         }
         return minPageCount;
+    }
+
+    private long getNewSize(long requiredSize, long oldSize) {
+        final long pageSize = 1L << sizeMsb;
+        if (initialSize < pageSize && requiredSize <= pageSize) {
+            final long size = Numbers.ceilPow2(Math.max(requiredSize, initialSize));
+            return requiredSize > oldSize ? Math.min(Math.max(size, oldSize * 2), pageSize) : size;
+        }
+        return getNewPageCount(requiredSize, oldSize) << sizeMsb;
     }
 
     protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {

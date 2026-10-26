@@ -136,6 +136,44 @@ public class PlanTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileAllocationDoesNotScaleWithUnusedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final int unusedColumnCount = 400;
+            final StringSink ddl = new StringSink();
+            ddl.put("CREATE TABLE wde (ts TIMESTAMP, s SYMBOL, a DOUBLE, b LONG");
+            for (int i = 0; i < unusedColumnCount; i++) {
+                ddl.put(", c").put(i).put(" DOUBLE");
+            }
+            ddl.put(") TIMESTAMP(ts) PARTITION BY DAY");
+            execute(ddl);
+            execute("CREATE TABLE nrw (ts TIMESTAMP, s SYMBOL, a DOUBLE, b LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            final String rows = """
+                    VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'x', 1.5, 1),
+                    ('2024-01-01T00:00:01.000000Z', 'y', 2.5, -1)
+                    """;
+            execute("INSERT INTO wde (ts, s, a, b) " + rows);
+            execute("INSERT INTO nrw (ts, s, a, b) " + rows);
+            try (
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final long narrowBytes = compileAllocatedBytes(scope.getBean(), compiler, "SELECT ts, a FROM nrw WHERE b > 0 AND s = 'x'");
+                final long wideBytes = compileAllocatedBytes(scope.getBean(), compiler, "SELECT ts, a FROM wde WHERE b > 0 AND s = 'x'");
+                // the frame factory keeps a reference to the name of every column, 8 bytes at most
+                Assert.assertTrue("unused columns add allocation to a compile", wideBytes - narrowBytes <= 16L * unusedColumnCount);
+            }
+            assertQuery("SELECT ts, a FROM wde WHERE b > 0 AND s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.5
+                            """);
+        });
+    }
+
+    @Test
     public void testCompileHoldsOneReaderAtATime() throws Exception {
         assertMemoryLeak(() -> {
             final int tableCount = 20;
@@ -535,6 +573,22 @@ public class PlanTablesTest extends AbstractCairoTest {
             }
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
+    }
+
+    private static long compileAllocatedBytes(com.sun.management.ThreadMXBean threadMXBean, SqlCompiler compiler, String sql) throws Exception {
+        for (int i = 0; i < 2_000; i++) {
+            Misc.free(compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory());
+        }
+        final int compileCount = 200;
+        long minBytes = Long.MAX_VALUE;
+        for (int round = 0; round < 5; round++) {
+            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+            for (int i = 0; i < compileCount; i++) {
+                Misc.free(compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory());
+            }
+            minBytes = Math.min(minBytes, threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+        }
+        return minBytes / compileCount;
     }
 
     private void assertPattern(String predicate, String expectedValues) throws Exception {

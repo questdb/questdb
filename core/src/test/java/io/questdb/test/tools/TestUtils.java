@@ -39,6 +39,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
@@ -58,6 +59,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -2517,6 +2519,20 @@ public final class TestUtils {
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
+    }
+
+    /**
+     * The descriptor a partition frame factory keeps for the table whose columns {@code metadata} lists.
+     */
+    public static TableDescriptor tableDescriptor(RecordMetadata metadata) {
+        final ObjList<String> columnNames = new ObjList<>(metadata.getColumnCount());
+        boolean hasConvertedColumns = false;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata column = metadata.getColumnMetadata(i);
+            columnNames.add(column.getColumnName());
+            hasConvertedColumns |= column.getWriterIndex() != column.getOriginalWriterIndex();
+        }
+        return new TableDescriptor(columnNames, metadata.getTimestampIndex(), metadata.getTimestampType(), hasConvertedColumns);
     }
 
     /**

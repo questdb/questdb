@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -118,6 +119,7 @@ final class OperatorPlanning implements Mutable {
     private final HashJoinAggregationPlanning hashJoinPlanning;
     private final IntList readIds;
     private final IntList readOrder;
+    private final ObjList<LogicalPlan> undecidedMasters = new ObjList<>();
     private final ObjList<JoinInput> undecidedSteps;
     private int frameInputLo;
     private boolean isFullFatJoins;
@@ -138,6 +140,7 @@ final class OperatorPlanning implements Mutable {
         generatedInputs.clear();
         hashJoinPlanning.clear();
         frameInputLo = 0;
+        undecidedMasters.clear();
         undecidedSteps.clear();
     }
 
@@ -427,6 +430,18 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * The fused GROUP BY builds the input its {@link HashJoinAggregation} records instead of the steps of the join,
+     * which therefore settle without an input to hash.
+     */
+    private void forgoBuildSides(JoinPlan join) {
+        for (int i = 0, n = undecidedSteps.size(); i < n; i++) {
+            if (join.getOrderedInputs().indexOf(undecidedSteps.getQuick(i)) > -1) {
+                undecidedMasters.setQuick(i, null);
+            }
+        }
+    }
+
+    /**
      * True when the page frames the plan serves come from a table whose parquet partitions store a column under a
      * converted type.
      */
@@ -679,6 +694,7 @@ final class OperatorPlanning implements Mutable {
             final HashJoinAggregation hashJoin = hashJoinPlanning.plan(aggregate);
             if (hashJoin != null) {
                 aggregate.setHashJoin(hashJoin);
+                forgoBuildSides((JoinPlan) hashJoin.getAggregate().getChild());
                 return;
             }
         }
@@ -695,6 +711,45 @@ final class OperatorPlanning implements Mutable {
                     baseTimestampIndex == timestampIndex && scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD);
         }
         aggregate.setAlgorithm(aggregateAlgorithm(aggregate, base));
+    }
+
+    /**
+     * Records the input the light INNER hash join step over a master of one input hashes: the one with the smaller row
+     * bound, see {@link PhysicalProperties#rowBound}, where only a master with random access can be hashed. A step with
+     * an input of unknown bound leaves the choice to execution. The choice holds while the bound of the hashed input
+     * stays within twice the bound of the other one. The tables that bound them keep the row counts that guarantee it,
+     * the hashed one growing and the other shrinking by at most the same factor, so a cursor open past them compiles the
+     * statement again, and a new compile at the same row counts keeps them.
+     */
+    private void planBuildSide(JoinInput step, LogicalPlan master) {
+        final PlanTables tables = context.getPlanTables();
+        final LogicalPlan slave = step.getInput();
+        final long masterRows = PhysicalProperties.rowBound(master, tables);
+        final long slaveRows = PhysicalProperties.rowBound(slave, tables);
+        final JoinInput.BuildSide side = JoinInput.BuildSide.smaller(masterRows, slaveRows);
+        if (side == null || side == JoinInput.BuildSide.MASTER && !isRandomAccess(master)) {
+            return;
+        }
+        step.setBuildSide(side);
+        final boolean isMasterBuilt = side == JoinInput.BuildSide.MASTER;
+        final LogicalPlan built = isMasterBuilt ? master : slave;
+        final LogicalPlan probe = isMasterBuilt ? slave : master;
+        final ScanPlan builtScan = PhysicalProperties.rowBoundScan(built);
+        final ScanPlan probeScan = PhysicalProperties.rowBoundScan(probe);
+        // Both bounds read the rows of one table, which moves them together.
+        if (builtScan != null && probeScan != null && builtScan.getTableToken().equals(probeScan.getTableToken())) {
+            return;
+        }
+        final long builtRows = isMasterBuilt ? masterRows : slaveRows;
+        final long probeRows = isMasterBuilt ? slaveRows : masterRows;
+        final double product = (double) builtRows * probeRows;
+        final long maxBuiltRows = Math.max(builtRows, (long) Math.floor(Math.sqrt(2 * product)));
+        if (builtScan != null && PhysicalProperties.rowBoundLimit(built) > maxBuiltRows) {
+            builtScan.keepRowCountWithin(0, maxBuiltRows);
+        }
+        if (probeScan != null) {
+            probeScan.keepRowCountWithin(Math.min(probeRows, (long) Math.ceil(Math.sqrt(product / 2))), Long.MAX_VALUE);
+        }
     }
 
     /**
@@ -813,8 +868,14 @@ final class OperatorPlanning implements Mutable {
     private void planLimit(LimitPlan limit) {
         final LogicalPlan limited = limit.getChild();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
-            limit.setApplication(isInputLimit(limited) ? LimitPlan.Application.INPUT
-                    : PlanToFactoryRules.masterSuffixScan(limit) != null ? LimitPlan.Application.MASTER_SUFFIX : LimitPlan.Application.OPERATOR);
+            if (isInputLimit(limited)) {
+                limit.setApplication(LimitPlan.Application.INPUT);
+            } else if (PlanToFactoryRules.masterSuffixScan(limit) != null) {
+                limit.setApplication(LimitPlan.Application.MASTER_SUFFIX);
+                readMasterSuffixOrder(PlanToFactoryRules.masterSuffixJoin(limit));
+            } else {
+                limit.setApplication(LimitPlan.Application.OPERATOR);
+            }
             return;
         }
         final SortPlan sort = (SortPlan) LogicalPlans.skipProjects(limited);
@@ -870,6 +931,7 @@ final class OperatorPlanning implements Mutable {
                     step.setMasterSide(JoinInput.MasterSide.FIXED);
                 } else {
                     undecidedSteps.add(step);
+                    undecidedMasters.add(inputIndex == 1 ? join.getOrderedInputs().getQuick(0).getInput() : null);
                 }
             }
         }
@@ -1119,6 +1181,24 @@ final class OperatorPlanning implements Mutable {
             case null -> {
             }
             default -> readJoinOrder(join, inputCount - 1, isAdviceRead, isDirectionRead);
+        }
+    }
+
+    /**
+     * A MASTER_SUFFIX LIMIT whose master's parallel filter returns the last rows of the master reads the rows of each
+     * master row together, in master order, from every step of the join, so it fixes the master side of every light
+     * INNER hash join step.
+     */
+    private void readMasterSuffixOrder(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        if (PhysicalProperties.implementsLimit(ordered.getQuick(0).getInput()) == PhysicalProperties.Capability.NO) {
+            return;
+        }
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            final JoinInput step = ordered.getQuick(i);
+            if (step.getMasterSide() == null) {
+                step.setMasterSide(JoinInput.MasterSide.FIXED);
+            }
         }
     }
 
@@ -1656,15 +1736,20 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Lets the smaller input drive every light INNER hash join whose order no decision read since
-     * {@link #planOperators} planned it.
+     * {@link #planOperators} planned it, and decides the input it hashes where the row bounds of its inputs tell.
      */
     void settleMasterSides() {
         for (int i = 0, n = undecidedSteps.size(); i < n; i++) {
             final JoinInput step = undecidedSteps.getQuick(i);
             if (step.getMasterSide() == null) {
                 step.setMasterSide(JoinInput.MasterSide.SMALLER);
+                final LogicalPlan master = undecidedMasters.getQuick(i);
+                if (master != null) {
+                    planBuildSide(step, master);
+                }
             }
         }
+        undecidedMasters.clear();
         undecidedSteps.clear();
     }
 

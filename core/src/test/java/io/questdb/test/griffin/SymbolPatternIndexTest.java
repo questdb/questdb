@@ -4588,7 +4588,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         private boolean hasReleasedOwnResources;
 
         private ThrowingClosePartitionFrameCursorFactory(TableToken tableToken, RecordMetadata metadata) {
-            super(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, PartitionFrameCursorFactory.ORDER_ASC, null, 0, false);
+            super(tableToken, TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), PartitionFrameCursorFactory.ORDER_ASC, null, 0, false);
         }
 
         @Override

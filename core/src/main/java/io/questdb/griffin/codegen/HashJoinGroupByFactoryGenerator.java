@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFac
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -126,7 +127,7 @@ final class HashJoinGroupByFactoryGenerator {
         Throwable primary = null;
         try {
             // The ordinary plan builds the master first, and the first build of a bind variable without a type infers it.
-            final boolean isMasterBuilt = hashJoin.getBuildSide() == HashJoinAggregation.BuildSide.MASTER;
+            final boolean isMasterBuilt = hashJoin.getBuildSide() == JoinInput.BuildSide.MASTER;
             if (isMasterBuilt) {
                 build = generateInput(frame, hashJoin.getBuildInput(), hashJoin.getBuildRead(), buildFilter, executionContext);
             }

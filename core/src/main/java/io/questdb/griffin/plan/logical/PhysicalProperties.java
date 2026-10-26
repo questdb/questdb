@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SetOperationCasts;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -37,7 +38,8 @@ import org.jetbrains.annotations.Nullable;
  * whether its cursor supports random access, page frames, time frames, shared cursors and long top-K, whether it
  * applies a LIMIT itself, follows the order advice of its scans or reads long_sequence(), and the order it emits its
  * rows in, and the table it reports. It reads the access paths and the operator decisions operator planning records on
- * the plan. A property is {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry.
+ * the plan. A property is {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry. With the
+ * row counts of the tables the plan reads, it also bounds the rows the factory returns, see {@link #rowBound}.
  */
 public final class PhysicalProperties {
     public static final int UNKNOWN_TIMESTAMP = -2;
@@ -109,6 +111,49 @@ public final class PhysicalProperties {
      */
     public static int masterTimestampIndex(JoinPlan join, int inputCount) {
         return joinTimestamp(join, inputCount);
+    }
+
+    /**
+     * An upper bound of the rows the factory returns, from the row counts of the tables {@code tables} holds, -1 when
+     * unknown: a table scan returns at most the rows of its table, a filter, a projection, a keyed GROUP BY, a DISTINCT
+     * and a decorrelation domain read at most the rows of their input, and a LIMIT of a constant count at most that
+     * many rows. A scan of a live view returns rows its table does not hold yet, so it has no bound.
+     */
+    public static long rowBound(LogicalPlan plan, PlanTables tables) {
+        final ScanPlan scan = rowBoundScan(plan);
+        final long limit = rowBoundLimit(plan);
+        if (scan != null) {
+            return Math.min(tables.of(scan).getRowCount(), limit);
+        }
+        return limit < Long.MAX_VALUE ? limit : -1;
+    }
+
+    /**
+     * The fewest rows a LIMIT of a constant count allows along the inputs that bound the rows of the plan, see
+     * {@link #rowBound}; {@link Long#MAX_VALUE} for none.
+     */
+    public static long rowBoundLimit(LogicalPlan plan) {
+        long limit = Long.MAX_VALUE;
+        for (LogicalPlan node = plan; node != null; node = boundingInput(node)) {
+            if (node instanceof LimitPlan limitPlan && limitPlan.getHi() == null && limitPlan.getLo() instanceof ConstantExpression lo) {
+                final long count = LogicalPlans.limitValue(lo);
+                if (count > -1) {
+                    limit = Math.min(limit, count);
+                }
+            }
+        }
+        return limit;
+    }
+
+    /**
+     * The scan whose table's row count bounds the rows of the plan, see {@link #rowBound}; null when no table does.
+     */
+    public static ScanPlan rowBoundScan(LogicalPlan plan) {
+        LogicalPlan node = plan;
+        while (node != null && !(node instanceof ScanPlan)) {
+            node = boundingInput(node);
+        }
+        return node instanceof ScanPlan scan && !scan.getTableToken().isLiveView() ? scan : null;
     }
 
     /**
@@ -308,6 +353,21 @@ public final class PhysicalProperties {
             return Capability.NO;
         }
         return left == Capability.YES && right == Capability.YES ? Capability.YES : Capability.UNKNOWN;
+    }
+
+    /**
+     * The input whose rows bound the rows of the plan, see {@link #rowBound}; null when none does.
+     */
+    private static LogicalPlan boundingInput(LogicalPlan plan) {
+        return switch (plan) {
+            case FilterPlan filter -> filter.getChild();
+            case ProjectPlan project -> project.getChild();
+            case AggregatePlan aggregate -> aggregate.getGroupingExpressions().size() > 0 ? aggregate.getChild() : null;
+            case DistinctPlan distinct -> distinct.getChild();
+            case DomainReadPlan read -> read.getProducer();
+            case LimitPlan limit -> limit.getChild();
+            default -> null;
+        };
     }
 
     private static Capability capability(int properties, int shift) {

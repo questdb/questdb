@@ -250,6 +250,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         if (input.getAlgorithm() != null) {
             clone.setAlgorithm(input.getAlgorithm());
             clone.setMasterSide(input.getMasterSide());
+            clone.setBuildSide(input.getBuildSide());
         }
         originalInputs.add(input);
         copiedInputs.add(clone);
@@ -376,6 +377,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setTimestampDropped(scan.isTimestampDropped());
         clone.setJoinIntervalStep(scan.getJoinIntervalStep());
         clone.getJoinIntervals().add(scan.getJoinIntervals());
+        clone.keepRowCountWithin(scan.getMinRowCount(), scan.getMaxRowCount());
         return clone;
     }
 

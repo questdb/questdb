@@ -2111,15 +2111,51 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitOverJoinKeepsSmallerMasterDriving() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT 5 k, x::INT v FROM long_sequence(1_000))");
+            // the master holds fewer rows than the slave, but its filter returns the last master rows, which the LIMIT
+            // reads in master order, so the master drives the join
+            assertQuery("SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.i > 0 LIMIT -2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: s.k=m.i
+                                        Async JIT Filter workers: 1
+                                          limit: 2
+                                          filter: 0<i
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: m
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                            """)
+                    .returns("""
+                            i\tv
+                            5\t2
+                            5\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testNegativeLimitOverJoinSkipsRowsOfOldMasterRow() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT 5 k, x::INT v FROM long_sequence(1_000))");
             execute("CREATE TABLE c AS (SELECT x::INT c FROM long_sequence(3))");
             // only master row 5 joins, to 1_000 slave rows; the LIMIT reads the first of them and skips the others by
-            // their count, through a hash join and through a cross join over it
+            // their count, through a hash join and through a cross join over it. The master holds more rows than the
+            // slave, so the join without the LIMIT hashes the slave too and returns the rows in the same order.
             final String[] joins = {
                     "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.i > 0",
                     "SELECT m.i, s.v, c.c FROM m JOIN s ON m.i = s.k CROSS JOIN c WHERE m.i > 0",

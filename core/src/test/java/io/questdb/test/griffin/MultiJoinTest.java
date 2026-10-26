@@ -396,16 +396,16 @@ public class MultiJoinTest extends AbstractCairoTest {
                                       condition: c.k=b.k
                                         Hash Join Light
                                           condition: b.k=a.k
-                                            Async Top K lo: 2 workers: 1
-                                              filter: null
-                                              keys: [id desc]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_multi_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_multi_b
                                             Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_multi_b
+                                                Async Top K lo: 2 workers: 1
+                                                  filter: null
+                                                  keys: [id desc]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_multi_a
                                         Hash
                                             PageFrame
                                                 Row forward scan

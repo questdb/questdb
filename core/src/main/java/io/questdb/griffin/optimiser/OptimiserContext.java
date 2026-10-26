@@ -126,6 +126,13 @@ final class OptimiserContext implements Mutable {
         return functionSources;
     }
 
+    /**
+     * The tables of the statement, whose access facts code generation reads too.
+     */
+    PlanTables getPlanTables() {
+        return planTables;
+    }
+
     BoundExpressionRewriter getRewriter() {
         return rewriter;
     }

@@ -294,7 +294,7 @@ final class HashJoinAggregationPlanning implements Mutable {
     private HashJoinAggregation orientation(
             AggregatePlan aggregate,
             JoinPlan join,
-            HashJoinAggregation.BuildSide side,
+            JoinInput.BuildSide side,
             LogicalPlan master,
             HashJoinAggregation.InputRead masterRead,
             long masterRows,
@@ -305,7 +305,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         final JoinInput first = join.getOrderedInputs().getQuick(0);
         final JoinInput second = join.getOrderedInputs().getQuick(1);
         final JoinKind kind = second.getJoinType();
-        final boolean isMasterBuilt = side == HashJoinAggregation.BuildSide.MASTER;
+        final boolean isMasterBuilt = side == JoinInput.BuildSide.MASTER;
         final HashJoinAggregation hashJoin = hashJoins.next().of(aggregates.next().of(join, aggregate.getPosition()), kind, side,
                 isMasterBuilt ? slave : master, isMasterBuilt ? slaveRead : masterRead, (isMasterBuilt ? second : first).getBindingAlias(),
                 isMasterBuilt ? master : slave, isMasterBuilt ? masterRead : slaveRead, (isMasterBuilt ? first : second).getBindingAlias());
@@ -575,8 +575,11 @@ final class HashJoinAggregationPlanning implements Mutable {
         if (!planFilters(join, kind)) {
             return null;
         }
-        final HashJoinAggregation.BuildSide side = kind == JoinKind.RIGHT_OUTER || kind == JoinKind.INNER && masterRows < slaveRows
-                ? HashJoinAggregation.BuildSide.MASTER : HashJoinAggregation.BuildSide.SLAVE;
+        final JoinInput.BuildSide side = switch (kind) {
+            case RIGHT_OUTER -> JoinInput.BuildSide.MASTER;
+            case INNER -> JoinInput.BuildSide.smaller(masterRows, slaveRows);
+            default -> JoinInput.BuildSide.SLAVE;
+        };
         final HashJoinAggregation hashJoin = orientation(aggregate, join, side, master, masterRead, masterRows, slave, slaveRead, slaveRows);
         if (hashJoin == null) {
             return null;
@@ -585,8 +588,8 @@ final class HashJoinAggregationPlanning implements Mutable {
         // A SYMBOL key translates every distinct key the probe reads into the build's dictionary, so probing the
         // input with more rows costs about what building it would: SYMBOL keys keep the one build.
         if (kind == JoinKind.INNER && !hashJoin.getKeys().hasTranslatedSymbol() && (masterScan.isIntervalScan() || slaveScan.isIntervalScan())) {
-            hashJoin.setAlternate(orientation(aggregate, join, side == HashJoinAggregation.BuildSide.MASTER
-                    ? HashJoinAggregation.BuildSide.SLAVE : HashJoinAggregation.BuildSide.MASTER, master, masterRead, masterRows, slave, slaveRead, slaveRows));
+            hashJoin.setAlternate(orientation(aggregate, join, side == JoinInput.BuildSide.MASTER
+                    ? JoinInput.BuildSide.SLAVE : JoinInput.BuildSide.MASTER, master, masterRead, masterRows, slave, slaveRead, slaveRows));
         }
         return hashJoin;
     }

@@ -364,11 +364,11 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                   condition: b.x=a.x
                                     PageFrame
                                         Row forward scan
-                                        Frame forward scan on: t
+                                        Frame forward scan on: u
                                     Hash
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: u
+                                            Frame forward scan on: t
                             """)
                     .returns("""
                             x\ty
@@ -1163,11 +1163,11 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                   condition: b.k=a.k
                                     PageFrame
                                         Row forward scan
-                                        Frame forward scan on: a
+                                        Frame forward scan on: b
                                     Hash
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: b
+                                            Frame forward scan on: a
                             """)
                     .returns("""
                             ts\tk\tv
@@ -1704,11 +1704,25 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: b
                     """;
+            final String swappedPlan = """
+                    Window
+                      functions: [row_number() over (partition by [k])]
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.k=a.k
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """;
             assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
             assertQuery(sql)
                     .noRandomAccess()
-                    .withPlan(plan)
+                    .withPlan(swappedPlan)
                     .returns("""
                             ts\tk\tv\trn
                             1970-01-01T00:00:03.000000Z\t2\t1\t1

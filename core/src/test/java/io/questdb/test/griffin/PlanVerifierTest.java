@@ -117,8 +117,8 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts("SELECT count(*), sum(hb.w) FROM ha LEFT JOIN hb ON ha.k = hb.k", AggregatePlan.class, aggregate -> {
                 final HashJoinAggregation hashJoin = aggregate.getHashJoin();
                 Assert.assertNotNull(hashJoin);
-                Assert.assertEquals(HashJoinAggregation.BuildSide.SLAVE, hashJoin.getBuildSide());
-                hashJoin.of(hashJoin.getAggregate(), hashJoin.getJoinType(), HashJoinAggregation.BuildSide.MASTER,
+                Assert.assertEquals(JoinInput.BuildSide.SLAVE, hashJoin.getBuildSide());
+                hashJoin.of(hashJoin.getAggregate(), hashJoin.getJoinType(), JoinInput.BuildSide.MASTER,
                         hashJoin.getProbeInput(), hashJoin.getProbeRead(), hashJoin.getProbeAlias(),
                         hashJoin.getBuildInput(), hashJoin.getBuildRead(), hashJoin.getBuildAlias());
             }, PlanVerifier.AGGREGATE_ALGORITHM);
@@ -513,6 +513,52 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 step.setMasterSide(null);
                 verifier.verify(plan, PASS);
                 assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, "JoinPlan");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinBuildSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bs_a (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE bs_b (k INT, x INT)");
+            // A consumer reads the order of the master, which then drives the join.
+            assertAlgorithmContradicts("SELECT a.ts, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k ORDER BY a.ts", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
+                Assert.assertNull(step.getBuildSide());
+                step.setBuildSide(JoinInput.BuildSide.MASTER);
+            }, PlanVerifier.JOIN_BUILD_SIDE);
+            final String union = "(SELECT k, x FROM bs_b UNION ALL SELECT k, x FROM bs_b)";
+            // A full-fat hash join of a slave without random access always hashes its slave.
+            assertAlgorithmContradicts("SELECT b.x, u.x FROM bs_b b JOIN " + union + " u ON b.k = u.k", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.Algorithm.HASH, step.getAlgorithm());
+                step.setBuildSide(JoinInput.BuildSide.SLAVE);
+            }, PlanVerifier.JOIN_BUILD_SIDE);
+            // A LIMIT bounds the rows of the union, which cannot be read back by row id to be hashed.
+            assertAlgorithmContradicts("SELECT u.x, b.x FROM (SELECT * FROM " + union + " LIMIT 3) u JOIN bs_b b ON u.k = b.k", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
+                Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
+                step.setMasterSide(JoinInput.MasterSide.SMALLER);
+                step.setBuildSide(JoinInput.BuildSide.MASTER);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+            // The parallel filter of the master returns the last master rows that the negative LIMIT reads in master
+            // order.
+            execute("CREATE TABLE bs_m (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT m.i, b.x FROM bs_m m JOIN bs_b b ON m.i = b.k WHERE m.i > 0 LIMIT -1",
+                            sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                Assert.assertEquals(LimitPlan.Application.MASTER_SUFFIX, find(plan, LimitPlan.class).getApplication());
+                final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
+                verifier.verifyAccessPaths(plan);
+                step.setMasterSide(JoinInput.MasterSide.SMALLER);
+                assertFails(plan, PlanVerifier.LIMIT_APPLICATION, "LimitPlan");
             }
         });
     }

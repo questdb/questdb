@@ -509,12 +509,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
 
             GenericRecordMetadata metadata;
-            final int timestampIndex;
 
             final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
 
             try (TableReader reader = engine.getReader(tableToken)) {
-                timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -531,8 +529,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     partitionBy,
                                     intervals
                             ),
-                            timestampIndex,
-                            metadata,
+                            TestUtils.tableDescriptor(metadata),
                             ORDER_DESC,
                             null,
                             0,
@@ -860,12 +857,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
 
             GenericRecordMetadata metadata;
-            final int timestampIndex;
 
             final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
 
             try (TableReader reader = engine.getReader(tableToken)) {
-                timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -882,8 +877,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     PartitionBy.DAY,
                                     intervals
                             ),
-                            timestampIndex,
-                            metadata,
+                            TestUtils.tableDescriptor(metadata),
                             ORDER_DESC,
                             null,
                             0,

@@ -81,6 +81,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             slaveChain = new RecordChain(
                     slaveFactory.getMetadata(),
                     slaveChainSink,
+                    configuration.getSqlHashJoinLightValuePageSize(),
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages()
             );

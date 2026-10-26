@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
@@ -825,7 +824,11 @@ public final class SqlBinder implements Mutable {
             } else {
                 assert !token.isView();
                 final PlanTable table = ctx.planTables.acquire(token, tableName.position, executionContext);
-                scan = bindScan(source, tableName, table.getTableToken(), table.getMetadataVersion(), table.getMetadata());
+                scan = bindScan(source, tableName, table.getTableToken(), table.getMetadataVersion());
+                for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+                    bindScanColumn(scan, i, table.getColumnName(i), table.getColumnType(i), table.isSymbolTableStatic(i),
+                            table.isIndexed(i), i == table.getTimestampIndex());
+                }
             }
             scan.setRandomAccess(!isRowIdSuppressed);
             return bindTimestamp(scan, source);
@@ -1290,31 +1293,38 @@ public final class SqlBinder implements Mutable {
         return ctx.planNodes.columns.next().of(metadata.getColumnId(index), ColumnType.BOOLEAN, expression.position);
     }
 
-    ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableToken token, long metadataVersion, RecordMetadata metadata) {
-        final BindScope scope = ctx.scope();
+    /**
+     * Binds the scan of a table without columns; {@link #bindScanColumn} adds each column of the table to it.
+     */
+    ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableToken token, long metadataVersion) {
         final ScanPlan scan = ctx.planNodes.scans.next().of(token, metadataVersion, tableName.position, source.isUpdate());
         scan.setHints(scanHints(source));
         final ExpressionNode view = source.getViewNameExpr();
         if (view != null) {
             scan.setView(Chars.toString(view.token), view.position);
         }
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final int type = metadata.getColumnType(i);
-            if (type > 0) {
-                scan.getOutput().add(ctx.planNodes.nextColumnId(), metadata.getColumnName(i), type, true);
-                scan.getOutput().setSymbolTableStatic(scan.getOutput().getColumnCount() - 1, metadata.isSymbolTableStatic(i));
-                scan.getSourceColumnIndexes().add(i);
-                if (metadata.isColumnIndexed(i)) {
-                    scan.getIndexedColumnIds().add(scan.getOutput().getColumnId(scan.getOutput().getColumnCount() - 1));
-                }
-                if (i == metadata.getTimestampIndex()) {
-                    scan.getOutput().setTimestampIndex(scan.getOutput().getColumnCount() - 1);
-                    scan.setNativeTimestamp(scan.getOutput().getTimestampColumnId(), type);
-                    scope.intrinsicTimestampColumnIds.add(scan.getOutput().getTimestampColumnId());
-                }
+        return scan;
+    }
+
+    /**
+     * Adds the table column at {@code columnIndex} to the output of the scan, unless the column is deleted.
+     */
+    void bindScanColumn(ScanPlan scan, int columnIndex, CharSequence name, int type, boolean isSymbolTableStatic, boolean isIndexed,
+                        boolean isTimestamp) {
+        if (type > 0) {
+            final OutputSchema output = scan.getOutput();
+            output.add(ctx.planNodes.nextColumnId(), name, type, true);
+            output.setSymbolTableStatic(output.getColumnCount() - 1, isSymbolTableStatic);
+            scan.getSourceColumnIndexes().add(columnIndex);
+            if (isIndexed) {
+                scan.getIndexedColumnIds().add(output.getColumnId(output.getColumnCount() - 1));
+            }
+            if (isTimestamp) {
+                output.setTimestampIndex(output.getColumnCount() - 1);
+                scan.setNativeTimestamp(output.getTimestampColumnId(), type);
+                ctx.scope().intrinsicTimestampColumnIds.add(output.getTimestampColumnId());
             }
         }
-        return scan;
     }
 
     /**

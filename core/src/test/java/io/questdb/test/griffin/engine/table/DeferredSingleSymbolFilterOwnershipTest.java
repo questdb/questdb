@@ -40,6 +40,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -108,7 +109,7 @@ public class DeferredSingleSymbolFilterOwnershipTest extends AbstractCairoTest {
                 columnSizes.add(ColumnType.pow2SizeOf(metadata.getColumnType(i)));
             }
             final FullPartitionFrameCursorFactory frames = new FullPartitionFrameCursorFactory(
-                    reader.getTableToken(), TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false
+                    reader.getTableToken(), TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), ORDER_ASC, null, 0, false
             ) {
                 @Override
                 public void close() {

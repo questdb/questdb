@@ -41,26 +41,10 @@ public interface TableAccessInfo {
     int getColumnType(int columnIndex);
 
     /**
-     * The writer indexes of the columns the covering index of the column includes; null or empty when it has none.
-     */
-    IntList getCoveringColumnIndices(int columnIndex);
-
-    /**
      * The position of the column among the columns the covering index of the key column includes, -1 when it does not
      * include the column.
      */
-    default int getCoveredPosition(int keyColumnIndex, int columnIndex) {
-        final IntList included = getCoveringColumnIndices(keyColumnIndex);
-        if (included != null) {
-            final int writerIndex = getWriterIndex(columnIndex);
-            for (int i = 0, n = included.size(); i < n; i++) {
-                if (included.getQuick(i) == writerIndex) {
-                    return i;
-                }
-            }
-        }
-        return -1;
-    }
+    int getCoveredPosition(int keyColumnIndex, int columnIndex);
 
     byte getIndexType(int columnIndex);
 
@@ -78,6 +62,11 @@ public interface TableAccessInfo {
     int getWriterIndex(int columnIndex);
 
     /**
+     * Whether the column has a covering index that includes a column.
+     */
+    boolean hasCoveringIndex(int columnIndex);
+
+    /**
      * Whether the table has a parquet partition and a column whose type a change re-keyed after its creation, so a
      * parquet partition may store it in another type than the table declares.
      */
@@ -87,8 +76,7 @@ public interface TableAccessInfo {
      * Whether the covering index of the key column includes every other column of {@code columnIndexes}.
      */
     default boolean isCovering(int keyColumnIndex, IntList columnIndexes) {
-        final IntList included = getCoveringColumnIndices(keyColumnIndex);
-        if (included == null || included.size() == 0) {
+        if (!hasCoveringIndex(keyColumnIndex)) {
             return false;
         }
         for (int i = 0, n = columnIndexes.size(); i < n; i++) {

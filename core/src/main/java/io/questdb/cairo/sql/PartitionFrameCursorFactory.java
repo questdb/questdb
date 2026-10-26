@@ -71,8 +71,6 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
 
     PartitionFrameCursor getCursor(SqlExecutionContext executionContext, IntList columnIndexes, int order) throws SqlException;
 
-    RecordMetadata getMetadata();
-
     /**
      * Order of records in the partition frame in regard to timestamp.
      *
@@ -91,6 +89,11 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     default boolean isNonDeterministic() {
         return true;
     }
+
+    /**
+     * The table the factory reads, at the metadata version of its scan; a column index is a position among its columns.
+     */
+    TableDescriptor getTableDescriptor();
 
     TableToken getTableToken();
 
@@ -115,6 +118,14 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
             long partitionTableVersion,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
     );
+
+    /**
+     * Sets the row counts of the table outside which a choice the plan made from the table's row count no longer holds:
+     * opening a cursor over a table with another row count throws {@link TableReferenceOutOfDateException}, so the
+     * holder of the factory compiles the statement again, unless the execution context
+     * {@link SqlExecutionContext#isTableRowCountChangeTolerated() tolerates} row count changes.
+     */
+    void setRowCountRange(long minRowCount, long maxRowCount);
 
     boolean supportsTableRowId(TableToken tableToken);
 

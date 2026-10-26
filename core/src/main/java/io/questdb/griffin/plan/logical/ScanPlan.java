@@ -72,7 +72,9 @@ public final class ScanPlan extends LogicalPlan {
     private CursorExpression keySubquery;
     private BoundExpression limitHi;
     private BoundExpression limitLo;
+    private long maxRowCount = Long.MAX_VALUE;
     private long metadataVersion = -1;
+    private long minRowCount;
     private int nativeTimestampColumnId = -1;
     private int nativeTimestampType = ColumnType.UNDEFINED;
     private BoundExpression residual;
@@ -132,6 +134,8 @@ public final class ScanPlan extends LogicalPlan {
         joinIntervalStep = null;
         keyPattern = null;
         keySubquery = null;
+        maxRowCount = Long.MAX_VALUE;
+        minRowCount = 0;
         residual = null;
         residualAlgorithm = null;
         within = null;
@@ -298,8 +302,24 @@ public final class ScanPlan extends LogicalPlan {
         return limitLo;
     }
 
+    /**
+     * The most rows the table may hold for the choices operator planning made from its row count to hold, see
+     * {@link #keepRowCountWithin}; {@link Long#MAX_VALUE} when no choice depends on it.
+     */
+    public long getMaxRowCount() {
+        return maxRowCount;
+    }
+
     public long getMetadataVersion() {
         return metadataVersion;
+    }
+
+    /**
+     * The fewest rows the table may hold for the choices operator planning made from its row count to hold, see
+     * {@link #keepRowCountWithin}; 0 when no choice depends on it.
+     */
+    public long getMinRowCount() {
+        return minRowCount;
     }
 
     public int getNativeTimestampColumnId() {
@@ -491,6 +511,15 @@ public final class ScanPlan extends LogicalPlan {
      */
     public boolean isWalClientUpdate() {
         return isWalClientUpdate;
+    }
+
+    /**
+     * Records that a choice of operator planning holds only while the table holds {@code min} to {@code max} rows: a
+     * cursor open of the scan that finds another row count asks for the statement to be compiled again.
+     */
+    public void keepRowCountWithin(long min, long max) {
+        minRowCount = Math.max(minRowCount, min);
+        maxRowCount = Math.min(maxRowCount, max);
     }
 
     /**

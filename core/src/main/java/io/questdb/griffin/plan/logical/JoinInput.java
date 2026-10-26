@@ -51,6 +51,7 @@ public final class JoinInput implements Mutable {
     private final OutputSchema output = new OutputSchema();
     private Algorithm algorithm;
     private CharSequence bindingAlias;
+    private BuildSide buildSide;
     private int hints;
     private LogicalPlan input;
     private boolean isDependent;
@@ -91,6 +92,7 @@ public final class JoinInput implements Mutable {
         output.clear();
         algorithm = null;
         bindingAlias = null;
+        buildSide = null;
         hints = 0;
         input = null;
         isDependent = false;
@@ -117,6 +119,16 @@ public final class JoinInput implements Mutable {
 
     public CharSequence getBindingAlias() {
         return bindingAlias;
+    }
+
+    /**
+     * The input a light INNER hash join step hashes, which operator planning records for a step whose master side is
+     * {@link MasterSide#SMALLER} when it knows a row bound of both inputs, see {@link PhysicalProperties#rowBound}. Null
+     * for a step that always hashes its slave, and for one that leaves the choice to execution, which hashes the input
+     * whose cursor reports fewer rows.
+     */
+    public BuildSide getBuildSide() {
+        return buildSide;
     }
 
     public int getHints() {
@@ -283,6 +295,11 @@ public final class JoinInput implements Mutable {
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
         masterSide = algorithm == Algorithm.LIGHT_HASH && joinType == JoinKind.INNER ? null : MasterSide.FIXED;
+        buildSide = null;
+    }
+
+    public void setBuildSide(BuildSide buildSide) {
+        this.buildSide = buildSide;
     }
 
     public void setDependent(boolean isDependent) {
@@ -447,6 +464,25 @@ public final class JoinInput implements Mutable {
          * {@code asof_memoized_driveby} hint asks for.
          */
         MEMOIZED_DRIVEBY
+    }
+
+    /**
+     * Which input of a hash join, its master or its slave, the operator hashes; it probes the hash with the other one.
+     * An outer join hashes the input it NULL-extends.
+     */
+    public enum BuildSide {
+        MASTER, SLAVE;
+
+        /**
+         * The input to hash so that the hash holds the fewer rows: the master when it holds fewer rows than the slave,
+         * else the slave; null when either row count is unknown, -1.
+         */
+        public static BuildSide smaller(long masterRows, long slaveRows) {
+            if (masterRows < 0 || slaveRows < 0) {
+                return null;
+            }
+            return masterRows < slaveRows ? MASTER : SLAVE;
+        }
     }
 
     /**

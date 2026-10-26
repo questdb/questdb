@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,15 +44,14 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             TableToken tableToken,
             long metadataVersion,
             RuntimeIntrinsicIntervalModel intervalModel,
-            int timestampIndex,
-            RecordMetadata metadata,
+            TableDescriptor table,
             int baseOrder,
             String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
-        this.timestampIndex = timestampIndex;
+        super(tableToken, metadataVersion, table, viewName, viewPosition, updateQuery);
+        this.timestampIndex = table.getTimestampIndex();
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;
     }

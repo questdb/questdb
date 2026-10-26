@@ -63,12 +63,15 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         this.base = base;
         RecordArray rows = null;
         try {
-            // The copy starts at the light join's value page, so a small slave costs little memory, and doubles from
-            // there up to the bytes a full-fat join's value pages may hold.
-            final long pageSize = Numbers.ceilPow2(configuration.getSqlHashJoinLightValuePageSize());
-            final long maxBytes = (long) Numbers.ceilPow2(configuration.getSqlHashJoinValuePageSize()) * configuration.getSqlHashJoinValueMaxPages();
-            rows = new CachedRecordArray(base.getMetadata(), recordSink, pageSize,
-                    (int) Math.min(Integer.MAX_VALUE, Math.max(1, maxBytes / pageSize)));
+            // The copy holds what a full-fat join's value pages may hold and, like the record chains of those joins,
+            // starts at the light join's value page, so a small slave costs little memory.
+            rows = new CachedRecordArray(
+                    base.getMetadata(),
+                    recordSink,
+                    configuration.getSqlHashJoinLightValuePageSize(),
+                    configuration.getSqlHashJoinValuePageSize(),
+                    configuration.getSqlHashJoinValueMaxPages()
+            );
             cursor = new MaterializedRecordCursor(rows);
         } catch (Throwable th) {
             Misc.free(rows, th);
@@ -150,12 +153,17 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    /**
+     * Memory that grows as {@link MemoryCARWImpl} does from {@code initialSize}, and fails with a
+     * {@link CacheLimitException}, on which the cursor releases the copy and streams its base, when it would exceed
+     * {@code maxPages} pages or memory runs out.
+     */
     private static class CacheMemory extends MemoryCARWImpl {
         private final CacheLimitException limitExceeded = new CacheLimitException();
         private final long maxBytes;
 
-        private CacheMemory(long pageSize, int maxPages) {
-            super(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_RECORD_CHAIN);
+        private CacheMemory(long initialSize, long pageSize, int maxPages) {
+            super(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_RECORD_CHAIN, null, initialSize);
             maxBytes = Numbers.ceilPow2(pageSize) * maxPages;
         }
 
@@ -177,8 +185,13 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static class CachedRecordArray extends RecordArray {
-        private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-            super(columnTypes, recordSink, new CacheMemory(pageSize, maxPages), new CacheMemory(pageSize >> 4, maxPages));
+        private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, long initialSize, long pageSize, int maxPages) {
+            super(
+                    columnTypes,
+                    recordSink,
+                    new CacheMemory(initialSize, pageSize, maxPages),
+                    new CacheMemory(initialSize >> 4, pageSize >> 4, maxPages)
+            );
         }
     }
 

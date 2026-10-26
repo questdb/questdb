@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
@@ -94,6 +95,20 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             String maxPagesConfigKey
     ) {
         this(columnTypes, recordSink, Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey));
+    }
+
+    /**
+     * A chain whose memory starts at {@code initialSize} bytes and doubles up to {@code pageSize}, so it takes memory
+     * in proportion to the records it holds, see {@link MemoryCARWImpl}.
+     */
+    public RecordChain(
+            @Transient @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            long initialSize,
+            long pageSize,
+            int maxPages
+    ) {
+        this(columnTypes, recordSink, new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, null, initialSize));
     }
 
     protected RecordChain(@NotNull ColumnTypes columnTypes, @Nullable RecordSink recordSink, MemoryCARW mem) {

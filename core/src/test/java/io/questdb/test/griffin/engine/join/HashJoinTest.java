@@ -28,9 +28,13 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -262,6 +266,341 @@ public class HashJoinTest extends AbstractCairoTest {
                             1\t10
                             2\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightBuildsEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            execute("CREATE TABLE e (id INT, x INT)");
+            assertQuery("SELECT e.id, a.id FROM e JOIN a ON a.x = e.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: a.x=e.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: e
+                            """)
+                    .returns("id\tid1\n");
+            assertQuery("SELECT a.id, e.id FROM a JOIN e ON e.x = a.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: e.x=a.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: e
+                            """)
+                    .returns("id\tid1\n");
+        });
+    }
+
+    @Test
+    public void testHashJoinLightBuildsSmallerFilteredInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            // a filtered table bounds its rows by the table's: the join hashes the smaller table and reads the filter
+            final String expected = """
+                    id\tid1
+                    2\t1
+                    3\t2
+                    1\t3
+                    2\t4
+                    3\t5
+                    1\t6
+                    3\t8
+                    1\t9
+                    """;
+            assertQuery("SELECT o.id, a.id FROM o JOIN a ON a.x = o.x WHERE a.v != 7")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: a.x=o.x
+                                    Async JIT Filter workers: 1
+                                      filter: v!=7
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT o.id, a.id FROM o JOIN a ON a.x = o.x WHERE a.v + 0 * o.id != 7")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Filter filter: a.v+0*o.id!=7
+                                    Hash Join Light
+                                      condition: a.x=o.x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: o
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT o.id, a.id FROM o JOIN a ON a.x = o.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: a.x=o.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t1
+                            3\t2
+                            1\t3
+                            2\t4
+                            3\t5
+                            1\t6
+                            2\t7
+                            3\t8
+                            1\t9
+                            """);
+            // the filtered input holds fewer rows than the other table, yet its table holds more, so it is not hashed
+            assertQuery("SELECT o.id, a.id FROM o JOIN a ON a.x = o.x WHERE a.v = 7")
+                    .noRandomAccess()
+                    .withPlanContaining("""
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightBuildsSmallerInputOfLateralDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lo AS (SELECT x::INT id, (x % 4 + 1)::INT x FROM long_sequence(20))");
+            execute("CREATE TABLE la AS (SELECT x::INT id, x::INT x FROM long_sequence(5))");
+            execute("CREATE TABLE lb AS (SELECT x::INT id, x::INT x FROM long_sequence(5))");
+            // the decorrelation domain bounds its rows by the filtered outer table's, so each branch hashes its own
+            // smaller table and reads the domain
+            assertQuery("""
+                    SELECT o.id, l.v FROM (SELECT id, x FROM lo WHERE x <= 2) o JOIN LATERAL (
+                        SELECT la.id v FROM la WHERE la.x = o.x AND la.id > o.id
+                        UNION ALL
+                        SELECT lb.id v FROM lb WHERE lb.x = o.x AND lb.id > o.id
+                    ) l""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join
+                                  condition: l.__qdb_outer_ref__0_x=o.x and l.__qdb_outer_ref__0_id=o.id
+                                    Async JIT Filter workers: 1
+                                      filter: 2>=x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lo
+                                    Hash
+                                        Union All
+                                            SelectedRecord
+                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_id<id
+                                                    Hash Join Light
+                                                      condition: __qdb_outer_ref__0_x=x
+                                                        Async JIT Group By workers: 1
+                                                          keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                          filter: 2>=x
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: lo
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: la
+                                            SelectedRecord
+                                                Filter filter: __qdb_outer_ref__0_1.__qdb_outer_ref__0_id<id
+                                                    Hash Join Light
+                                                      condition: __qdb_outer_ref__0_x=x
+                                                        SelectedRecord
+                                                            (Shared)
+                                                                Async JIT Group By workers: 1
+                                                                  keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                                  filter: 2>=x
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: lo
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: lb
+                            """)
+                    .returns("""
+                            id\tv
+                            1\t2
+                            1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightBuildsSmallerLimitedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            // LIMIT 2 bounds the sub-query below the 3 rows of o, which then drives the join
+            assertQuery("SELECT o.id, l.id FROM o JOIN (SELECT id, x FROM a LIMIT 2) l ON l.x = o.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.x=o.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: o
+                                    Hash
+                                        Limit value: 2 skip-rows: 0 take-rows: 2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t1
+                            3\t2
+                            """);
+            // a LIMIT of a bind variable leaves the bound of its table
+            bindVariableService.setLong("n", 2);
+            assertQuery("SELECT o.id, l.id FROM o JOIN (SELECT id, x FROM a LIMIT :n) l ON l.x = o.x")
+                    .noRandomAccess()
+                    .withPlanContaining("""
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t1
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightKeepsExecutionChoiceForUnboundedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            // a sort has no row bound, so the plan keeps hashing the slave and execution compares the cursor sizes
+            assertQuery("SELECT s.id, a.id FROM (SELECT id, x FROM o ORDER BY id DESC) s JOIN a ON a.x = s.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: a.x=s.x
+                                    Encode sort light
+                                      keys: [id desc]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t1
+                            3\t2
+                            1\t3
+                            2\t4
+                            3\t5
+                            1\t6
+                            2\t7
+                            3\t8
+                            1\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightRecompilesWhenTableSizesReverseBuildSide() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            final String sql = "SELECT o.id, a.id FROM o JOIN a ON a.x = o.x";
+            try (RecordCursorFactory factory = select(sql)) {
+                // o holds 3 rows and a 9, so the join hashes o while o holds at most 7 rows and a at least 4
+                execute("INSERT INTO o SELECT (x + 3)::INT, (x % 3 + 1)::INT FROM long_sequence(4)");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.drainCursor(cursor);
+                }
+                execute("INSERT INTO o SELECT (x + 7)::INT, (x % 3 + 1)::INT FROM long_sequence(3)");
+                assertOutOfDate(factory, "o");
+                // a context that runs the factory it has keeps the choice
+                try (
+                        SqlExecutionContextImpl tolerantContext = new SqlExecutionContextImpl(engine, 1) {
+                            @Override
+                            public boolean isTableRowCountChangeTolerated() {
+                                return true;
+                            }
+                        };
+                        RecordCursor cursor = factory.getCursor(tolerantContext.with(AllowAllSecurityContext.INSTANCE))
+                ) {
+                    TestUtils.drainCursor(cursor);
+                }
+            }
+            // o now holds 10 rows, so the join hashes a while a holds at most 13 rows and o at least 7
+            assertQuery(sql).assertsPlanContaining("""
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
+            try (RecordCursorFactory factory = select(sql)) {
+                execute("TRUNCATE TABLE o");
+                assertOutOfDate(factory, "o");
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinRecordChainGrowsWithBuildRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16 * 1024 * 1024);
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                try (
+                        RecordCursorFactory factory = compiler.compile("SELECT o.id, a.id FROM o JOIN a ON a.x = o.x", sqlExecutionContext).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final long chainMemBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                    Assert.assertTrue(cursor.hasNext());
+                    final long chainMem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - chainMemBefore;
+                    Assert.assertTrue(chainMem > 0);
+                    Assert.assertTrue(chainMem <= 128 * 1024);
+                }
+            }
         });
     }
 
@@ -1166,6 +1505,14 @@ public class HashJoinTest extends AbstractCairoTest {
                         """);
     }
 
+    private static void assertOutOfDate(RecordCursorFactory factory, String tableName) throws Exception {
+        try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+            Assert.fail();
+        } catch (TableReferenceOutOfDateException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), tableName);
+        }
+    }
+
     private void assertVarcharAggregateKeyJoin(String aggregate, String slave, String expected) throws Exception {
         final String query = "SELECT b.sym, c.i FROM (SELECT sym, " + aggregate + "(v) k FROM t GROUP BY sym) b %s " + slave + " c ON b.k = c.v ORDER BY b.sym, c.i";
         assertLightAndFullFatJoin(String.format(query, "JOIN"), expected, null);
@@ -1206,6 +1553,12 @@ public class HashJoinTest extends AbstractCairoTest {
                 b\t5
                 c\t8
                 """);
+    }
+
+    private void createBuildSideTables() throws Exception {
+        execute("CREATE TABLE o AS (SELECT x::INT id, x::INT x FROM long_sequence(3))");
+        execute("CREATE TABLE o2 AS (SELECT x::INT id, x::INT x FROM long_sequence(3))");
+        execute("CREATE TABLE a AS (SELECT x::INT id, (x % 3 + 1)::INT x, x::INT v FROM long_sequence(9))");
     }
 
     private void createBook() throws Exception {

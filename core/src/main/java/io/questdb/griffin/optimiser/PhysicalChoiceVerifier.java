@@ -90,8 +90,23 @@ final class PhysicalChoiceVerifier {
         return true;
     }
 
+    private static boolean hasRowBound(LogicalPlan plan) {
+        return PhysicalProperties.rowBoundScan(plan) != null || PhysicalProperties.rowBoundLimit(plan) < Long.MAX_VALUE;
+    }
+
     private static boolean isBounded(SortPlan.Algorithm algorithm) {
         return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || isTopK(algorithm);
+    }
+
+    /**
+     * Whether the build side the join step records is one operator planning decides: a light INNER hash join step that
+     * the smaller input drives, over a master that is one input, where both inputs have a row bound, see
+     * {@link PhysicalProperties#rowBound}.
+     */
+    private static boolean isBuildSideDecided(JoinPlan join, int position, JoinInput step) {
+        return step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH && step.getJoinType() == JoinKind.INNER
+                && step.getMasterSide() == JoinInput.MasterSide.SMALLER && position == 1
+                && hasRowBound(join.getOrderedInputs().getQuick(0).getInput()) && hasRowBound(step.getInput());
     }
 
     /**
@@ -119,7 +134,7 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isHashJoinOrientation(HashJoinAggregation hashJoin) {
         final JoinKind kind = hashJoin.getJoinType();
-        final boolean isMasterBuilt = hashJoin.getBuildSide() == HashJoinAggregation.BuildSide.MASTER;
+        final boolean isMasterBuilt = hashJoin.getBuildSide() == JoinInput.BuildSide.MASTER;
         final boolean isBuildFixed = kind == JoinKind.INNER || isMasterBuilt == (kind == JoinKind.RIGHT_OUTER);
         final BoundExpression postJoinFilter = hashJoin.getPostJoinFilter();
         return (kind == JoinKind.INNER || kind == JoinKind.LEFT_OUTER || kind == JoinKind.RIGHT_OUTER) && isBuildFixed
@@ -167,10 +182,28 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the join step reads its master back by row id, which requires a master with random access.
+     * Whether the join step reads its master back by row id, which requires a master with random access: a markout
+     * join, and a light hash join that hashes its master.
      */
-    private static boolean isMasterReadByRowId(JoinInput.Algorithm algorithm) {
-        return algorithm == JoinInput.Algorithm.MARKOUT;
+    private static boolean isMasterReadByRowId(JoinInput step) {
+        return step.getAlgorithm() == JoinInput.Algorithm.MARKOUT || step.getBuildSide() == JoinInput.BuildSide.MASTER;
+    }
+
+    /**
+     * Whether a step of the join under a MASTER_SUFFIX LIMIT may let its smaller input drive it although the master's
+     * parallel filter returns the last rows of the master, whose suffix the LIMIT reads in master order.
+     */
+    private static boolean isMasterSuffixDrivenBySmaller(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        if (PhysicalProperties.implementsLimit(ordered.getQuick(0).getInput()) == PhysicalProperties.Capability.NO) {
+            return false;
+        }
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            if (ordered.getQuick(i).getMasterSide() == JoinInput.MasterSide.SMALLER) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -465,9 +498,12 @@ final class PhysicalChoiceVerifier {
         if (scan != null && (!hasScanChoice || !isHintedTimeFrameScan(scan, step))) {
             return PlanVerifier.JOIN_ALGORITHM;
         }
+        if (step.getBuildSide() != null && !isBuildSideDecided(join, position, step)) {
+            return PlanVerifier.JOIN_BUILD_SIDE;
+        }
         return isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step)
                 && isUnsatisfied(PhysicalProperties.supportsRandomAccess(step.getInput()), isPlanned)
-                || isMasterReadByRowId(algorithm) && position > 0
+                || isMasterReadByRowId(step) && position > 0
                 && isUnsatisfied(PhysicalProperties.masterSupportsRandomAccess(join, position), isPlanned)
                 ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
@@ -495,7 +531,8 @@ final class PhysicalChoiceVerifier {
         final SortPlan sort = LogicalPlans.hasSortUnderStableProjects(limited) ? (SortPlan) LogicalPlans.skipProjects(limited) : null;
         final boolean isInput = OperatorPlanning.isInputLimit(sort != null ? sort.getChild() : limited);
         if ((application == LimitPlan.Application.INPUT) != isInput || isInput && !isScanLimited(sort != null ? sort.getChild() : limited, limit)
-                || (application == LimitPlan.Application.MASTER_SUFFIX) != (PlanToFactoryRules.masterSuffixScan(limit) != null)) {
+                || (application == LimitPlan.Application.MASTER_SUFFIX) != (PlanToFactoryRules.masterSuffixScan(limit) != null)
+                || application == LimitPlan.Application.MASTER_SUFFIX && isMasterSuffixDrivenBySmaller(PlanToFactoryRules.masterSuffixJoin(limit))) {
             return PlanVerifier.LIMIT_APPLICATION;
         }
         final SortPlan.Algorithm algorithm = sort != null ? sort.getAlgorithm() : null;
