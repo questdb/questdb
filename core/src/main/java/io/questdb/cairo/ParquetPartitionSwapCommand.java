@@ -32,11 +32,12 @@ import io.questdb.tasks.TableWriterTask;
  * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot - see {@code PartitionCompactionScanJob}
  * and {@link O3PartitionJob#compactParquetPartition} - without ever holding the writer for the copy itself.
  */
-public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
+public class ParquetPartitionSwapCommand implements CompactionSwapCommand {
     private long correlationId = -1L;
     private long expectedMetadataVersion;
     private long expectedParquetFileSize;
     private long expectedSrcNameTxn;
+    private volatile boolean isApplied;
     private boolean isFullyMaterialized;
     private boolean isIndexRowMapDropped;
     private long newParquetFileSize;
@@ -46,14 +47,18 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        ((TableWriter) svc).swapCompactedParquetPartition(
-                partitionTimestamp,
-                expectedSrcNameTxn,
-                expectedParquetFileSize,
-                expectedMetadataVersion,
-                newParquetFileSize,
-                isFullyMaterialized
-        );
+        try {
+            ((TableWriter) svc).swapCompactedParquetPartition(
+                    partitionTimestamp,
+                    expectedSrcNameTxn,
+                    expectedParquetFileSize,
+                    expectedMetadataVersion,
+                    newParquetFileSize,
+                    isFullyMaterialized
+            );
+        } finally {
+            isApplied = true;
+        }
         return 0;
     }
 
@@ -121,6 +126,11 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
         return 0;
     }
 
+    @Override
+    public boolean isApplied() {
+        return isApplied;
+    }
+
     /**
      * Whether the build re-encoded every row group under the current table schema, materializing every
      * column from row 0 - in which case the swap zeroes the partition's column tops - as opposed to copying
@@ -157,6 +167,7 @@ public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
         this.newParquetFileSize = -1L;
         this.isFullyMaterialized = false;
         this.isIndexRowMapDropped = false;
+        this.isApplied = false;
     }
 
     @Override

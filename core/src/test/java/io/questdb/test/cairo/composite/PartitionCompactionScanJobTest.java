@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.ColumnTopRecorder;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
@@ -65,6 +66,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -398,11 +400,11 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * The writer refuses a merge while an open non-WAL transaction holds a new partition, else the O3 purge job would
-     * take that partition's directory: its name txn sits below the merge's txn, and _txn does not list it.
+     * The writer commits an open non-WAL transaction that opened a new partition before it merges, so the O3 purge
+     * job never sees that partition's directory unlisted below the merge's txn.
      */
     @Test
-    public void testRequestMergeAroundAnOpenTransactionKeepsThePartitionItOpened() throws Exception {
+    public void testRequestMergeCommitsAnOpenTransactionThatOpenedAPartition() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
@@ -451,22 +453,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
                     runSweepOnAnotherThread(ff);
                     ownerWriter.tick();
-                    Assert.assertTrue("the refused merge must leave the transaction open", ownerWriter.inTransaction());
+                    Assert.assertFalse("the merge must commit the open transaction first", ownerWriter.inTransaction());
                     try (TableReader reader = engine.getReader(token)) {
-                        Assert.assertEquals("a refused merge must leave the day split", 3, reader.getTxFile().getPartitionCount());
+                        Assert.assertEquals("the day's two folders must have become one", 3, reader.getTxFile().getPartitionCount());
                     }
-                }
-                engine.releaseAllReaders();
-                purgeJob.drain(0);
-
-                Assert.assertTrue("the purge must keep the open transaction's partition directory", ff.exists(path.$()));
-                ownerWriter.commit();
-
-                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
-                runSweepOnAnotherThread(ff);
-                ownerWriter.tick();
-                try (TableReader reader = engine.getReader(token)) {
-                    Assert.assertEquals("the day's two folders must have become one", 3, reader.getTxFile().getPartitionCount());
                 }
                 engine.releaseAllReaders();
                 purgeJob.drain(0);
@@ -641,6 +631,86 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     /**
      * A column added after the copy's build moves only the metadata version, which the install must check.
      */
+    /**
+     * The open transaction opened a new day and holds an O3 row for an earlier one, so the install commits it first
+     * and must look the day up again: the commit moves it from index 0 to 1.
+     */
+    @Test
+    public void testParquetCopyInstallCommitsAnOpenTransactionThatOpenedAPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetCopyTable("gp");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                final String stagedBuild = stageParquetCopy(ownerWriter, token, day);
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 70001);
+                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 70002);
+                Assert.assertTrue("the fixture must hold an O3 row", ownerWriter.hasO3());
+                Assert.assertEquals("the in-order row must have opened a partition", 3, ownerWriter.getPartitionCount());
+
+                ownerWriter.tick();
+                Assert.assertFalse("the install must commit the open transaction first", ownerWriter.inTransaction());
+                Assert.assertEquals("the commit must have moved the day", 1, ownerWriter.getTxWriter().getPartitionIndex(day));
+                Assert.assertEquals(
+                        "the install must take the copy",
+                        "nameTxn=-1, rows=100, columnVersion=-1, metadataVersion=0, active=false, split=false," +
+                                " parquet=false, copy=true, composite=false, remote=false",
+                        parquetCopyInputs(ownerWriter, day)
+                );
+                Assert.assertFalse("no staged build may outlive the install", dirExists(configuration.getFilesFacade(), stagedBuild));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() c FROM gp").noRandomAccess().expectSize().returns("c\n112\n");
+        });
+    }
+
+    /**
+     * The install's commit of the owner's open transaction fails in O3. The command queue swallows the failure, so the
+     * writer must be left distressed: the owner's next commit has to fail rather than roll its rows back silently.
+     */
+    @Test
+    public void testParquetCopyInstallDistressesTheWriterWhenItsCommitFails() throws Exception {
+        final AtomicBoolean isO3Failing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isO3Failing.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "2019-12-31")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final TableToken token = createParquetCopyTable("gf");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                stageParquetCopy(ownerWriter, token, day);
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 70_001);
+                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 70_002);
+                Assert.assertEquals("the in-order row must have opened a partition", 3, ownerWriter.getPartitionCount());
+
+                isO3Failing.set(true);
+                ownerWriter.tick();
+                Assert.assertTrue("a failed commit must distress the writer", ownerWriter.isDistressed());
+                try {
+                    ownerWriter.commit();
+                    Assert.fail("the owner's commit must not report success");
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getMessage(), "distressed");
+                }
+                isO3Failing.set(false);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() c FROM gf").noRandomAccess().expectSize().returns("c\n110\n");
+            execute("INSERT INTO gf VALUES (70_003, '2020-01-05T00:00:00.000000Z')");
+            assertQuery("SELECT count() c FROM gf").noRandomAccess().expectSize().returns("c\n111\n");
+        });
+    }
+
     @Test
     public void testParquetCopyInstallRefusesAColumnAddedAfterItsBuild() throws Exception {
         assertMemoryLeak(() -> {
@@ -2183,7 +2253,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * Uses a fresh job: a refused install's in-flight record holds the day back on the old one until it ages out.
+     * Uses a fresh job, so the request is the only thing that can dispatch the copy.
      */
     private void assertParquetCopyRebuilt(TableToken token, long day, long liveRows) {
         try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
@@ -2908,6 +2978,68 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     @Test
     public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueued() throws Exception {
         assertNoRebuildWhileSwapQueued("1h");
+    }
+
+    /**
+     * The open transaction opened a new day and holds an O3 row for an earlier one, so the REWRITE swap commits it
+     * first and must look the partition up again: the commit moves it from index 0 to 1.
+     */
+    @Test
+    public void testCompositeSwapCommitsAnOpenTransactionThatOpenedAPartition() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cc AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cc SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cc SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+            execute("ALTER TABLE cc SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken token = engine.verifyTableName("cc");
+            Assert.assertFalse(token.isWal());
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final long nameTxnBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("2020-01-01 should still be composite after the conversion",
+                        reader.getTxFile().isPartitionComposite(0));
+                nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 80001);
+                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 80002);
+                Assert.assertTrue("the fixture must hold an O3 row", ownerWriter.hasO3());
+                Assert.assertEquals("the in-order row must have opened a partition", 3, ownerWriter.getPartitionCount());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                runSweepOnAnotherThread(configuration.getFilesFacade());
+                ownerWriter.tick();
+                Assert.assertFalse("the swap must commit the open transaction first", ownerWriter.inTransaction());
+                final TxWriter tx = ownerWriter.getTxWriter();
+                final int partitionIndex = tx.getPartitionIndex(day);
+                Assert.assertEquals("the commit must have moved the day", 1, partitionIndex);
+                Assert.assertFalse("the REWRITE must have landed", tx.isPartitionComposite(partitionIndex));
+                Assert.assertNotEquals("the REWRITE must have landed", nameTxnBefore, tx.getPartitionNameTxn(partitionIndex));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() c FROM cc").noRandomAccess().expectSize().returns("c\n6012\n");
+            assertQuery("SELECT count() c FROM cc WHERE ts IN '2020-01-01'").noRandomAccess().expectSize().returns("c\n5960\n");
+        });
     }
 
     /**
@@ -3989,14 +4121,12 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * A command the writer consumed WITHOUT moving {@code _txn} - here its rename fails - leaves the in-flight
-     * record describing a swap that will never land. The record still has to stand: the sweep cannot tell that
-     * command from one still queued, and rebuilding under a live command is what corrupts the partition. Only
-     * once the record has outlived the in-flight timeout does the sweep take the writer out of the pool, tick
-     * whatever is left on its queue, and reconsider the logical partition.
+     * A command the writer consumed WITHOUT moving {@code _txn} - here its rename fails - leaves {@code _txn} exactly
+     * as the in-flight record describes it. The command reports that the writer applied it, so the next sweep
+     * forgets the record and rebuilds the partition without waiting out the in-flight timeout.
      */
     @Test
-    public void testScanForgetsAnInFlightRecordOnlyAfterDrainingItsWriter() throws Exception {
+    public void testScanRebuildsOnceTheWriterHasAppliedAFailedSwap() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
@@ -4045,17 +4175,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 // fails, which leaves _txn exactly as the record describes it.
                 Assert.assertEquals(1, failedRenames.get());
 
-                for (int i = 0; i < 3; i++) {
-                    setCurrentMicros(currentMicros + interval + 1);
-                    job.run();
-                }
-                Assert.assertEquals("nothing may be rebuilt while the record stands", 1, stagingMkdirs.get());
-                Assert.assertEquals(1, job.getPendingSwapMemoSize());
-
-                setCurrentMicros(currentMicros + 31 * Micros.MINUTE_MICROS);
+                setCurrentMicros(currentMicros + interval + 1);
                 job.run();
-                Assert.assertEquals("an expired record must be forgotten once its writer has been drained",
-                        0, job.getPendingSwapMemoSize());
+                Assert.assertEquals("an applied command must release its record", 0, job.getPendingSwapMemoSize());
                 Assert.assertEquals("the partition must be rebuilt once the record is gone", 2, stagingMkdirs.get());
             }
 

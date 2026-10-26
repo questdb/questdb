@@ -45,7 +45,7 @@ import io.questdb.tasks.TableWriterTask;
  * </ul>
  * All five are the same errand - rebuild this partition off a reader - so they share one command and one lock reason.
  */
-public class CompositePartitionSwapCommand implements AsyncWriterCommand {
+public class CompositePartitionSwapCommand implements CompactionSwapCommand {
     /**
      * Longs per {@link #folders} entry: the folder's own start timestamp, its name txn, its generation
      * (a composite folder's writer txn, zero for a plain one), its live row count and the column version its
@@ -64,6 +64,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     private long expectedMetadataVersion;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
+    private volatile boolean isApplied;
     private boolean isMakePlain;
     private boolean isMerge;
     private boolean isParquetGeneration;
@@ -78,42 +79,46 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        if (isParquetGeneration) {
-            ((TableWriter) svc).installGeneratedParquet(
-                    partitionTimestamp,
-                    expectedSrcNameTxn,
-                    liveRows,
-                    expectedColumnVersion,
-                    expectedMetadataVersion,
-                    seqTxn
-            );
-        } else if (isMerge) {
-            ((TableWriter) svc).swapMergedLogicalPartition(
-                    partitionTimestamp,
-                    folders,
-                    expectedSrcNameTxn,
-                    expectedWriterTxn,
-                    expectedMetadataVersion,
-                    liveRows,
-                    parquetFileSize,
-                    columnTops
-            );
-        } else if (isMakePlain) {
-            ((TableWriter) svc).makePartitionPlainInPlace(
-                    partitionTimestamp,
-                    expectedSrcNameTxn,
-                    expectedWriterTxn,
-                    expectedMetadataVersion
-            );
-        } else {
-            ((TableWriter) svc).swapCompactedCompositePartition(
-                    partitionTimestamp,
-                    expectedSrcNameTxn,
-                    expectedWriterTxn,
-                    expectedMetadataVersion,
-                    liveRows,
-                    columnTops
-            );
+        try {
+            if (isParquetGeneration) {
+                ((TableWriter) svc).installGeneratedParquet(
+                        partitionTimestamp,
+                        expectedSrcNameTxn,
+                        liveRows,
+                        expectedColumnVersion,
+                        expectedMetadataVersion,
+                        seqTxn
+                );
+            } else if (isMerge) {
+                ((TableWriter) svc).swapMergedLogicalPartition(
+                        partitionTimestamp,
+                        folders,
+                        expectedSrcNameTxn,
+                        expectedWriterTxn,
+                        expectedMetadataVersion,
+                        liveRows,
+                        parquetFileSize,
+                        columnTops
+                );
+            } else if (isMakePlain) {
+                ((TableWriter) svc).makePartitionPlainInPlace(
+                        partitionTimestamp,
+                        expectedSrcNameTxn,
+                        expectedWriterTxn,
+                        expectedMetadataVersion
+                );
+            } else {
+                ((TableWriter) svc).swapCompactedCompositePartition(
+                        partitionTimestamp,
+                        expectedSrcNameTxn,
+                        expectedWriterTxn,
+                        expectedMetadataVersion,
+                        liveRows,
+                        columnTops
+                );
+            }
+        } finally {
+            isApplied = true;
         }
         return 0;
     }
@@ -193,6 +198,11 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return 0;
     }
 
+    @Override
+    public boolean isApplied() {
+        return isApplied;
+    }
+
     public boolean isMakePlain() {
         return isMakePlain;
     }
@@ -226,6 +236,7 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.seqTxn = -1L;
         this.folders.clear();
         this.columnTops.clear();
+        this.isApplied = false;
     }
 
     /**

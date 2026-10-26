@@ -1934,6 +1934,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert PartitionBy.isPartitioned(partitionBy);
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        // Ahead of every lookup below: the commit can move the partition's index.
+        final boolean isOpenedPartitionConflict = !commitOpenTransactionThatOpenedPartitions(partitionTimestamp);
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         final boolean isParquet = partitionIndex > -1 && txWriter.isPartitionParquet(partitionIndex);
         final long liveParquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
@@ -1942,7 +1944,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // snapshot the staged copy was built from - a swap would drop or misplace them. The writer's own
         // owner commits them in its own time, and the next sweep rebuilds off a snapshot that has them.
         final boolean isInTransaction = inTransaction();
-        final boolean isTransactionConflict = isInTransaction
+        final boolean isTransactionConflict = isOpenedPartitionConflict || isInTransaction
                 && isParquet
                 && !isPartitionRangeClearOfOpenTransaction(partitionIndex, partitionIndex + 1, partitionTimestamp);
         // An upload moves none of the nameTxn, the file size or the metadata version, so the triple below
@@ -3214,11 +3216,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long seqTxn
     ) {
         assert PartitionBy.isPartitioned(partitionBy);
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         final long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        // Ahead of every lookup below: the commit can move the partition's index.
+        final boolean isOpenedPartitionConflict = !commitOpenTransactionThatOpenedPartitions(logicalPartitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         final long liveNameTxn = partitionIndex > -1 ? txWriter.getPartitionNameTxn(partitionIndex) : -1;
         final boolean isInTransaction = inTransaction();
-        final boolean isTransactionConflict = isInTransaction
+        final boolean isTransactionConflict = isOpenedPartitionConflict || isInTransaction
                 && (partitionIndex < 0 || !isPartitionRangeClearOfOpenTransaction(partitionIndex, partitionIndex + 1, logicalPartitionTimestamp));
         final boolean stale = isTransactionConflict
                 || partitionIndex < 0
@@ -4195,13 +4199,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long liveRows,
             ColumnTopRecorder columnTops
     ) {
+        // Ahead of every lookup below: the commit can move the partition's index.
+        final boolean isOpenedPartitionConflict = !commitOpenTransactionThatOpenedPartitions(
+                txWriter.getLogicalPartitionTimestamp(partitionTimestamp)
+        );
         final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
         final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
         final long liveMetadataVersion = getMetadataVersion();
         // See swapCompactedParquetPartition: an open transaction can hold uncommitted rows for this
         // partition that the build's snapshot never saw, so decline rather than swap over them.
         final boolean isInTransaction = inTransaction();
-        final boolean isTransactionConflict = isInTransaction
+        final boolean isTransactionConflict = isOpenedPartitionConflict || isInTransaction
                 && (partitionIndex < 0 || !isPartitionRangeClearOfOpenTransaction(
                 partitionIndex,
                 partitionIndex + 1,
@@ -4216,6 +4224,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || !txWriter.isPartitionComposite(partitionIndex)
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || liveWriterTxn != expectedWriterTxn
+                // The copy holds exactly the rows the folder had: an append the generation missed shows here.
+                || txWriter.getPartitionSize(partitionIndex) != liveRows
                 || liveMetadataVersion != expectedMetadataVersion;
 
         other.trimTo(pathSize);
@@ -4340,6 +4350,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
         final boolean isParquetConversion = parquetFileSize > -1;
+        // Ahead of every lookup below: the commit can move the run's first index.
+        final boolean isOpenedPartitionConflict = !commitOpenTransactionThatOpenedPartitions(logicalPartitionTimestamp);
         // See swapCompactedCompositePartition: an open transaction can hold uncommitted rows the build's
         // snapshot never saw, so decline rather than swap over them.
         final boolean isInTransaction = inTransaction();
@@ -4347,7 +4359,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int firstIndex = folderCount > 1 || (isParquetConversion && folderCount > 0)
                 ? txWriter.findAttachedPartitionIndexByLoTimestamp(folders.getQuick(0))
                 : -1;
-        final boolean isTransactionConflict = isInTransaction
+        final boolean isTransactionConflict = isOpenedPartitionConflict || isInTransaction
                 && (firstIndex < 0 || !isPartitionRangeClearOfOpenTransaction(firstIndex, firstIndex + folderCount, logicalPartitionTimestamp));
         // A run that reaches the last entry is the active logical partition - see the method doc.
         boolean stale = isTransactionConflict
@@ -6366,6 +6378,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishHasParquetPartitions();
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
+    }
+
+    /**
+     * Commits the open transaction ahead of a compaction swap when it opened partitions past the last committed
+     * one: a swap committed around it would move {@code _txn} past their name txns without listing them, and the O3
+     * purge job would delete their directories. Any other open transaction is left open, and the swap either
+     * commits around it or is refused - see {@link #isPartitionRangeClearOfOpenTransaction}. Commits nothing when
+     * the swap is refused anyway: for a WAL writer, after a failed O3 commit, or when an O3 row falls inside the
+     * swapped logical partition.
+     * <p>
+     * A failed commit distresses the writer. The command queue swallows the exception, and a failed O3 commit only
+     * latches {@code o3InError}, which the owner's next {@code commit()} would roll back without a word - the owner's
+     * rows lost and its commit reported as a success. Distressed, the writer fails the owner's next call instead.
+     *
+     * @return false when the transaction stays open with partitions it opened, which the swap must refuse
+     */
+    private boolean commitOpenTransactionThatOpenedPartitions(long logicalPartitionTimestamp) {
+        if (!inTransaction()) {
+            return true;
+        }
+        // Owners tick between rows, never between newRow() and append().
+        assert (masterRef & 1) == 0;
+        if (txWriter.getPartitionCount() == txWriter.getCommittedPartitionCount()) {
+            return true;
+        }
+        if (tableToken.isWal() || o3InError || hasO3RowInLogicalPartition(logicalPartitionTimestamp)) {
+            return false;
+        }
+        LOG.info().$("committing open transaction that opened partitions ahead of a compaction swap [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, logicalPartitionTimestamp)
+                .I$();
+        try {
+            commit();
+        } catch (Throwable th) {
+            markDistressed();
+            LOG.critical().$("could not commit open transaction ahead of a compaction swap, writer is distressed [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, logicalPartitionTimestamp)
+                    .$(", ex=").$(th)
+                    .I$();
+            throw th;
+        }
+        return !inTransaction();
     }
 
     private void commitRemovePartitionOperation() {
@@ -9548,6 +9603,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    private boolean hasO3RowInLogicalPartition(long logicalPartitionTimestamp) {
+        if (!hasO3()) {
+            return false;
+        }
+        final long logicalPartitionTimestampHi = txWriter.getNextLogicalPartitionTimestamp(logicalPartitionTimestamp);
+        final long o3TimestampAddr = o3TimestampMem.getAddress();
+        for (long row = 0, n = getO3RowCount0(); row < n; row++) {
+            final long timestamp = getTimestampIndexValue(o3TimestampAddr, row);
+            if (timestamp >= logicalPartitionTimestamp && timestamp < logicalPartitionTimestampHi) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasPostingIndex() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
@@ -10193,14 +10263,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Whether committed partitions {@code [lo, hi)} can be swapped and committed while this writer's transaction stays
-     * open: the range ends before the last committed partition (in-order rows land there), no partition is open past
-     * it (the O3 purge job would delete its unlisted directory), no O3 row falls inside the logical partition, and
-     * nothing is pending that only a whole commit publishes. WAL writers are refused.
+     * open: the range ends before the last committed partition (in-order rows land there), no O3 row falls inside
+     * the logical partition, and nothing is pending that only a whole commit publishes. WAL writers are refused. A
+     * transaction that opened partitions has been committed already, see
+     * {@link #commitOpenTransactionThatOpenedPartitions}.
      */
     private boolean isPartitionRangeClearOfOpenTransaction(int lo, int hi, long logicalPartitionTimestamp) {
         if (tableToken.isWal()
                 || o3InError
-                || (masterRef & 1) != 0
                 || txWriter.isPartitionTableChanged()
                 || columnVersionWriter.hasChanges()
                 || txWriter.getPartitionCount() != txWriter.getCommittedPartitionCount()
@@ -10212,17 +10282,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return false;
             }
         }
-        if (hasO3()) {
-            final long logicalPartitionTimestampHi = txWriter.getNextLogicalPartitionTimestamp(logicalPartitionTimestamp);
-            final long o3TimestampAddr = o3TimestampMem.getAddress();
-            for (long row = 0, n = getO3RowCount0(); row < n; row++) {
-                final long timestamp = getTimestampIndexValue(o3TimestampAddr, row);
-                if (timestamp >= logicalPartitionTimestamp && timestamp < logicalPartitionTimestampHi) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return !hasO3RowInLogicalPartition(logicalPartitionTimestamp);
     }
 
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {

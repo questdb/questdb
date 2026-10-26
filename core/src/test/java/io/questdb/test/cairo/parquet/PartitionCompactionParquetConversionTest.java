@@ -26,6 +26,7 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
@@ -33,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
@@ -421,6 +423,71 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
+    @Test
+    public void testRequestRebuildsAfterANonWalSwapRefusedForAnAddColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("rc", false);
+            execute("CREATE TABLE rc_oracle AS (SELECT * FROM rc) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // ADD COLUMN moves the metadata version and leaves the day's name txn alone.
+            assertNextRequestRebuildsAfterARefusedSwap("rc", writer -> writer.addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE), _ -> {
+            });
+            execute("ALTER TABLE rc_oracle ADD COLUMN extra INT");
+            assertConvertedMatchesOracle("rc");
+        });
+    }
+
+    @Test
+    public void testRequestRebuildsAfterANonWalSwapRefusedForAnAppend() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("ra", false);
+            execute("CREATE TABLE ra_oracle AS (SELECT * FROM ra) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertNextRequestRebuildsAfterARefusedSwap("ra", writer -> commitLateRows(writer, "2020-01-01T23:30:00.000000Z"), _ -> {
+            });
+            execute(lateRowsInsert("ra_oracle", "2020-01-01T23:30:00.000000Z"));
+            assertConvertedMatchesOracle("ra");
+        });
+    }
+
+    /**
+     * An O3 row in the day is the one open transaction the swap does not commit. The owner commits it later, with the
+     * writer still held, and the next request rebuilds off a snapshot that holds it.
+     */
+    @Test
+    public void testRequestRebuildsAfterANonWalSwapRefusedForAnO3RowInTheDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("ro", false);
+            execute("CREATE TABLE ro_oracle AS (SELECT * FROM ro) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertNextRequestRebuildsAfterARefusedSwap(
+                    "ro",
+                    writer -> {
+                        final TableWriter.Row row = writer.newRow(parse("2020-01-01T23:59:00.000000Z"));
+                        row.putInt(0, 99_999);
+                        row.append();
+                        Assert.assertTrue("the fixture must hold an O3 row in the day", writer.hasO3());
+                    },
+                    writer -> {
+                        Assert.assertTrue("a refused swap must leave the transaction open", writer.inTransaction());
+                        writer.commit();
+                    }
+            );
+            execute("INSERT INTO ro_oracle (i, ts) VALUES (99_999, '2020-01-01T23:59:00.000000Z')");
+            assertConvertedMatchesOracle("ro");
+        });
+    }
+
+    @Test
+    public void testRequestRebuildsAfterAWalSwapRefusedForAnAppend() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("rw", true);
+            execute("CREATE TABLE rw_oracle AS (SELECT * FROM rw) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertNextRequestRebuildsAfterARefusedSwap("rw", writer -> commitLateRows(writer, "2020-01-01T23:30:00.000000Z"), _ -> {
+            });
+            execute(lateRowsInsert("rw_oracle", "2020-01-01T23:30:00.000000Z"));
+            drainWalQueue();
+            assertConvertedMatchesOracle("rw");
+        });
+    }
+
     private static void assertConverted(String tableName) {
         try (TableReader reader = engine.getReader(tableName)) {
             final TxReader tx = reader.getTxFile();
@@ -509,9 +576,18 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     private static void runJobOnAnotherThread() throws InterruptedException {
+        try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+            runJobOnAnotherThread(job);
+        }
+    }
+
+    /**
+     * Runs {@code job} on a thread that holds no writer, so a writer the test holds is busy to it.
+     */
+    private static void runJobOnAnotherThread(PartitionCompactionScanJob job) throws InterruptedException {
         final Throwable[] failure = new Throwable[1];
         final Thread thread = new Thread(() -> {
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+            try {
                 job.run();
             } catch (Throwable e) {
                 failure[0] = e;
@@ -585,6 +661,47 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                     LOG
             );
         }
+    }
+
+    /**
+     * Queues a conversion on a held writer and lets {@code beforeSwap} make it stale; the tick refuses it, without
+     * moving the day's name txn. Then {@code afterRefusal} runs and the same job takes a second request: the refused
+     * command must have released its in-flight record, so the request rebuilds and its swap lands, with the writer
+     * still held and no wait for the in-flight timeout.
+     */
+    private void assertNextRequestRebuildsAfterARefusedSwap(
+            String tableName,
+            WriterAction beforeSwap,
+            WriterAction afterRefusal
+    ) throws Exception {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        final TableToken token = engine.verifyTableName(tableName);
+        final long nameTxnBefore = dayNameTxn(tableName);
+        try (
+                PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine);
+                TableWriter ownerWriter = engine.getWriter(token, "owner")
+        ) {
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+            runJobOnAnotherThread(job);
+            Assert.assertEquals("the busy writer must have been handed a queued swap", 1, job.getPendingSwapMemoSize());
+            beforeSwap.run(ownerWriter);
+            ownerWriter.tick();
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("the stale swap must be refused", tx.isPartitionParquet(tx.getPartitionIndex(DAY)));
+            }
+            Assert.assertEquals("the refusal must leave the day's name txn alone", nameTxnBefore, dayNameTxn(tableName));
+            assertNoStagingDirectory(token);
+            afterRefusal.run(ownerWriter);
+
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+            runJobOnAnotherThread(job);
+            ownerWriter.tick();
+            assertConverted(tableName);
+        }
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
     }
 
     /**
@@ -714,5 +831,10 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                 " rnd_varchar(1, 40, 1) v, rnd_str(1, 30, 1) str, rnd_double(2) d, rnd_double_array(1, 1) arr," +
                 " timestamp_sequence('" + from + "', 5 * 1_000_000L) ts, x + 1_000_000 late FROM long_sequence(200)");
         drainWalQueue();
+    }
+
+    @FunctionalInterface
+    private interface WriterAction {
+        void run(TableWriter writer) throws Exception;
     }
 }

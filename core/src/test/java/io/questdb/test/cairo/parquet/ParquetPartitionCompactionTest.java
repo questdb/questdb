@@ -175,11 +175,12 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * The swap must not commit around a transaction that opened a new partition: the swap's commit would move
-     * {@code _txn} past that directory's name txn without listing it, and the O3 purge job would delete it.
+     * The swap commits an in-order open transaction that opened a new partition, then lands through the ordinary
+     * commit: a swap committed around it would move {@code _txn} past that directory's name txn without listing it,
+     * and the O3 purge job would delete it.
      */
     @Test
-    public void testSwapAroundAnOpenTransactionThatOpenedAPartitionIsRefused() throws Exception {
+    public void testSwapCommitsAnOpenTransactionThatOpenedAPartition() throws Exception {
         setUpSmallRowGroupsNoAutoRewrite();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
 
@@ -187,7 +188,7 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             createTableWithDeadRowGroupBytes("op", false);
             final TableToken tableToken = engine.verifyTableName("op");
             final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
-            final long parquetFileSizeBefore = parquetPartitionFileSize(tableToken);
+            final String stagingDir = stagingDir(tableToken);
 
             try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
                 appendRow(ownerWriter, "2020-01-03T00:00:00.000000Z", 202, "k1");
@@ -195,23 +196,15 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 Assert.assertFalse("the fixture must hold no O3 row", ownerWriter.hasO3());
                 Assert.assertEquals("the row must have opened a partition", 3, ownerWriter.getPartitionCount());
 
-                try {
-                    ownerWriter.swapCompactedParquetPartition(
-                            DAY_2020_01_01,
-                            nameTxnBefore,
-                            parquetFileSizeBefore,
-                            ownerWriter.getMetadataVersion(),
-                            parquetFileSizeBefore,
-                            false
-                    );
-                    Assert.fail("the swap ran around a transaction that opened a partition");
-                } catch (TableReferenceOutOfDateException ignore) {
-                }
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+                runSweepOnAnotherThread();
+                Assert.assertTrue("the busy writer must have been handed a queued swap", dirExists(stagingDir));
 
-                Assert.assertTrue("the swap committed the writer's open transaction", ownerWriter.inTransaction());
-                Assert.assertEquals("a declined swap must not replace the live partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
-                assertUnusedBytesPositive(tableToken);
-                ownerWriter.commit();
+                ownerWriter.tick();
+                Assert.assertFalse("the swap must commit the open transaction first", ownerWriter.inTransaction());
+                Assert.assertFalse("the swap should have renamed the staging directory in", dirExists(stagingDir));
+                Assert.assertNotEquals("the swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                assertUnusedBytesZero(tableToken);
             }
 
             assertQuery("SELECT count() FROM op")

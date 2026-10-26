@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
-import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -45,6 +44,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -70,9 +70,10 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
  * and plain folders are left alone.
  * <p>
  * A swap this job hands to a busy writer's command queue takes ownership of the staging directory the build filled.
- * An in-flight record suppresses any further work on the WHOLE logical partition while the writer instance that
- * received the command remains live and the command's own target - the folder it rewrites, or for a MERGE the run
- * it replaces - still has the identity the staging directory is named after.
+ * An in-flight record suppresses any further work on the WHOLE logical partition until the writer has applied the
+ * command - landed or refused it - while the writer instance that received the command remains live and the
+ * command's own target - the folder it rewrites, or for a MERGE the run it replaces - still has the identity the
+ * staging directory is named after.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
     private static final int IN_FLIGHT_EXPIRY_OFFSET = 5;
@@ -118,6 +119,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final LongList folders = new LongList();
     private final PartitionGeometry geometry = new PartitionGeometry();
     private final long idleTimeoutMicros;
+    // The command each in-flight record waits on, at the record's own index.
+    private final ObjList<CompactionSwapCommand> inFlightCommands = new ObjList<>();
     // Sorted by (tableId, logicalPartitionTimestamp), IN_FLIGHT_STRIDE longs per record.
     private final LongList inFlightSwaps = new LongList();
     private final long ioBudget;
@@ -197,6 +200,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         cleanParquetPartitions.clear();
         retiringCleanParquetPartitions.clear();
         inFlightSwaps.clear();
+        inFlightCommands.clear();
         geometry.close();
         other.close();
         nativeIndexBuilder = Misc.free(nativeIndexBuilder);
@@ -1482,7 +1486,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     /**
      * Resolves this table's in-flight records that have outlived
      * {@link CairoConfiguration#getPartitionCompactionSwapTimeout()}. A record that old describes a command the
-     * writer never reported on - one it refused without moving {@code _txn}, say - and it would otherwise park its
+     * writer has not applied yet - one queued on a writer that stopped ticking, say - and it would otherwise park its
      * logical partition for the life of that writer instance. Taking the writer out of the pool and ticking it
      * consumes whatever is still queued, which is what makes forgetting the records safe:
      * nothing is rebuilt on the strength of the timeout alone. A writer too busy to hand over keeps its records,
@@ -1746,8 +1750,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * per logical partition is ever outstanding, so folders that each deserve their own compaction take their turns
      * one sweep after another.
      * <p>
-     * The record survives only while the exact writer instance that received the command remains live. The staging
-     * directory itself is not a liveness signal: a terminal path may leave it behind, while a live command must
+     * The record survives only while the exact writer instance that received the command remains live and has not
+     * applied it yet. A refused command does not move {@code _txn}, so only the command itself can report it. The
+     * staging directory is not a liveness signal: a terminal path may leave it behind, while a live command must
      * retain ownership even if the directory temporarily disappears.
      */
     private boolean isSwapPending(TableToken tableToken, long logicalPartitionTimestamp) {
@@ -1756,7 +1761,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             return false;
         }
         final int offset = recordIndex * IN_FLIGHT_STRIDE;
-        if (inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) == engine.getWriterId(tableToken)) {
+        if (inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) == engine.getWriterId(tableToken)
+                && !inFlightCommands.getQuick(recordIndex).isApplied()) {
             return true;
         }
         removePendingSwap(recordIndex);
@@ -1804,9 +1810,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Drops this table's in-flight records whose swap is done or gone: the writer instance that took the command
-     * is no longer the table's, or the command's own target has moved on (see {@link #isInFlightTargetUnchanged})
-     * - which is what landing the swap does.
+     * Drops this table's in-flight records whose swap is done or gone: the writer applied the command, the writer
+     * instance that took it is no longer the table's, or the command's own target has moved on (see
+     * {@link #isInFlightTargetUnchanged}) - which is what landing the swap does.
      * <p>
      * A change to any OTHER folder of the logical partition does not drop the record. The staging directory is
      * named after the target alone, so while the target keeps its identity a rebuild would clear and refill the
@@ -1821,7 +1827,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET) != tableToken.getTableId()) {
                 break;
             }
-            if (liveWriterId < 0 || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId) {
+            if (liveWriterId < 0
+                    || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId
+                    || inFlightCommands.getQuick(recordIndex).isApplied()) {
                 removePendingSwap(recordIndex);
                 continue;
             }
@@ -1843,7 +1851,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long targetTimestamp,
             long targetNameTxn,
             long targetGeneration,
-            AsyncWriterCommand command,
+            CompactionSwapCommand command,
             String what,
             TimestampDriver timestampDriver
     ) {
@@ -1862,6 +1870,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         targetNameTxn,
                         targetGeneration,
                         publishedWriterId,
+                        command,
                         clock.getTicks()
                 );
             }
@@ -1915,6 +1924,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long targetNameTxn,
             long targetGeneration,
             long writerId,
+            CompactionSwapCommand command,
             long nowMicros
     ) {
         assert writerId > 0;
@@ -1922,7 +1932,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (recordIndex < 0) {
             recordIndex = -recordIndex - 1;
             inFlightSwaps.insert(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
+            inFlightCommands.insert(recordIndex, 1, null);
         }
+        inFlightCommands.setQuick(recordIndex, command);
         final int offset = recordIndex * IN_FLIGHT_STRIDE;
         inFlightSwaps.setQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET, tableId);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET, logicalPartitionTimestamp);
@@ -1935,6 +1947,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     private void removePendingSwap(int recordIndex) {
         inFlightSwaps.removeIndexBlock(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
+        inFlightCommands.remove(recordIndex);
     }
 
     /**
