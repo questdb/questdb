@@ -96,17 +96,23 @@ columns, or alias the extra one: `SELECT *, ts AS ts2 FROM base_price` works.
 Refresh compiles a view's stored query again and copies its columns into the
 view by position. `MatViewRefreshJob.validateViewSchema()` refuses the refresh,
 and leaves the view invalid, when the query's column count differs from the
-view's or when a query column sits at a different position than the view column
-of the same name. A query column whose name matches no view column is copied
-into the view column at its position, and refresh logs
+view's. When the stored query has a wildcard in its top-level select list, it
+also refuses a query column that sits at a different position than the view
+column of the same name. A query column whose name matches no view column is
+copied into the view column at its position, and refresh logs
 `materialized view column name differs from query column name, copying by position`.
+A query without a top-level wildcard skips the name comparison: its text fixes
+what every column computes.
 
-Two cases reach that path:
+Two cases reach the copy by position under a wildcard:
 
-- Generated names. A view created by 8.2.3-8.3.3, or with
-  `cairo.sql.column.alias.expression.enabled=false`, stores `avg(price)` as
-  `avg`. With expression aliases enabled, the stored query produces
-  `avg(price)`. The view keeps refreshing.
+- Generated names. QuestDB 8.x and
+  `cairo.sql.column.alias.expression.enabled=false` name an unaliased
+  `avg(price)` `avg` and a repeated `sym` `sym1`; the expression rules name
+  them `avg(price)` and `sym_2`, and cut a long column reference to
+  `cairo.sql.column.alias.generated.max.size`. A wildcard carries such names
+  through, as in `SELECT * FROM (SELECT ts, avg(price) FROM t SAMPLE BY 1d)`.
+  The view keeps refreshing after an upgrade or a change of either setting.
 - A view that reads a SQL view through a top-level wildcard, such as
   `SELECT * FROM vagg` or `vagg`, takes that SQL view's columns at each
   position. After `ALTER VIEW` renames a column in place, or replaces it with a
@@ -117,11 +123,12 @@ Two cases reach that path:
 - **Why accepted:** a name cannot tell a renamed or replaced column from a
   column redefined under its old name, as in
   `ALTER VIEW vagg AS (SELECT ..., max(a) c ...)`, which an exact name
-  comparison accepts as well. Comparing exact names would leave every view with
-  a generated name invalid after an upgrade or a change of the alias setting,
-  with no repair short of DROP and CREATE, since `ALTER MATERIALIZED VIEW` cannot
-  rename a column. A generated name that collides with another view column's
-  name reads as a moved column and leaves the view invalid.
+  comparison accepts as well. Comparing exact names would leave every such view
+  with a generated name invalid after an upgrade or a change of the alias
+  settings, with no repair short of DROP and CREATE, since
+  `ALTER MATERIALIZED VIEW` cannot rename a column. A generated name that
+  collides with another view column's name reads as a moved column and leaves
+  the view invalid.
 - **Pinned by:**
   `MatViewRefreshRecompileCompatibilityTest.testRefreshAcceptsChangedGeneratedColumnNames`
   (and its incremental and range variants),
@@ -129,7 +136,13 @@ Two cases reach that path:
   `MatViewRefreshRecompileCompatibilityTest.testRefreshAcceptsSqlViewColumnReplacedInPlace`,
   `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewColumnsSwapped`,
   `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewColumnsRotated`,
-  `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewAddedColumn`.
+  `MatViewRefreshRecompileCompatibilityTest.testRefreshRejectsSqlViewAddedColumn`,
+  `MatViewTest.testRefreshKeepsViewWhenExpressionAliasRulesRenameColumns`,
+  `MatViewTest.testRefreshKeepsViewWhenLegacyAliasRulesRenameColumns`,
+  `MatViewTest.testRefreshKeepsViewWhenAliasMaxSizeRenamesColumns`,
+  `MatViewTest.testRefreshRejectsWildcardViewWhenSourceViewReordersColumns`,
+  `MatViewTest.testRefreshRejectsWildcardViewWhenSourceViewGainsColumn`,
+  `MatViewReloadOnRestartTest.testMatViewsReloadOnServerStartWithChangedAliasRules`.
 - **Follow-up:** expand an aggregating view's top-level wildcard at CREATE, as
   for passthrough views, so a new view reads its SQL view's columns by name.
 

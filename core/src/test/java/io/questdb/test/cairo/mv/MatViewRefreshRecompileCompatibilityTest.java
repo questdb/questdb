@@ -647,10 +647,10 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
      * A view keeps the column names CREATE generated, while refresh compiles the stored query under the
      * alias setting in force now. A view created by 8.2.3-8.3.3, which named {@code avg(v)} as
      * {@code avg}, reaches refresh the same way as a view created with
-     * {@code cairo.sql.column.alias.expression.enabled=false} on a server that later enables it. With
-     * expression aliases enabled, CREATE requires an explicit alias for such a column, so the change
-     * only goes from disabled to enabled. Refresh copies the renamed column by position and the view
-     * stays valid.
+     * {@code cairo.sql.column.alias.expression.enabled=false} on a server that later enables it. The
+     * subquery and WITH cases carry the generated name through a top-level wildcard, so refresh compares
+     * the names and accepts the one that matches no view column. Refresh copies the renamed column by
+     * position and the view stays valid.
      */
     private void assertRefreshAcceptsChangedGeneratedColumnNames(String refreshSql) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));

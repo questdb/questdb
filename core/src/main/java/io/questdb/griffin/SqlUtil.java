@@ -1223,6 +1223,30 @@ public class SqlUtil {
         return ast.lhs;
     }
 
+    /**
+     * Returns whether the top-level select list of a parsed query, before the optimiser expands it in
+     * place, contains a wildcard: a written one ({@code *}, {@code t.*}) or the one the parser adds for a
+     * query written without SELECT. An empty select list counts as a wildcard, so a caller that skips a
+     * check for wildcard-free queries keeps it for a shape this method cannot see into.
+     */
+    public static boolean hasTopLevelWildcard(IQueryModel model) {
+        if (model.isArtificialStar()) {
+            return true;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int n = columns.size();
+        if (n == 0) {
+            return true;
+        }
+        for (int i = 0; i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast != null && ast.isWildcard()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static byte implicitCastAsByte(long value, int fromType) {
         if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
             return (byte) value;

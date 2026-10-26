@@ -659,6 +659,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         }
     }
 
+    // For a materialized view refresh, the compiler reports whether the SELECT it has just parsed has a wildcard
+    // in its top-level select list, before the optimiser expands it. The refresh compares the query's column
+    // names with the view's only then: without a wildcard the query text fixes what every column computes, and
+    // the names can differ only in how the alias rules in effect name unaliased columns.
+    default void setTopLevelProjectionWildcard(boolean hasTopLevelProjectionWildcard) {
+    }
+
     void setUseSimpleCircuitBreaker(boolean value);
 
     default boolean shouldLogSql() {

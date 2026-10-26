@@ -7594,6 +7594,159 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshKeepsViewWhenAliasMaxSizeRenamesColumns() throws Exception {
+        // Under the expression alias rules, CREATE cuts the generated name of a column reference longer than
+        // cairo.sql.column.alias.generated.max.size to that size, the designated timestamp included. A refresh
+        // under another size names the same columns differently. The stored query still fixes what every column
+        // computes, so both an aggregating and a passthrough view keep refreshing.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+            final String sym = "sym_" + "s".repeat(66);
+            final String ts = "ts_" + "t".repeat(67);
+            final String sym64 = sym.substring(0, 64);
+            final String ts64 = ts.substring(0, 64);
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            sym + " varchar, price double, " + ts + " #TIMESTAMP" +
+                            ") timestamp(" + ts + ") partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            execute("create materialized view price_1d as (select " + ts + ", " + sym + ", avg(price) avg_price from base_price sample by 1d)");
+            execute("create materialized view price_copy as (select " + sym + ", price, " + ts + " from base_price)");
+            drainQueues();
+
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, 128);
+            execute("refresh materialized view price_1d full");
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+            execute("insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01')");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1d\tvalid\t
+                            price_copy\tvalid\t
+                            """);
+            assertQuery("price_1d")
+                    .timestamp(ts64)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(
+                            ts64 + "\t" + sym64 + "\tavg_price\n" +
+                                    "2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n" +
+                                    "2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"
+                    ));
+            assertQuery("price_copy")
+                    .timestamp(ts64)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(
+                            sym64 + "\tprice\t" + ts64 + "\n" +
+                                    "gbpusd\t1.5\t2024-09-10T12:01:00.000000Z\n" +
+                                    "gbpusd\t2.5\t2024-09-11T12:01:00.000000Z\n"
+                    ));
+        });
+    }
+
+    @Test
+    public void testRefreshKeepsViewWhenExpressionAliasRulesRenameColumns() throws Exception {
+        // QuestDB 8.x, and any release run with cairo.sql.column.alias.expression.enabled=false, names an
+        // unaliased avg(price) "avg" and a repeated sym "sym1". The expression rules name them "avg(price)" and
+        // "sym_2". The view stores its query as written, and that text fixes what every column computes, so a
+        // refresh under the expression rules keeps the view valid and keeps copying the columns by position.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            execute("create materialized view price_1d as (select ts, sym, sym, avg(price) from base_price sample by 1d)");
+            execute("create materialized view price_cte as (with p as (select ts, sym, price from base_price) select ts, sym, avg(price) from p sample by 1d)");
+            drainQueues();
+
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+            execute("refresh materialized view price_1d full");
+            execute("refresh materialized view price_cte full");
+            drainQueues();
+            execute("insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01')");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1d\tvalid\t
+                            price_cte\tvalid\t
+                            """);
+            assertQuery("price_1d")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tsym\tsym1\tavg
+                            2024-09-10T00:00:00.000000Z\tgbpusd\tgbpusd\t1.5
+                            2024-09-11T00:00:00.000000Z\tgbpusd\tgbpusd\t2.5
+                            """));
+            assertQuery("price_cte")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tsym\tavg
+                            2024-09-10T00:00:00.000000Z\tgbpusd\t1.5
+                            2024-09-11T00:00:00.000000Z\tgbpusd\t2.5
+                            """));
+        });
+    }
+
+    @Test
+    public void testRefreshKeepsViewWhenLegacyAliasRulesRenameColumns() throws Exception {
+        // The reverse switch. The expression rules name a repeated sym "sym_2" and cut a column reference longer
+        // than cairo.sql.column.alias.generated.max.size to that size; the legacy rules name them "sym1" and
+        // the full column name.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+            final String venue = "venue_" + "v".repeat(64);
+            final String venue64 = venue.substring(0, 64);
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, " + venue + " varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 'lmax', 1.5, '2024-09-10T12:01')");
+            execute("create materialized view price_1d as (select ts, sym, sym, " + venue + ", avg(price) avg_price from base_price sample by 1d)");
+            drainQueues();
+
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+            execute("refresh materialized view price_1d full");
+            drainQueues();
+            execute("insert into base_price values('gbpusd', 'lmax', 2.5, '2024-09-11T12:01')");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1d\tvalid\t
+                            """);
+            assertQuery("price_1d")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(
+                            "ts\tsym\tsym_2\t" + venue64 + "\tavg_price\n" +
+                                    "2024-09-10T00:00:00.000000Z\tgbpusd\tgbpusd\tlmax\t1.5\n" +
+                                    "2024-09-11T00:00:00.000000Z\tgbpusd\tgbpusd\tlmax\t2.5\n"
+                    ));
+        });
+    }
+
+    @Test
     public void testRefreshMaterializedViewStatsResetsEma() throws Exception {
         // REFRESH MATERIALIZED VIEW <name> STATS clears the EMA values so the
         // cost model returns to its cold-start state. Operators reach for
@@ -7686,6 +7839,93 @@ public class MatViewTest extends AbstractCairoTest {
                 Assert.assertTrue("avg_commit_nanos > 0 via SQL", record.getBool(0));
                 Assert.assertTrue("gap_threshold_ts_units > 0 via SQL", record.getBool(1));
             }
+        });
+    }
+
+    @Test
+    public void testRefreshRejectsWildcardViewWhenSourceViewGainsColumn() throws Exception {
+        // A wildcard over a regular view takes its columns from that view, which ALTER VIEW can widen without
+        // invalidating the materialized view. The refresh refuses the wider query. A view that lists its
+        // columns keeps refreshing them.
+        // The composite partition sweep cannot open a reader on a regular view.
+        disableCompositePartitionRandomisation();
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create view price_stats as (select ts, sym, avg(price) a, max(price) b from base_price sample by 1h)");
+            execute("create materialized view stats_star as (select * from price_stats)");
+            execute("create materialized view stats_cols as (select ts, sym, a, b from price_stats)");
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            drainQueues();
+
+            execute("alter view price_stats as (select ts, sym, avg(price) a, max(price) b, min(price) c from base_price sample by 1h)");
+            drainQueues();
+            execute("insert into base_price values('gbpusd', 2.5, '2024-09-10T15:01'), ('gbpusd', 9.5, '2024-09-10T15:02')");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            stats_cols\tvalid\t
+                            stats_star\tinvalid\t[-1]: materialized view query does not match view schema [view=stats_star, queryColumnCount=5, viewColumnCount=4]
+                            """);
+            assertQuery("stats_cols")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tsym\ta\tb
+                            2024-09-10T12:00:00.000000Z\tgbpusd\t1.5\t1.5
+                            2024-09-10T15:00:00.000000Z\tgbpusd\t6.0\t9.5
+                            """));
+        });
+    }
+
+    @Test
+    public void testRefreshRejectsWildcardViewWhenSourceViewReordersColumns() throws Exception {
+        // A wildcard over a regular view takes its column order from that view, which ALTER VIEW can change
+        // without invalidating the materialized view. The copier maps columns by position, so the refresh
+        // compares column names and refuses the reordered query instead of writing max(price) into a and
+        // avg(price) into b. A view that lists its columns reads them by name and keeps refreshing.
+        // The composite partition sweep cannot open a reader on a regular view.
+        disableCompositePartitionRandomisation();
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create view price_stats as (select ts, sym, avg(price) a, max(price) b from base_price sample by 1h)");
+            execute("create materialized view stats_star as (select * from price_stats)");
+            execute("create materialized view stats_cols as (select ts, sym, a, b from price_stats)");
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            drainQueues();
+
+            execute("alter view price_stats as (select ts, sym, max(price) b, avg(price) a from base_price sample by 1h)");
+            drainQueues();
+            execute("insert into base_price values('gbpusd', 2.5, '2024-09-10T15:01'), ('gbpusd', 9.5, '2024-09-10T15:02')");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            stats_cols\tvalid\t
+                            stats_star\tinvalid\t[-1]: materialized view query does not match view schema [view=stats_star, columnIndex=2, queryColumn=b, viewColumn=a]
+                            """);
+            assertQuery("stats_cols")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tsym\ta\tb
+                            2024-09-10T12:00:00.000000Z\tgbpusd\t1.5\t1.5
+                            2024-09-10T15:00:00.000000Z\tgbpusd\t6.0\t9.5
+                            """));
         });
     }
 
