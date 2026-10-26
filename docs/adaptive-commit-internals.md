@@ -682,7 +682,14 @@ bytes.
   does the same at the end of its current batch, or before its next one, on its own thread, so the removal never
   races a save point being written. A table that fails for another reason is logged and left to its writer; a
   failed flush follows the engine's resolved mode (section 9): in `adaptive` the table keeps its save point
-  and WAL floor and retries the flush and removal before each batch; in `sync` it stops the engine. The switch logs `cleared adaptive save points on becoming a replica [tables=...,
+  and WAL floor and retries the flush and removal before each batch; in `sync` it stops the engine. The same
+  reconcile, once the save point is gone and its pins are released, finishes the partition work that waited for a save
+  point: a DETACH takes its final name, a kept `.attachable` goes, an owed partition purge is queued, and the
+  completion requirement clears. Until then a DETACH or ATTACH applied on the writer keeps its temporary name or source,
+  as on a primary (`TableWriter.mayHaveSavePoint`: the policy, else the pins, else the save point file), and an
+  operation that meets the replica policy half-way leaves its work to the reconcile instead of failing. A rename that
+  fails there suspends the table, which RESUME WAL retries; a purge that does not fit the queue is left to the next
+  writer open, as anywhere else. The switch logs `cleared adaptive save points on becoming a replica [tables=...,
   busy=..., failed=...]`. On Linux each enrolled table costs one `syncfs` and two `fsync`, about 19 ms with the
   writer open and the removal: about 19 s for 1,000 tables before the replica loop starts. One `syncfs` for every
   table, then the removals, would bring that near the writer opens alone; that batching is left for later.
