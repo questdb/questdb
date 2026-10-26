@@ -645,8 +645,44 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             // A merge that materialized the column top left scratch past the destination's logical end, see
             // O3OpenColumnJob.mergeFixColumn(). Trim it before the sync, so the sync does not write it out.
             // Windows cannot truncate a mapped file, so a failed attempt is retried after the unmap.
-            O3Utils.unmap(ff, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmap(ff, srcDataVarAddr, srcDataVarSize);
+            try {
+                try {
+                    O3Utils.unmap(ff, srcDataFixAddr, srcDataFixSize);
+                } finally {
+                    O3Utils.unmap(ff, srcDataVarAddr, srcDataVarSize);
+                }
+            } catch (Throwable th) {
+                // Same as a failed release below: the commit must fail, and the column still counts down.
+                LOG.error()
+                        .$("release error [table=").$(tableWriter.getTableToken())
+                        .$(", e=").$(th)
+                        .I$();
+                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+                unmapAndCloseAllPartsComplete(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcDataFixFd,
+                        0,
+                        0,
+                        srcDataVarFd,
+                        0,
+                        0,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarSize,
+                        0,
+                        0,
+                        tableWriter
+                );
+                throw th;
+            }
             final boolean hasDstScratch = dstFixFd > 0 && srcDataFixFd == -dstFixFd;
             final long dstFixFileSize = TableUtils.alignedSize(Math.abs(dstFixSize));
             final boolean isScratchTrimmed = !hasDstScratch || ff.truncate(dstFixFd, dstFixFileSize);
