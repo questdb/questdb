@@ -128,8 +128,8 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     private static final int STAT_BACKFILL_ROWS_PER_ROUND = 5;
     private static final String STAT_BASE = "fx";
     private static final String STAT_RANGE_COLUMNS = "sym, ts::varchar, px, qty, c, sp, ks, cvl, vsx, cx";
-    // T1b over a RANGE frame in the issue's lv2 spelling, with T1a and T2 on the same frame, plus
-    // T1a and T1b over a lagged frame and over one that excludes the current row.
+    // corr over a RANGE frame in issue #7873's lv2 spelling, with stddev_pop and ksum on the same
+    // frame, plus covar and variance over a lagged frame and over one that excludes the current row.
     private static final String STAT_RANGE_QUERY = """
             SELECT ts, sym, px, qty,
                 corr(px, qty) OVER w AS c,
@@ -145,8 +145,8 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     private static final String STAT_RANGE_VIEW = "fx_range_lv";
     private static final int STAT_REPAIR_ROUNDS = 6;
     private static final String STAT_ROWS_COLUMNS = "sym, ts::varchar, px, qty, vol, cv, vp, sx, cr";
-    // T1a and T1b over a ROWS frame in the issue's lv1 spelling, plus a lagged frame and one that
-    // excludes the current row.
+    // stddev/variance and covar/corr over a ROWS frame in issue #7873's lv1 spelling, plus a lagged
+    // frame and one that excludes the current row.
     private static final String STAT_ROWS_QUERY = """
             SELECT ts, sym, px, qty,
                 stddev_samp(px) OVER w AS vol,
@@ -352,11 +352,11 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     @Test
     public void testBoundedFrameStatViewsFedBySendersRestoreAcrossARestart() throws Exception {
         // The statistical window functions over bounded frames, end to end through the real
-        // client: stddev and variance (T1a) and covar and corr (T1b) over ROWS and RANGE frames,
-        // and ksum (T2) over a RANGE frame. A QWP stream feeds the base in timestamp order and an
-        // ILP-over-HTTP backfill sends late rows below its frontier, which the views repair. Some
-        // rows leave px or qty out, so the frames hold NULLs: the ROWS ring keeps a NaN
-        // placeholder for each, and the RANGE ring and every accumulator skip them.
+        // client: stddev/variance and covar/corr over ROWS and RANGE frames, and ksum over a
+        // RANGE frame. A QWP stream feeds the base in timestamp order and an ILP-over-HTTP
+        // backfill sends late rows below its frontier, which the views repair. Some rows leave px
+        // or qty out, so the frames hold NULLs: the ROWS ring keeps a NaN placeholder for each,
+        // and the RANGE ring and every accumulator skip them.
         //
         // After the restart each view must come back on the timeline its previous process
         // sealed, not on a rebuild, and keep computing on the frame state it restored: the next

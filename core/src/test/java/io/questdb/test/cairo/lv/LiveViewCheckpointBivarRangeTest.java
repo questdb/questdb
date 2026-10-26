@@ -111,12 +111,12 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     // EXCLUDE CURRENT ROW folds into a high bound one tick below the current row, so the
     // current pair waits in the ring outside the frame.
     private static final String FRAME_EXCLUDED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '6' SECOND PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
-    // The issue's own lv2 spelling: the short form of N PRECEDING AND CURRENT ROW.
+    // Issue #7873's own lv2 spelling: the short form of N PRECEDING AND CURRENT ROW.
     private static final String FRAME_ISSUE = "PARTITION BY sym ORDER BY ts RANGE '1' MINUTE PRECEDING";
     // A high bound below the current row: the ring holds pairs the frame has not reached yet.
     private static final String FRAME_LAGGED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING";
     private static final String[] FUNCTIONS = {"covar_samp", "covar_pop", "corr"};
-    // The issue's lv2 view, verbatim.
+    // Issue #7873's lv2 view, verbatim.
     private static final String ISSUE_PROJECTION = "corr(px, qty) OVER (" + FRAME_ISSUE + ") AS c";
     private static final String[] NARROW_VIEWS = {"lv_lag", "lv_excl", "lv_issue"};
     // Distinct ascending seconds per key per commit.
@@ -129,7 +129,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     // first minute on, so the running sums carry the rounding of many adds and drops.
     private static final String TICK_FRAME_CURRENT = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '20' SECOND PRECEDING AND CURRENT ROW";
     // All three functions over all four frame shapes: frameIncludesCurrentValue (CURRENT ROW and
-    // the issue's short form) and not (N PRECEDING AND M PRECEDING, EXCLUDE CURRENT ROW).
+    // issue #7873's short form) and not (N PRECEDING AND M PRECEDING, EXCLUDE CURRENT ROW).
     private static final String TICK_PROJECTION = "covar_samp(px, qty) OVER (" + TICK_FRAME_CURRENT + ") AS c0, "
             + "corr(px, qty) OVER (" + TICK_FRAME_CURRENT + ") AS c1, "
             + "covar_pop(px, qty) OVER (" + FRAME_LAGGED + ") AS c2, "
@@ -492,7 +492,7 @@ public class LiveViewCheckpointBivarRangeTest extends AbstractLiveViewTest {
     public void testBoundedRangeRestoresExactValuesAcrossRestart() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            // The issue's lv2 view.
+            // Issue #7873's lv2 view.
             execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s START FROM BEGINNING AS "
                     + "SELECT ts, sym, " + ISSUE_PROJECTION + " FROM fx");
             final String select = """

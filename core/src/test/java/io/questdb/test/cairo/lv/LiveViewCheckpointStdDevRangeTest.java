@@ -107,7 +107,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
     // EXCLUDE CURRENT ROW folds into a high bound one tick below the current row, so the
     // current pair waits in the ring outside the frame.
     private static final String FRAME_EXCLUDED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '6' SECOND PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
-    // The issue's own spelling: the short form of N PRECEDING AND CURRENT ROW.
+    // Issue #7873's own spelling: the short form of N PRECEDING AND CURRENT ROW.
     private static final String FRAME_ISSUE = "PARTITION BY sym ORDER BY ts RANGE '1' MINUTE PRECEDING";
     // A high bound below the current row: the ring holds pairs the frame has not reached yet.
     private static final String FRAME_LAGGED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING";
@@ -123,7 +123,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
     // first minute on, so the running sums carry the rounding of many adds and drops.
     private static final String TICK_FRAME_CURRENT = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '20' SECOND PRECEDING AND CURRENT ROW";
     // All six spellings over all four frame shapes: frameIncludesCurrentValue (CURRENT ROW and
-    // the issue's short form) and not (N PRECEDING AND M PRECEDING, EXCLUDE CURRENT ROW).
+    // issue #7873's short form) and not (N PRECEDING AND M PRECEDING, EXCLUDE CURRENT ROW).
     private static final String TICK_PROJECTION = "stddev_samp(px) OVER (" + TICK_FRAME_CURRENT + ") AS s0, "
             + "var_pop(px) OVER (" + TICK_FRAME_CURRENT + ") AS s1, "
             + "stddev_pop(px) OVER (" + FRAME_LAGGED + ") AS s2, "
@@ -476,7 +476,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
     public void testBoundedRangeRestoresExactValuesAcrossRestart() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            // The issue's lv2 spelling of the frame, over stddev_samp.
+            // Issue #7873's lv2 spelling of the frame, over stddev_samp.
             execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s START FROM BEGINNING AS "
                     + "SELECT ts, sym, " + issueProjection() + " FROM fx");
             execute("""
@@ -687,7 +687,7 @@ public class LiveViewCheckpointStdDevRangeTest extends AbstractLiveViewTest {
         };
     }
 
-    // The issue's lv2 frame over a single stddev_samp column.
+    // Issue #7873's lv2 frame over a single stddev_samp column.
     private static String issueProjection() {
         return "stddev_samp(px) OVER (" + FRAME_ISSUE + ") AS vol";
     }

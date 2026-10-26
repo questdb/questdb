@@ -106,12 +106,12 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
     // EXCLUDE CURRENT ROW folds into a high bound one tick below the current row, so the
     // current pair waits in the ring outside the frame.
     private static final String FRAME_EXCLUDED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '6' SECOND PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
-    // The issue's short form of N PRECEDING AND CURRENT ROW.
+    // Issue #7873's short form of N PRECEDING AND CURRENT ROW.
     private static final String FRAME_ISSUE = "PARTITION BY sym ORDER BY ts RANGE '1' MINUTE PRECEDING";
     // A high bound below the current row: the ring holds pairs the frame has not reached yet.
     private static final String FRAME_LAGGED = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' SECOND PRECEDING AND '3' SECOND PRECEDING";
     // The bit-exact case's frames, over all four frame shapes: frameIncludesCurrentValue (k1,
-    // and the issue's short form k5) and not (the lagged k2 and k3, EXCLUDE CURRENT ROW k4).
+    // and issue #7873's short form k5) and not (the lagged k2 and k3, EXCLUDE CURRENT ROW k4).
     // The 10-second frames expire pairs from the eleventh second on, so their running sums
     // carry the rounding of many adds and drops; the narrow lagged k3 is where a restore that
     // dropped the compensation term shows.
@@ -323,7 +323,7 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
                 for (String view : NARROW_VIEWS) {
                     final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(view);
                     Assert.assertNotNull(view, instance);
-                    driveUntilRepairParks(job, instance);
+                    driveUntilParked(job, view);
                     final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
                     Assert.assertTrue(
                             view + ": a converging repair on the primary must have copied its state aside",
@@ -456,7 +456,7 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
     public void testBoundedRangeRestoresExactValuesAcrossRestart() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            // The issue's short form of the frame.
+            // Issue #7873's short form of the frame.
             execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s START FROM BEGINNING AS "
                     + "SELECT ts, sym, " + issueProjection() + " FROM fx");
             execute("""
@@ -887,18 +887,6 @@ public class LiveViewCheckpointKSumRangeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW " + view + " FLUSH EVERY 100ms START FROM NOW AS SELECT ts, sym, "
                     + projection(frameOf(view)) + " FROM fx");
         }
-    }
-
-    private void driveUntilRepairParks(LiveViewRefreshJob job, LiveViewInstance instance) {
-        for (int pass = 0; pass < 64; pass++) {
-            if (instance.getSuspendedRepair() != null) {
-                return;
-            }
-            if (!job.processNotificationsForTest()) {
-                break;
-            }
-        }
-        Assert.assertNotNull("the repair never parked on its turn budget", instance.getSuspendedRepair());
     }
 
     private LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {

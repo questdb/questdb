@@ -66,7 +66,7 @@ public class LiveViewCheckpointStdDevRowsTest extends AbstractLiveViewTest {
     private static final String FRAME_CURRENT = "PARTITION BY sym ORDER BY ts ROWS BETWEEN 10 PRECEDING AND CURRENT ROW";
     // EXCLUDE CURRENT ROW folds into a high bound one row below the current one.
     private static final String FRAME_EXCLUDED = "PARTITION BY sym ORDER BY ts ROWS BETWEEN 6 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW";
-    // The issue's own spelling: the short form of N PRECEDING AND CURRENT ROW.
+    // Issue #7873's own spelling: the short form of N PRECEDING AND CURRENT ROW.
     private static final String FRAME_ISSUE = "PARTITION BY sym ORDER BY ts ROWS 19 PRECEDING";
     // A high bound below the current row: the value entering the frame comes off the ring.
     private static final String FRAME_LAGGED = "PARTITION BY sym ORDER BY ts ROWS BETWEEN 10 PRECEDING AND 3 PRECEDING";
@@ -76,7 +76,7 @@ public class LiveViewCheckpointStdDevRowsTest extends AbstractLiveViewTest {
     private static final int ROWS_PER_COMMIT = 40;
     // Seconds per commit in the bit-exact case.
     private static final int TICK_COMMIT_SECONDS = 60;
-    // The bit-exact case's frames: the issue's short form (frameIncludesCurrentValue), a lagged
+    // The bit-exact case's frames: issue #7873's short form (frameIncludesCurrentValue), a lagged
     // high bound, and EXCLUDE CURRENT ROW, which folds into a high bound one row down. All three
     // drop a value from the running sums on every row once full, so the sums carry the rounding
     // of hundreds of adds and drops by the time the view seals.
@@ -203,7 +203,7 @@ public class LiveViewCheckpointStdDevRowsTest extends AbstractLiveViewTest {
     public void testBoundedRowsRestoresExactValuesAcrossRestart() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            // The issue's view, verbatim apart from the table name the base already carries.
+            // Issue #7873's view, verbatim apart from the table name the base already carries.
             execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s START FROM BEGINNING AS "
                     + "SELECT ts, sym, stddev_samp(px) OVER (" + FRAME_ISSUE + ") AS vol FROM fx");
             execute("""

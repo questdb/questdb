@@ -129,7 +129,7 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
     private static final String[] RANGE_REPAIR_FUNCTIONS = {
             "avg(px)", "ksum(px)", "stddev_samp(px)", "var_pop(px)", "covar_samp(px, qty)", "corr(px, qty)"
     };
-    // The issue's frame, which ends at the current row, and a lagged one.
+    // Issue #7873's frame, which ends at the current row, and a lagged one.
     private static final String[] ROWS_FRAMES = {
             "PARTITION BY sym ORDER BY ts ROWS 19 PRECEDING",
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 12 PRECEDING AND 3 PRECEDING"
@@ -408,6 +408,32 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
         });
     }
 
+    // The late row the view last repaired for took the boundary rebuild, and the rebuild
+    // re-emitted rows since `boundaryRowsBefore` was read, so the disposition is this row's.
+    private static void assertBoundaryRebuild(LiveViewInstance instance, long boundaryRowsBefore) {
+        assertRepairDisposition(instance, "boundary rebuild");
+        Assert.assertTrue(
+                "the boundary rebuild must have re-emitted the view's rows from its START FROM boundary",
+                instance.getO3BoundaryReplayRows() > boundaryRowsBefore
+        );
+    }
+
+    // The cancelling functions deny the view its localized plan, so its last repair must name
+    // that denial next to the route it took instead.
+    private static void assertRepairDisposition(LiveViewInstance instance, String expectedDisposition) {
+        final int denial = instance.getCheckpointRepairLastDenialReason();
+        Assert.assertEquals(
+                "the cancelling functions must deny the view its localized plan",
+                "incomplete dependency",
+                LiveViewCheckpointRepairPlan.denialReasonName(denial)
+        );
+        Assert.assertEquals(
+                "the late row took the wrong repair route",
+                expectedDisposition,
+                LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
+        );
+    }
+
     // Each function over each frame, as columns named <function>_w<frame index>.
     private static String columnName(String function, int frame) {
         return function.substring(0, function.indexOf('(')) + "_w" + frame;
@@ -565,32 +591,6 @@ public class LiveViewCheckpointStatNumericsTest extends AbstractLiveViewTest {
                 assertViewPrintsLikePlain(view, plain);
             }
         });
-    }
-
-    // The late row the view last repaired for took the boundary rebuild, and the rebuild
-    // re-emitted rows since `boundaryRowsBefore` was read, so the disposition is this row's.
-    private static void assertBoundaryRebuild(LiveViewInstance instance, long boundaryRowsBefore) {
-        assertRepairDisposition(instance, "boundary rebuild");
-        Assert.assertTrue(
-                "the boundary rebuild must have re-emitted the view's rows from its START FROM boundary",
-                instance.getO3BoundaryReplayRows() > boundaryRowsBefore
-        );
-    }
-
-    // The cancelling functions deny the view its localized plan, so its last repair must name
-    // that denial next to the route it took instead.
-    private static void assertRepairDisposition(LiveViewInstance instance, String expectedDisposition) {
-        final int denial = instance.getCheckpointRepairLastDenialReason();
-        Assert.assertEquals(
-                "the cancelling functions must deny the view its localized plan",
-                "incomplete dependency",
-                LiveViewCheckpointRepairPlan.denialReasonName(denial)
-        );
-        Assert.assertEquals(
-                "the late row took the wrong repair route",
-                expectedDisposition,
-                LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denial)
-        );
     }
 
     private void commit(LiveViewRefreshJob job, String insert) throws Exception {

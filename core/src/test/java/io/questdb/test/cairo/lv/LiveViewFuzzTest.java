@@ -82,6 +82,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.IntStream;
 
 /**
  * Differential fuzz test for live views.
@@ -218,14 +219,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             RANGE_COVAR_SAMP_LAGGED_VARIANT, RANGE_KSUM_LAGGED_VARIANT,
             RANGE_STDDEV_SAMP_EXCLUDED_VARIANT
     };
-    private static final int[] STAT_VARIANTS = {
-            STDDEV_SAMP_ROWS_VARIANT, VAR_POP_ROWS_VARIANT, COVAR_SAMP_ROWS_VARIANT,
-            CORR_ROWS_VARIANT, STDDEV_POP_ROWS_LAGGED_VARIANT, COVAR_POP_ROWS_EXCLUDED_VARIANT,
-            RANGE_STDDEV_POP_VARIANT, RANGE_VARIANCE_VARIANT, RANGE_COVAR_POP_VARIANT,
-            RANGE_CORR_VARIANT, RANGE_KSUM_VARIANT, RANGE_VAR_SAMP_LAGGED_VARIANT,
-            RANGE_COVAR_SAMP_LAGGED_VARIANT, RANGE_KSUM_LAGGED_VARIANT,
-            RANGE_STDDEV_SAMP_EXCLUDED_VARIANT
-    };
+    // Every integer-column stat shape, the ROWS ones first, so a variant added to either list
+    // joins the pool the other fuzz arms draw from.
+    private static final int[] STAT_VARIANTS = IntStream.concat(
+            Arrays.stream(STAT_ROWS_VARIANTS),
+            Arrays.stream(STAT_RANGE_VARIANTS)
+    ).toArray();
     // The bivariate shapes' second argument: exact, small, NULL exactly where i is NULL, and
     // not a linear function of i, so corr stays off +/-1 on most frames.
     private static final String STAT_Y = "(i * 7) % 13";
@@ -2429,6 +2428,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         drainWalQueue();
     }
 
+    // Simulates a restart once the caller has freed its refresh job: rebuilds the registry from
+    // on-disk state and returns the job the run continues on. The caller nulls its job first, so
+    // a throw here leaves its cleanup nothing to close twice.
+    private LiveViewRefreshJob restartViews() {
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        return new LiveViewRefreshJob(0, engine, 1);
+    }
+
     // Differential fuzz for an anchored window variant. Mirrors runFuzz's
     // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh
     // with optional restarts, over an un-flushed lead or a parked repair as
@@ -3801,9 +3809,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     final boolean isRandomRestart = restart && rnd.nextInt(3) == 0;
                     if ((isRandomRestart || (restarts == 0 && c >= forcedRestartCommit)) && isViewActive()) {
                         job = Misc.free(job);
-                        engine.getLiveViewRegistry().clear();
-                        engine.buildViewGraphs();
-                        job = new LiveViewRefreshJob(0, engine, 1);
+                        job = restartViews();
                         restarts++;
                     }
                 }
@@ -3812,9 +3818,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // No post-CREATE commit left the view ACTIVE, or there was none: the seed took
                 // every row. Restart over what the seed left.
                 job = Misc.free(job);
-                engine.getLiveViewRegistry().clear();
-                engine.buildViewGraphs();
-                job = new LiveViewRefreshJob(0, engine, 1);
+                job = restartViews();
                 restarts++;
             }
             LOG.info().$("LV fuzz restarts: variant=").$(variant).$(", restarts=").$(restarts).$();
