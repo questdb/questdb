@@ -37,9 +37,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
-import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.std.LongList;
@@ -68,8 +68,14 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                     for (boolean isGrouped : new boolean[]{false, true}) {
                         for (int slavePosition = 0; slavePosition < 3; slavePosition++) {
                             for (int route = 0; route < 3; route++) {
-                                assertCancellation(engine, context, millis, isParallel, isGrouped, slavePosition, route, null, false, false);
+                                assertCancellation(engine, context, millis, isParallel, isGrouped, false, slavePosition, route, null, false, false);
                             }
+                        }
+                    }
+                    // Without aggregates, the projection factories run the same lookups.
+                    for (int slavePosition = 0; slavePosition < 3; slavePosition++) {
+                        for (int route = 0; route < 3; route++) {
+                            assertCancellation(engine, context, millis, isParallel, false, true, slavePosition, route, null, false, false);
                         }
                     }
                     assertQuery("SELECT count(q.ts) n FROM t HORIZON JOIN q q LIST (0s) AS h")
@@ -86,7 +92,9 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                 AtomicLong millis = new AtomicLong(1000);
                 TestUtils.execute(null, (engine, _, context) -> {
                     createTables(engine, context);
-                    assertCancellation(engine, context, millis, isParallel, false, 0, 0, null, false, true);
+                    for (boolean isProjection : new boolean[]{false, true}) {
+                        assertCancellation(engine, context, millis, isParallel, false, isProjection, 0, 0, null, false, true);
+                    }
                 }, testConfiguration(isParallel, millis), LOG);
             });
         }
@@ -99,8 +107,13 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                 AtomicLong millis = new AtomicLong(1000);
                 TestUtils.execute(new TestWorkerPool(1, mode), (engine, _, context) -> {
                     createTables(engine, context);
-                    for (boolean hasMasterFilter : new boolean[]{false, true}) {
-                        assertCancellation(engine, context, millis, true, false, 0, 0, mode, hasMasterFilter, false);
+                    // A projection collects its frames in order. The owner of an ordered frame
+                    // sequence asks the slot-gated strategy before it steals its own published
+                    // frame, so a worker takes a slot to reduce the frame, which reaches the signal.
+                    for (boolean isProjection : new boolean[]{false, true}) {
+                        for (boolean hasMasterFilter : new boolean[]{false, true}) {
+                            assertCancellation(engine, context, millis, true, false, isProjection, 0, 0, mode, hasMasterFilter, false);
+                        }
                     }
                 }, testConfiguration(true, millis), LOG);
             });
@@ -113,15 +126,17 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
             AtomicLong millis,
             boolean isParallel,
             boolean isGrouped,
+            boolean isProjection,
             int slavePosition,
             int route,
             WorkerPoolMode workerMode,
             boolean hasMasterFilter,
             boolean isTimeout
     ) throws Exception {
-        String sql = query(isGrouped, slavePosition, route, hasMasterFilter);
-        String factoryName = (isParallel ? "Async" : "") + (slavePosition > 0 ? "Multi" : "")
-                + "HorizonJoin" + (isGrouped ? "" : "NotKeyed") + "RecordCursorFactory";
+        String sql = query(isGrouped, isProjection, slavePosition, route, hasMasterFilter);
+        String factoryName = isProjection
+                ? (isParallel ? "Async" : "") + "HorizonJoinProjectionRecordCursorFactory"
+                : (isParallel ? "Async" : "") + (slavePosition > 0 ? "Multi" : "") + "HorizonJoin" + (isGrouped ? "" : "NotKeyed") + "RecordCursorFactory";
         String method = switch (route) {
             case 0 -> "backwardScanForFilterMatch";
             case 1 -> "backwardScanForKeyMatch";
@@ -131,14 +146,22 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         SqlExecutionCircuitBreaker originalBreaker = context.getCircuitBreaker();
         Thread ownerThread = Thread.currentThread();
         context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        Callback callback = new Callback(engine, context, sql, factoryName, method, signalAt, ownerThread, workerMode, hasMasterFilter, isTimeout, millis);
+        Callback callback = new Callback(engine, context, sql, factoryName, method, signalAt, ownerThread, workerMode, hasMasterFilter, isProjection, isTimeout, millis);
         TestLatchedCounterFunctionFactory.reset(callback);
         try (OwnerBreaker breaker = new OwnerBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), ownerThread)) {
             ((SqlExecutionContextImpl) context).with(breaker);
             try (RecordCursorFactory factory = engine.select(sql, context)) {
                 RecordCursorFactory baseFactory = factory.getBaseFactory();
+                // A projection may sit right under the outer factory or be the outer factory itself.
+                while (isProjection && baseFactory != null && !factoryName.equals(baseFactory.getClass().getSimpleName())) {
+                    baseFactory = baseFactory.getBaseFactory();
+                }
+                if (isProjection && baseFactory == null && factoryName.equals(factory.getClass().getSimpleName())) {
+                    baseFactory = factory;
+                }
+                Assert.assertNotNull(sql, baseFactory);
                 Assert.assertEquals(factoryName, baseFactory.getClass().getSimpleName());
-                PerWorkerLocks locks = workerMode == null ? null : ((AsyncHorizonJoinNotKeyedRecordCursorFactory) baseFactory).getAtom().getPerWorkerLocks();
+                PerWorkerLocks locks = workerMode == null ? null : ((PerWorkerLockOwner) baseFactory.getAtom()).getPerWorkerLocks();
                 CountDownLatch acquired = new CountDownLatch(1);
                 if (locks != null) {
                     locks.setTestAcquireLatch(acquired);
@@ -159,16 +182,25 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
                 Assert.assertNull(context.getMemoryTracker());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 if (locks != null) {
-                    Assert.assertEquals(0, acquired.getCount());
+                    Assert.assertEquals("no worker took a slot: " + sql, 0, acquired.getCount());
                     Assert.assertEquals(0, locks.getAcquiredSlotCount());
                     locks.setTestAcquireLatch(null);
                 }
                 callback.isArmed = false;
                 millis.set(1000);
                 breaker.resetTimer();
-                String expected = (isGrouped ? "k\t" : "") + "n" + (slavePosition > 0 ? "\tn2" : "") + "\n"
-                        + (isGrouped ? "1\t" : "") + "0" + (slavePosition > 0 ? "\t" + (route == 2 ? 2 : 1) : "") + "\n";
-                new QueryAssertion(engine, factory).withContext(context).inferRandomAccess().expectSize().returns(expected);
+                String expected;
+                if (isProjection) {
+                    // The filtered right-hand table matches nothing; the unfiltered one matches the
+                    // last quote at or before each left-hand row.
+                    expected = "k\tn" + (slavePosition > 0 ? "\tn2" : "") + "\n"
+                            + (route == 2 ? projectionRow(slavePosition, "1970-01-01T00:00:00.000127Z") : "")
+                            + projectionRow(slavePosition, "1970-01-01T00:00:00.000255Z");
+                } else {
+                    expected = (isGrouped ? "k\t" : "") + "n" + (slavePosition > 0 ? "\tn2" : "") + "\n"
+                            + (isGrouped ? "1\t" : "") + "0" + (slavePosition > 0 ? "\t" + (route == 2 ? 2 : 1) : "") + "\n";
+                }
+                new QueryAssertion(engine, factory).withContext(context).inferRandomAccess().expectSize(!(isProjection && hasMasterFilter)).returns(expected);
                 Assert.assertEquals(0, callback.tracker.getUsed());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 if (locks != null) {
@@ -189,11 +221,18 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         engine.execute("INSERT INTO tf VALUES (127, 1), (256, 1)", context);
     }
 
-    private static String query(boolean isGrouped, int slavePosition, int route, boolean hasMasterFilter) {
+    private static String projectionRow(int slavePosition, String unfilteredMatch) {
+        return "1\t" + (slavePosition > 0 ? "\t" + unfilteredMatch : "") + "\n";
+    }
+
+    private static String query(boolean isGrouped, boolean isProjection, int slavePosition, int route, boolean hasMasterFilter) {
         String filtered = " HORIZON JOIN q q ON (" + (route == 0 ? "" : "t.k = q.k AND (")
                 + "q.price < 0 OR test_latched_counter()" + (route == 0 ? "" : ")") + ")";
         String unfiltered = " HORIZON JOIN q q2";
-        return "SELECT " + (isGrouped ? "t.k, " : "") + "count(q.ts) n" + (slavePosition > 0 ? ", count(q2.ts) n2" : "")
+        String columns = isProjection
+                ? "t.k, q.ts n" + (slavePosition > 0 ? ", q2.ts n2" : "")
+                : (isGrouped ? "t.k, " : "") + "count(q.ts) n" + (slavePosition > 0 ? ", count(q2.ts) n2" : "");
+        return "SELECT " + columns
                 + " FROM " + (route == 2 ? "tf" : "t") + " t"
                 + (slavePosition == 2 ? unfiltered + filtered : filtered + (slavePosition == 1 ? unfiltered : ""))
                 + " LIST (0s) AS h" + (hasMasterFilter ? " WHERE t.k > 0" : "");
@@ -250,6 +289,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         private final CairoEngine engine;
         private final String factoryName;
         private final boolean hasMasterFilter;
+        private final boolean isProjection;
         private final boolean isTimeout;
         private final String method;
         private final AtomicLong millis;
@@ -261,7 +301,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         private volatile boolean isArmed = true;
         private volatile MemoryTracker tracker;
 
-        Callback(CairoEngine engine, SqlExecutionContext context, String sql, String factoryName, String method, int signalAt, Thread ownerThread, WorkerPoolMode workerMode, boolean hasMasterFilter, boolean isTimeout, AtomicLong millis) {
+        Callback(CairoEngine engine, SqlExecutionContext context, String sql, String factoryName, String method, int signalAt, Thread ownerThread, WorkerPoolMode workerMode, boolean hasMasterFilter, boolean isProjection, boolean isTimeout, AtomicLong millis) {
             this.engine = engine;
             this.context = context;
             this.sql = sql;
@@ -271,6 +311,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
             this.ownerThread = ownerThread;
             this.workerMode = workerMode;
             this.hasMasterFilter = hasMasterFilter;
+            this.isProjection = isProjection;
             this.isTimeout = isTimeout;
             this.millis = millis;
         }
@@ -281,10 +322,12 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
             if (isArmed && count == signalAt) {
                 Assert.assertTrue(method, StackWalker.getInstance().walk(stream -> stream.anyMatch(frame -> frame.getMethodName().equals(method))));
                 if (workerMode != null) {
+                    String reducer = isProjection
+                            ? (hasMasterFilter ? "filterAndMatch" : "match")
+                            : (hasMasterFilter ? "filterAndReduce" : "reduce");
+                    Assert.assertTrue(reducer, StackWalker.getInstance().walk(stream -> stream.anyMatch(frame -> frame.getMethodName().equals(reducer) && frame.getClassName().endsWith(factoryName))));
                     Assert.assertNotSame(ownerThread, Thread.currentThread());
                     Assert.assertEquals(workerMode == WorkerPoolMode.FIBER_HOST, Fiber.current() != null);
-                    String reducer = hasMasterFilter ? "filterAndReduce" : "reduce";
-                    Assert.assertTrue(reducer, StackWalker.getInstance().walk(stream -> stream.anyMatch(frame -> frame.getMethodName().equals(reducer) && frame.getClassName().endsWith(factoryName))));
                 }
                 hasSignalled = true;
                 if (isTimeout) {

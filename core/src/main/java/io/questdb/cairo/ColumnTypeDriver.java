@@ -169,6 +169,26 @@ public interface ColumnTypeDriver {
     );
 
     /**
+     * Column-top aware {@link #o3ColumnMerge}: any row of source 1 (the on-disk column) below {@code srcDataTop} has no
+     * entry in the column file and is merged in as this type's NULL. {@code srcAuxAddr1} / {@code srcDataAddr1} are
+     * UNBIASED - the file's first stored row is logical row {@code srcDataTop}.
+     *
+     * @param srcDataTop the column top of source 1, in rows
+     */
+    void o3ColumnMergeWithTop(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcDataTop,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    );
+
+    /**
      * Copies aux vector from source memory pointer to either the destination memory or directly to file.
      *
      * @param ff            the file facade for test simulation

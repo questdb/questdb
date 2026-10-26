@@ -132,4 +132,31 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameCount = 0;
         frameCursor.toTop();
     }
+
+    /**
+     * Drops every frame the address cache holds, so the next walk numbers its frames from zero and
+     * fills the cache itself.
+     * <p>
+     * The cache maps a frame ordinal to that frame's addresses and page limits, and it deliberately
+     * outlives a walk: {@link #toTop()} keeps it, and {@link PageFrameAddressCache#add} keeps whatever
+     * the cache already holds under an ordinal. That holds only while every walk of this cursor cuts
+     * frames the same way. A skip walk ({@link PageFrameCursor#next(long)}) does not - it cuts at the
+     * skip target and may collapse a whole partition into one frame - so a walk that follows one, or
+     * one that runs over frames an ordinary walk left behind, would read the other walk's addresses
+     * and page limits with its own row counts. Callers that are about to change how frames are cut
+     * must call this first, and only from the top of the cursor: it renumbers frames from zero.
+     */
+    protected void resetFrameCache() {
+        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+        // A decoded Parquet frame is keyed by frame ordinal, and so is the pool's bound frame memory;
+        // both describe the numbering being dropped here. releaseParquetBuffers() ignores the pool's pin
+        // bits and closes the DirectLongLists a bound record reads its addresses through, so abandon both
+        // records first, as that method's contract demands. The pool's bindGeneration bump only guards the
+        // NEXT navigateTo(); a read through a record still bound from an earlier recordAt() goes straight
+        // to the freed lists.
+        recordA.clear();
+        recordB.clear();
+        frameMemoryPool.releaseParquetBuffers();
+        frameCount = 0;
+    }
 }
