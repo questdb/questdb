@@ -247,6 +247,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * {@link #getCursor(SqlExecutionContext)} of this factory has returned in the same
      * execution. The parents of both cursors open their children in their own order, so
      * a cursor that reads the rows of its children while it opens can break this.
+     * <p>
+     * Everything a parent may read while it opens, such as the symbol tables that
+     * {@link Function#init} binds, must be valid when this method returns, whichever of
+     * this method and {@code getCursor()} runs first in the execution: a hash join, for
+     * example, opens its build side before its probe side. An implementation therefore
+     * opens the owner state (the base cursor that the primary aggregates and the
+     * functions bound to it) on the first of the two calls, and the other call reuses it.
+     * The primary cursor still owns that state and releases it when it closes.
      *
      * @param executionContext SQL execution context
      * @param sharedId         unique consumer identifier (0-based)

@@ -1871,6 +1871,81 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
         });
     }
 
+    // The outer non-keyed GROUP BY is shared, and its consumer sits on the build side of a hash join,
+    // which opens before the primary: the consumer binds last(sym) to the owner's symbol tables.
+    @Test
+    public void testSharedCursorSymbolKeyOfNotKeyedGroupByOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            assertQuery("""
+                    SELECT o.s, o.m, l.c
+                    FROM (SELECT last(sym) s, max(id) m FROM orders) o
+                    JOIN LATERAL (SELECT count(*) c FROM quotes q WHERE q.sym = o.s AND q.px > o.m) l
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s\tm\tc
+                            AAPL\t3\t1
+                            """);
+        });
+    }
+
+    // The outer vectorized GROUP BY is shared, and its consumer serves the owner's symbol tables to a
+    // parent that opens before the primary.
+    @Test
+    public void testSharedCursorSymbolKeyOfVectorizedGroupByOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            assertQuery("""
+                    SELECT o.sym, o.n, l.c
+                    FROM (SELECT sym, count() n FROM orders GROUP BY sym) o
+                    JOIN LATERAL (SELECT count(*) c FROM quotes q WHERE q.sym = o.sym AND q.px > o.n) l
+                    ORDER BY o.sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tn\tc
+                            AAPL\t2\t1
+                            MSFT\t1\t1
+                            """);
+        });
+    }
+
+    // The consumer opens the owner state before the primary; executing the cached factory again must
+    // reopen it for the new execution rather than serve the previous one.
+    @Test
+    public void testSharedCursorSymbolKeyReexecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            final String query = """
+                    SELECT o.sym, o.f, l.c
+                    FROM (SELECT sym, first(id) f FROM orders GROUP BY sym) o
+                    JOIN LATERAL (SELECT count(*) c FROM quotes q WHERE q.sym = o.sym AND q.px > o.f) l
+                    ORDER BY o.sym
+                    """;
+            try (RecordCursorFactory factory = select(query)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("""
+                            sym\tf\tc
+                            AAPL\t1\t1
+                            MSFT\t2\t1
+                            """, cursor, factory.getMetadata(), true);
+                }
+                execute("INSERT INTO orders VALUES (4, 'IBM', '2024-01-01T00:00:07Z')");
+                execute("INSERT INTO quotes VALUES ('IBM', 31.0, '2024-01-01T00:00:08Z')");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("""
+                            sym\tf\tc
+                            AAPL\t1\t1
+                            IBM\t4\t2
+                            MSFT\t2\t1
+                            """, cursor, factory.getMetadata(), true);
+                }
+            }
+        });
+    }
+
     // #8064: the RIGHT/FULL join rewrite shares the outer-ref GROUP BY as the build side of a
     // symbol-translating hash join. Master answers these; the branch fails with a NullPointerException.
     @Test
@@ -1957,6 +2032,7 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     ) l ORDER BY 1, 2
                     """)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             id\tv
                             1\t10

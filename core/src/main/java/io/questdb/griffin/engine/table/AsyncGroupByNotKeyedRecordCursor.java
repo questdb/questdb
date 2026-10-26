@@ -161,6 +161,10 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         isValueBuilt = true;
     }
 
+    boolean isOpen() {
+        return isOpen;
+    }
+
     void of(UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         // Assign before reopen() so close() can drain a partially reopened atom on a breach.
