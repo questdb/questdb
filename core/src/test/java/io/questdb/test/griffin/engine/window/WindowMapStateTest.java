@@ -350,7 +350,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    // One accumulator for two outputs, so the frame is maintained once.
                 }
             }
             assertFusedMatchesUnfusedOnWindow("t", RANGE_FRAME_WINDOW, "sum(x) over w", "avg(x) over w");
@@ -440,7 +439,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    // One accumulator for two outputs, so the frame is maintained once.
                 }
             }
             assertFusedMatchesUnfusedOnWindow("t", ROWS_FRAME_WINDOW, "sum(x) over w", "avg(x) over w");
@@ -602,7 +600,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    // One accumulator for two outputs, so x is read and compensated once.
                 }
             }
             // Both sums over one argument: five slots, and each total maintained by the
@@ -710,8 +707,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    // Two accumulators, four outputs: x is read once per component and not
-                    // once per call.
                 }
             }
             assertFusedMatchesUnfused(
@@ -905,7 +900,6 @@ public class WindowMapStateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final long rows = drain(cursor);
                     Assert.assertEquals(KEY_SHAPE_ROW_COUNT, rows);
-                    // Two accumulators for three outputs: x is read once per component.
                 }
             }
             assertFusedMatchesUnfused("sum(x) over w", "max(x) over w", "count(x) over w");
