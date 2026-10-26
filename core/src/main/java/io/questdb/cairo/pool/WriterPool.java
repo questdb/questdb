@@ -307,8 +307,9 @@ public class WriterPool extends AbstractPool {
                     closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                 } catch (Throwable th) {
                     // The writer is unusable after a close, thrown or not, and closeWriter() has already nulled it.
-                    // Leave the entry free and empty, as a failed lockAndNotify() does: the next get() opens a new
-                    // writer, the next lock() locks the table, and the reaper evicts it.
+                    // Leave the entry free and empty, with the reason a completed close sets and the owner a failed
+                    // lockAndNotify() resets: the next get() opens a new writer, the next lock() locks the table, and
+                    // the reaper evicts it.
                     e.ownershipReason = OWNERSHIP_REASON_RELEASED;
                     Unsafe.storeFence();
                     Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
