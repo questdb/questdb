@@ -72,16 +72,16 @@ public class YearTimestampSamplerTest {
 
     @Test
     public void testOffsetMatchesFloorWithOffset() throws Exception {
-        // round() after setOffset() returns the bucket that timestamp_floor_utc() on the GROUP BY path returns for
-        // the offset (GitHub issue #7769)
+        // Regression test for #7769. round() after setOffset() must return the same bucket as timestamp_floor_utc()
+        // on the GROUP BY path.
         testOffsetMatchesFloorWithOffset(MicrosTimestampDriver.INSTANCE);
         testOffsetMatchesFloorWithOffset(NanosTimestampDriver.INSTANCE);
     }
 
     @Test
     public void testPositiveOffset() throws Exception {
-        // GitHub issue #7769. A positive offset moves each bucket start after the start of its calendar year, and
-        // round() returned that bucket start also for a value before it.
+        // Regression test for #7769. A positive offset moves bucket starts past the start of their calendar year,
+        // and round() used to return that bucket start even for values before it.
         testPositiveOffset(MicrosTimestampDriver.INSTANCE);
         testPositiveOffset(NanosTimestampDriver.INSTANCE);
     }
@@ -118,18 +118,18 @@ public class YearTimestampSamplerTest {
 
     @Test
     public void testRoundMatchesGridWalk() throws Exception {
-        // round() returns the last bucket start that nextTimestamp() reaches at or before the value, in every state
-        // that setStart() and setOffset() leave: anchors at the start, middle and end of a year, before and after
-        // the values, with a time of day, and offsets of either sign up to the 23:59 that WITH OFFSET accepts and
-        // the 47:58 that a mat view refresh passes for WITH OFFSET in a fixed-offset time zone
+        // round() must return the last bucket start, as reached by nextTimestamp(), at or before the value, for every
+        // state that setStart() and setOffset() can leave: anchors at the start, middle and end of a year, before
+        // and after the values, with a time of day, and offsets of either sign up to 23:59 (the WITH OFFSET limit)
+        // and 47:58 (what a mat view refresh passes for WITH OFFSET in a fixed-offset time zone)
         testRoundMatchesGridWalk(MicrosTimestampDriver.INSTANCE);
         testRoundMatchesGridWalk(NanosTimestampDriver.INSTANCE);
     }
 
     @Test
     public void testRoundNearEndOfTimestampRange() throws Exception {
-        // The bucket that starts in the calendar year of the value can start after the largest timestamp, which
-        // overflows a long. round() returns the bucket before it.
+        // The candidate bucket in the value's calendar year may start after the largest timestamp, overflowing a
+        // long. round() must return the previous bucket.
         final TimestampSampler microsSampler = MicrosTimestampDriver.INSTANCE.getTimestampSampler(1, 'y', 0);
         microsSampler.setStart(MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2021-08-31T00:00:00.000000Z"));
         final long expectedMicros = Micros.toMicros(294_246, 8, 31);
@@ -146,8 +146,8 @@ public class YearTimestampSamplerTest {
     @Test
     public void testRoundNearEndOfTimestampRangeWithNegativeOffset() throws Exception {
         // round() shifts the value by a negative offset to find the calendar year of its bucket. Near the largest
-        // timestamp the shift overflows a long, and round() keeps the value, which belongs to the bucket of the last
-        // calendar year: 294247 for TIMESTAMP and 2262 for TIMESTAMP_NS.
+        // timestamp, the shift overflows a long, so round() uses the value as is, which belongs to the bucket of the
+        // last calendar year: 294247 for TIMESTAMP and 2262 for TIMESTAMP_NS.
         final TimestampDriver microsDriver = MicrosTimestampDriver.INSTANCE;
         final long oneHourMicros = microsDriver.fromMinutes(60);
         final long almostTwoDaysMicros = microsDriver.fromMinutes(47 * 60 + 58);
@@ -205,10 +205,10 @@ public class YearTimestampSamplerTest {
 
     @Test
     public void testStartMatchesFloorWithOffset() throws Exception {
-        // round() after setStart() returns the last bucket start at or before the value. It returned the bucket start
-        // in the calendar year of the value, which follows a value that comes earlier in its year than the anchor does
-        // in its own, and it counted multi-year strides from 1970 (GitHub issue #7769). timestamp_floor_utc() on the
-        // GROUP BY path counts the years from the anchor, as FROM sets it.
+        // Regression test for #7769. round() after setStart() must return the last bucket start at or before the
+        // value. It used to return the bucket start in the value's calendar year, which lies after values that come
+        // earlier in their year than the anchor, and it counted multi-year strides from 1970. timestamp_floor_utc()
+        // on the GROUP BY path counts years from the anchor that FROM sets.
         testStartMatchesFloorWithOffset(MicrosTimestampDriver.INSTANCE);
         testStartMatchesFloorWithOffset(NanosTimestampDriver.INSTANCE);
     }
@@ -468,7 +468,7 @@ public class YearTimestampSamplerTest {
         final long hi = driver.parseFloorLiteral("2060-01-01T00:00:00.000000Z");
         final long step = driver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
         for (int stride : strides) {
-            // a sampler that neither setStart() nor setOffset() configured starts its grid in 1970
+            // an unconfigured sampler (no setStart() or setOffset() call) anchors its grid at 1970
             assertRoundMatchesGridWalk(driver.getTimestampSampler(stride, 'y', 0), 0, lo, hi, step);
             final TimestampSampler sampler = driver.getTimestampSampler(stride, 'y', 0);
             for (String anchor : anchors) {
@@ -527,7 +527,7 @@ public class YearTimestampSamplerTest {
         assertRound(driver, twoYearSampler, "2027-03-15T08:00:00.000000Z", "2027-03-15T08:00:00.000000Z");
         assertRound(driver, twoYearSampler, "2025-03-01T00:00:00.000000Z", "2023-03-15T08:00:00.000000Z");
 
-        // an anchor on Feb 29 moves to Feb 28 in a year that is not a leap year
+        // an anchor on Feb 29 clamps to Feb 28 in non-leap years
         sampler.setStart(driver.parseFloorLiteral("2024-02-29T00:00:00.000000Z"));
         assertRound(driver, sampler, "2025-02-28T12:00:00.000000Z", "2025-02-28T00:00:00.000000Z");
         assertRound(driver, sampler, "2025-02-27T23:59:59.999999Z", "2024-02-29T00:00:00.000000Z");

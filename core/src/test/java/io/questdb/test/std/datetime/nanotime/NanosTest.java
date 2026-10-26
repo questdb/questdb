@@ -365,8 +365,8 @@ public class NanosTest {
 
     @Test
     public void testFloorMMWithOffsetNearLongMax() {
-        // The bucket after the value would start after Long.MAX_VALUE (2262-04-11T23:47:16.854775807Z). Its start
-        // must not wrap around to 1677 and land in the result.
+        // The bucket in the value's month would start after Long.MAX_VALUE (2262-04-11T23:47:16.854775807Z). Its
+        // start must not wrap around to 1677 and end up in the result.
         final long offset = parseNSecUTC("2024-01-15T00:00:00.000000000Z");
         assertNanos("2262-03-15T00:00:00.000000000Z", Nanos.floorMM(Nanos.toNanos(2262, 4, 10), 1, offset));
         assertNanos("2262-03-15T00:00:00.000000000Z", Nanos.floorMM(Long.MAX_VALUE, 1, offset));
@@ -382,9 +382,9 @@ public class NanosTest {
 
     @Test
     public void testFloorMMWithOffsetOnLastDayOfMonth() {
-        // GitHub issue #7798. The bucket starts on the day of the offset, or on the last day of a shorter month. A
-        // value after the start of such a bucket, but earlier in its month than the offset in its own, went into the
-        // bucket before.
+        // Regression test for #7798. Buckets start on the offset's day, or on the last day of shorter months. A value
+        // after the start of such a bucket, but earlier in its month than the offset in its own, used to go into the
+        // previous bucket.
         final long offset = parseNSecUTC("1969-12-31T23:00:00.000000000Z");
         assertNanos("2024-04-30T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-04-30T23:45:00.000000000Z"), 1, offset));
         assertNanos("2024-03-31T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-04-30T22:59:59.999999999Z"), 1, offset));
@@ -403,8 +403,8 @@ public class NanosTest {
 
     @Test
     public void testFloorMMWithOffsetStaysOnGrid() {
-        // The bucket of a value starts at or before the value, on the grid that addMonths() steps from the offset,
-        // and the next bucket on that grid starts after the value
+        // The value's bucket must start at or before the value, on the grid that addMonths() steps from the offset,
+        // and the next bucket on that grid must start after the value
         final String[] offsets = {
                 "1969-12-31T23:00:00.000000000Z",
                 "1970-01-01T10:00:00.000000000Z",
@@ -548,7 +548,7 @@ public class NanosTest {
 
     @Test
     public void testFloorYYYYWithOffsetNearLongMax() {
-        // as testFloorMMWithOffsetNearLongMax(), for years
+        // same as testFloorMMWithOffsetNearLongMax(), for years
         final long offset = parseNSecUTC("2024-06-01T00:00:00.000000000Z");
         assertNanos("2261-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Nanos.toNanos(2262, 3, 1), 1, offset));
         assertNanos("2261-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, offset));
@@ -561,7 +561,7 @@ public class NanosTest {
 
     @Test
     public void testFloorYYYYWithOffsetOnLeapDay() {
-        // as testFloorMMWithOffsetOnLastDayOfMonth(), for an offset on Feb 29 and a year that is not a leap year
+        // same as testFloorMMWithOffsetOnLastDayOfMonth(), for a Feb 29 offset and a non-leap year
         final long offset = parseNSecUTC("2024-02-29T00:00:00.000000000Z");
         assertNanos("2025-02-28T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2025-02-28T12:00:00.000000000Z"), 1, offset));
         assertNanos("2024-02-29T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2025-02-27T23:59:59.999999999Z"), 1, offset));

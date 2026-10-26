@@ -213,9 +213,10 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testOffsetMatchesFloorWithOffset() throws Exception {
-        // round() after setOffset() returns the bucket that timestamp_floor_utc() on the GROUP BY path returns for
-        // the offset, also for a negative offset, where the GROUP BY path anchors at the last day of December 1969 and
-        // put the end of a month shorter than 31 days into the bucket before (GitHub issues #7769 and #7798)
+        // Regression test for #7769 and #7798. round() after setOffset() must return the same bucket as
+        // timestamp_floor_utc() on the GROUP BY path, including negative offsets, where the GROUP BY path anchors
+        // at the last day of December 1969 and used to put the end of a month shorter than 31 days into the
+        // previous bucket.
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampDriver.TimestampFloorWithOffsetMethod floorMethod = timestampDriver.getTimestampFloorWithOffsetMethod('M');
         final long[] offsets = {
@@ -246,8 +247,8 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testPositiveOffset() throws Exception {
-        // GitHub issue #7769. A positive offset moves each bucket start after the start of its calendar month, and
-        // round() returned that bucket start also for a value before it.
+        // Regression test for #7769. A positive offset moves bucket starts past the start of their calendar month,
+        // and round() used to return that bucket start even for values before it.
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
         sampler.setOffset(timestampDriver.fromMinutes(10 * 60));
@@ -307,7 +308,7 @@ public class MonthTimestampSamplerTest {
                 "2014-02-01T00:00:00.000000Z",
                 "2022-02-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
-                // a stride that does not divide a year counts its months from January 1970, as Micros.floorMM() does
+                // a stride that doesn't divide 12 counts months from January 1970, as Micros.floorMM() does
                 "2024-03-01T00:00:00.000000Z",
         };
         final int[] strides = new int[]{
@@ -360,10 +361,10 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testRoundMatchesGridWalk() throws Exception {
-        // round() returns the last bucket start that nextTimestamp() reaches at or before the value, in every state
-        // that setStart() and setOffset() leave: anchors on the first, middle and last days of a month, before and
-        // after the values, with a time of day, and offsets of either sign up to the 23:59 that WITH OFFSET accepts
-        // and the 47:58 that a mat view refresh passes for WITH OFFSET in a fixed-offset time zone
+        // round() must return the last bucket start, as reached by nextTimestamp(), at or before the value, for every
+        // state that setStart() and setOffset() can leave: anchors on the first, middle and last days of a month,
+        // before and after the values, with a time of day, and offsets of either sign up to 23:59 (the WITH OFFSET
+        // limit) and 47:58 (what a mat view refresh passes for WITH OFFSET in a fixed-offset time zone)
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final String[] anchors = {
                 "1965-03-01T00:00:00.000000Z",
@@ -391,7 +392,7 @@ public class MonthTimestampSamplerTest {
         final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
         final long step = timestampDriver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
         for (int stride : strides) {
-            // a sampler that neither setStart() nor setOffset() configured starts its grid in January 1970
+            // an unconfigured sampler (no setStart() or setOffset() call) anchors its grid at January 1970
             assertRoundMatchesGridWalk(timestampDriver.getTimestampSampler(stride, 'M', 0), 0, lo, hi, step);
             final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
             for (String anchor : anchors) {
@@ -404,7 +405,8 @@ public class MonthTimestampSamplerTest {
                 // the offset grid starts at January 1970 plus the offset
                 assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
             }
-            // setStart() after setOffset() anchors the grid at a month that no stride counts from January 1970
+            // setStart() after setOffset() re-anchors the grid at a month that is off the January 1970 grid for every
+            // multi-month stride
             final long anchorTs = timestampDriver.parseFloorLiteral("2029-12-31T10:00:00.000000Z");
             sampler.setStart(anchorTs);
             assertRoundMatchesGridWalk(sampler, anchorTs, lo, hi, step);
@@ -413,8 +415,8 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testRoundMatchesGridWalkAroundYearZero() throws Exception {
-        // TIMESTAMP reaches years before year 0, where the month index 12 * year + month - 1 of the value and of the
-        // anchor is negative. round() counts the strides from the anchor month across year 0 as well.
+        // TIMESTAMP reaches years before year 0, where the month index (12 * year + month - 1) of the value and of
+        // the anchor is negative. round() must count strides from the anchor month across year 0 as well.
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final long[] anchors = {
@@ -444,8 +446,8 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testRoundNearEndOfTimestampRange() throws Exception {
-        // The bucket that starts in the calendar month of the value can start after the largest timestamp, which
-        // overflows a long. round() returns the bucket before it.
+        // The candidate bucket in the value's calendar month may start after the largest timestamp, overflowing a
+        // long. round() must return the previous bucket.
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
         sampler.setStart(timestampDriver.parseFloorLiteral("2024-01-15T08:00:00.000000Z"));
@@ -459,8 +461,8 @@ public class MonthTimestampSamplerTest {
     @Test
     public void testRoundNearEndOfTimestampRangeWithNegativeOffset() throws Exception {
         // round() shifts the value by a negative offset to find the calendar month of its bucket. Near the largest
-        // timestamp the shift overflows a long, and round() keeps the value, which belongs to the bucket of the last
-        // calendar month: 294247-01 for TIMESTAMP and 2262-04 for TIMESTAMP_NS.
+        // timestamp, the shift overflows a long, so round() uses the value as is, which belongs to the bucket of the
+        // last calendar month: 294247-01 for TIMESTAMP and 2262-04 for TIMESTAMP_NS.
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final long oneHour = timestampDriver.fromMinutes(60);
         final long almostTwoDays = timestampDriver.fromMinutes(47 * 60 + 58);
@@ -590,10 +592,10 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testStartMatchesFloorWithOffset() throws Exception {
-        // round() after setStart() returns the last bucket start at or before the value. It returned the bucket start
-        // in the calendar month of the value, which follows a value that comes earlier in its month than the anchor
-        // does in its own, and it counted multi-month strides from January (GitHub issue #7769). timestamp_floor_utc()
-        // on the GROUP BY path counts the months from the anchor, as FROM sets it.
+        // Regression test for #7769. round() after setStart() must return the last bucket start at or before the
+        // value. It used to return the bucket start in the value's calendar month, which lies after values that come
+        // earlier in their month than the anchor, and it counted multi-month strides from January.
+        // timestamp_floor_utc() on the GROUP BY path counts months from the anchor that FROM sets.
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampDriver.TimestampFloorWithOffsetMethod floorMethod = timestampDriver.getTimestampFloorWithOffsetMethod('M');
         final String[] anchors = {
@@ -643,7 +645,7 @@ public class MonthTimestampSamplerTest {
         assertRound(quarterSampler, "2024-06-01T00:00:00.000000Z", "2024-05-15T08:00:00.000000Z");
         assertRound(quarterSampler, "2024-02-01T00:00:00.000000Z", "2023-11-15T08:00:00.000000Z");
 
-        // an anchor on the 31st moves to the last day of a shorter month
+        // an anchor on the 31st clamps to the last day of shorter months
         sampler.setStart(timestampDriver.parseFloorLiteral("2024-01-31T00:00:00.000000Z"));
         assertRound(sampler, "2024-02-29T12:00:00.000000Z", "2024-02-29T00:00:00.000000Z");
         assertRound(sampler, "2024-03-30T23:59:59.999999Z", "2024-02-29T00:00:00.000000Z");

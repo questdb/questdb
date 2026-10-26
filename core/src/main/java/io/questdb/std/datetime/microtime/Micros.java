@@ -367,19 +367,17 @@ public final class Micros {
         if (micros < offset) {
             return offset;
         }
-        // Splits the offset into its calendar fields once and counts the calendar months from the offset to the
-        // value. The bucket that starts in the month of the value starts after the value when the value comes
-        // earlier in its month, and the value then belongs to the bucket before. This method and monthBucketStart()
-        // move the bucket start to the last day of a month shorter than the day of the offset, as addMonths() does.
-        // getMonthsBetween() compared the positions within the month without that move, and put 2024-04-30T23:45
-        // into the bucket before the one that starts at 2024-04-30T23:00 for the offset 1969-12-31T23:00 (GitHub
-        // issue #7798). For the month of the value, the check compares positions within that month, so it never
-        // builds a bucket start after the value, which could overflow a long.
+        // Splits the offset into calendar fields once and counts calendar months from the offset to the value.
+        // The candidate bucket in the value's month starts after the value when the value lies earlier in its
+        // month, and the value then belongs to the previous bucket. Like addMonths(), this method and
+        // monthBucketStart() clamp the offset's day to the last day of shorter months. getMonthsBetween() lacks
+        // that clamping, so it can't be used here: for the offset 1969-12-31T23:00, it puts 2024-04-30T23:45
+        // before the bucket starting at 2024-04-30T23:00 (#7798). For the value's own month, the check compares
+        // positions within the month, so it never builds a bucket start after the value, which could overflow.
         final int offsetYear = getYear(offset);
         final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
         final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
-        // The formula equals getDayOfMonth(); the call measured slower in the TIMESTAMP_NS month floor benchmark, so
-        // all four floor sites keep it inline.
+        // inlined getDayOfMonth(): the call measured slower in the TIMESTAMP_NS month floor benchmark
         final int offsetDay = (int) ((offset - yearMicros(offsetYear, isOffsetLeap)
                 - monthOfYearMicros(offsetMonth, isOffsetLeap)) / DAY_MICROS) + 1;
         final long offsetTime = getTimeMicros(offset);
@@ -572,15 +570,15 @@ public final class Micros {
         if (micros < offset) {
             return offset;
         }
-        // Counts the calendar years, as floorMM() counts the months. This method and yearBucketStart() move an
-        // offset on Feb 29 to Feb 28 in a year that is not a leap year, as addYears() does, and getYearsBetween()
-        // put a value on Feb 28 after the moved bucket start into the bucket before. For the year of the value, the
-        // check compares positions within that year, so it never builds a bucket start after the value.
+        // Counts calendar years, as floorMM() counts months. Like addYears(), this method and yearBucketStart()
+        // clamp a Feb 29 offset to Feb 28 in non-leap years. getYearsBetween() lacks that clamping, so it can't be
+        // used here: it puts a value on Feb 28 after the clamped bucket start into the previous bucket. For the
+        // value's own year, the check compares positions within the year, so it never builds a bucket start after
+        // the value.
         final int offsetYear = getYear(offset);
         final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
         final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
-        // The formula equals getDayOfMonth(); the call measured slower in the TIMESTAMP_NS month floor benchmark, so
-        // all four floor sites keep it inline.
+        // inlined getDayOfMonth(): the call measured slower in the TIMESTAMP_NS month floor benchmark
         final int offsetDay = (int) ((offset - yearMicros(offsetYear, isOffsetLeap)
                 - monthOfYearMicros(offsetMonth, isOffsetLeap)) / DAY_MICROS) + 1;
         final long offsetTime = getTimeMicros(offset);
@@ -1188,8 +1186,8 @@ public final class Micros {
         return getRemainderMicros(micros - offset, strideDays * DAY_MICROS);
     }
 
-    // Returns the start of the bucket in the given month of the year, or in an earlier year when monthOfYear is
-    // zero or negative. The bucket starts on the day of the offset, or on the last day of a shorter month.
+    // Returns the bucket start in the given month of the year; a zero or negative monthOfYear refers to a month
+    // of an earlier year. The day is clamped to the last day of a shorter month.
     private static long monthBucketStart(
             int year,
             boolean isLeap,

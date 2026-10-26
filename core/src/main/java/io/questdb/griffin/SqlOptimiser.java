@@ -11205,9 +11205,8 @@ public class SqlOptimiser implements Mutable {
                         orderByModel.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
                     }
                     nested.clearOrderBy();
-                    // LIMIT applies to the sorted rows, so it moves above ORDER BY, to the wrapper. Left on
-                    // the original select model, below the sort, it took the rows in hash order (GitHub issue
-                    // #7746).
+                    // LIMIT must apply to the sorted rows, so move it to the wrapper along with ORDER BY.
+                    // Left on the original model, it would cut the rows in hash order, before the sort (#7746).
                     if (originalSbModel.getLimitLo() != null || originalSbModel.getLimitHi() != null) {
                         model.setLimitPosition(originalSbModel.getLimitPosition());
                         model.moveLimitFrom(originalSbModel);

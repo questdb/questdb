@@ -7712,10 +7712,10 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillMixedLinearUsesBucketTimestamps() throws Exception {
-        // GitHub issue #7932. A FILL list that mixes LINEAR with other values interpolated a LINEAR column at the
-        // first bucket of the gap plus a counter times the length of that bucket. Months vary in length, and the
-        // counter advanced on every read of the column, so a LIMIT, an outer WHERE and a second read of the column
-        // moved the values. The mixed fill now interpolates at the start of each bucket, as FILL(LINEAR) alone does.
+        // Regression test for #7932. A FILL list mixing LINEAR with other fill values used to interpolate a LINEAR
+        // column at the gap's first bucket plus a counter times that bucket's length. Months vary in length, and the
+        // counter advanced on every read of the column, so a LIMIT, an outer WHERE or a second read of the column
+        // shifted the values. The mixed fill now interpolates at each bucket's start, as FILL(LINEAR) alone does.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH");
             execute("INSERT INTO m VALUES ('2021-08-01T00:00:00.000000Z', 1.0), ('2021-11-01T00:00:00.000000Z', 12.0)");
@@ -9822,9 +9822,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByLimitWithTimestampCopies() throws Exception {
-        // GitHub issue #7746. The rewrite of SAMPLE BY into GROUP BY moves a copy of the timestamp, or an expression
-        // over it, to a wrapper, along with the ORDER BY that sorts the buckets. LIMIT stayed below the wrapper and
-        // took the buckets in the hash order of the GROUP BY, before the sort.
+        // Regression test for #7746. The SAMPLE BY to GROUP BY rewrite moves a copy of the timestamp, or an expression
+        // over it, to a wrapper model, along with the ORDER BY that sorts the buckets. LIMIT used to stay below the
+        // wrapper, so it took the buckets in GROUP BY hash order, before the sort.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t AS (
@@ -10218,10 +10218,10 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByMonthFirstObservationMidMonth() throws Exception {
-        // GitHub issue #7769. With the grid anchored partway through a month, the month sampler rounded a timestamp
-        // that comes earlier in its month than the anchor up to the next bucket start. FILL(LINEAR) keys every row
-        // with it, and the other fills of the SAMPLE BY cursor the row that opens a bucket. A multi-month stride
-        // counted its buckets from January, not from the anchor month.
+        // Regression test for #7769. With the grid anchored partway through a month, the month sampler used to round
+        // a timestamp that comes earlier in its month than the anchor up to the next bucket start. FILL(LINEAR) keys
+        // every row with it, and the other fills of the SAMPLE BY cursor key the row that opens a bucket. A
+        // multi-month stride also counted its buckets from January rather than from the anchor month.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -10499,11 +10499,11 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByMonthNegativeOffsetEndOfShortMonth() throws Exception {
-        // GitHub issue #7798. With a negative offset, the GROUP BY path anchors the month buckets on the last day of
-        // December 1969, and moves that day to the last day of a shorter month. It put a row after the start of such
-        // a bucket, but earlier in its month than the anchor in December, such as the row at 2024-04-30T23:45Z, into
-        // the bucket before. The SAMPLE BY cursor put the row into its own bucket. FROM on the 31st anchors the
-        // buckets the same way.
+        // Regression test for #7798. With a negative offset, the GROUP BY path anchors month buckets on the last day
+        // of December 1969 and clamps that day to the last day of shorter months. It used to put a row after the
+        // start of such a bucket, but earlier in its month than the anchor in December, such as the row at
+        // 2024-04-30T23:45Z, into the previous bucket, while the SAMPLE BY cursor put the row into its own bucket.
+        // FROM on the 31st anchors the buckets the same way.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH");
             execute("""
@@ -10565,7 +10565,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2025-02-28T00:00:00.000000Z\t1\t6.0
                             """
             );
-            // FROM on Feb 29 anchors the year buckets on Feb 28 in a year that is not a leap year
+            // FROM on Feb 29 anchors year buckets on Feb 28 in non-leap years
             assertSampleByCursorMatchesGroupBy(
                     "t",
                     " SAMPLE BY 1y FROM '2024-02-29'",
@@ -10906,9 +10906,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByMonthPositiveOffset() throws Exception {
-        // GitHub issue #7769. A positive offset moves each bucket start after the start of its month or year. The
-        // SAMPLE BY cursor put a row before the bucket start of its month, such as the row at 2024-01-01T06:00Z, into
-        // the bucket that starts later in that month instead of the bucket before.
+        // Regression test for #7769. A positive offset moves bucket starts past the start of their month or year. The
+        // SAMPLE BY cursor used to put a row that comes before the bucket start in its month, such as the row at
+        // 2024-01-01T06:00Z, into the bucket that starts later in that month rather than the previous one.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE toff (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -10941,7 +10941,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-03-01T10:00:00.000000Z\t1\t8.0
                             """
             );
-            // FILL(LINEAR) runs on the SAMPLE BY cursor also straight over the table
+            // FILL(LINEAR) stays on the SAMPLE BY cursor even when it queries the table directly
             assertQuery("SELECT ts, sum(v) s FROM toff SAMPLE BY 1M FILL(LINEAR)" + offset)
                     .noLeakCheck()
                     .timestamp("ts")
@@ -10969,9 +10969,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByMonthStrideNotDividingYear() throws Exception {
-        // GitHub issue #7769. The month sampler counted the buckets of a stride from January of each year, so the
-        // SAMPLE BY cursor started a 5M bucket in January and November of every year. The GROUP BY path counts them
-        // from January 1970, and so does the cursor now.
+        // Regression test for #7769. The month sampler used to count stride buckets from January of each year, so
+        // the SAMPLE BY cursor started a 5M bucket in January and November of every year. The GROUP BY path counts
+        // them from January 1970, and so does the cursor now.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -16515,9 +16515,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByYearFirstObservationMidYear() throws Exception {
-        // GitHub issue #7769. With the grid anchored partway through a year, the year sampler rounded a timestamp
-        // that comes earlier in its year than the anchor up to the next bucket start, and a multi-year stride
-        // counted its buckets from 1970, not from the anchor year.
+        // Regression test for #7769. With the grid anchored partway through a year, the year sampler used to round a
+        // timestamp that comes earlier in its year than the anchor up to the next bucket start, and a multi-year
+        // stride counted its buckets from 1970 rather than from the anchor year.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ty (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -17661,8 +17661,8 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        // The buckets start on the 3rd of every third month, so the rows of the 1st and the 2nd belong to the
-        // bucket before, unlike with ALIGN TO CALENDAR below (GitHub issue #7769)
+        // Buckets start on the 3rd of every third month, so rows on the 1st and the 2nd belong to the previous
+        // bucket, unlike with ALIGN TO CALENDAR below (#7769)
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to first observation")
                 .ddl("create table x as " +
                         "(" +

@@ -196,9 +196,9 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
     @Test
     public void testTimerEvery5MonthsCountsFromStart() throws Exception {
         // START falls in April, so the 5-month cadence runs April, September, February, July. A grid
-        // counted from January of each year would fire in June and November, and a grid counted
-        // from January 1970 would fire in August, January and June. The timer job registers the
-        // timer on 2024-05-10, inside the first period, so the first deadline comes from the grid.
+        // counted from January of each year would fire in June and November, and one counted from
+        // January 1970 would fire in August, January and June. The timer job registers the timer on
+        // 2024-05-10, inside the first period, so the first deadline comes from the grid.
         assertMemoryLeak(() -> {
             createBaseTable(engine, sqlExecutionContext);
             currentMicros = parseFloorPartialTimestamp("2024-05-10T00:00:00.000000Z");
@@ -229,9 +229,9 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
 
     @Test
     public void testTimerEveryMonthClampsStartDayToMonthEnd() throws Exception {
-        // START falls on January 31st. The timer job registers the timer on 2024-02-10, so the
-        // first deadline falls on the last day of February, and the later firings go back to the
-        // 31st or to the last day of shorter months.
+        // START falls on January 31st. The timer job registers the timer on 2024-02-10, so the first
+        // deadline falls on the last day of February; later firings return to the 31st or clamp to
+        // the last day of shorter months.
         assertMemoryLeak(() -> {
             createBaseTable(engine, sqlExecutionContext);
             currentMicros = parseFloorPartialTimestamp("2024-02-10T00:00:00.000000Z");
@@ -276,10 +276,9 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
 
     @Test
     public void testTimerEveryMonthRecreatedMidPeriod() throws Exception {
-        // ALTER re-creates the timer on 2024-02-10 with a START of 2024-01-15T08:00, partway
-        // through that schedule's January period. The re-created timer must keep the February
-        // firing. The old schedule fires on the 20th, so a firing on the 15th can only come from
-        // the re-created timer.
+        // ALTER re-creates the timer on 2024-02-10 with a START of 2024-01-15T08:00, partway through
+        // that schedule's January period. The re-created timer must keep the February firing. Since
+        // the old schedule fires on the 20th, a firing on the 15th can only come from the new timer.
         assertMemoryLeak(() -> {
             createBaseTable(engine, sqlExecutionContext);
             currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");

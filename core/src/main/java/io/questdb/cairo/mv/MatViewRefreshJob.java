@@ -1032,11 +1032,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             final long iteratorMinTs = intervalIterator.getMinTimestamp();
             final long iteratorMaxTs = intervalIterator.getMaxTimestamp();
-            // The iterator can yield no interval for a non-empty range: it skips the buckets that no txn interval
-            // intersects, and the period and the refresh limit can cut the txn intervals down to none. Such an
-            // iterator left insertAsSelect() without a query, a commit or a watermark advance, and the view stayed
-            // 'refreshing' (GitHub issue #7772). A null iterator commits the watermark without a query.
-            // insertAsSelect() rewinds the iterator before it iterates.
+            // The iterator may yield no intervals even for a non-empty range: it skips buckets that no txn
+            // interval intersects, and the period and refresh limit may trim all txn intervals away. Leave
+            // the iterator null in that case, so that insertAsSelect() commits the watermark without running
+            // the query; otherwise, the view would stay 'refreshing' forever (#7772). Calling next() here
+            // is safe since insertAsSelect() rewinds the iterator before using it.
             if (intervalIterator.next()) {
                 LOG.info().$("refreshing materialized view [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
@@ -1694,9 +1694,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             pendingScanRangeTsUnits = 0L;
                         }
                     } else if (replacementTimestampLo == Long.MIN_VALUE) {
-                        // The iterator yielded no interval, so no commitMatView() took the factory back into the
-                        // view state. findRefreshIntervals() hands out no such iterator; should one get here, the
-                        // refresh frees the factory and commits the watermark as for no intervals, see below.
+                        // The iterator yielded no intervals, so no commitMatView() call returned the factory
+                        // to the view state. findRefreshIntervals() never hands out such an iterator, but if
+                        // it does, free the factory and commit the watermark as in the no-intervals case.
                         hasIntervals = false;
                     }
                     break;
@@ -2755,8 +2755,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    // Ends a refresh that has no interval to query. It may still need to bump the base table txn or the last
-    // period hi.
+    // Completes a refresh that has no intervals to query. It may still need to bump the base table txn
+    // or the last period hi.
     private boolean refreshNoIntervals(
             MatViewState viewState,
             WalWriter walWriter,

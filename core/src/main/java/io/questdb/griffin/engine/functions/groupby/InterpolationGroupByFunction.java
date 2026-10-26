@@ -44,7 +44,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class InterpolationGroupByFunction implements GroupByFunction, FunctionExtension {
     private final GroupByFunction wrappedFunction;
-    // the start of the bucket that the interpolation fills, see setBucketTimestamp()
+    // start timestamp of the bucket being interpolated, see setBucketTimestamp()
     private long bucketTimestamp;
     private long endTime;
     private boolean interpolating;
@@ -343,9 +343,10 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     /**
-     * Sets the start of the bucket that the interpolation fills. The fill cursor calls it for every bucket of a gap
-     * after the first one. The bucket start is the x of the interpolation: bucket lengths vary for month and year
-     * strides, and a getter can run any number of times for a bucket, or not at all.
+     * Sets the start timestamp of the bucket being interpolated. The fill cursor calls this for each bucket
+     * of a gap after the first one, which {@link #startInterpolating(long, long, long)} sets up. The bucket
+     * start serves as the x value of the interpolation, which keeps the result correct for variable-length
+     * buckets (month and year strides) and for getters that run any number of times per bucket, or not at all.
      */
     public void setBucketTimestamp(long bucketTimestamp) {
         this.bucketTimestamp = bucketTimestamp;

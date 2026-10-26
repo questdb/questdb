@@ -3958,11 +3958,11 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testIncrementalRefreshMonthAndYearStrideWithPositiveOffset() throws Exception {
-        // GitHub issue #7769. A positive offset moves each bucket start after the start of its month or year. The
-        // refresh interval iterator rounded the lower bound of the new rows up to the bucket start in their month,
-        // past a row that comes before it, and the incremental refresh left that row out of the view. Such a
-        // refresh also found no interval to query, leaked the view's query factory and left the view 'refreshing'
-        // (GitHub issue #7772). Each insert below lands right before a bucket start of one of the views.
+        // Regression test for #7769 and #7772. A positive offset moves bucket starts past the start of their
+        // month or year. The refresh interval iterator used to round the lower bound of the new rows up to the
+        // bucket start in their month, skipping rows that come before it, so the incremental refresh missed them.
+        // Such a refresh could also find no intervals to query, leaking the view's query factory and leaving the
+        // view 'refreshing'. Each insert below lands right before a bucket start of one of the views.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
@@ -4008,7 +4008,7 @@ public class MatViewTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(replaceExpectedTimestamp(expected[i]));
-                // the view holds what its query returns over the base table
+                // the view must match its query run over the base table
                 assertQuery("select ts, count() c, sum(price) s from base_price sample by " + strides[i] + " align to calendar with offset '10:00'")
                         .timestamp("ts")
                         .inferRandomAccess()
@@ -4029,10 +4029,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testIncrementalRefreshMonthStrideWithNegativeOffset() throws Exception {
-        // GitHub issue #7798. With a negative offset, the view's query put a row at the end of a month shorter than 31
-        // days, after the bucket start on its last day, into the bucket before. The incremental refresh queries only
-        // the buckets of the new rows, so the row came out of the query outside of them, and the refresh failed with
-        // "timestamp out of replace range" and invalidated the view.
+        // Regression test for #7798. With a negative offset, the view's query used to put a row at the end of a
+        // month shorter than 31 days, after the bucket start on its last day, into the previous bucket. Since the
+        // incremental refresh queries only the buckets of the new rows, the row fell outside of them, so the refresh
+        // failed with "timestamp out of replace range" and invalidated the view.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
@@ -4135,10 +4135,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
-        // GitHub issue #7772. The period cuts off the txn interval of the row in the incomplete period, and the
-        // refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
-        // interval although the refresh range is not empty. The refresh took the view's query factory, leaked it,
-        // and never advanced the watermark, so the view stayed 'refreshing'.
+        // Regression test for #7772. The period cuts off the txn interval of the row in the incomplete period, and
+        // the refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
+        // intervals even though the refresh range is not empty. The refresh used to leak the view's query factory
+        // and never advance the watermark, leaving the view 'refreshing'.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"

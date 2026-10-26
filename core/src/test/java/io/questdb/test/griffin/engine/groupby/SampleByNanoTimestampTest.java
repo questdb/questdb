@@ -9910,8 +9910,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearByMonth() throws Exception {
-        // The buckets start on the 3rd of every third month, so the rows of the 1st and the 2nd belong to the
-        // bucket before, unlike with ALIGN TO CALENDAR below (GitHub issue #7769)
+        // Buckets start on the 3rd of every third month, so rows on the 1st and the 2nd belong to the previous
+        // bucket, unlike with ALIGN TO CALENDAR below (#7769)
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to first observation")
                 .ddl("create table x as " +
                         "(" +
