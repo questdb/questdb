@@ -144,6 +144,27 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     /**
+     * A background flush is not work that should keep the worker spinning: the pass that flushes an idle batch
+     * must still return {@code false}, or the worker resets its idle counter and never backs off to its sleep.
+     */
+    @Test
+    public void testBackgroundFlushDoesNotReportBusy() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker tracker = createTable("x");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("x")); ExposedFlusher flusher = new ExposedFlusher(engine)) {
+                setCurrentMicros(T0 + 1000);
+                commitRow(w, 0, 1);
+                final long pending = tracker.getSeqTxn();
+                Assert.assertTrue("test setup: the batch must be pending", tracker.getLocalDurableSeqTxn() < pending);
+                setCurrentMicros(T0 + 1000 + WINDOW_US);
+                Assert.assertFalse("a background flush must not report busy work to the worker loop", flusher.flushNow());
+                Assert.assertEquals("the pass must flush the idle batch", pending, tracker.getLocalDurableSeqTxn());
+            }
+        });
+    }
+
+    /**
      * The background flusher reads its clock before it sweeps, so a batch can start between the two. The sweep
      * must judge that batch's age by the writer's own clock read, not take the earlier timestamp for a backwards
      * clock step and flush the batch long before the group window.

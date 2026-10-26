@@ -857,11 +857,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
         final long t = clock.getTicks();
         // Sweep the adaptive group commit's pending-flush registry on every pass, independent of the slower
-        // purge cadence, so an idle writer's last commit becomes durable about one window after it.
-        boolean busy = false;
+        // purge cadence, so an idle writer's last commit becomes durable about one window after it. A flush is
+        // not reported as busy work: that would reset the worker's idle back-off and keep it spinning.
         final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
         if (groupWindowUs > 0) {
-            busy = engine.getWalGroupCommitFlushQueue().sweep(groupWindowUs);
+            engine.getWalGroupCommitFlushQueue().sweep(groupWindowUs);
         }
         if (last + checkInterval < t) {
             last = t;
@@ -875,7 +875,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 LOG.info().$("skipping, locked out").$();
             }
         }
-        return busy;
+        return false;
     }
 
     public interface Deleter {
