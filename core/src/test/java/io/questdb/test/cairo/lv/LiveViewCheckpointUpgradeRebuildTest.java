@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -52,14 +53,16 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.zip.CRC32;
 
 /**
  * The upgrade rebuild of a live view carried over from an older checkpoint format, on the paths the
  * released fixtures cannot reach: crashes between its steps, faults in its retire, a base whose
- * apply lags the view, a view still seeding, a view that never materialized a row, and a shutdown
- * in the middle of its scan.
+ * apply lags the view, a view still seeding, a view that never materialized a row, a shutdown
+ * in the middle of its scan, and a fault a retry may get past during its scan, which the
+ * flush-retry budget retries rather than invalidating the view.
  * <p>
  * Every case builds a view with this build, stops the process, and stamps the view's
  * {@code _timeline} with an older format version in both fields that carry one, checksum and all -
@@ -82,7 +85,18 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
+    private static final int ERRNO_EMFILE = 24;
+    // The gate's restore declines for a view whose timeline predates the supported format, and it
+    // falls back to the rebuild, which is still the upgrade's.
+    private static final String GATE_UPGRADE_REBUILD_LINE = "live view cannot restore its runtime from the checkpoint timeline, "
+            + "rebuilding from the applied base [view=lv, cause=mid-drain refresh failure, "
+            + "reason=timeline predates the supported checkpoint format]";
     private static final int OLDER_FORMAT_VERSION = LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1;
+    // The line the restart's applied-base rebuild logs when it hands a fault a retry may get past
+    // to the flush-retry budget instead of invalidating the view.
+    private static final String RESTART_REBUILD_RETRY_LINE = "live view restart rebuild hit a retryable fault, retrying [view=lv";
+    private static final String ROW_AFTER_THE_UPGRADE = "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)";
+    private static final String ROW_AFTER_THE_UPGRADE_OUTPUT = "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n";
     private static final String UPGRADE_CAUSE = "timeline format upgrade";
     private static final String VIEW_ROWS_QUERY = "SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv";
     private static final LogCapture capture = new LogCapture();
@@ -347,11 +361,12 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             carryOverToOlderFormat();
             fault.of(engine.verifyTableName("tx").getDirName());
 
-            // A failure other than apply lag and cancellation keeps the disposition the
-            // missing-timeline route has: an IO fault or a dropped base needs an operator either
-            // way, and the view says so durably rather than retrying a scan forever.
+            // A base column file the scan needs reads as gone, which no retry gets past. The view
+            // keeps the disposition the missing-timeline route has: it needs an operator, and says
+            // so durably. A fault a retry may get past retries under the flush-retry budget
+            // instead; see testAFaultTheRetryGetsPastDuringTheUpgradeRebuildCompletesTheUpgrade.
             engine.releaseInactive();
-            fault.armAppliedScan();
+            fault.armAppliedScan(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
@@ -379,6 +394,264 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             drive();
             assertRecoveryReport(invalidRow);
             assertViewRows(ALL_ROWS);
+        });
+    }
+
+    @Test
+    public void testAFaultThatOutlastsTheRetryBudgetInvalidatesTheViewAfterTheBudget() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 3);
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            fault.of(engine.verifyTableName("tx").getDirName());
+
+            // EMFILE on every scan of the base: a fault a retry may get past, which never clears.
+            // The view retries the upgrade rebuild under the flush-retry budget, takes the rebuild
+            // once more when the budget runs out, and only then invalidates.
+            engine.releaseInactive();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                fault.armAppliedScanPersistently(ERRNO_EMFILE);
+                try {
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    fault.disarmAppliedScan();
+                }
+                Assert.assertTrue("the restart rebuild's scan must have been failed", fault.hasAppliedScanFired());
+                final LiveViewInstance instance = instance("lv");
+                Assert.assertFalse(
+                        "the restart's fault must leave the view to retry under the budget [reason=" + instance.getInvalidationReason() + ']',
+                        instance.isInvalid()
+                );
+                // Nothing drives a view with no commits in front of it, so the window-state debt
+                // waits for the gate of the turn a base commit gives it.
+                Assert.assertTrue(instance.isWindowStateDirty());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+
+                // The base applies the commit with the fault disarmed, so only the view's scans of
+                // the base meet it.
+                execute("INSERT INTO tx VALUES " + ROW_AFTER_THE_UPGRADE);
+                drainWalQueue();
+                fault.armAppliedScanPersistently(ERRNO_EMFILE);
+                try {
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    fault.disarmAppliedScan();
+                }
+                guard = job.rebuildRestatementGuardForTest();
+            }
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertTrue(instance.isInvalid());
+            Assert.assertEquals("flush retry budget exhausted", instance.getInvalidationReason());
+            // The restart's rebuild faults once. The commit's notification drives the gate, which
+            // faults twice: on that turn, and on the turn after its back-off, which the fallback scan
+            // drives because the view has not consumed the commit. The third fault runs the budget
+            // out, and one more rebuild follows it.
+            Assert.assertEquals(
+                    "the view must have retried the rebuild under the budget rather than invalidate on the first fault",
+                    3,
+                    instance.getRefreshFaultCount()
+            );
+            // The rebuild the spent budget takes is still the upgrade's: guard stood down.
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(RESTART_REBUILD_RETRY_LINE));
+            Assert.assertEquals(2, capture.countOccurrences(GATE_UPGRADE_REBUILD_LINE));
+            Assert.assertEquals(2, capture.countOccurrences("live view window-state recompute failed [view=lv, cause=mid-drain refresh failure"));
+            capture.assertLogged("live view refresh budget exhausted retrying a failed restore, rebuilding from the applied base [view=lv");
+            capture.assertLogged("live view window-state recompute failed [view=lv, cause=timeline restore failed");
+            capture.assertNotLogged("live view restart applied-base rebuild failed [view=");
+            // Nothing committed, so the rows are the ones the view had, beside the older superblock.
+            assertViewRows(ALL_ROWS);
+            Assert.assertTrue("no rebuild committed, so the upgrade is still owed", instance.isCheckpointUpgradeRebuildPending());
+            // An invalid view never refreshes again, so live_views() must not promise the rebuild
+            // the pending flag still records.
+            assertRecoveryReport("invalid\t\t\tflush retry budget exhausted\n");
+            Assert.assertEquals(OLDER_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+        });
+    }
+
+    @Test
+    public void testAFaultTheRetryGetsPastDuringTheUpgradeRebuildCompletesTheUpgrade() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            final String upgradeReason = instance("lv").getCheckpointUpgradeRebuildReason();
+
+            // EMFILE once, on the upgrade rebuild's scan of the base: the fault that most threatens
+            // every view carried over from an older format, since each of them rebuilds on its first
+            // refresh. A retry gets past it, so the view must not invalidate on it.
+            engine.releaseInactive();
+            fault.armAppliedScan(ERRNO_EMFILE);
+            drive();
+            Assert.assertTrue("the rebuild's scan must have been failed", fault.hasAppliedScanFired());
+            Assert.assertFalse("the fault must strike the probe, before the rebuild owes the window state", fault.isWindowStateDirtyAtFault());
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "a fault a retry gets past must not invalidate the view [reason=" + instance.getInvalidationReason() + ']',
+                    instance.isInvalid()
+            );
+            Assert.assertFalse(instance.hasPendingInvalidationReason());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            // The faulted turn charged the fault and left the window-state debt. Nothing drives a
+            // view with no commits in front of it, so the debt waits for the gate of the turn the
+            // next base commit gives the view, and the upgrade with it.
+            Assert.assertTrue(instance.isWindowStateDirty());
+            Assert.assertTrue("no rebuild committed, so the upgrade is still owed", instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertEquals(OLDER_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            Assert.assertEquals("the one scan fault is the one refresh fault", 1, instance.getRefreshFaultCount());
+            assertViewRows(ALL_ROWS);
+            assertRecoveryReport("active\tupgrade_rebuild_pending\t" + upgradeReason + "\t\n");
+            capture.drain();
+            capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=" + UPGRADE_CAUSE);
+            capture.assertOnlyOnce(Pattern.quote(RESTART_REBUILD_RETRY_LINE));
+            capture.assertNotLogged("live view restart applied-base rebuild failed [view=");
+            // The fault came before the rebuild owed the window state, so the faulted turn charged it
+            // rather than recover in place.
+            capture.assertLogged("live view refresh failed [view=lv, retryCount=1");
+            capture.assertNotLogged("live view refresh failed, window state recovered");
+            capture.assertNotLogged(GATE_UPGRADE_REBUILD_LINE);
+
+            // The commit's turn runs the gate, whose rebuild is still the upgrade's: guard stood down,
+            // older directory retired. The rebuild pins the base's applied head, so it consumes the
+            // commit, and the turn records the success that ends the retry streak.
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertAndRefresh(job, ROW_AFTER_THE_UPGRADE);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertFalse("the gate's rebuild must retire the older timeline", instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            Assert.assertEquals(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            Assert.assertEquals(1, instance.getRefreshFaultCount());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            Assert.assertEquals(0, instance.getFlushRetryCount());
+            assertViewRows(ALL_ROWS + ROW_AFTER_THE_UPGRADE_OUTPUT);
+            assertRecoveryReport("active\t\t\t\n");
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(GATE_UPGRADE_REBUILD_LINE));
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+
+            // The upgrade is over: a restart restores from the seal the gate's rebuild wrote.
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertRecoveryReport("active\t\t\t\n");
+            assertViewRows(ALL_ROWS + ROW_AFTER_THE_UPGRADE_OUTPUT);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testAFaultTheRetryGetsPastDuringTheUpgradeRebuildRerunsItOnTheNextStart() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            fault.of(engine.verifyTableName("tx").getDirName());
+
+            // testAFaultTheRetryGetsPastDuringTheUpgradeRebuildCompletesTheUpgrade, with a restart
+            // ahead of any commit. The faulted rebuild committed nothing, so the older superblock
+            // that owes the upgrade is still on disk.
+            engine.releaseInactive();
+            fault.armAppliedScan(ERRNO_EMFILE);
+            drive();
+            Assert.assertTrue("the rebuild's scan must have been failed", fault.hasAppliedScanFired());
+            final LiveViewInstance faulted = instance("lv");
+            Assert.assertFalse(
+                    "a fault a retry gets past must not invalidate the view [reason=" + faulted.getInvalidationReason() + ']',
+                    faulted.isInvalid()
+            );
+            Assert.assertTrue("no rebuild committed, so the upgrade is still owed", faulted.isCheckpointUpgradeRebuildPending());
+            Assert.assertEquals(OLDER_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            assertViewRows(ALL_ROWS);
+
+            // The next start meets that superblock and runs the upgrade rebuild to the end.
+            shutdown();
+            final LiveViewRebuildRestatementGuard guard = restart();
+            assertUpgradeRebuilt("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            Assert.assertEquals(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            assertRecoveryReport("active\t\t\t\n");
+            assertViewRows(ALL_ROWS);
+            assertNoRefreshFaults("lv");
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(ALL_ROWS);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testAFaultTheRetryGetsPastMidwayThroughTheUpgradeRebuildCompletesTheUpgrade() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            fault.of(engine.verifyTableName("tx").getDirName());
+
+            // EMFILE once, on the second day's column file. By then the probe has found a row, the
+            // rebuild has wiped the accumulators and owes the window state, and its replacement
+            // writer holds the first day's rows uncommitted. The fault ends the rebuild there, and
+            // the faulted turn's failure handling recovers the window state in place, with the
+            // upgrade's rebuild: guard stood down, older directory retired. The replacement the
+            // fault abandoned must not reach the view.
+            engine.releaseInactive();
+            fault.armAppliedScanPastFirstDay(ERRNO_EMFILE);
+            final LiveViewRebuildRestatementGuard guard = drive();
+            Assert.assertTrue("the rebuild's scan must have been failed", fault.hasAppliedScanFired());
+            Assert.assertTrue("the scan must have opened the first day before the fault", fault.getAppliedScanOpensBeforeFault() > 0);
+            Assert.assertTrue("the fault must strike after the rebuild owes the window state", fault.isWindowStateDirtyAtFault());
+            // Read before the invalidation check, so a run that invalidates the view still shows that
+            // the abandoned replacement rolled back: the first day alone would replace every row.
+            assertViewRows(ALL_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "a fault a retry gets past must not invalidate the view [reason=" + instance.getInvalidationReason() + ']',
+                    instance.isInvalid()
+            );
+            Assert.assertFalse(instance.hasPendingInvalidationReason());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertFalse("the recovery's rebuild must retire the older timeline", instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            Assert.assertEquals("the one scan fault is the one refresh fault", 1, instance.getRefreshFaultCount());
+            Assert.assertEquals(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            assertRecoveryReport("active\t\t\t\n");
+            capture.drain();
+            capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=" + UPGRADE_CAUSE);
+            capture.assertOnlyOnce(Pattern.quote(RESTART_REBUILD_RETRY_LINE));
+            capture.assertNotLogged("live view restart applied-base rebuild failed [view=");
+            // The faulted turn recovered the window state itself, rather than charge the fault and
+            // leave the recovery to a later turn's gate.
+            capture.assertLogged("live view refresh failed, window state recovered, retrying [view=lv");
+            capture.assertNotLogged("live view refresh failed [view=lv");
+            capture.assertOnlyOnce(Pattern.quote(GATE_UPGRADE_REBUILD_LINE));
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+
+            // A commit drains over the recovered runtime, and the turn that gets past it ends the
+            // retry streak.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertAndRefresh(job, ROW_AFTER_THE_UPGRADE);
+            }
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals(1, instance.getRefreshFaultCount());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            Assert.assertEquals(0, instance.getFlushRetryCount());
+            assertViewRows(ALL_ROWS + ROW_AFTER_THE_UPGRADE_OUTPUT);
+
+            // The upgrade is over: a restart restores from the seal the recovery's rebuild wrote.
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertRecoveryReport("active\t\t\t\n");
+            assertViewRows(ALL_ROWS + ROW_AFTER_THE_UPGRADE_OUTPUT);
+            assertNoRefreshFaults("lv");
         });
     }
 
@@ -949,7 +1222,9 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
      * Fails, once each and only when armed: the unlink of a view's {@code _timeline}, the open that
      * creates a view's {@code _timeline} where none exists, the removal of its checkpoint
      * {@code meta} directory, and the open of the base's {@code amount} column that the whole-view
-     * rebuild's scan of the applied base makes and the raw-WAL drain never does.
+     * rebuild's scan of the applied base makes and the raw-WAL drain never does. The scan fault
+     * reports the errno the test arms it with, and can instead fail every such open, or only the first
+     * one past the first day's partition.
      * <p>
      * Also lands, once and only when armed, an {@code ADD COLUMN} on the base between the restart's
      * plan compile and the upgrade rebuild's base reader open. The restart opens a reader of the
@@ -957,8 +1232,16 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
      * the compiled plan so the catalogue load's own open cannot fire it.
      */
     private static final class UpgradeFault extends TestFilesFacadeImpl {
+        // The partition directory of the first of the three days seedSixRows writes.
+        private static final String FIRST_DAY_PARTITION = "2026-01-01";
+        // The errno each failed scan open reports.
+        private final AtomicInteger appliedScanErrno = new AtomicInteger();
+        // The base column opens the past-the-first-day fault let through before it fired.
+        private final AtomicInteger appliedScanOpensBeforeFault = new AtomicInteger();
         private final AtomicBoolean isAppliedScanArmed = new AtomicBoolean();
         private final AtomicBoolean isAppliedScanFired = new AtomicBoolean();
+        private final AtomicBoolean isAppliedScanPastFirstDayArmed = new AtomicBoolean();
+        private final AtomicBoolean isAppliedScanPersistent = new AtomicBoolean();
         private final AtomicBoolean isMetaDirRemoveArmed = new AtomicBoolean();
         private final AtomicBoolean isMetaDirRemoveFired = new AtomicBoolean();
         private final AtomicBoolean isSchemaChangeArmed = new AtomicBoolean();
@@ -967,12 +1250,29 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         private final AtomicBoolean isTimelineCreateFired = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveArmed = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveFired = new AtomicBoolean();
+        // Whether the view owed a window-state rebuild when the scan fault last fired. Only the
+        // rebuild's own mark, once its probe found a row, gives a restarting view that debt.
+        private final AtomicBoolean isWindowStateDirtyAtFault = new AtomicBoolean();
+        // The errno the next errno() read reports, set by the open that failed; 0 when none.
+        private final AtomicInteger pendingErrno = new AtomicInteger();
         private volatile String baseDir;
         private volatile String viewDir;
+
+        private static boolean isBaseAmountColumn(LPSZ name, String baseDir) {
+            return Utf8s.containsAscii(name, baseDir)
+                    && !Utf8s.containsAscii(name, "wal")
+                    && Utf8s.endsWithAscii(name, "amount.d");
+        }
 
         private static boolean isRestartPlanCompiled() {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             return instance != null && instance.isCheckpointRestoreAttempted() && instance.getCompiledPlan() != null;
+        }
+
+        @Override
+        public int errno() {
+            final int errno = pendingErrno.getAndSet(0);
+            return errno != 0 ? errno : super.errno();
         }
 
         @Override
@@ -993,13 +1293,19 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             }
             final String dir = baseDir;
             if (dir != null
+                    && isAppliedScanPastFirstDayArmed.get()
+                    && isBaseAmountColumn(name, dir)) {
+                if (Utf8s.containsAscii(name, FIRST_DAY_PARTITION)) {
+                    appliedScanOpensBeforeFault.incrementAndGet();
+                } else if (isAppliedScanPastFirstDayArmed.compareAndSet(true, false)) {
+                    return failAppliedScanOpen();
+                }
+            }
+            if (dir != null
                     && isAppliedScanArmed.get()
-                    && Utf8s.containsAscii(name, dir)
-                    && !Utf8s.containsAscii(name, "wal")
-                    && Utf8s.endsWithAscii(name, "amount.d")
-                    && isAppliedScanArmed.compareAndSet(true, false)) {
-                isAppliedScanFired.set(true);
-                return -1;
+                    && isBaseAmountColumn(name, dir)
+                    && (isAppliedScanPersistent.get() || isAppliedScanArmed.compareAndSet(true, false))) {
+                return failAppliedScanOpen();
             }
             return super.openRO(name);
         }
@@ -1038,9 +1344,33 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             return super.rmdir(name, haltOnError);
         }
 
-        void armAppliedScan() {
+        void armAppliedScan(int errno) {
+            appliedScanErrno.set(errno);
+            isWindowStateDirtyAtFault.set(false);
             isAppliedScanFired.set(false);
             isAppliedScanArmed.set(true);
+        }
+
+        /**
+         * Fails, once, the first open of a base {@code amount} column file outside the first day's
+         * partition: the scan's move to the second day, after the probe read the first.
+         */
+        void armAppliedScanPastFirstDay(int errno) {
+            appliedScanErrno.set(errno);
+            appliedScanOpensBeforeFault.set(0);
+            isWindowStateDirtyAtFault.set(false);
+            isAppliedScanFired.set(false);
+            isAppliedScanPastFirstDayArmed.set(true);
+        }
+
+        void armAppliedScanPersistently(int errno) {
+            armAppliedScan(errno);
+            isAppliedScanPersistent.set(true);
+        }
+
+        void disarmAppliedScan() {
+            isAppliedScanPersistent.set(false);
+            isAppliedScanArmed.set(false);
         }
 
         void armSchemaChange(String viewDir) {
@@ -1064,6 +1394,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             isTimelineRemoveArmed.set(true);
         }
 
+        int getAppliedScanOpensBeforeFault() {
+            return appliedScanOpensBeforeFault.get();
+        }
+
         boolean hasAppliedScanFired() {
             return isAppliedScanFired.get();
         }
@@ -1084,8 +1418,20 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             return isTimelineRemoveFired.get();
         }
 
+        boolean isWindowStateDirtyAtFault() {
+            return isWindowStateDirtyAtFault.get();
+        }
+
         void of(String baseDir) {
             this.baseDir = baseDir;
+        }
+
+        private long failAppliedScanOpen() {
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            isWindowStateDirtyAtFault.set(instance != null && instance.isWindowStateDirty());
+            isAppliedScanFired.set(true);
+            pendingErrno.set(appliedScanErrno.get());
+            return -1;
         }
     }
 }

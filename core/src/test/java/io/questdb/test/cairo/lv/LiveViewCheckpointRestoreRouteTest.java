@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -32,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
@@ -39,6 +41,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -46,6 +49,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 /**
  * Coverage for the route a live view's one restart recovery attempt records.
@@ -65,9 +70,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * is what carries it.
  */
 public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
+    private static final int ERRNO_EMFILE = 24;
+    // The gate's restore declines for a view with no timeline, and it falls back to the rebuild.
+    private static final String GATE_ABSENT_TIMELINE_REBUILD_LINE = "live view cannot restore its runtime from the checkpoint timeline, "
+            + "rebuilding from the applied base [view=lv, cause=mid-drain refresh failure, reason=timeline is absent]";
+    // The line the restart's applied-base rebuild logs when it hands a fault a retry may get past
+    // to the flush-retry budget instead of invalidating the view.
+    private static final String RESTART_REBUILD_RETRY_LINE = "live view restart rebuild hit a retryable fault, retrying [view=lv";
+    private static final LogCapture capture = new LogCapture();
 
     @After
     public void resetClock() {
+        capture.stop();
         setCurrentMicros(-1);
     }
 
@@ -77,6 +91,7 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
         // restart off rather than a single root.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
+        capture.start();
     }
 
     @Test
@@ -86,15 +101,25 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
         // state at all - the disposition no other case can reach, because a rebuild that
         // works covers for every restore that does not.
         final AtomicBoolean failBaseColumnReads = new AtomicBoolean();
+        // The errno the next errno() read reports, set by the open that failed; 0 when none.
+        final AtomicInteger pendingErrno = new AtomicInteger();
         assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                final int errno = pendingErrno.getAndSet(0);
+                return errno != 0 ? errno : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 // Partition column reads only. The WAL segment copies carry the same
                 // file name and the apply that reads them must keep working, or the
-                // fixture never gets its rows into the base table.
+                // fixture never gets its rows into the base table. The file reads as
+                // gone, which no retry gets past.
                 if (failBaseColumnReads.get()
                         && Utf8s.endsWithAscii(name, "amount.d")
                         && !Utf8s.containsAscii(name, "wal")) {
+                    pendingErrno.set(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
                     return -1;
                 }
                 return super.openRO(name);
@@ -211,6 +236,217 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
             Assert.assertFalse(instance().isInvalid());
+        });
+    }
+
+    @Test
+    public void testAFaultTheRetryGetsPastDuringTheRestartRebuildKeepsTheViewActive() throws Exception {
+        // testAFailedRebuildRecordsABlockedRoute with the base column read failing once on EMFILE,
+        // a fault a retry may get past, rather than on a file that is gone. The restart must hand
+        // the fault to the flush-retry accounting, rather than invalidate the view durably on a
+        // fault that clears. The fault strikes the probe, before the rebuild owes the window
+        // state, so the faulted turn charges it and leaves the window-state debt, which the gate
+        // of the turn the next base commit gives the view settles with a rebuild.
+        final AtomicBoolean isScanFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasScanFaultFired = new AtomicBoolean();
+        // The errno the next errno() read reports, set by the open that failed; 0 when none.
+        final AtomicInteger pendingErrno = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                final int errno = pendingErrno.getAndSet(0);
+                return errno != 0 ? errno : super.errno();
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (isScanFaultArmed.get()
+                        && Utf8s.endsWithAscii(name, "amount.d")
+                        && !Utf8s.containsAscii(name, "wal")
+                        && isScanFaultArmed.compareAndSet(true, false)) {
+                    hasScanFaultFired.set(true);
+                    pendingErrno.set(ERRNO_EMFILE);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        }, () -> {
+            createTargetView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                for (int second = 0; second <= 30; second += 10) {
+                    insertAccount(job, timestamp(second), second % 20 == 0 ? "acct-1" : "acct-2", second + 1.0);
+                }
+                assertViewMatchesRecompute();
+            }
+
+            removeTimeline();
+            engine.releaseInactive();
+            isScanFaultArmed.set(true);
+            restartCycle();
+            Assert.assertTrue("the restart rebuild's scan must have been failed", hasScanFaultFired.get());
+
+            final LiveViewInstance instance = instance();
+            Assert.assertFalse(
+                    "a fault a retry gets past must not invalidate the view [reason=" + instance.getInvalidationReason() + ']',
+                    instance.isInvalid()
+            );
+            Assert.assertFalse(instance.hasPendingInvalidationReason());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            // Nothing drives a view with no commits in front of it, so the debt stands.
+            Assert.assertTrue(instance.isWindowStateDirty());
+            Assert.assertEquals("the one scan fault is the one refresh fault", 1L, instance.getRefreshFaultCount());
+            Assert.assertEquals(1L, instance.getCheckpointRebuildAttempts());
+            // A rebuild that hands its fault on records no restart route, as a drift's does.
+            assertRoute(LiveViewCheckpointRecoveryPhase.ROUTE_NONE, instance);
+            assertViewMatchesRecompute();
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(RESTART_REBUILD_RETRY_LINE));
+            capture.assertNotLogged("live view restart applied-base rebuild failed [view=");
+            // No restore ran, so the log must not report one as failed.
+            capture.assertNotLogged("could not restore live view from checkpoint timeline");
+            // The fault came before the rebuild owed the window state, so the faulted turn charged it
+            // rather than recover in place.
+            capture.assertLogged("live view refresh failed [view=lv, retryCount=1");
+            capture.assertNotLogged("live view refresh failed, window state recovered");
+            capture.assertNotLogged(GATE_ABSENT_TIMELINE_REBUILD_LINE);
+
+            // The commit's turn runs the gate, which rebuilds with the restatement guard armed. The
+            // rebuild pins the base's applied head, so it consumes the commit, and the turn records
+            // the success that ends the retry streak.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                insertAccount(resumed, timestamp(40), "acct-1", 100.0);
+            }
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals(1L, instance.getRefreshFaultCount());
+            Assert.assertEquals("the gate's rebuild is no restart rebuild attempt", 1L, instance.getCheckpointRebuildAttempts());
+            // The gate's recovery records no restart route either.
+            assertRoute(LiveViewCheckpointRecoveryPhase.ROUTE_NONE, instance);
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            Assert.assertEquals(0, instance.getFlushRetryCount());
+            assertViewMatchesRecompute();
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(GATE_ABSENT_TIMELINE_REBUILD_LINE));
+
+            // The gate's rebuild sealed a fresh timeline, which the next restart restores from.
+            restartCycle();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance().isInvalid());
+            assertViewMatchesRecompute();
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testAFaultTheRetryGetsPastMidwayThroughTheRestartRebuildKeepsTheViewActive() throws Exception {
+        // testAFaultTheRetryGetsPastDuringTheRestartRebuildKeepsTheViewActive with the fault on the
+        // second hour's column file. By then the probe has found a row, the rebuild has wiped the
+        // accumulators and owes the window state, and its replacement writer holds the first hour's
+        // rows uncommitted. The faulted turn's failure handling recovers the window state in place,
+        // with a rebuild that runs the restatement guard, unlike the upgrade's.
+        final AtomicBoolean isScanFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasScanFaultFired = new AtomicBoolean();
+        final AtomicBoolean isWindowStateDirtyAtFault = new AtomicBoolean();
+        // The base column opens the fault let through before it fired.
+        final AtomicInteger scanOpensBeforeFault = new AtomicInteger();
+        // The errno the next errno() read reports, set by the open that failed; 0 when none.
+        final AtomicInteger pendingErrno = new AtomicInteger();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                final int errno = pendingErrno.getAndSet(0);
+                return errno != 0 ? errno : super.errno();
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (isScanFaultArmed.get()
+                        && Utf8s.endsWithAscii(name, "amount.d")
+                        && !Utf8s.containsAscii(name, "wal")) {
+                    if (Utf8s.containsAscii(name, "2026-01-01T09")) {
+                        scanOpensBeforeFault.incrementAndGet();
+                    } else if (isScanFaultArmed.compareAndSet(true, false)) {
+                        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                        isWindowStateDirtyAtFault.set(instance != null && instance.isWindowStateDirty());
+                        hasScanFaultFired.set(true);
+                        pendingErrno.set(ERRNO_EMFILE);
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        }, () -> {
+            createTargetView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 1.0);
+                insertAccount(job, "2026-01-01T09:00:10.000000Z", "acct-2", 11.0);
+                insertAccount(job, "2026-01-01T10:00:00.000000Z", "acct-1", 21.0);
+                insertAccount(job, "2026-01-01T10:00:10.000000Z", "acct-2", 31.0);
+                assertViewMatchesRecompute();
+            }
+
+            removeTimeline();
+            engine.releaseInactive();
+            isScanFaultArmed.set(true);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob restarted = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(restarted);
+                guard = restarted.rebuildRestatementGuardForTest();
+                Assert.assertTrue("the restart rebuild's scan must have been failed", hasScanFaultFired.get());
+                Assert.assertTrue("the scan must have opened the first hour before the fault", scanOpensBeforeFault.get() > 0);
+                Assert.assertTrue("the fault must strike after the rebuild owes the window state", isWindowStateDirtyAtFault.get());
+                // Read before the invalidation check, so a run that invalidates the view still shows
+                // that the abandoned replacement rolled back: the first hour alone would replace
+                // every row.
+                assertViewMatchesRecompute();
+
+                final LiveViewInstance instance = instance();
+                Assert.assertFalse(
+                        "a fault a retry gets past must not invalidate the view [reason=" + instance.getInvalidationReason() + ']',
+                        instance.isInvalid()
+                );
+                Assert.assertFalse(instance.hasPendingInvalidationReason());
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                Assert.assertFalse(instance.isWindowStateDirty());
+                Assert.assertEquals("the one scan fault is the one refresh fault", 1L, instance.getRefreshFaultCount());
+                Assert.assertEquals("the recovery's rebuild is no restart rebuild attempt", 1L, instance.getCheckpointRebuildAttempts());
+                // The in-place recovery records no restart route, as a drift's does.
+                assertRoute(LiveViewCheckpointRecoveryPhase.ROUTE_NONE, instance);
+                // The recovery's rebuild ran the guard, which found every row the view retains.
+                Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+                Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+                Assert.assertEquals(4, guard.getReproducedRows());
+                capture.drain();
+                capture.assertOnlyOnce(Pattern.quote(RESTART_REBUILD_RETRY_LINE));
+                capture.assertNotLogged("live view restart applied-base rebuild failed [view=");
+                capture.assertNotLogged("could not restore live view from checkpoint timeline");
+                // The faulted turn recovered the window state itself, rather than charge the fault
+                // and leave the recovery to a later turn's gate.
+                capture.assertLogged("live view refresh failed, window state recovered, retrying [view=lv");
+                capture.assertNotLogged("live view refresh failed [view=lv");
+                capture.assertOnlyOnce(Pattern.quote(GATE_ABSENT_TIMELINE_REBUILD_LINE));
+
+                // A commit drains over the recovered runtime, and the turn that gets past it ends the
+                // retry streak.
+                insertAccount(restarted, "2026-01-01T10:00:20.000000Z", "acct-1", 100.0);
+                assertViewMatchesRecompute();
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals(1L, instance.getRefreshFaultCount());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+            }
+
+            // The recovery's rebuild sealed a fresh timeline, which the next restart restores from.
+            restartCycle();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance().isInvalid());
+            assertViewMatchesRecompute();
+            assertNoRefreshFaults("lv");
         });
     }
 
