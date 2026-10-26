@@ -728,7 +728,10 @@ bytes.
   manual step before it runs as primary again.
 - **A local log behind the object store.** A live table whose local sequencer log ends below the object store's last
   transaction for it lost records the replicas hold: a power loss of a `nosync` or `async` primary (above), a local
-  restore behind the store, or a replica started as primary before it caught up. Its next commits would take those
+  restore behind the store, or a replica started as primary before it caught up. A table converted to non-WAL and
+  back (`ALTER TABLE ... SET TYPE`) on a replicating primary also lands here: the conversion gives its directory a new
+  log from txn 0 while the store keeps the old one, so the next start is refused although nothing was lost; for it
+  only the rebase remedy below applies (a replica would download the old history). Its next commits would take those
   transaction numbers with other content, and the uploader would resume past them. The uploader start refuses it:
   the startup scan (`process_startup_table`, from `WalUploader.triggerUploadMissed`) fails the start as primary with
   `local sequencer log is behind the object store, refusing to start as primary [t=..., local_txn=...,
@@ -743,8 +746,8 @@ bytes.
   record is appended, so the table stays dropped on the primary. The check reads the log after the Java open cut
   its torn tail: the scan opens each table's sequencer (`TableSequencerAPI.getCurrentWalId`) before it reads the
   log, and no client write or job runs before the scan at boot (the worker pools and the network servers depend on
-  the replication component). A table the scan did not judge (its log was missing then, or it was replication-
-  disabled and a config reload put it back) is held instead, by the upload loop, with one critical line `local
+  the replication component). A table the scan did not judge (its log was missing or could not be opened then, or it was
+  replication-disabled and a config reload put it back) is held instead, by the upload loop, with one critical line `local
   sequencer log is behind the object store, holding the table's uploads [...]`: its uploads stop for the uploader's
   lifetime, also once its new commits pass the store's last transaction.
 - **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and `sync`
