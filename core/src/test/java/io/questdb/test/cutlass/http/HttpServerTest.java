@@ -65,6 +65,12 @@ public class HttpServerTest extends AbstractBootstrapTest {
     private static final Utf8String SUCCESS_UTF8 = new Utf8String(SUCCESS);
 
     @Test
+    public void testEmptySimpleResponseFraming() throws Exception {
+        testEmptySimpleResponseFraming(Integer.MAX_VALUE);
+        testEmptySimpleResponseFraming(1);
+    }
+
+    @Test
     public void testHttpServerBind() {
         try (HttpServerMock httpServer = new HttpServerMock(1, 9001)) {
             httpServer.registerEndpoint(requestHeader -> new HttpRequestProcessor() {
@@ -182,18 +188,87 @@ public class HttpServerTest extends AbstractBootstrapTest {
         }
     }
 
+    private void testEmptySimpleResponseFraming(int sendFragmentSize) throws Exception {
+        assertMemoryLeak(() -> {
+            final WebConsoleLoadingTest.RecordingHttpClientNetwork network = new WebConsoleLoadingTest.RecordingHttpClientNetwork();
+            try (HttpServerMock server = new HttpServerMock(1, 9001, sendFragmentSize);
+                 io.questdb.client.cutlass.http.client.HttpClient client = network.newClient()) {
+                server.registerEndpoint(request -> {
+                    final int status = Integer.parseInt(request.getUrlParam(new Utf8String("status")).toString());
+                    final int kind = Integer.parseInt(request.getUrlParam(new Utf8String("kind")).toString());
+                    return new HttpRequestProcessor() {
+                        @Override
+                        public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                            switch (kind) {
+                                case 0 -> context.simpleResponse().sendStatusNoContent(status);
+                                case 1 -> context.simpleResponse().sendStatusNoContent(status, "X-Test: char");
+                                case 2 -> context.simpleResponse().sendStatusNoContent(status, new Utf8String("X-Test: utf8"));
+                                case 3 -> context.simpleResponse().sendStatusJsonContent(status, new Utf8String("{\"ok\":true}"), false);
+                                case 4 -> context.simpleResponse().sendStatusTextContent(status, SUCCESS_UTF8, null);
+                                default -> throw new AssertionError(kind);
+                            }
+                        }
+
+                        @Override
+                        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                            if (kind == 0) {
+                                context.resumeResponseSend();
+                            } else {
+                                onRequestComplete(context);
+                            }
+                        }
+                    };
+                });
+                server.start();
+                for (int status : new int[]{200, 301, 302, 404, 204, 304}) {
+                    for (int kind = 0; kind < 3; kind++) {
+                        network.clearReceived();
+                        final io.questdb.client.cutlass.http.client.HttpClient.ResponseHeaders empty = client.newRequest("localhost", 9001)
+                                .GET().url("/service").query("status", Integer.toString(status)).query("kind", Integer.toString(kind)).send();
+                        empty.await();
+                        network.assertEmptyResponse(empty, status);
+                        final io.questdb.client.std.str.Utf8Sequence extraHeader = empty.getHeader(new io.questdb.client.std.str.Utf8String("X-Test"));
+                        if (kind == 0) {
+                            Assert.assertNull(extraHeader);
+                        } else {
+                            Assert.assertEquals(kind == 1 ? "char" : "utf8", extraHeader.toString());
+                        }
+
+                        // Reuse the live socket through fixed and chunked bodies before the next empty response.
+                        for (int bodyKind = 3; bodyKind <= 4; bodyKind++) {
+                            network.clearReceived();
+                            final io.questdb.client.cutlass.http.client.HttpClient.ResponseHeaders body = client.newRequest("localhost", 9001)
+                                    .GET().url("/service").query("status", "200").query("kind", Integer.toString(bodyKind)).send();
+                            body.await();
+                            Assert.assertEquals(bodyKind == 4, body.isChunked());
+                            Assert.assertEquals(bodyKind == 3 ? 11 : -1, body.getContentLength());
+                            ClientHttpUtils.assertChunkedBody(body, bodyKind == 3 ? "{\"ok\":true}" : "Success\r\n");
+                            network.assertStatusLine(200);
+                        }
+                        network.assertSingleConnection();
+                    }
+                }
+            }
+        });
+    }
+
     private static class HttpServerMock implements QuietCloseable {
         private final static Log LOG = LogFactory.getLog(HttpServerMock.class);
         private final HttpServer httpServer;
         private final WorkerPool workerPool;
 
         public HttpServerMock(int workerCount, int port) {
+            this(workerCount, port, Integer.MAX_VALUE);
+        }
+
+        public HttpServerMock(int workerCount, int port, int sendFragmentSize) {
             final String baseDir = root;
             final HttpServerConfigurationBuilder serverConfigBuilder = new HttpServerConfigurationBuilder();
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
                     .withFactoryProvider(DefaultFactoryProvider.INSTANCE)
                     .withPort(port)
+                    .withForceSendFragmentationChunkSize(sendFragmentSize)
                     .build(new DefaultTestCairoConfiguration(root));
 
             final int cpuAvailable = max(Runtime.getRuntime().availableProcessors() / 2, 1);
