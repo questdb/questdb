@@ -272,11 +272,22 @@ public class BitmapIndexWriter implements IndexWriter {
                 }
             } else {
                 if (this.valueMemSize > 0) {
-                    long vActual = ff.length(valueFd);
-                    if (this.valueMemSize > vActual) {
+                    final long vActual = ff.length(valueFd);
+                    final long vMinLength = BitmapIndexUtils.getMinValueFileLength(
+                            this.valueMemSize,
+                            keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1
+                    );
+                    if (vMinLength > vActual) {
                         throw CairoException.critical(0)
-                                .put("bitmap index value file too short [expected=").put(this.valueMemSize)
+                                .put("bitmap index value file too short [valueMemSize=").put(this.valueMemSize)
+                                .put(", minLength=").put(vMinLength)
                                 .put(", actual=").put(vActual).put(", fd=").put(valueFd).put(']');
+                    }
+                    if (this.valueMemSize > vActual) {
+                        LOG.info().$("extending bitmap index value file to its published size [fd=").$(valueFd)
+                                .$(", length=").$(vActual)
+                                .$(", valueMemSize=").$(this.valueMemSize)
+                                .I$();
                     }
                 }
                 vFdUnassigned = false;
@@ -352,12 +363,23 @@ public class BitmapIndexWriter implements IndexWriter {
 
             this.valueMemSize = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
             if (this.valueMemSize > 0) {
-                LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn);
-                long vActual = ff.length(vName);
-                if (this.valueMemSize > vActual) {
+                final LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn);
+                final long vActual = ff.length(vName);
+                final long vMinLength = BitmapIndexUtils.getMinValueFileLength(
+                        this.valueMemSize,
+                        keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1
+                );
+                if (vMinLength > vActual) {
                     throw CairoException.critical(0)
-                            .put("bitmap index value file too short [expected=").put(this.valueMemSize)
+                            .put("bitmap index value file too short [valueMemSize=").put(this.valueMemSize)
+                            .put(", minLength=").put(vMinLength)
                             .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
+                }
+                if (this.valueMemSize > vActual) {
+                    LOG.info().$("extending bitmap index value file to its published size [path=").$(vName)
+                            .$(", length=").$(vActual)
+                            .$(", valueMemSize=").$(this.valueMemSize)
+                            .I$();
                 }
             }
             valueMem.of(
@@ -451,7 +473,12 @@ public class BitmapIndexWriter implements IndexWriter {
                 }
             }
         }
-        valueMemSize = maxValueBlockOffset + blockCapacity;
+        final long newValueMemSize = maxValueBlockOffset + blockCapacity;
+        // Grow the value file to the size before publishing it, as allocateValueBlockAndStore() does: readers and
+        // the next writer open take the published size as covered by the file. With no keys left this publishes
+        // one block that nothing has written yet, past the file a new writer maps when the block is large.
+        valueMem.jumpTo(newValueMemSize);
+        valueMemSize = newValueMemSize;
         updateValueMemSize();
         setMaxValue(maxValue);
     }
@@ -564,11 +591,14 @@ public class BitmapIndexWriter implements IndexWriter {
         }
         long newValueBlockOffset = valueMemSize;
 
+        // Grow the value file to the end of the block, from the offset the block is placed at, before writing to
+        // it or publishing it: a failure to grow then leaves the index as it was, and the published size is always
+        // covered by the file. Growing relative to the append cursor instead left the file up to a block short
+        // whenever the cursor lagged the size, as after rollbackValues() on an index with no keys.
+        valueMem.jumpTo(newValueBlockOffset + blockCapacity);
+
         // store our value
         valueMem.putLong(newValueBlockOffset, value);
-
-        // reserve memory for value block
-        valueMem.skip(blockCapacity);
 
         // make sure we change value memory size after jump was successful
         valueMemSize += blockCapacity;

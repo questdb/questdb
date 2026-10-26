@@ -137,8 +137,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp
     ) {
-        // Refreshing the file this reader has open: the writer extends .v before it publishes a larger size, so
-        // only a first open can meet a torn file, as in reloadConditionally().
+        // Refreshing the file this reader has open: the writer grows .v to cover a size before it publishes it
+        // (BitmapIndexWriter.allocateValueBlockAndStore() and rollbackValues(), the two places that publish a
+        // larger size), so only a first open can meet a torn file, as in reloadConditionally().
         final boolean isRefresh = isOpen() && columnNameTxn == this.columnTxn && partitionTxn == this.partitionTxn;
         this.columnTop = columnTop;
         this.columnTxn = columnNameTxn;
@@ -170,10 +171,12 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
 
             if (valueMemSize > 0 && !isRefresh) {
                 LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
-                long vActual = ff.length(vName);
-                if (valueMemSize > vActual) {
+                final long vActual = ff.length(vName);
+                final long vMinLength = BitmapIndexUtils.getMinValueFileLength(valueMemSize, blockValueCountMod);
+                if (vMinLength > vActual) {
                     throw CairoException.critical(0)
-                            .put("bitmap index value file too short [expected=").put(valueMemSize)
+                            .put("bitmap index value file too short [valueMemSize=").put(valueMemSize)
+                            .put(", minLength=").put(vMinLength)
                             .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
                 }
             }

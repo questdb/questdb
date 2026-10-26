@@ -84,6 +84,31 @@ public final class BitmapIndexUtils {
         return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
     }
 
+    /**
+     * The shortest value file that holds every value an index can have written when its key file publishes
+     * {@code valueMemSize}. A shorter file lost written values and must not be opened: mapping it would SIGBUS
+     * on the first read past its end.
+     * <p>
+     * The answer is not {@code valueMemSize} itself. The writer places a new block at the published size, writes
+     * its first cell and then publishes the size past the block. Builds that grew the value file only up to the
+     * append cursor, which could lag the published size by a block after a rollback of an index with no keys,
+     * could stop there (a kill, or a close that does not truncate) with the file ending inside that last block,
+     * past its first cell. Every cell after the first is written only later, through a write that extends the
+     * file first, and readers read only cells below each key's count, so such a file is complete. Opening it
+     * zero-extends it in the writer and maps it in the reader, as builds before this check did.
+     *
+     * @param valueMemSize       value file size published in the key file header
+     * @param blockValueCountMod values per block minus one, from the key file header
+     * @return the minimum value file length; {@code valueMemSize} when the header does not describe a whole block
+     */
+    public static long getMinValueFileLength(long valueMemSize, int blockValueCountMod) {
+        if (blockValueCountMod < 1) {
+            return valueMemSize;
+        }
+        final long blockCapacity = (blockValueCountMod + 1L) * Long.BYTES + VALUE_BLOCK_FILE_RESERVED;
+        return valueMemSize < blockCapacity ? valueMemSize : valueMemSize - blockCapacity + Long.BYTES;
+    }
+
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".k");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {

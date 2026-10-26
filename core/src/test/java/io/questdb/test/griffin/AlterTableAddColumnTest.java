@@ -24,12 +24,16 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -791,6 +795,96 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testAddSymbolIndexToNonEmptyPartitionFreshReaders() throws Exception {
+        // The first commit after adding an indexed symbol column to a partition that has rows rolls the empty index
+        // back to the column top. A 4 KiB value page puts a page boundary inside the index's early blocks, so a
+        // reader opened after each commit, and on a WAL table the apply job's index writer reopen, meet any value
+        // size the writer published before the value file covered it.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CommitMode.NOSYNC, configuration.getCommitMode());
+            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
+            execute("create table y (ts timestamp, v long) timestamp(ts) partition by day" + (isWal ? " wal" : " bypass wal"));
+            execute("insert into y select '2024-01-01'::timestamp + x, x from long_sequence(10)");
+            drainWalQueue();
+            execute("alter table y add column s symbol index");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("y");
+            final long dayStart = MicrosTimestampDriver.floor("2024-01-01");
+            for (int i = 0; i < 40; i++) {
+                execute("insert into y values (" + (dayStart + 1_000 + i) + "::timestamp, " + i + ", 'c" + i + "')");
+                drainWalQueue();
+                if (isWal) {
+                    Assert.assertFalse("table suspended after insert " + i, engine.getTableSequencerAPI().isSuspended(tableToken));
+                }
+                engine.releaseAllReaders();
+                assertQuery("select count() from y where s = 'c" + i + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n1\n");
+            }
+            engine.releaseAllReaders();
+            assertQuery("select count(), count_distinct(s) from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tcount_distinct\n50\t40\n");
+        });
+    }
+
+    @Test
+    public void testAddSymbolIndexToNonEmptyPartitionRollback() throws Exception {
+        // A rollback closes the active partition's index without truncating it and reopens it. Right after the first
+        // commit into a partition with rows, at a 4 KiB value page, the index's value size must already be covered
+        // by its value file, or the reopen fails, the writer is distressed and the partition cannot be opened again.
+        Assume.assumeFalse(isWal);
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 4096);
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CommitMode.NOSYNC, configuration.getCommitMode());
+            Assert.assertEquals(4096, configuration.getDataIndexValueAppendPageSize());
+            execute("create table y (ts timestamp, v long) timestamp(ts) partition by day bypass wal");
+            execute("insert into y select '2024-01-01'::timestamp + x, x from long_sequence(10)");
+            execute("alter table y add column s symbol index");
+            final long ts = MicrosTimestampDriver.floor("2024-01-01T00:00:01");
+            try (TableWriter writer = getWriter("y")) {
+                TableWriter.Row row = writer.newRow(ts);
+                row.putLong(1, 1);
+                row.putSym(2, "c0");
+                row.append();
+                writer.commit();
+
+                row = writer.newRow(ts + 1);
+                row.putLong(1, 2);
+                row.putSym(2, "c1");
+                row.append();
+                writer.rollback();
+
+                row = writer.newRow(ts + 2);
+                row.putLong(1, 3);
+                row.putSym(2, "c0");
+                row.append();
+                writer.commit();
+            }
+            engine.releaseAllReaders();
+            assertQuery("select count() from y where s = 'c0'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            execute("insert into y values ('2024-01-01T00:00:02', 4, 'c0')");
+            engine.releaseAllReaders();
+            assertQuery("select count() from y where s = 'c0'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+        });
     }
 
     @Test
