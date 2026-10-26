@@ -42,7 +42,6 @@ import org.jetbrains.annotations.TestOnly;
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
-    private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final FiberWalWaitQueue fiberWaiters = new FiberWalWaitQueue();
@@ -172,6 +171,8 @@ public class SeqTxnTracker {
     // -1 suspended
     // 0 unknown
     // 1 not suspended
+    // Written only under this tracker's monitor (initTxns() and setSuspendedState()), where notifyOnDrop() also
+    // reads it, so the suspended_tables gauge counts exactly the trackers at -1 that are not dropped.
     private volatile int suspendedState = 0;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long waiterRegistrationCount;
@@ -341,8 +342,10 @@ public class SeqTxnTracker {
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
-        if (Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1) && isSuspended) {
-            metrics.tableWriterMetrics().incSuspendedTables();
+        synchronized (this) {
+            if (suspendedState == 0) {
+                setSuspendedState(isSuspended ? -1 : 1);
+            }
         }
         // seqTxn has to be initialized before writerTxn since isInitialised() method checks writerTxn
         long stxn = seqTxn;
@@ -429,6 +432,10 @@ public class SeqTxnTracker {
                 return;
             }
             dropped = true;
+            // A dropped table is no longer one of the suspended tables; later transitions do not count it.
+            if (suspendedState < 0) {
+                metrics.tableWriterMetrics().decSuspendedTables();
+            }
         }
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
@@ -496,9 +503,9 @@ public class SeqTxnTracker {
 
         // should be the last one to be set
         // to make sure error details are available for read when the table is suspended
-        this.suspendedState = -1;
-
-        metrics.tableWriterMetrics().incSuspendedTables();
+        synchronized (this) {
+            setSuspendedState(-1);
+        }
         fireWaiters();
     }
 
@@ -861,12 +868,12 @@ public class SeqTxnTracker {
     public void setUnsuspended() {
         // should be the first one to be set
         // no error details should be read when table is not suspended
-        this.suspendedState = 1;
+        synchronized (this) {
+            setSuspendedState(1);
+        }
 
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
-
-        metrics.tableWriterMetrics().decSuspendedTables();
     }
 
     /**
@@ -888,11 +895,11 @@ public class SeqTxnTracker {
             this.dirtyWriterTxn = dirtyWriterTxn;
             // Progress made means table is not suspended
             if (writerTxn > prevWriterTxn) {
-                suspendedState = 1;
+                setSuspendedState(1);
                 metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
                 progressMade = true;
             } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
-                suspendedState = 1;
+                setSuspendedState(1);
             }
         }
         if (progressMade) {
@@ -903,5 +910,20 @@ public class SeqTxnTracker {
 
     private void fireWaiters() {
         fiberWaiters.fire(writerTxn, isSuspended() || dropped);
+    }
+
+    // Callers hold this tracker's monitor. Counts a change into or out of the suspended state once, and a
+    // dropped tracker not at all: notifyOnDrop() has already taken it out of the gauge.
+    private void setSuspendedState(int newState) {
+        final int prevState = suspendedState;
+        suspendedState = newState;
+        if (dropped || prevState == newState) {
+            return;
+        }
+        if (newState < 0) {
+            metrics.tableWriterMetrics().incSuspendedTables();
+        } else if (prevState < 0) {
+            metrics.tableWriterMetrics().decSuspendedTables();
+        }
     }
 }
