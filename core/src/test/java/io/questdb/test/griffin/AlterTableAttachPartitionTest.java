@@ -351,6 +351,21 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachForeignMetadataReportsPartitionPosition() throws Exception {
+        // The metadata check throws from inside the attach; the error points at the partition literal all the same
+        assertMemoryLeak(() -> {
+            final java.nio.file.Path tableDir = detachToAttachable();
+            execute("CREATE TABLE other (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            java.nio.file.Files.copy(
+                    java.nio.file.Path.of(configuration.getDbRoot(), engine.verifyTableName("other").getDirName(), TableUtils.META_FILE_NAME),
+                    tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix()).resolve(TableUtils.META_FILE_NAME),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+            assertAttachFailsAtPartitionPosition("Detached partition metadata [table_id] is not compatible");
+        });
+    }
+
+    @Test
     public void testAttachMissingPartition() throws Exception {
         assertMemoryLeak(() -> {
                     TableModel dst = new TableModel(configuration, "dst9", PartitionBy.DAY);
@@ -390,6 +405,20 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     }
                 }
         );
+    }
+
+    @Test
+    public void testAttachOverLeftoverDirReportsPartitionPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            final java.nio.file.Path tableDir = detachToAttachable();
+            final long txn;
+            try (TableWriter writer = getWriter("tab")) {
+                txn = writer.getTxn();
+            }
+            // The attach's destination, as an earlier failed attempt of the same attach leaves it
+            java.nio.file.Files.createDirectories(tableDir.resolve("2024-01-01." + txn));
+            assertAttachFailsAtPartitionPosition(AttachDetachStatus.ATTACH_ERR_DIR_EXISTS.name());
+        });
     }
 
     @Test
@@ -1347,6 +1376,17 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
      * txn. A copy that failed part-way used to leave that directory behind. The retry, at the same txn, failed on it
      * and left the writer's path inside it, so the next new partition was created in it.
      */
+    private void assertAttachFailsAtPartitionPosition(String expectedMessage) throws Exception {
+        final String sql = "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'";
+        try {
+            execute(sql);
+            Assert.fail("ATTACH must fail");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            Assert.assertEquals(sql.indexOf('\''), e.getPosition());
+        }
+    }
+
     private void assertAttachRetryAfterFailedCopy(boolean isLeftoverStuck) throws Exception {
         setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, "true");
         final AtomicInteger copiesBeforeFailure = new AtomicInteger(Integer.MAX_VALUE);
@@ -1612,6 +1652,19 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 dstPartitionName,
                 configuration.getAttachPartitionSuffix()
         );
+    }
+
+    // Table tab with its 2024-01-01 partition detached and renamed to .attachable; returns the table directory.
+    private java.nio.file.Path detachToAttachable() throws Exception {
+        execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+        execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+        final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot(), engine.verifyTableName("tab").getDirName());
+        java.nio.file.Files.move(
+                tableDir.resolve("2024-01-01" + TableUtils.DETACHED_DIR_MARKER),
+                tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix())
+        );
+        return tableDir;
     }
 
     private String getPartitionDirName(String tableName, String partitionName) throws NumericException {

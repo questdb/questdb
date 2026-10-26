@@ -497,10 +497,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
                 final long partitionTimestamp = extraInfo.getQuick(i * 2);
-                AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
+                final int partitionPosition = (int) extraInfo.getQuick(i * 2 + 1);
+                final AttachDetachStatus attachDetachStatus;
+                try {
+                    attachDetachStatus = svc.attachPartition(partitionTimestamp);
+                } catch (CairoException e) {
+                    // The writer does not know the SQL text; an error it throws points at the partition literal too
+                    throw e.position(partitionPosition);
+                }
                 if (AttachDetachStatus.OK != attachDetachStatus) {
                     throw attachDetachStatus.getException(
-                            (int) extraInfo.getQuick(i * 2 + 1),
+                            partitionPosition,
                             attachDetachStatus,
                             tableToken,
                             svc.getTimestampType(),
@@ -572,10 +579,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
                 final long partitionTimestamp = extraInfo.getQuick(i * 2);
-                AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);
+                final int partitionPosition = (int) extraInfo.getQuick(i * 2 + 1);
+                final AttachDetachStatus attachDetachStatus;
+                try {
+                    attachDetachStatus = svc.detachPartition(partitionTimestamp);
+                } catch (CairoException e) {
+                    // The writer does not know the SQL text; an error it throws points at the partition literal too
+                    throw e.position(partitionPosition);
+                }
                 if (AttachDetachStatus.OK != attachDetachStatus) {
                     throw attachDetachStatus.getException(
-                            (int) extraInfo.getQuick(i * 2 + 1),
+                            partitionPosition,
                             attachDetachStatus,
                             tableToken,
                             svc.getTimestampType(),
