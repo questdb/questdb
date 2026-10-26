@@ -56,11 +56,40 @@ public class QuestDBPoolCommitWindowE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCloseCommitsTheOpenWindow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startWithEnvVariables()) {
+                createTable(server, "c");
+                // the row bound commits at the 1000th and the 2000th release; the age
+                // bound never fires, so the last 500 releases stay in an open window
+                // until db.close() asks the I/O thread for the commit-only frame
+                ingestOneRowPerLease("c", "commit_rows=1000;commit_interval_ms=60000;", 2500);
+                awaitApplied(server, "c");
+                server.assertSql(
+                        "SELECT count(), sum(v), min(v), max(v) FROM c",
+                        """
+                                count\tsum\tmin\tmax
+                                2500\t3123750\t0\t2499
+                                """
+                );
+                // the third transaction can only come from the synthesised commit
+                server.assertSql(
+                        "SELECT sequencerTxn FROM wal_tables() WHERE name = 'c'",
+                        """
+                                sequencerTxn
+                                3
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDefaultWindowKeepsContents() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain server = startWithEnvVariables()) {
                 createTable(server, "d");
-                ingestOneRowPerLease("d", "");
+                ingestOneRowPerLease("d", "", LEASES);
                 awaitApplied(server, "d");
                 server.assertSql("SELECT count(), sum(v), min(v), max(v) FROM d", EXPECTED_CONTENTS);
                 // the derived default window (1000 rows / 100 ms) commits fewer times than once per release
@@ -81,8 +110,8 @@ public class QuestDBPoolCommitWindowE2ETest extends AbstractBootstrapTest {
             try (final TestServerMain server = startWithEnvVariables()) {
                 createTable(server, "nw");
                 createTable(server, "w");
-                ingestOneRowPerLease("nw", "commit_rows=0;commit_interval_ms=0;");
-                ingestOneRowPerLease("w", "commit_rows=1000;commit_interval_ms=60000;");
+                ingestOneRowPerLease("nw", "commit_rows=0;commit_interval_ms=0;", LEASES);
+                ingestOneRowPerLease("w", "commit_rows=1000;commit_interval_ms=60000;", LEASES);
                 awaitApplied(server, "nw");
                 awaitApplied(server, "w");
                 server.assertSql("SELECT count(), sum(v), min(v), max(v) FROM nw", EXPECTED_CONTENTS);
@@ -117,9 +146,9 @@ public class QuestDBPoolCommitWindowE2ETest extends AbstractBootstrapTest {
         server.awaitTable(table);
     }
 
-    private static void ingestOneRowPerLease(String table, String window) {
+    private static void ingestOneRowPerLease(String table, String window, int leases) {
         try (QuestDB db = QuestDB.connect("ws::addr=127.0.0.1:" + HTTP_PORT + ";" + POOL + window)) {
-            for (int i = 0; i < LEASES; i++) {
+            for (int i = 0; i < leases; i++) {
                 try (Sender s = db.borrowSender()) {
                     s.table(table).longColumn("v", i).atNow();
                 }
