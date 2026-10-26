@@ -76,9 +76,14 @@ QuestDB Enterprise defaults to `nosync` when replication is configured: a replic
 loss of a node. An explicit `cairo.commit.mode` always wins.
 
 Existing tables need no migration. After the restart, each WAL table enrols when a writer first opens it: it takes
-its first save point, which flushes every partition of the table once (one `syncfs` on Linux, a flush per file
-elsewhere). The writer takes it before it applies anything, so no table is ever applied lazily without a save point
-behind it.
+its first save point, which flushes every partition of the table (one `syncfs` on Linux, a flush per file on macOS
+and Windows). The writer takes it before it applies anything, so no table is ever applied lazily without a save
+point behind it.
+
+On macOS and Windows a new writer cannot tell what an earlier writer of the table left unflushed, so the first save
+point of every writer flushes every file of every partition and of the sequencer again: once after each start, and
+again whenever the table's writer was closed after `cairo.inactive.writer.ttl` (10 minutes by default) without use.
+The cost grows with the number of partitions and columns. On Linux the one `syncfs` covers it.
 
 ## 4. The group-commit window
 

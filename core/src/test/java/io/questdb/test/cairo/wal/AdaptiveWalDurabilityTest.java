@@ -1648,6 +1648,63 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The cost the guides document for macOS and Windows: a writer the pool closed after its idle time cannot vouch
+     * for what the previous writer left in place, so the first save point of the new writer flushes every partition
+     * and the sequencer again, even though the last save point names the live state.
+     */
+    @Test
+    public void testWriterReopenedAfterIdleReleaseWalksEveryPartitionAgain() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final EpochOpenTrackingFacade ff = new EpochOpenTrackingFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                commitRow(walWriter, Micros.DAY_MICROS, 2L);
+                commitRow(walWriter, 2 * Micros.DAY_MICROS, 3L);
+            }
+            drainWalQueue();
+
+            final TableWriter firstWriter;
+            try (TableWriter tableWriter = getWriter(tt)) {
+                firstWriter = tableWriter;
+                Assert.assertEquals(CommitMode.ADAPTIVE, tableWriter.getEffectiveCommitMode());
+                tableWriter.advanceDurableEpoch(1L);
+                Assert.assertEquals("the save point must name the live state", tableWriter.getTxn(), tracker.getPinnedEpochTxn());
+            }
+
+            // The tests run with a negative writer TTL, so the idle release closes the pooled writer at once.
+            engine.releaseInactive();
+
+            try (TableWriter tableWriter = getWriter(tt)) {
+                Assert.assertNotSame("the idle release must close the writer", firstWriter, tableWriter);
+                Assert.assertEquals("nothing was written since the save point", tableWriter.getTxn(), tracker.getPinnedEpochTxn());
+
+                ff.reset();
+                tableWriter.advanceDurableEpoch(2L);
+                Assert.assertEquals(
+                        "the first save point of the new writer must walk every partition",
+                        java.util.Set.of("1970-01-01", "1970-01-02", "1970-01-03"),
+                        ff.openedPartitionDirs()
+                );
+                Assert.assertTrue("the first save point of the new writer must walk the sequencer", ff.isSequencerWalked());
+
+                // The walk is once per writer: the next save point, with nothing written, walks neither.
+                ff.reset();
+                tableWriter.advanceDurableEpoch(3L);
+                Assert.assertEquals(java.util.Set.of(), ff.openedPartitionDirs());
+                Assert.assertFalse("a later save point must not walk the sequencer", ff.isSequencerWalked());
+            }
+        });
+    }
+
     private int readMarkerGeneration(TableToken token) {
         return currentSavePoint(token).generation;
     }
@@ -2449,6 +2506,20 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     static class EpochOpenTrackingFacade extends WalFdatasyncFacade {
         private final java.util.Set<String> openedPartitionDirs = java.util.concurrent.ConcurrentHashMap.newKeySet();
         private boolean failManifestOpen;
+        private volatile boolean isSequencerWalked;
+
+        @Override
+        public long findFirst(LPSZ path) {
+            // Only the sequencer flush lists the txn_seq directory itself.
+            if (Utf8s.endsWithAscii(path, WalUtils.SEQ_DIR)) {
+                isSequencerWalked = true;
+            }
+            return super.findFirst(path);
+        }
+
+        public boolean isSequencerWalked() {
+            return isSequencerWalked;
+        }
 
         @Override
         public boolean isSyncfsFileSystemWide() {
@@ -2491,6 +2562,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
         public void reset() {
             openedPartitionDirs.clear();
+            isSequencerWalked = false;
         }
     }
 

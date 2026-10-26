@@ -20018,7 +20018,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishPendingPostingSealPurges(txWriter.getTxn());
     }
 
-    // Open, rollback/reload and disabled intervals require a full sweep before incremental coverage is trusted.
+    // True while the write sets cannot vouch for every change since the last save point, so the next save point
+    // flushes every partition (and, where syncfs is not filesystem-wide, the sequencer). A new writer starts true
+    // even when the save point names the live txn: a previous writer can leave named files changed in place
+    // without moving the txn (a rolled-back or distressed commit, a crash before the save point), and so can
+    // REINDEX. rollback() and setDirtyPartitionTracking(false) set it again; only advanceDurableEpoch() clears it.
     private boolean epochWriteSetIncomplete = true;
 
     private void handleBestEffortDurableEpochFailure(Throwable failure, CharSequence operation) {

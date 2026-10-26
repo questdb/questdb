@@ -228,9 +228,12 @@ the save point's partition pin keeps until then.
      every dirty column file, wait for it, then one `syncfs`, which also makes the sequencer log, the symbol maps
      and every directory entry durable;
    - Linux otherwise: a flush per column file and symbol map, then one `syncfs`;
-   - macOS and Windows: a flush per file of every partition written since the last save point (every partition at
-     enrolment), an `fsync` of the table directory, one device barrier, and an `fdatasync` of the sequencer log, so
-     the save point never names a transaction the WAL has not made durable;
+   - macOS and Windows: a flush per file of every partition written since the last save point, an `fsync` of the
+     table directory, one device barrier, and an `fdatasync` of the sequencer log, so the save point never names a
+     transaction the WAL has not made durable. The first save point of each writer instance (at enrolment, after
+     each start and after each idle release of the writer), and the first one after a rollback or an interval
+     without write-set tracking, flushes every partition instead of those written, and every sequencer file as
+     well: such a writer cannot vouch for what was changed in place before it (`TableWriter.epochWriteSetIncomplete`);
    - then `fsync` the live `_cv`, then the live `_txn`.
 4. Release the pin of the generation about to be overwritten, which stops being a fallback once its file is
    truncated, then pin the partition versions the live `_txn` names in the transaction scoreboard, in that same
@@ -858,7 +861,8 @@ field and body checksum. The save point removal deletes the first four when it f
 2. `syncfs` flushes the whole file system, so a save point's cost depends on unrelated dirty data on the same file
    system.
 3. On macOS and Windows a save point flushes every file written since the last one, then the table directory, then
-   the device: slower than `syncfs`, and the enrolment flushes every partition.
+   the device: slower than `syncfs`, and the first save point of every writer (at enrolment, after each start and
+   after each idle release of the writer) flushes every partition and the sequencer.
 4. A renamed directory is durable only once its parent is synced. REBASE WAL syncs the database root between the
    rename of its staging clone and the registry swap, and the table registry syncs the root between its compaction
    rename and the unlink of the old file.
