@@ -10512,9 +10512,6 @@ public class MatViewTest extends AbstractCairoTest {
     private void assertRefreshAcrossSplitParentAppend(String baseTableDdl, boolean isMergeAppend) throws Exception {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(isMergeAppend));
-        // Merge-append writes the late rows into the parent's own geometry instead of splitting it, so the split
-        // this test's setup asserts never appears. Pin the production default to cover the plain split path.
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute(baseTableDdl);
             execute(
@@ -10544,15 +10541,21 @@ public class MatViewTest extends AbstractCairoTest {
                         // shorter than the one it would overwrite
                         execute("INSERT INTO base VALUES ('X', '2020-02-03T01:19')");
                         drainWalQueue();
-                        if (!isMergeAppend) {
-                            try (TableReader reader = getReader("base")) {
+                        try (TableReader reader = getReader("base")) {
+                            if (isMergeAppend) {
+                                // merge-append writes both rows at the tail of the parent's own files, so the
+                                // partition stays single and composite; the pinned reader keeps its geometry record
+                                Assert.assertEquals(1, reader.getPartitionCount());
+                                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+                                Assert.assertEquals(102, reader.getPartitionRowCountFromMetadata(0));
+                            } else {
                                 // the pinned refresh reader forces the parent's last row and the new
                                 // row into a second split instead of an in-place append or a full copy
                                 Assert.assertEquals(3, reader.getPartitionCount());
                                 Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
                                 Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));
-                                Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
                             }
+                            Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
                         }
                     } catch (Throwable th) {
                         hookFailure.set(th);
