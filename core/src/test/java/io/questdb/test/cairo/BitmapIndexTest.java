@@ -1394,9 +1394,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
                 assertTrue("Value file should grow in size", newMemSize > initialMemSize);
 
-                // The reader should stop at the last known valueMem size boundary now.
+                // The reader should stop at the last known valueMem size boundary now. It maps
+                // 5 blocks of 128 values, and the writer filled all 640 cells before extending
+                // the file, so the reader returns every one of them.
                 assertForwardCursorLimit(reader, 0, N, tmp, 528, 0);
-                assertForwardCursorLimit(reader, 0, N + newKeysN, tmp, 639, 0);
+                assertForwardCursorLimit(reader, 0, N + newKeysN, tmp, 640, 0);
                 Assert.assertFalse(reader.getCursor(0, N + newKeysN, Long.MAX_VALUE).hasNext());
                 Assert.assertFalse(reader.getCursor(0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
             }

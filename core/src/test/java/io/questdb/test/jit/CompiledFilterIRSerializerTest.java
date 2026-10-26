@@ -1146,6 +1146,30 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testDateInLiteral() throws Exception {
+        // InTimestampTimestampFunctionFactory compares a DATE key in microseconds: d matches when
+        // d * 1000 lies in the interval.
+        serialize("adate in '2020-01-01'");
+        assertIR("(i64 1577836800000L)(i64 adate)(>=)(i64 1577923199999L)(i64 adate)(<=)(&&)(ret)");
+        serialize("adate in '2020-01-01T23:59:58;4s;-1d;2'");
+        assertIR("(i64 1577836798000L)(i64 adate)(>=)(i64 1577836801999L)(i64 adate)(<=)(&&)" +
+                "(i64 1577923198000L)(i64 adate)(>=)(i64 1577923201999L)(i64 adate)(<=)(&&)(||)(ret)");
+        serialize("adate in '2020-01-01T00:00:00.001'");
+        assertIR("(i64 1577836800001L)(i64 adate)(=)(ret)");
+        // An interval within one millisecond holds no DATE value.
+        serialize("adate in '2020-01-01T00:00:00.000500'");
+        assertIR("(i64 1577836800001L)(i64 adate)(>=)(i64 1577836800000L)(i64 adate)(<=)(&&)(ret)");
+        // Microsecond bounds round inward.
+        serialize("adate in '2020-01-01T00:00:00.000500;2T'");
+        assertIR("(i64 1577836800001L)(i64 adate)(>=)(i64 1577836800002L)(i64 adate)(<=)(&&)(ret)");
+        serialize("adate in null");
+        assertIR("(i64 -9223372036854775808L)(i64 adate)(=)(ret)");
+        // Before 1970, flooring and ceiling differ from truncation.
+        serialize("adate in '1969-12-31T23:59:59.999500;1T'");
+        assertIR("(i64 0L)(i64 adate)(=)(ret)");
+    }
+
+    @Test
     public void testDateLiteral() throws Exception {
         serialize("adate = '2023-02-11T11:12:22'");
         assertIR("(i64 1676113942000L)(i64 adate)(=)(ret)");
@@ -1241,10 +1265,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
         serialize("anint NOT IN (1, 2, 3)");
         assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
+        // A lone string element on a timestamp key is an interval, see testInSingleStringIsInterval.
         serialize("atimestamp IN ('2020-01-01')");
-        assertIR("(i64 1577836800000000L)(i64 atimestamp)(=)(ret)");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
         serialize("atimestampns IN ('2020-01-01')");
-        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(=)(ret)");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923199999999999L)(i64 atimestampns)(<=)(&&)(ret)");
+        serialize("atimestamp IN ('2020-01-01', '2020-01-02')");
+        assertIR("(i64 1577923200000000L)(i64 atimestamp)(=)(i64 1577836800000000L)(i64 atimestamp)(=)(||)(ret)");
     }
 
     @Test
@@ -1529,6 +1556,60 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         );
     }
 
+    @Test
+    public void testInSingleStringIntervalCountThreshold() throws Exception {
+        // The IN list threshold (10 by default) caps the interval count of the parenthesised form:
+        // past the threshold, the range checks cost more than the Java filter's binary search.
+        serialize("atimestamp IN ('2020-01-01T10:00;1h;1d;10')");
+        try {
+            serialize("atimestamp IN ('2020-01-01T10:00;1h;1d;11')");
+            Assert.fail("JIT must decline 11 intervals");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "exceeded JIT IN list threshold [threshold=10, intervals=11]");
+        }
+        try {
+            serialize("adate NOT IN ('[2020-01-01,2020-01-03,2020-01-05,2020-01-07,2020-01-09,2020-01-11,2020-01-13,2020-01-15,2020-01-17,2020-01-19,2020-01-21]')");
+            Assert.fail("JIT must decline 11 intervals");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "exceeded JIT IN list threshold [threshold=10, intervals=11]");
+        }
+    }
+
+    @Test
+    public void testInSingleStringIsInterval() throws Exception {
+        // InTimestampTimestampFunctionFactory runs an interval search when the only element is a
+        // string and the key is a DATE, TIMESTAMP or TIMESTAMP_NS, as for the unparenthesised form.
+        serialize("atimestamp IN ('2020-01')");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1580515199999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("adate IN ('2020-01-01')");
+        assertIR("(i64 1577836800000L)(i64 adate)(>=)(i64 1577923199999L)(i64 adate)(<=)(&&)(ret)");
+        serialize("atimestamp NOT IN ('2020-01-01')");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(!)(ret)");
+        serialize("atimestamp IN ('2020-01-01T23:59:58;4s;-1d;2')");
+        assertIR("(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836801999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923201999999L)(i64 atimestamp)(<=)(&&)(||)(ret)");
+        // A point stays a single comparison.
+        serialize("atimestamp IN ('2020-01-01T00:00:00.000001Z')");
+        assertIR("(i64 1577836800000001L)(i64 atimestamp)(=)(ret)");
+        // NULL is a point, not a string.
+        serialize("atimestamp IN (NULL)");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(=)(ret)");
+        // A string element on a key of another type keeps its own IN semantics.
+        serialize("asymbol IN ('abc')");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+
+        bindVariableService.clear();
+        bindVariableService.setTimestamp("ts", 0);
+        serialize(":ts IN ('2020-01-01')");
+        assertIR("(i64 1577836800000000L)(i64 :0)(>=)(i64 1577923199999999L)(i64 :0)(<=)(&&)(ret)");
+
+        // In a short-circuit AND chain, the chain emits the interval's exit.
+        serialize("anint = 1 and atimestamp IN ('2020-01-01') and auuid != '22222222-2222-2222-2222-222222222222'", true, false, true);
+        assertIR("(i32 1L)(i32 anint)(=)(&&_sc)" +
+                "(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(&&_sc)" +
+                "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)");
+    }
+
     @Test(expected = SqlException.class)
     public void testInSubSelect() throws Exception {
         serialize("asymbol in (select asymbol from tab limit 1)");
@@ -1662,7 +1743,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNanoTimestampInLiteralNull() throws Exception {
         serialize("atimestampns in null");
-        assertIR("(i64 -9223372036854775808L)(i64 atimestampns)(>=)(i64 -9223372036854775808L)(i64 atimestampns)(<=)(&&)(ret)");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestampns)(=)(ret)");
     }
 
     @Test
@@ -2223,7 +2304,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testTimestampInLiteralNull() throws Exception {
         serialize("atimestamp in null");
-        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(>=)(i64 -9223372036854775808L)(i64 atimestamp)(<=)(&&)(ret)");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(=)(ret)");
     }
 
     @Test
@@ -2705,6 +2786,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("anint = 0 or 2 > 1");
     }
 
+    @Test
+    public void testUnsupportedDateVariableInterval() throws Exception {
+        // The Java filter resolves a date variable each time the cursor opens. The IR would freeze
+        // the bounds at compile time, and a cached plan would go stale.
+        for (String filter : new String[]{
+                "atimestamp IN '$today'",
+                "atimestamp IN ('$today')",
+                "atimestampns IN '$now - 1h..$now'",
+                "adate IN ('[$yesterday, $tomorrow]')",
+                "along = 1 and atimestamp IN '$TODAY'"
+        }) {
+            try {
+                serialize(filter);
+                Assert.fail("JIT must decline: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "date variables are not supported by JIT");
+            }
+        }
+    }
+
     @Test(expected = SqlException.class)
     public void testUnsupportedFalseConstantInNumericContext() throws Exception {
         serialize("along = false");
@@ -3084,6 +3185,27 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testUnsupportedSymbolOrdering() throws Exception {
         assertOrderingComparisonRejected("asymbol", "SYMBOL");
+    }
+
+    @Test
+    public void testUnsupportedTimestampExpressionIntervalIn() throws Exception {
+        // The Java filter types the key expression and runs an interval search over it; the
+        // serializer has no type for an expression key.
+        for (String filter : new String[]{
+                "atimestamp + 1 IN ('2020-01-01')",
+                "-adate IN ('2020-01-01')",
+                "atimestampns * 2 NOT IN ('2020-01-01')"
+        }) {
+            try {
+                serialize(filter);
+                Assert.fail("JIT must decline: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "interval search over a timestamp expression is not supported by JIT");
+            }
+        }
+        // A list of points over a timestamp expression keeps its equality semantics.
+        serialize("atimestamp + 1 IN ('2020-01-01', '2020-01-02')");
+        assertIR("(i64 1577923200000000L)(i64 1L)(i64 atimestamp)(+)(=)(i64 1577836800000000L)(i64 1L)(i64 atimestamp)(+)(=)(||)(ret)");
     }
 
     @Test(expected = SqlException.class)

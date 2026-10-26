@@ -27,11 +27,14 @@ package io.questdb.test.cairo;
 import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.SymbolMapUtil;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.SymbolValueCountCollector;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -53,6 +56,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -475,6 +479,17 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterBySymbolWhileWalTableWriterHoldsUncommittedSymbols() throws Exception {
+        // WAL apply adds the symbols of a transaction to the table's symbol map before it commits.
+        assertFilterBySymbolWhileWriterHoldsUncommittedSymbols(true);
+    }
+
+    @Test
+    public void testFilterBySymbolWhileWriterHoldsUncommittedSymbols() throws Exception {
+        assertFilterBySymbolWhileWriterHoldsUncommittedSymbols(false);
+    }
+
+    @Test
     public void testKeyOfCachedKeyLeavesReaderCacheEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -545,6 +560,59 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, overlay.keyOf("missing", n));
                     Assert.assertEquals(SymbolTable.VALUE_IS_NULL, overlay.keyOf(null, 3));
                     Assert.assertEquals(0, reader.getCacheSize());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeyOfFindsVisibleSymbolsWhileWriterExtendsIndex() throws Exception {
+        // The reader maps the index value file when it opens. The symbols the writer adds after
+        // that start new value blocks past the mapping, while the bucket value counts, which the
+        // writer updates in place, already count them. A lookup of a bucket's newest visible symbol
+        // used to fail when that symbol filled the last mapped block of its bucket.
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                // 64 hash buckets for 1_000 symbols, so most buckets span several value blocks.
+                final int capacity = 128;
+                final int n = 1_000;
+                create(path, "x", capacity, false);
+                try (SymbolMapWriter writer = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR,
+                        -1
+                )) {
+                    for (int i = 0; i < n; i++) {
+                        Assert.assertEquals(i, writer.put("sym" + i));
+                    }
+
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, n)) {
+                        for (int i = 0; i < n; i++) {
+                            Assert.assertEquals("sym" + i, i, reader.keyOf("sym" + i));
+                        }
+
+                        for (int i = n; i < 2 * n; i++) {
+                            Assert.assertEquals(i, writer.put("sym" + i));
+                        }
+
+                        for (int i = 0; i < n; i++) {
+                            Assert.assertEquals("sym" + i, i, reader.keyOf("sym" + i));
+                        }
+                        // The reader's symbol count bounds the lookup, so it doesn't see the new symbols.
+                        for (int i = n; i < 2 * n; i++) {
+                            Assert.assertEquals("sym" + i, SymbolTable.VALUE_NOT_FOUND, reader.keyOf("sym" + i));
+                        }
+
+                        reader.updateSymbolCount(2 * n);
+                        for (int i = 0; i < 2 * n; i++) {
+                            Assert.assertEquals("sym" + i, i, reader.keyOf("sym" + i));
+                        }
+                    }
                 }
             }
         });
@@ -1044,6 +1112,31 @@ public class SymbolMapTest extends AbstractCairoTest {
                         Assert.assertEquals(i + 1, reader.getCacheSize());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderSnapshotFindsCommittedSymbolsAfterLaterCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL CAPACITY 128) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(insertAccounts(1, 40));
+            drainWalQueue();
+            try (TableReader reader = getReader("t")) {
+                final SymbolMapReader symbols = reader.getSymbolMapReader(1);
+                Assert.assertEquals(40, symbols.getSymbolCount());
+                for (int i = 1; i <= 40; i++) {
+                    Assert.assertEquals("acct-" + i, i - 1, symbols.keyOf("acct-" + i));
+                }
+
+                // A later commit adds symbols. The reader stays on its snapshot.
+                execute(insertAccounts(41, 200));
+                drainWalQueue();
+                Assert.assertEquals(40, symbols.getSymbolCount());
+                for (int i = 1; i <= 40; i++) {
+                    Assert.assertEquals("acct-" + i, i - 1, symbols.keyOf("acct-" + i));
+                }
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, symbols.keyOf("acct-41"));
             }
         });
     }
@@ -1845,6 +1938,40 @@ public class SymbolMapTest extends AbstractCairoTest {
         });
     }
 
+    private void assertFilterBySymbolWhileWriterHoldsUncommittedSymbols(boolean isWal) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL CAPACITY 128) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+            execute(insertAccounts(1, 40));
+            if (isWal) {
+                drainWalQueue();
+            }
+            // The first run leaves a reader in the pool. The leak check of assertQuery() would
+            // release that reader, so the queries below skip it; assertMemoryLeak() covers them.
+            assertQuery("SELECT s FROM t WHERE s = 'acct-20'").noLeakCheck().returns("s\nacct-20\n");
+            try (TableWriter writer = getWriter("t")) {
+                // The writer adds new symbols and does not commit them.
+                for (int i = 41; i <= 200; i++) {
+                    if (isWal) {
+                        // WAL apply adds a transaction's symbols to the symbol map ahead of the
+                        // commit, as this does. A WAL table's writer takes no rows directly.
+                        writer.getSymbolMapWriter(1).put("acct-" + i);
+                    } else {
+                        final TableWriter.Row row = writer.newRow(i * 1_000_000L);
+                        row.putSym(1, "acct-" + i);
+                        row.append();
+                    }
+                }
+                // The pooled reader serves these queries, at the transaction before the new symbols.
+                for (int i = 1; i <= 40; i++) {
+                    assertQuery("SELECT s FROM t WHERE s = 'acct-" + i + "'").noLeakCheck().returns("s\nacct-" + i + "\n");
+                }
+                assertQuery("SELECT s FROM t WHERE s = 'acct-41'").noLeakCheck().returns("s\n");
+                writer.rollback();
+            }
+            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n40\n");
+        });
+    }
+
     private void destroySymbolFilesOffsets(Path path, String name, int cleanCount, Rnd rnd) {
         int plen = path.size();
         try {
@@ -1911,6 +2038,18 @@ public class SymbolMapTest extends AbstractCairoTest {
                 symbols.size() >= 5
         );
         return symbols;
+    }
+
+    private static String insertAccounts(int from, int to) {
+        final StringSink sql = new StringSink();
+        sql.put("INSERT INTO t VALUES ");
+        for (int i = from; i <= to; i++) {
+            if (i > from) {
+                sql.put(", ");
+            }
+            sql.put('(').put(i * 1_000_000L).put("::TIMESTAMP, 'acct-").put(i).put("')");
+        }
+        return sql.toString();
     }
 
     /**

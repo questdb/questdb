@@ -106,7 +106,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
-                if (right != null && containsDateVariable(right)) {
+                if (right != null && DateExpressionEvaluator.containsDateVariable(right, 0, right.length())) {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
@@ -136,16 +136,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
-    }
-
-    private static boolean containsDateVariable(CharSequence seq) {
-        int lim = seq.length();
-        for (int i = 0; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isIntervalSearch(ObjList<Function> args) {

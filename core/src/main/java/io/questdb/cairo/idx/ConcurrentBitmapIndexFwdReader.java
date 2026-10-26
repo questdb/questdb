@@ -152,9 +152,11 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 if (cellIndex == blockValueCountMod && position < valueCount) {
                     // We are at edge of block right now, next value will be in next block.
                     if (!jumpToNextValueBlock()) {
-                        // We've reached the memory boundary which means that no values left.
+                        // The next block lies past this reader's mapping: a writer added it after
+                        // the reader mapped the value file, and valueCount, which the key file
+                        // holds, already counts it. The value just read sits in the mapped region
+                        // and passed the maxValue check, so hand it out and end the iteration.
                         valueCount = 0;
-                        return false;
                     }
                 }
 

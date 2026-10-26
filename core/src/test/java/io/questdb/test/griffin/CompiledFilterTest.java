@@ -211,6 +211,38 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableIntervalInFilterFollowsClock() throws Exception {
+        // The JIT used to resolve $today when it compiled the filter, so a cached plan kept the
+        // bounds of the day it was compiled on. The JIT now declines date variables, and the Java
+        // filter resolves them each time the cursor opens.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            final long day = 86_400_000_000L;
+            final long jan2 = 1_704_153_600_000_000L;
+            for (String filter : new String[]{
+                    "dt IN '$today'", "dt IN ('$today')",
+                    "tm IN '$today'", "tm IN ('$today')",
+                    "tn IN '$today'", "tn IN ('$today')"
+            }) {
+                setCurrentMicros(jan2 + 3_600_000_000L);
+                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE " + filter)) {
+                    Assert.assertFalse(filter, factory.usesCompiledFilter());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        println(factory, cursor);
+                    }
+                    TestUtils.assertEquals(filter, "k\n1\n2\n", sink);
+
+                    setCurrentMicros(jan2 + day + 3_600_000_000L);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        println(factory, cursor);
+                    }
+                    TestUtils.assertEquals(filter, "k\n3\n", sink);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDeferredSymbolConstants() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
@@ -1662,6 +1694,38 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleStringInMatchesWholeInterval() throws Exception {
+        // InTimestampTimestampFunctionFactory treats an IN whose only element is a string as an
+        // interval search on a DATE, TIMESTAMP or TIMESTAMP_NS key. The JIT used to compare the
+        // key with the start of the interval only.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02')", "k\n1\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'", "k\n1\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " NOT IN ('2024-01-02')", "k\n3\n4\n5\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01')", "k\n1\n2\n3\n5\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02') AND k > 1", "k\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02') OR k = 3", "k\n1\n2\n3\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T00:00:00.000000Z')", "k\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T00:00:00.000500')", "k\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T12:00;1m;1d;2')", "k\n1\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('[2024-01-02,2024-01-03]')", "k\n1\n2\n3\n", true);
+                // More intervals than the IN list threshold allows run on the Java filter.
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T12:00;1m;-1d;11')", "k\n1\n", false);
+                assertFilterWithAndWithoutJit(c + " IN (NULL)", "k\n4\n", true);
+                // Two or more elements are points.
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02', '2024-01-03')", "k\n2\n3\n", true);
+            }
+            assertFilterWithAndWithoutJit("tm IN ('2024-01-02T12') OR dt IN ('2024-01-03') OR tn IN ('2024-01-01')", "k\n1\n3\n5\n", true);
+            // The Java filter runs an interval search over a timestamp expression, which the JIT used
+            // to compile as an equality.
+            assertFilterWithAndWithoutJit("(tm + 1) IN ('2024-01-02')", "k\n1\n2\n5\n", false);
+            assertFilterWithAndWithoutJit("(tn + 1) IN ('2024-01-02')", "k\n1\n2\n5\n", false);
+        });
+    }
+
+    @Test
     public void testSymbolBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
@@ -1915,6 +1979,21 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
+    private void assertFilterWithAndWithoutJit(String filter, String expected, boolean isJitExpected) throws Exception {
+        final String query = "SELECT k FROM x WHERE " + filter;
+        try {
+            for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(mode);
+                assertQuery(query).noLeakCheck().returns(expected);
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertEquals(query + ", jit mode " + mode, isJitExpected && mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
+    }
+
     private void assertSymbolFilter(String filter, String expected) throws Exception {
         final String query = "SELECT v FROM x WHERE " + filter;
         execute("TRUNCATE TABLE x");
@@ -1928,6 +2007,18 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 (6, 6, 'x')
                 """).returns("v\n", expected);
         assertSqlRunWithJit(query);
+    }
+
+    private void createTemporalInTable() throws SqlException {
+        execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x VALUES
+                (1, '2024-01-02T12:00:00.000Z', '2024-01-02T12:00:00.000000Z', '2024-01-02T12:00:00.000000000Z', '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-02T00:00:00.000Z', '2024-01-02T00:00:00.000000Z', '2024-01-02T00:00:00.000000000Z', '2024-01-01T01:00:00.000000Z'),
+                (3, '2024-01-03T00:00:00.000Z', '2024-01-03T00:00:00.000000Z', '2024-01-03T00:00:00.000000000Z', '2024-01-01T02:00:00.000000Z'),
+                (4, NULL, NULL, NULL, '2024-01-01T03:00:00.000000Z'),
+                (5, '2024-01-01T23:59:59.999Z', '2024-01-01T23:59:59.999999Z', '2024-01-01T23:59:59.999999999Z', '2024-01-01T04:00:00.000000Z')
+                """);
     }
 
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {
