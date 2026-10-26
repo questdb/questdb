@@ -688,7 +688,8 @@ bytes.
   completion requirement clears. Until then a DETACH or ATTACH applied on the writer keeps its temporary name or source,
   as on a primary (`TableWriter.mayHaveSavePoint`: the policy, else the pins, else the save point file), and an
   operation that meets the replica policy half-way leaves its work to the reconcile instead of failing. A rename that
-  fails there suspends the table, which RESUME WAL retries; a purge that does not fit the queue is left to the next
+  fails there suspends the table, which RESUME WAL retries (at the demote clear, when the table's next batch runs; an
+  idle table keeps the temporary name until then); a purge that does not fit the queue is left to the next
   writer open, as anywhere else. The switch logs `cleared adaptive save points on becoming a replica [tables=...,
   busy=..., failed=...]`. On Linux each enrolled table costs one `syncfs` and two `fsync`, about 19 ms with the
   writer open and the removal: about 19 s for 1,000 tables before the replica loop starts. One `syncfs` for every
@@ -745,8 +746,8 @@ bytes.
   uploader start refuses it: the startup scan (`process_startup_table`, from `WalUploader.triggerUploadMissed`)
   fails the start as primary with `local sequencer log is behind the object store, refusing to start as primary
   [t=..., local_txn=..., store_txn=...]`, naming the remedies (start the node as a replica so it downloads the
-  missing transactions, then promote it; take the table out of replication with `replication.disabled.tables`; or
-  drop it). The check skips the tables replicas do not follow, as the promote pre-flight does (the replication-
+  missing transactions, then promote it; take the table out of replication with `replication.disabled.tables`, then
+  drop it if it is not wanted; while the start is refused no SQL runs, so the table cannot be dropped first). The check skips the tables replicas do not follow, as the promote pre-flight does (the replication-
   disabled and node-local tables), and a table whose local log ends in its drop, dropped or a rebase source in the
   index, or not in the index. It reads the log after the Java open cut its torn tail: the scan opens each table's
   sequencer (`TableSequencerAPI.getCurrentWalId`) before it reads the log, and no client write or job runs before
