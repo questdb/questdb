@@ -25,42 +25,29 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.PartitionGeometry;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.TextPlanSink;
-import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 /**
  * The key-major ORDER BY symbol claims (SortedSymbolIndex, and FilterOnValues /
  * FilterOnExcludedValues with keyMajor: true) walk each key across every page frame of the scan.
- * With merge-append off no partition is composite, and each query here must return the rows the
- * same query returns through a full sort ({@code no_index}), across partitions, column tops and
- * small page frames. With merge-append on the planner must not claim the order at all, see
- * {@link SortedSymbolIndexOrderingTest}.
+ * Each query here must return the rows the same query returns through a full sort
+ * ({@code no_index}), across partitions, column tops, small page frames and the pieces of
+ * composite partitions. A composite piece's rows sit at a shifted, possibly relocated, range of
+ * the partition's files, and the index reads file rows, so the walk must read each frame's index
+ * range rather than its partition rows.
  */
 public class KeyMajorSymbolOrderingTest extends AbstractCairoTest {
 
-    @Override
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
-    }
-
     @Test
-    public void testCompositePartitionKeepsSortAfterMergeAppendCommits() throws Exception {
-        // A partition that merge-append made composite must not be read key-major: its pieces overlap
-        // in time, so a key walked across the partition's frames is not in timestamp order.
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 128);
-        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+    public void testCompositePartitionAfterMergeAppendCommits() throws Exception {
+        setCompositeProperties();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL INDEX CAPACITY 8, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
@@ -75,17 +62,102 @@ public class KeyMajorSymbolOrderingTest extends AbstractCairoTest {
             drainWalQueue();
             execute("INSERT INTO x VALUES ('k1', '2024-01-01T15:30:00.000000Z')");
             drainWalQueue();
+            assertHasShiftedPieces("x", 0);
             for (String query : new String[]{
-                    "SELECT s, ts FROM x ORDER BY s, ts",
-                    "SELECT s, ts FROM x ORDER BY s, ts DESC",
                     "SELECT s, ts FROM x WHERE s IN ('k1', 'k3') ORDER BY s, ts",
                     "SELECT s, ts FROM x WHERE s IN ('k1', 'k3') ORDER BY s DESC, ts",
                     "SELECT s, ts FROM x WHERE s NOT IN ('k2') ORDER BY s, ts",
                     "SELECT s, ts FROM x WHERE s = 'k2' ORDER BY s, ts DESC",
+            }) {
+                assertMatchesFullSort(query, true);
+            }
+            for (String query : new String[]{
+                    "SELECT s, ts FROM x ORDER BY s, ts",
+                    "SELECT s, ts FROM x ORDER BY s, ts DESC",
                     "SELECT s, ts FROM x ORDER BY s, ts LIMIT 5",
             }) {
-                assertNoKeyMajor(query);
                 assertMatchesFullSort(query, false);
+            }
+        });
+    }
+
+    @Test
+    public void testCompositePiecesRelocatedAndShifted() throws Exception {
+        // Pieces merged at the files' tail sit far above their partition rows, and the pieces they
+        // left behind sit below theirs (a negative shift), with dead rows in between. Two
+        // partitions, and a column added after the first commit leaves column tops in both.
+        setCompositeProperties();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX TYPE POSTING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x
+                    SELECT ('k' || (x % 4))::SYMBOL, x, timestamp_sequence('2024-01-01', 86_400_000L)
+                    FROM long_sequence(2_000)""");
+            drainWalQueue();
+            execute("ALTER TABLE x ADD COLUMN w INT");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO x VALUES
+                    ('k1', 2_001, '2024-01-01T00:02:00.000001Z', 1),
+                    ('k2', 2_002, '2024-01-01T00:23:00.000001Z', 2),
+                    ('k0', 2_003, '2024-01-02T03:00:00.000001Z', 3)""");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO x VALUES
+                    ('k3', 2_004, '2024-01-01T00:05:00.000001Z', 4),
+                    ('k1', 2_005, '2024-01-02T11:00:00.000001Z', 5),
+                    ('k2', 2_006, '2024-01-01T19:00:00.000001Z', 6)""");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO x VALUES
+                    ('k0', 2_007, '2024-01-01T00:23:00.000002Z', 7),
+                    ('k3', 2_008, '2024-01-02T03:00:00.000002Z', 8)""");
+            drainWalQueue();
+            assertHasShiftedPieces("x", 0);
+            assertHasShiftedPieces("x", 1);
+            for (int[] sizes : new int[][]{{3, 7}, {1, 1}, {
+                    configuration.getSqlPageFrameMinRows(),
+                    configuration.getSqlPageFrameMaxRows()
+            }}) {
+                sqlExecutionContext.changePageFrameSizes(sizes[0], sizes[1]);
+                try {
+                    for (String query : new String[]{
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k1', 'k3') ORDER BY s, ts",
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k1', 'k3', 'k0') ORDER BY s, ts DESC",
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k1', 'k3') ORDER BY s DESC, ts",
+                            "SELECT s, ts, v, w FROM x WHERE s NOT IN ('k2') ORDER BY s, ts",
+                            "SELECT s, ts, v, w FROM x WHERE s NOT IN ('k0', 'k2') ORDER BY s, ts DESC",
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k1', 'k2') ORDER BY s, ts LIMIT 11",
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k1', 'k2') ORDER BY s, ts DESC LIMIT 3, 40",
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k1', 'k2') AND ts IN '2024-01-01' ORDER BY s, ts",
+                            "SELECT s, ts, v, w FROM x WHERE s IN ('k0', 'k3') AND v > 1_500 ORDER BY s, ts",
+                    }) {
+                        assertMatchesFullSort(query, true);
+                    }
+                    // a single key over both partitions keeps the single-symbol scan and its sort
+                    for (String query : new String[]{
+                            "SELECT s, ts, v, w FROM x ORDER BY s, ts",
+                            "SELECT s, ts, v, w FROM x WHERE s = 'k2' ORDER BY s, ts",
+                            "SELECT s, ts, v, w FROM x WHERE s = 'k1' ORDER BY s, ts DESC",
+                    }) {
+                        assertMatchesFullSort(query, false);
+                    }
+                    // a key-major window: each key's rows must arrive in timestamp order for its frame
+                    sqlExecutionContext.setParallelWindowEnabled(true);
+                    try {
+                        final String window = "SELECT s, ts, v, sum(v) OVER (PARTITION BY s ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) sv, "
+                                + "row_number() OVER (PARTITION BY s) rn FROM x WHERE s IN ('k1', 'k2', 'k3') ORDER BY s";
+                        assertQuery(window).assertsPlanContaining("keyMajor: true");
+                        assertSqlCursors(window.replaceFirst("SELECT ", "SELECT /*+ no_index */ "), window);
+                    } finally {
+                        sqlExecutionContext.setParallelWindowEnabled(false);
+                    }
+                } finally {
+                    sqlExecutionContext.changePageFrameSizes(
+                            configuration.getSqlPageFrameMinRows(),
+                            configuration.getSqlPageFrameMaxRows()
+                    );
+                }
             }
         });
     }
@@ -187,11 +259,21 @@ public class KeyMajorSymbolOrderingTest extends AbstractCairoTest {
         }
     }
 
-    private void assertNoKeyMajor(String query) throws Exception {
-        try (RecordCursorFactory factory = select(query)) {
-            final TextPlanSink sink = new TextPlanSink();
-            sink.of(factory, sqlExecutionContext);
-            Assert.assertFalse(query + "\n" + sink.getSink(), Chars.contains(sink.getSink(), "keyMajor"));
+    // At least one piece of the partition sits above its partition rows and one below: a merge moved
+    // the one to the files' tail and left the other behind it.
+    private void assertHasShiftedPieces(String table, int partitionIndex) {
+        try (TableReader reader = getReader(table)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionComposite(partitionIndex));
+            final PartitionGeometry geometry = reader.getGeometry();
+            geometry.resolve(partitionIndex);
+            boolean isAbove = false;
+            boolean isBelow = false;
+            for (int i = 0, n = geometry.getPieceCount(partitionIndex); i < n; i++) {
+                final long shift = geometry.getPieceShift(partitionIndex, i);
+                isAbove |= shift > 0;
+                isBelow |= shift < 0;
+            }
+            Assert.assertTrue("partition " + partitionIndex + " has no relocated piece", isAbove && isBelow);
         }
     }
 
@@ -226,5 +308,15 @@ public class KeyMajorSymbolOrderingTest extends AbstractCairoTest {
             }
             Assert.assertEquals(expectedRowCount, row);
         }
+    }
+
+    private static void setCompositeProperties() {
+        // split and merge-append on a fixture small enough to assert row by row, and keep compaction off
+        // the pieces, so the queries read the pieces the commits produced
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
     }
 }

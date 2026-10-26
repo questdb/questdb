@@ -142,8 +142,10 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
         }
         final PageFrame frame = base.next(skipTarget);
         if (frame != null) {
-            frameLos.add(frame.getPartitionLo());
-            frameHis.add(frame.getPartitionHi());
+            // the index is in file rows: a composite piece's frame sits at its partition rows plus
+            // the piece's shift, see PageFrame#getIndexRowLo()
+            frameLos.add(frame.getIndexRowLo());
+            frameHis.add(frame.getIndexRowHi());
             IndexReader reader = null;
             boolean isLazy = false;
             if (frame.getFormat() == PartitionFormat.NATIVE) {

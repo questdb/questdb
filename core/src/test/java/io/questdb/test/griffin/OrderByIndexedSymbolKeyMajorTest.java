@@ -76,8 +76,6 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
         setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         // 4 rows per page frame: a 24-row PARTITION BY NONE table is 6 frames and each

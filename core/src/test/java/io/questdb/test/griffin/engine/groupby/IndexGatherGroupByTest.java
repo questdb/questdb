@@ -25,6 +25,9 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -113,6 +116,52 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
             assertSameAsSerial("select " + AGGREGATES + " from t where sym = 'NOPE'", true);
             // keys of some partitions only
             assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('P0', 'P3', 'P7', 'R1') order by sym", true);
+        });
+    }
+
+    @Test
+    public void testCompositePiecesRelocatedAndShifted() throws Exception {
+        // Merge-append moves the pieces it merges to the files' tail, above their partition rows,
+        // and leaves the pieces between them below theirs. The gather reads each run of frames from
+        // the posting index in file rows, so a run never spans two pieces of different shifts.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting, x double, y int, z long, f float, s2 symbol, ts timestamp)"
+                    + " timestamp(ts) partition by day wal");
+            execute("insert into t select rnd_symbol('S0', 'S1', 'S2', 'S3', null), rnd_double(), rnd_int(0, 1000, 5), x, rnd_float(), "
+                    + "rnd_symbol('a', 'b'), timestamp_sequence('1970-01-01', 21_600_000L) from long_sequence(12_000)");
+            drainWalQueue();
+            final Rnd rnd = new Rnd(7, 11);
+            for (int c = 0; c < 10; c++) {
+                // a few backdated rows each, into an earlier stretch of one of the three days
+                final long minute = rnd.nextLong(3 * 24 * 60 - 10);
+                execute("insert into t select rnd_symbol('S0', 'S1', 'S2', 'R'), rnd_double(), rnd_int(0, 1000, 5), 100_000 + x, rnd_float(), "
+                        + "rnd_symbol('a', 'b'), dateadd('m', " + minute + ", '1970-01-01')::timestamp + x from long_sequence(" + (1 + rnd.nextInt(4)) + ")");
+                drainWalQueue();
+            }
+            try (TableReader reader = getReader("t")) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                boolean isAbove = false;
+                boolean isBelow = false;
+                for (int p = 0, n = reader.getPartitionCount(); p < n; p++) {
+                    if (reader.getTxFile().isPartitionComposite(p)) {
+                        geometry.resolve(p);
+                        for (int i = 0, m = geometry.getPieceCount(p); i < m; i++) {
+                            isAbove |= geometry.getPieceShift(p, i) > 0;
+                            isBelow |= geometry.getPieceShift(p, i) < 0;
+                        }
+                    }
+                }
+                Assert.assertTrue("no relocated piece", isAbove && isBelow);
+            }
+            assertSameAsSerial("select sym, " + AGGREGATES + " from t where sym in ('S1', 'S3', 'R') order by sym", false);
+            assertSameAsSerial("select sym, count() n, sum(z) sz, min(ts) mnt, max(ts) mxt from t where sym in ('S0', 'S2', 'R', null) order by sym", true);
+            assertSameAsSerial("select count() n, sum(z) sz from t where sym = 'S2'", true);
+            assertSameAsSerial("select s2, count() n, sum(z) sz from t where sym in ('S1', 'R') order by s2", true);
         });
     }
 

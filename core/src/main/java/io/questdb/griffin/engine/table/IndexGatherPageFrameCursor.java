@@ -365,8 +365,12 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         if (frame != null) {
             final byte format = frame.getFormat();
             framePartitions.add(frame.getPartitionIndex());
-            frameRowLos.add(frame.getPartitionLo());
-            frameRowHis.add(frame.getPartitionHi());
+            // In index rows, which the posting reader reads: a composite piece's frame sits at its
+            // partition rows plus the piece's shift, see PageFrame#getIndexRowLo(). Every row below is
+            // relative to these, and a run of frames needs them contiguous, so a run never spans two
+            // pieces whose shifts differ.
+            frameRowLos.add(frame.getIndexRowLo());
+            frameRowHis.add(frame.getIndexRowHi());
             frameFormats.add(format);
             IndexReader reader = null;
             boolean isLazy = false;

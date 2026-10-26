@@ -10240,8 +10240,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01a() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             // if query is ordered by symbol and there's only one partition to scan, there's no need to sort
             testSelectIndexedSymbol("");
@@ -10252,8 +10250,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01b() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // ordered by symbol over more than one partition: the key-major scan walks each key across all
         // partitions, so there is no sort while keys x partitions stays within
         // cairo.sql.index.key.major.max.partition.passes
@@ -10309,8 +10305,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01c() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertQuery("select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "      keyMajor: true\n" + "        Cursor-order scan\n" + //actual order is S2, S1
@@ -10424,8 +10418,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols07NonPartitioned() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index)");
             String expectedPlan = """
@@ -10447,8 +10439,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols07Partitioned() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
 
@@ -10475,8 +10465,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols08() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index)");
             execute("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
@@ -10560,8 +10548,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols09() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertQuery("select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;")
                 .assertsPlan("""
@@ -10673,8 +10659,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
@@ -10694,8 +10678,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols16() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
@@ -10771,8 +10753,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols7b() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertQuery("select s from a where s != 'S1' and length(s) = 2 order by s ")
                 .ddl("create table a ( ts timestamp, s symbol index) timestamp(ts);")
                 .assertsPlan("""

@@ -120,6 +120,10 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     // posting readers frozen for a planned walk, see enablePlannedWalk()
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
     private final LongList frameHis = new LongList();
+    // The index row of each frame's first row: the frame's partition row plus its composite piece's
+    // shift, see PageFrame#getIndexRowLo(). The index is in file-row space, so every index read takes
+    // its range from here, and the rows it returns are relative to it, i.e. frame rows.
+    private final LongList frameIndexLos = new LongList();
     private final ObjList<IndexReader> frameIndexReaders = new ObjList<>();
     private final LongList frameLos = new LongList();
     // the segments of a planned collect that this thread reads itself
@@ -745,8 +749,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             return 0;
         }
         final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) frameIndexReaders.getQuick(frameIndex);
-        final long lo = frameLos.getQuick(frameIndex);
-        final long hi = frameHis.getQuick(frameIndex) - 1;
+        final long lo = frameIndexLos.getQuick(frameIndex);
+        final long hi = indexRowHi(frameIndex) - 1;
         final long entryMax = reader.getEntryMaxValue();
         final long count = indexRanksEnabled
                 ? reader.countMatchesClamped(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi)
@@ -821,8 +825,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         }
         final int indexKey = rowCursorFactory.getIndexKey(keyIndex);
         final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) frameIndexReaders.getQuick(frameIndex);
-        final long lo = frameLos.getQuick(frameIndex);
-        final long hi = frameHis.getQuick(frameIndex) - 1;
+        final long lo = frameIndexLos.getQuick(frameIndex);
+        final long hi = indexRowHi(frameIndex) - 1;
         long rowLo = lo;
         long skip = rankLo;
         if (rankLo > 0) {
@@ -930,6 +934,11 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         frozenReaders.clear();
     }
 
+    // The index row one past the frame's last row, see frameIndexLos.
+    private long indexRowHi(int frameIndex) {
+        return frameIndexLos.getQuick(frameIndex) + frameHis.getQuick(frameIndex) - frameLos.getQuick(frameIndex);
+    }
+
     private void collectFrames() {
         final int indexColumnIndex = rowCursorFactory.getIndexColumnIndex();
         final int indexDirection = rowCursorFactory.getIndexDirection();
@@ -940,6 +949,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             frameAddressCache.add(frameCount++, frame);
             frameLos.add(frame.getPartitionLo());
             frameHis.add(frame.getPartitionHi());
+            frameIndexLos.add(frame.getIndexRowLo());
             framePartitionIndexes.add(frame.getPartitionIndex());
             // The frame object is reused by the next call to next(), so take the reader now. The
             // table reader caches it per partition, and it stays open until the cursor closes.
@@ -1011,7 +1021,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             return false;
         }
         final RowCursor probe = frameIndexReaders.getQuick(frameIndex)
-                .getCursor(indexKey, frameLos.getQuick(frameIndex), frameHis.getQuick(frameIndex) - 1);
+                .getCursor(indexKey, frameIndexLos.getQuick(frameIndex), indexRowHi(frameIndex) - 1);
         try {
             return !probe.hasNext();
         } finally {
@@ -1041,6 +1051,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         isFramesCollected = false;
         frameLos.clear();
         frameHis.clear();
+        frameIndexLos.clear();
         framePartitionIndexes.clear();
         frameIndexReaders.clear();
         keyIndex = 0;
@@ -1105,6 +1116,16 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         @Override
         public int getParquetRowGroupLo() {
             return frameAddressCache.getParquetRowGroupLo(frameIndex);
+        }
+
+        @Override
+        public long getIndexRowHi() {
+            return indexRowHi(frameIndex);
+        }
+
+        @Override
+        public long getIndexRowLo() {
+            return frameIndexLos.getQuick(frameIndex);
         }
 
         @Override

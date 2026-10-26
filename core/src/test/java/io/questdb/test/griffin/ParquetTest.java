@@ -2126,8 +2126,6 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testLimitOverParquetIndexedSymbolOrderBy() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // Regression: the decode-window clamp must not apply to a symbol-index scan. An index row
         // cursor yields the rows of one symbol only, scattered across the frame, so clamping the
         // parquet decode to the leading rows would read undecoded memory for the high row indexes.

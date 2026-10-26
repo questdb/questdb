@@ -4917,8 +4917,6 @@ public class SampleByTest extends AbstractCairoTest {
      */
     @Test
     public void testOrderSensitiveSampleByOverSortedSymbolIndexSorts() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table sdu (ts timestamp, sym symbol index, x long) timestamp(ts) partition by day");
             execute("insert into sdu values" +

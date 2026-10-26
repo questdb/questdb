@@ -319,8 +319,6 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByExcludedSymbolValuesOrdersTheSameWithAndWithoutCache() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // FilterOnExcludedValues sorts its per-symbol cursor factories by symbol
         // VALUE so the scan emits them in ORDER BY order. The comparator reads two
         // values out of the symbol map at once, and on a NOCACHE column both reads

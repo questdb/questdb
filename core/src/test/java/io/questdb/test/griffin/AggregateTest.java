@@ -282,8 +282,6 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithIndexedSymbolKey() throws Exception {
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("""
                     CREATE TABLE records (

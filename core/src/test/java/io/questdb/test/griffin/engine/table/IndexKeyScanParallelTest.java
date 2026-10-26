@@ -24,6 +24,9 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
@@ -74,6 +77,63 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         DeferredSingleSymbolFilterPageFrameRecordCursorFactory.resetParallelThresholdsForTesting();
         super.tearDown();
+    }
+
+    @Test
+    public void testCompositePiecesRelocatedAndShifted() throws Exception {
+        // Merge-append moves the pieces it merges to the files' tail, above their partition rows, and
+        // leaves the pieces between them below theirs. The parallel scan reads each frame's rows of
+        // the symbol from the posting index in file rows, at its own piece's shift.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting, x long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into t select rnd_symbol('A', 'B', 'C'), x, timestamp_sequence('1970-01-01', 21_600_000L) from long_sequence(12_000)");
+            drainWalQueue();
+            final Rnd rnd = new Rnd(5, 13);
+            for (int c = 0; c < 10; c++) {
+                final long minute = rnd.nextLong(3 * 24 * 60 - 10);
+                execute("insert into t select rnd_symbol('A', 'B', 'R'), 100_000 + x, dateadd('m', " + minute + ", '1970-01-01')::timestamp + x "
+                        + "from long_sequence(" + (1 + rnd.nextInt(4)) + ")");
+                drainWalQueue();
+            }
+            try (TableReader reader = getReader("t")) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                boolean isAbove = false;
+                boolean isBelow = false;
+                for (int p = 0, n = reader.getPartitionCount(); p < n; p++) {
+                    if (reader.getTxFile().isPartitionComposite(p)) {
+                        geometry.resolve(p);
+                        for (int i = 0, m = geometry.getPieceCount(p); i < m; i++) {
+                            isAbove |= geometry.getPieceShift(p, i) > 0;
+                            isBelow |= geometry.getPieceShift(p, i) < 0;
+                        }
+                    }
+                }
+                Assert.assertTrue("no relocated piece", isAbove && isBelow);
+            }
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(0, 0, 0);
+            for (String query : new String[]{
+                    "select * from t where sym = 'A'",
+                    "select * from t where sym = 'R'",
+                    "select * from t where sym = 'B' and ts > '1970-01-02'",
+                    "select count() from t where sym = 'A'",
+            }) {
+                try (RecordCursorFactory factory = select(query)) {
+                    final DeferredSingleSymbolFilterPageFrameRecordCursorFactory scan = findScan(factory);
+                    Assert.assertNotNull(query, scan);
+                    Assert.assertNotNull(query, scan.getParallelScan());
+                    final long parallelOpens = scan.getOpenCounts()[1];
+                    final String actual = print(factory, sqlExecutionContext);
+                    Assert.assertTrue(query, scan.getOpenCounts()[1] > parallelOpens);
+                    TestUtils.assertEquals(query, print(engine, sqlExecutionContext, query.replaceFirst("select ", "select /*+ no_index */ ")), actual);
+                }
+            }
+        });
     }
 
     @Test

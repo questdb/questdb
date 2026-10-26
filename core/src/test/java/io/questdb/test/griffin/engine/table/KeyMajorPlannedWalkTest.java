@@ -26,6 +26,9 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionGeometry;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
@@ -34,10 +37,12 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.ExecutorService;
@@ -57,12 +62,40 @@ import java.util.concurrent.Future;
 public class KeyMajorPlannedWalkTest extends AbstractCairoTest {
     private static final int[] WARMUPS = {1, 2, 4, 9};
 
-    @Override
-    @Before
-    public void setUp() {
-        super.setUp();
-        // key-major plans need non-composite partitions; merge-append founds composite ones
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    @Test
+    public void testCompositePiecesRelocatedAndShifted() throws Exception {
+        // Merge-append moves the pieces it merges to the files' tail, above their partition rows, and
+        // leaves the pieces between them below theirs. The planned walk counts and seeks the posting
+        // index in file rows, each frame at its own piece's shift.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting, a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select rnd_symbol('A','B','C','D'), x::int, timestamp_sequence('2024-01-01', 43_200_000L) from long_sequence(4_000)");
+            drainWalQueue();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (int c = 0; c < 12; c++) {
+                // backdated commits of a few rows each, every one into an earlier stretch of a day
+                final long minute = rnd.nextLong(2 * 24 * 60);
+                execute("insert into t select rnd_symbol('A','B','C','D','R'), (10_000 + x)::int, "
+                        + "dateadd('m', " + minute + ", '2024-01-01')::timestamp + x from long_sequence(" + (1 + rnd.nextInt(5)) + ")");
+                drainWalQueue();
+            }
+            assertHasShiftedPieces();
+            final String[] queries = {
+                    "select * from t where sym in ('A', 'C', 'R') order by sym",
+                    "select * from t where sym in ('B', 'D') and ts in '2024-01-01' order by sym",
+                    "select * from t where sym not in ('A') order by sym desc",
+            };
+            for (int i = 0; i < queries.length; i++) {
+                // planned and collected walks agree, and the planned walk's rows are the query's
+                Assert.assertTrue(assertWalks(queries[i], 21 + i));
+                assertPlannedWalkMatchesFullSort(queries[i]);
+            }
+        });
     }
 
     @Test
@@ -184,6 +217,59 @@ public class KeyMajorPlannedWalkTest extends AbstractCairoTest {
                 Assert.fail(what + ": row " + i + " of " + count + ": expected " + expected.get(expectedLo + i) + " but was " + actual.get(actualLo + i));
             }
         }
+    }
+
+    // At least one piece of the first partition sits above its partition rows and one below.
+    private void assertHasShiftedPieces() {
+        try (TableReader reader = getReader("t")) {
+            Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+            final PartitionGeometry geometry = reader.getGeometry();
+            geometry.resolve(0);
+            boolean isAbove = false;
+            boolean isBelow = false;
+            for (int i = 0, n = geometry.getPieceCount(0); i < n; i++) {
+                final long shift = geometry.getPieceShift(0, i);
+                isAbove |= shift > 0;
+                isBelow |= shift < 0;
+            }
+            Assert.assertTrue("no relocated piece", isAbove && isBelow);
+        }
+    }
+
+    // Walks the whole query through its plan and reads each planned row back through the cursor: the
+    // rows must be those the query returns through a full sort, in its order. This checks the plan
+    // against the table, where assertWalks() checks it against the collected walk.
+    private void assertPlannedWalkMatchesFullSort(String query) throws Exception {
+        final StringSink expected = new StringSink();
+        printSql(query.replaceFirst("select ", "select /*+ no_index */ "), expected);
+        final StringSink actual = new StringSink();
+        actual.put("sym\ta\tts\n");
+        try (
+                RecordCursorFactory factory = select(query);
+                RecordCursor cursor = keyMajorFactory(factory).getCursor(sqlExecutionContext);
+                DirectLongList rows = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            final KeyMajorPageFrameRecordCursor walk = keyMajor(cursor);
+            Assert.assertTrue(query, walk.enablePlannedWalk());
+            final LongList plan = new LongList();
+            int status;
+            do {
+                plan.clear();
+                status = walk.planKeyRows(plan, 97);
+                walk.readPlan(plan, rows);
+            } while (status != KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED);
+            final Record record = walk.getRecordB();
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                // a walk's row id is (frame << 32 | frame row), see toFrameRowId(); recordAt() takes Rows' encoding
+                final long rowId = rows.get(i);
+                walk.recordAt(record, Rows.toRowID((int) (rowId >>> 32), rowId & 0xFFFF_FFFFL));
+                final CharSequence sym = record.getSymA(0);
+                actual.put(sym == null ? "" : sym).put('\t').put(record.getInt(1)).put('\t');
+                MicrosFormatUtils.appendDateTimeUSec(actual, record.getTimestamp(2));
+                actual.put('\n');
+            }
+        }
+        TestUtils.assertEquals(query, expected, actual);
     }
 
     private static RecordCursorFactory keyMajorFactory(RecordCursorFactory factory) {

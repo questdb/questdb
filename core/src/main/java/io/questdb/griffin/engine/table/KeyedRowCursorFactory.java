@@ -42,9 +42,12 @@ public interface KeyedRowCursorFactory extends RowCursorFactory {
     /**
      * Returns the rows of the key at {@code keyIndex} within the given page frame, in the
      * factory's index direction. The frame passed in may be a snapshot that supports only
-     * {@link PageFrame#getIndexReader(int, int)}, {@link PageFrame#getPartitionLo()},
+     * {@link PageFrame#getIndexReader(int, int)}, {@link PageFrame#getIndexRowLo()},
+     * {@link PageFrame#getIndexRowHi()}, {@link PageFrame#getPartitionLo()},
      * {@link PageFrame#getPartitionHi()}, {@link PageFrame#getPartitionIndex()} and
-     * {@link PageFrame#getFormat()}.
+     * {@link PageFrame#getFormat()}. The index reads the index rows, which differ from the
+     * partition rows by a composite piece's shift; the rows it returns are relative to
+     * {@code getIndexRowLo()}, i.e. the frame's own rows.
      */
     RowCursor getCursor(int keyIndex, PageFrame pageFrame, PageFrameMemory pageFrameMemory);
 
