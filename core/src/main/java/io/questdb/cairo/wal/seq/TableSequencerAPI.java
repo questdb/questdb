@@ -580,6 +580,7 @@ public class TableSequencerAPI implements QuietCloseable {
             }
         }
         // Constructor enrolment, required publication and pooled return may all take the sequencer lock.
+        boolean isCompletingDurableEpoch = false;
         try (TableWriter writer = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
@@ -594,7 +595,9 @@ public class TableSequencerAPI implements QuietCloseable {
                     sequencer.unlockWrite();
                 }
             }
+            isCompletingDurableEpoch = true;
             writer.completeDurableEpochAfter("resume wal");
+            isCompletingDurableEpoch = false;
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
                     engine.removeWalApplySuspended(tableToken);
@@ -611,11 +614,20 @@ public class TableSequencerAPI implements QuietCloseable {
             if (engine.isDataSyncFailureFatal(e)) {
                 engine.handleDataSyncFailure(e);
             }
-            final String reason = e.getFlyweightMessage().toString();
-            suspendTable(tableToken, ErrorTag.NONE, reason);
-            throw CairoException.nonCritical()
-                    .put("could not complete the durable epoch; the table stays suspended; retry RESUME WAL [table=")
-                    .put(tableToken.getTableName()).put(", reason=").put(reason).put(']');
+            // A suspended table keeps the reason it was suspended for. A running one (in practice an ADAPTIVE table
+            // with a completion outstanding) is suspended with the tag the apply job would give the same failure
+            // (ApplyWal2TableJob.handleWalApplyFailure).
+            if (!isSuspended(tableToken)) {
+                final ErrorTag errorTag = e.isOutOfMemory() ? ErrorTag.OUT_OF_MEMORY : ErrorTag.resolveTag(e.getErrno());
+                suspendTable(tableToken, errorTag, e.getFlyweightMessage().toString());
+            }
+            if (isCompletingDurableEpoch) {
+                throw CairoException.critical(e.getErrno())
+                        .put("could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=")
+                        .put(tableToken.getTableName()).put(", reason=").put(e.getFlyweightMessage()).put(']');
+            }
+            // Opening the writer, the skip and the resume fail with their own error, errno and severity.
+            throw e;
         }
     }
 
