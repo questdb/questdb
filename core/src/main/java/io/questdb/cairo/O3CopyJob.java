@@ -681,11 +681,41 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
-            // unmap memory
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+            try {
+                unmapAndCloseColumn(
+                        ff,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarSize
+                );
+            } catch (Throwable th) {
+                // A double close or a failed munmap means the O3 bookkeeping is off, so the commit must
+                // fail. The column still counts down: without its count the partition never completes.
+                LOG.error()
+                        .$("release error [table=").$(tableWriter.getTableToken())
+                        .$(", e=").$(th)
+                        .I$();
+                tableWriter.o3BumpErrorCount(th);
+                closeColumnIdle(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter
+                );
+                throw th;
+            }
 
             final int columnsRemaining = columnCounter.decrementAndGet();
             LOG.debug()
@@ -782,6 +812,38 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     tableWriter
             );
             throw e;
+        }
+    }
+
+    // Releases the column's source and destination files. Each release runs even when an earlier one
+    // throws, so one failure cannot leak the rest.
+    private static void unmapAndCloseColumn(
+            FilesFacade ff,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize
+    ) {
+        try {
+            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+        } finally {
+            try {
+                O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            } finally {
+                try {
+                    O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+                } finally {
+                    O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+                }
+            }
         }
     }
 
@@ -898,11 +960,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
-        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
         try {
             try {
-                O3Utils.close(ff, srcTimestampFd);
+                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             } finally {
+                O3Utils.close(ff, srcTimestampFd);
+            }
+        } catch (Throwable th) {
+            // Same as a column that fails to release its files: the commit must fail. The error goes on
+            // record before the update below releases the writer, which then reads the error count.
+            LOG.error()
+                    .$("release error [table=").$(tableWriter.getTableToken())
+                    .$(", e=").$(th)
+                    .I$();
+            tableWriter.o3BumpErrorCount(th);
+            throw th;
+        } finally {
+            try {
                 o3NotifyPartitionUpdate(
                         tableWriter,
                         partitionUpdateSinkAddr,
@@ -913,12 +987,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         o3SplitPartitionSize,
                         partitionMutates
                 );
+            } finally {
+                if (timestampMergeIndexAddr != 0) {
+                    Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                }
+                tableWriter.o3CountDownDoneLatch();
             }
-        } finally {
-            if (timestampMergeIndexAddr != 0) {
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-            }
-            tableWriter.o3CountDownDoneLatch();
         }
     }
 
@@ -949,6 +1023,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
+    /**
+     * Completes a partition that did not finish: releases what the partition's tasks shared, then
+     * releases the writer. It runs only for commits that already failed, the writer's drain loop
+     * among its callers, so its releases are quiet: a release that throws must neither keep the
+     * writer waiting for good nor escape into the drain, where it would skip handing back the
+     * queue slot. The merge index goes before the writer: once released, the writer moves on and
+     * may check memory usage.
+     */
     static void closeColumnIdleQuick(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
@@ -958,15 +1040,51 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter
     ) {
         try {
-            final FilesFacade ff = tableWriter.getFilesFacade();
-            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-            O3Utils.close(ff, srcTimestampFd);
+            O3Utils.unmapAndCloseQuietly(tableWriter.getFilesFacade(), srcTimestampFd, srcTimestampAddr, srcTimestampSize);
+        } finally {
             if (timestampMergeIndexAddr != 0) {
                 Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             }
-        } finally {
             tableWriter.o3ClockDownPartitionUpdateCount();
             tableWriter.o3CountDownDoneLatch();
+        }
+    }
+
+    /**
+     * A publisher that failed part-way calls this to count down the live columns it never published,
+     * and completes the partition when that takes the column counter to zero. The column that failed
+     * is not one of them: its own error handler counts it down. A zero count leaves the counter alone.
+     * When the failed column is the last one to count down, its error handler has already completed
+     * the partition, and completing it again would release the writer's wait while tasks of other
+     * partitions still run.
+     */
+    static void closeUnpublishedColumns(
+            AtomicInteger columnCounter,
+            int unpublishedColumnCount,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter
+    ) {
+        if (unpublishedColumnCount > 0) {
+            final int columnsRemaining = columnCounter.addAndGet(-unpublishedColumnCount);
+            LOG.debug()
+                    .$("idle [table=").$(tableWriter.getTableToken())
+                    .$(", unpublished=").$(unpublishedColumnCount)
+                    .$(", columnsRemaining=").$(columnsRemaining)
+                    .I$();
+            if (columnsRemaining == 0) {
+                closeColumnIdleQuick(
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter
+                );
+            }
         }
     }
 
@@ -1130,14 +1248,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVFd,
             TableWriter tableWriter
     ) {
+        // Runs only for commits that already failed: the releases are quiet, see O3Utils.closeQuietly().
         try {
             final FilesFacade ff = tableWriter.getFilesFacade();
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-            O3Utils.close(ff, dstKFd);
-            O3Utils.close(ff, dstVFd);
+            O3Utils.unmapAndCloseQuietly(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndCloseQuietly(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            O3Utils.unmapAndCloseQuietly(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndCloseQuietly(ff, dstVarFd, dstVarAddr, dstVarSize);
+            O3Utils.closeQuietly(ff, dstKFd);
+            O3Utils.closeQuietly(ff, dstVFd);
         } finally {
             closeColumnIdle(
                     columnCounter,
