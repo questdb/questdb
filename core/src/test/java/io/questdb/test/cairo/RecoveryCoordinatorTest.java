@@ -3426,7 +3426,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 try (TableWriter writer = engine.getWriterUnsafe(token, "demote clear")) {
                     writer.reconcileDurableEpochAnchor();
                 }
-                Assert.assertTrue(tracker.isDurableEpochCompletionRequired());
+                // With the save point gone nothing is left to cover, so the reconcile clears the requirement. A
+                // replica keeps it only while a DETACH it finished there could not take its final name: re-arm it
+                // to show that the resume still takes the plain path then.
+                Assert.assertFalse(tracker.isDurableEpochCompletionRequired());
+                tracker.setDurableEpochCompletionRequired(true);
                 final CountDownLatch acquired = new CountDownLatch(1);
                 final CountDownLatch release = new CountDownLatch(1);
                 final AtomicReference<Throwable> failure = new AtomicReference<>();

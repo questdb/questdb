@@ -4617,8 +4617,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * The {@link LocalDurabilityPolicy#REPLICA_SKIP} half of {@link #reconcileDurableEpochAnchor()}: makes the
-     * table durable, then removes the save point, older generation first. Returns {@code false} when the save point
-     * could not be removed, so that the next batch tries again.
+     * table durable, then removes the save point, older generation first, then finishes the partition work that
+     * waited for a save point. Returns {@code false} when the save point could not be removed, so that the next batch
+     * tries again.
      */
     private boolean removeSavePointForReplica() {
         try {
@@ -4634,7 +4635,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() >= 0) {
                 releaseEpochPin();
             }
-            return true;
         } catch (CairoException e) {
             if (engine.isDataSyncFailureFatal(e)) {
                 distressed = true;
@@ -4647,6 +4647,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
         }
+        // No save point is left to rewind to, so the partition work that waited for one finishes now. A DETACH that
+        // cannot take its final name throws: the apply job suspends the table, and the next writer open retries.
+        finishPartitionMovesAfterSavePoint(false, -1);
+        if (detachesAfterSavePoint.size() == 0 && attachablesAfterSavePoint.size() == 0) {
+            engine.getTableSequencerAPI().getTxnTracker(tableToken).setDurableEpochCompletionRequired(false);
+        }
+        if (partitionPurgeOwedTxn > -1) {
+            if (schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
+                partitionPurgeOwedTxn = -1;
+            } else {
+                // As for any purge that does not fit the queue: the next writer open removes the versions
+                LOG.error().$("could not queue the partition purge the removed save points owed, queue is full [table=")
+                        .$(tableToken).I$();
+            }
+        }
+        return true;
     }
 
     private void publishAdaptiveBaselineOrFail() {
@@ -7833,6 +7849,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             if (!hasDurableEpochCoverage(txn)) {
+                if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+                    // Demoted during the operation: the work stays deferred and the requirement armed until
+                    // removeSavePointForReplica removes the save point and finishes both
+                    return;
+                }
                 throw CairoException.nonCritical().put("could not complete durable epoch after ").put(operation)
                         .put("; retry the operation or RESUME WAL [table=").put(tableToken.getTableName()).put(']');
             }
@@ -9133,10 +9154,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // An ATTACH keeps its source and a DETACH its temporary name until all selectable cuts cover it. A replica keeps no
-    // save point and never rewinds, so there they finish at once.
+    // An ATTACH keeps its source and a DETACH its temporary name until all selectable cuts cover it, while the table
+    // may have a save point to rewind to (mayHaveSavePoint). On a replica whose save points are removed, they finish
+    // at once.
     private boolean defersPartitionMoves() {
-        return enrolledAdaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled();
+        return enrolledAdaptive && mayHaveSavePoint();
     }
 
     // A committed DETACH whose rename to .detached failed: the partition is detached and its files are under the
@@ -11614,6 +11636,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
         commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
         return true;
+    }
+
+    // Whether the table may have a save point that a crash rewinds to: while local durability is on, and after a
+    // demote until removeSavePointForReplica has removed it. The pins answer without I/O while they stand: they are
+    // taken by advanceDurableEpoch for what it publishes and by RecoveryCoordinator.pinRecoveredEpoch for what
+    // recovery selects and what a conversion or a REBASE publishes, and released by releaseEpochPin and
+    // RecoveryCoordinator.unpinEpoch only once the save point is removed. A CREATE's baseline
+    // (DurableEpochManifest.publishInitial) is not pinned until the table's first save point, so without a pin the
+    // disk answers.
+    private boolean mayHaveSavePoint() {
+        if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            return true;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        if (tracker != null && tracker.getPinnedEpochTxn() >= 0) {
+            return true;
+        }
+        // Not the writer's path: callers hold a partition path in it
+        try (Path tablePath = new Path()) {
+            tablePath.of(path).trimTo(pathSize);
+            return DurableEpochManifest.exists(ff, tablePath, pathSize);
+        }
     }
 
     private boolean clampColumnTopsToLiveRows(long partitionTs, long liveRows) {
@@ -16259,7 +16303,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long otherPinnedTxn = tracker.getOtherPinnedEpochTxn();
                             final long olderPinnedTxn = otherPinnedTxn >= 0 ? otherPinnedTxn : tracker.getPinnedEpochTxn();
                             if (!configuration.attachPartitionCopy()
-                                    && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
+                                    && mayHaveSavePoint()
                                     && olderPinnedTxn < attachTxn) {
                                 attachablesAfterSavePoint.add(timestamp, attachTxn);
                             } else {
@@ -16275,7 +16319,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", errno=").$(ff.errno()).I$();
                         }
                         other.trimTo(pathSize);
-                    } else if (adaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled() && !hasDurableEpochCoverage(detachTxn)) {
+                    } else if (adaptive && mayHaveSavePoint() && !hasDurableEpochCoverage(detachTxn)) {
                         // Named once a save point covers the DETACH
                         detachesAfterSavePoint.add(timestamp, detachTxn);
                     } else if (!finishDetach(timestamp, detachTxn)) {
