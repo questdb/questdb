@@ -483,6 +483,13 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         return true;
     }
 
+    private boolean isParquetPartition(String tableName, long partitionTs) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            final int partitionIndex = findPartitionIndex(reader, partitionTs);
+            return partitionIndex > -1 && reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET;
+        }
+    }
+
     /**
      * The four multi-round tests: a WAL table whose 2022-02-24 partition is Parquet, and
      * a non-WAL oracle, receive the same random rounds of O3 and replace commits inside
@@ -575,10 +582,17 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             final O3ParquetPathCounts counts = new O3ParquetPathCounts();
             int reconversions = 0;
+            int parquetRounds = 0;
             // The most file system calls a round's WAL apply made: the next failure fires at
             // a call drawn from the first half of that, so it almost always fires.
             long walApplyCallsMax = 0;
             for (int round = 0; round < rounds; round++) {
+                // A replace can remove every row of the day and leave no partition to convert
+                // back, so the next round's rows build a native partition instead.
+                if (isParquetPartition(walTable, partitionTs)) {
+                    parquetRounds++;
+                }
+
                 // Pick a timestamp range pattern for this round.
                 long start, end;
                 int pattern = rnd.nextInt(5);
@@ -655,12 +669,13 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             LOG.info().$("parquet partition re-conversions: ").$(reconversions)
                     .$(", walIoFailures=").$(fuzzer.getIoFailuresObserved())
                     .$();
-            // Every round starts with 2022-02-24 in Parquet and writes into it. That takes at
+            // Every round that starts with 2022-02-24 in Parquet writes into it. That takes at
             // least one parquet O3 task: a write, a replace no-op or a replace that removes it.
+            Assert.assertTrue("no round started with a parquet partition", parquetRounds > 0);
             final long parquetTasks = counts.getWritten() + counts.getReplaceNoop() + counts.getReplaceRemoval();
             Assert.assertTrue(
-                    "expected at least " + rounds + " parquet O3 tasks, got " + parquetTasks + " (" + counts + ")",
-                    parquetTasks >= rounds
+                    "expected at least " + parquetRounds + " parquet O3 tasks, got " + parquetTasks + " (" + counts + ")",
+                    parquetTasks >= parquetRounds
             );
             if (hasWalIoFailures) {
                 Assert.assertTrue("no IO failure fired on WAL apply", fuzzer.getIoFailuresObserved() > 0);

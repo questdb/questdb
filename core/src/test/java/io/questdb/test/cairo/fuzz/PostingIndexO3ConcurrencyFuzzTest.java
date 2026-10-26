@@ -157,8 +157,10 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 prepareReplaceOnParquetList(rnd, tableNameNoWal, tableNameWal, tableNameWalParallel)
         );
         counts.log(LOG, getTestName());
-        // the follow-up list writes into a parquet partition's day on both WAL tables
-        Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() > 0);
+        // The follow-up list writes into a parquet partition's day on both WAL tables. A replace
+        // that drops whole days can remove that partition before any write reaches it, and the
+        // later rows then build a native partition in its place.
+        Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() + counts.getReplaceRemoval() > 0);
     }
 
     @Test
