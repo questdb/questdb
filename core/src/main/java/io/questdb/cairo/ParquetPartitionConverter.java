@@ -217,7 +217,9 @@ final class ParquetPartitionConverter implements QuietCloseable {
         return false;
     }
 
-    /** Hands the encoder FILE rows {@code [rowLo, rowLo + rows)} of a folder as one frame; tops are in file rows. */
+    /**
+     * Hands the encoder FILE rows {@code [rowLo, rowLo + rows)} of a folder as one frame; tops are in file rows.
+     */
     private void writeFrame(long writer, TableReader reader, int partitionIndex, long rowLo, long rows) {
         final TableMetadata metadata = reader.getMetadata();
         final int columnBase = reader.getColumnBase(partitionIndex);

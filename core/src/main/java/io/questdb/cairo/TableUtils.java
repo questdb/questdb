@@ -116,7 +116,9 @@ public final class TableUtils {
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
-    /** Suffix of {@code <partition>.<nameTxn>.generating}, the staging dir of a native partition's parquet copy. */
+    /**
+     * Suffix of {@code <partition>.<nameTxn>.generating}, the staging dir of a native partition's parquet copy.
+     */
     public static final String GENERATING_DIR_MARKER = ".generating";
     public static final int INITIAL_TXN = 0;
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
@@ -1999,7 +2001,9 @@ public final class TableUtils {
         }
     }
 
-    /** {@link #produceParquetFromNative} into the existing {@code dstPartitionDir}, trimmed back on return. */
+    /**
+     * {@link #produceParquetFromNative} into the existing {@code dstPartitionDir}, trimmed back on return.
+     */
     public static long produceParquetFromNativeInto(
             Path path,
             Path dstPartitionDir,

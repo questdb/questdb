@@ -4495,6 +4495,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             return ff.exists(path.of(dir).$());
         }
     }
+
     private static String generatingDir(TableToken token, int timestampType, int partitionBy, long partitionTimestamp, long nameTxn) {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(token.getDirName());

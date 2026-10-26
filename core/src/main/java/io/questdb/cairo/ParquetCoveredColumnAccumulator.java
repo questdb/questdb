@@ -168,7 +168,9 @@ final class ParquetCoveredColumnAccumulator {
         }
     }
 
-    /** Appends null entries for index rows of replaced row groups, keeping each entry at its index row. */
+    /**
+     * Appends null entries for index rows of replaced row groups, keeping each entry at its index row.
+     */
     void accumulateNulls(long rowCount) {
         if (rowCount <= 0) {
             return;

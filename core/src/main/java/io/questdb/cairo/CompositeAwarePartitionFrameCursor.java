@@ -230,7 +230,9 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
         return null;
     }
 
-    /** Emits the part of the pending row group the range covers, in index rows, and advances past it. */
+    /**
+     * Emits the part of the pending row group the range covers, in index rows, and advances past it.
+     */
     private @Nullable PartitionFrame nextRowGroup() {
         final ParquetMetaFileReader metadata = pendingParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();

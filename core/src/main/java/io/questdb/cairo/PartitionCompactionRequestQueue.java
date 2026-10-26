@@ -92,12 +92,16 @@ public class PartitionCompactionRequestQueue {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_FOLD);
     }
 
-    /** Asks for the logical partition to be converted into one parquet folder; false when the queue is full. */
+    /**
+     * Asks for the logical partition to be converted into one parquet folder; false when the queue is full.
+     */
     public boolean tryRequestParquetConversion(TableToken tableToken, long logicalPartitionTimestamp) {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_CONVERSION);
     }
 
-    /** Asks for a parquet copy installed beside the native files; false when the queue is full. */
+    /**
+     * Asks for a parquet copy installed beside the native files; false when the queue is full.
+     */
     public boolean tryRequestParquetGeneration(TableToken tableToken, long logicalPartitionTimestamp) {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION);
     }

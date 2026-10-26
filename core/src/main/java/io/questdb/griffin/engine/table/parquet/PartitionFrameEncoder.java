@@ -58,10 +58,14 @@ public class PartitionFrameEncoder {
 
     public static native void destroy(long writerPtr);
 
-    /** Writes the last row group, the footer and the {@code _pm} sidecar; returns the parquet file size. */
+    /**
+     * Writes the last row group, the footer and the {@code _pm} sidecar; returns the parquet file size.
+     */
     public static native long finish(long writerPtr, boolean sync) throws CairoException;
 
-    /** Returns the rows written to row groups so far, counted from the first frame. */
+    /**
+     * Returns the rows written to row groups so far, counted from the first frame.
+     */
     public static native long writeFrame(long writerPtr, long columnDataPtr, long rowCount) throws CairoException;
 
     static {

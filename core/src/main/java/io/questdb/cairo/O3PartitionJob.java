@@ -5942,7 +5942,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    /** Syncs symbol indexes with the new parquet file: append past {@code prevIndexRowCount}, or rebuild. */
+    /**
+     * Syncs symbol indexes with the new parquet file: append past {@code prevIndexRowCount}, or rebuild.
+     */
     private static void updateParquetIndexes(
             int partitionBy,
             long partitionTimestamp,

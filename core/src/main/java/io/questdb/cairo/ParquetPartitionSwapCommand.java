@@ -140,7 +140,9 @@ public class ParquetPartitionSwapCommand implements CompactionSwapCommand {
         return isFullyMaterialized;
     }
 
-    /** Whether the compacted file dropped the source's index row map, so its index files must be rebuilt. */
+    /**
+     * Whether the compacted file dropped the source's index row map, so its index files must be rebuilt.
+     */
     public boolean isIndexRowMapDropped() {
         return isIndexRowMapDropped;
     }

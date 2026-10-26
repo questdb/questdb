@@ -276,7 +276,9 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
         ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
     }
 
-    /** {@link #ofMerge} into one parquet file; the build calls {@link #setParquetFileSize} before publishing. */
+    /**
+     * {@link #ofMerge} into one parquet file; the build calls {@link #setParquetFileSize} before publishing.
+     */
     public void ofParquetConversion(
             TableToken tableToken,
             int tableId,

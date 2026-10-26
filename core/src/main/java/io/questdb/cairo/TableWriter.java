@@ -3206,7 +3206,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
-    /** Installs a staged parquet copy beside a plain native partition's files and marks it parquet_generated. */
+    /**
+     * Installs a staged parquet copy beside a plain native partition's files and marks it parquet_generated.
+     */
     public void installGeneratedParquet(
             long partitionTimestamp,
             long expectedNameTxn,
@@ -7130,7 +7132,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkO3Errors();
     }
 
-    /** Converts folders {@code [lo, hi)} of a non-active logical partition into one parquet folder, no fold first. */
+    /**
+     * Converts folders {@code [lo, hi)} of a non-active logical partition into one parquet folder, no fold first.
+     */
     private void convertLogicalPartitionToParquet(
             long logicalPartitionTimestamp,
             int lo,
@@ -10233,7 +10237,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the posting index key file exists with a non-empty
      * v2 chain (at least one published seal entry).
      */
-    /** True when the footer's index row map is identity, so index files hold partition rows; false if unreadable. */
+    /**
+     * True when the footer's index row map is identity, so index files hold partition rows; false if unreadable.
+     */
     private boolean isParquetIndexRowMapIdentity(long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
         final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
@@ -14918,7 +14924,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         retiredGeometryGenerations.clear();
     }
 
-    /** Refreshes the metadata cache's has-parquet-partitions flag only on a flip: its write lock is global. */
+    /**
+     * Refreshes the metadata cache's has-parquet-partitions flag only on a flip: its write lock is global.
+     */
     private void publishHasParquetPartitions() {
         final boolean hasParquetPartitions = txWriter.hasParquetPartitions();
         if (hasParquetPartitions != hasNotifiedParquetPartitions) {
@@ -16049,7 +16057,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /** A {@link #installGeneratedParquet} staging dir is live while its partition is plain, native, uncopied. */
+    /**
+     * A {@link #installGeneratedParquet} staging dir is live while its partition is plain, native, uncopied.
+     */
     private void removeGeneratingPartitionDirIfStale(long pUtf8NameZ) {
         final int markerLo = utf8Sink.size() - GENERATING_DIR_MARKER.length();
         final boolean stale;
@@ -16540,7 +16550,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
     }
 
-    /** Rebuilds an index instead of linking it unless {@code canLinkIndexFiles}, or when its column got a top. */
+    /**
+     * Rebuilds an index instead of linking it unless {@code canLinkIndexFiles}, or when its column got a top.
+     */
     private void restoreIndexFilesAfterParquetToNative(
             long partitionTimestamp,
             long parquetNameTxn,

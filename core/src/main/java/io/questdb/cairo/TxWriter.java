@@ -297,7 +297,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txPartitionCount;
     }
 
-    /** Partitions in the committed record; an open transaction may hold more in memory. */
+    /**
+     * Partitions in the committed record; an open transaction may hold more in memory.
+     */
     public int getCommittedPartitionCount() {
         final int symbolCount = txMemBase.getInt(readBaseOffset + TX_OFFSET_MAP_WRITER_COUNT_32);
         final int partitionTableBytes = txMemBase.getInt(readBaseOffset + getPartitionTableSizeOffset(symbolCount));
@@ -351,7 +353,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
-    /** Whether the committed record holds this partition's in-memory entry unchanged. */
+    /**
+     * Whether the committed record holds this partition's in-memory entry unchanged.
+     */
     public boolean isPartitionEntryCommitted(int partitionIndex) {
         if (partitionIndex < 0 || partitionIndex >= getCommittedPartitionCount()) {
             return false;
@@ -368,7 +372,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return true;
     }
 
-    /** Whether the open transaction changed the partition table in a way only a whole commit can publish. */
+    /**
+     * Whether the open transaction changed the partition table in a way only a whole commit can publish.
+     */
     public boolean isPartitionTableChanged() {
         return prevPartitionTableVersion != partitionTableVersion;
     }

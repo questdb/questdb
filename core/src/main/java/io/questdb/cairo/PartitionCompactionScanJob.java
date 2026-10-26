@@ -1012,7 +1012,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    /** Converts the requested logical partition into one parquet folder; true when dispatched. */
+    /**
+     * Converts the requested logical partition into one parquet folder; true when dispatched.
+     */
     private boolean convertRequestedPartition(
             TableToken tableToken,
             int timestampType,

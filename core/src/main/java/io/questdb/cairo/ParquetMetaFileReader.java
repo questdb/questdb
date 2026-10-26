@@ -363,7 +363,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
     }
 
-    /** Lists row groups in index row order, the order an index build must add them in. */
+    /**
+     * Lists row groups in index row order, the order an index build must add them in.
+     */
     public void collectRowGroupsInIndexRowOrder(IntList rowGroupOrder, LongList rowGroupIndexRowLos) {
         rowGroupOrder.clear();
         rowGroupIndexRowLos.clear();
@@ -522,7 +524,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return fileSize;
     }
 
-    /** Index rows the symbol indexes cover, dead rows included; see {@link #getRowGroupIndexRowLo(int, long)}. */
+    /**
+     * Index rows the symbol indexes cover, dead rows included; see {@link #getRowGroupIndexRowLo(int, long)}.
+     */
     public long getIndexRowCount() {
         return indexRowMapAddr != 0 ? Unsafe.getLong(indexRowMapAddr) : getPartitionRowCount();
     }
@@ -595,7 +599,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return rowGroupCount;
     }
 
-    /** Index row the symbol indexes store for a row group's first row; {@code rowGroupStartRow} under identity. */
+    /**
+     * Index row the symbol indexes store for a row group's first row; {@code rowGroupStartRow} under identity.
+     */
     public long getRowGroupIndexRowLo(int rowGroupIndex, long rowGroupStartRow) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         if (indexRowMapAddr == 0) {
