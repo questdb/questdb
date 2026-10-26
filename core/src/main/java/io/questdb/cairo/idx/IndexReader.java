@@ -31,6 +31,7 @@ import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.DirectBitSet;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -173,6 +174,22 @@ public interface IndexReader extends Closeable {
             SourceRowResolver sourceRows
     ) {
         return getFrameCursor(key, minValue, maxValue);
+    }
+
+    /**
+     * Opens an index-frame cursor with caller-owned storage available to readers that must
+     * materialize row IDs. The caller is responsible for binding the appropriate memory tracker
+     * and closing the storage. It must keep {@code frameRows} open and unchanged until it finishes
+     * consuming the returned frame.
+     */
+    default IndexFrameCursor getFrameCursor(
+            int key,
+            long minValue,
+            long maxValue,
+            SourceRowResolver sourceRows,
+            DirectLongList frameRows
+    ) {
+        return getFrameCursor(key, minValue, maxValue, sourceRows);
     }
 
     long getKeyBaseAddress();

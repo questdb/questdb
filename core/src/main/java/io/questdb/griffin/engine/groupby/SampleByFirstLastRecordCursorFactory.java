@@ -355,6 +355,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_SEARCH = 5;
         private final static int STATE_START = 0;
         private final PageFrameAddressCache frameAddressCache;
+        // Delta readers may have to materialize index hits. This cursor consumes one index frame
+        // at a time, so one query-scoped buffer can be reused across all scanned partitions.
+        private final DirectLongList indexFrameRows = new DirectLongList(64, MemoryTag.NATIVE_INDEX_READER, true);
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
@@ -409,10 +412,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void close() {
+            indexFrameRows.close();
+            indexFrameRows.setMemoryTracker(null);
             Misc.free(frameMemoryPool);
             Misc.free(frameAddressCache);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
+            memoryTracker = null;
         }
 
         public long getNextTimestamp() {
@@ -585,7 +591,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                                 groupBySymbolKey,
                                 frameLo,
                                 frameHi - 1,
-                                frameMemory.getSourceRowResolver()
+                                frameMemory.getSourceRowResolver(),
+                                indexFrameRows
                         );
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
@@ -787,6 +794,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.memoryTracker = sqlExecutionContext.getMemoryTracker();
+            indexFrameRows.close();
+            indexFrameRows.setMemoryTracker(memoryTracker);
             frameAddressCache.of(metadata, frameCursor);
             toTop();
             parseParams(this, sqlExecutionContext);
