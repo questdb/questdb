@@ -1389,11 +1389,18 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
+        // Every step runs even when an earlier one throws (a pooled writer's close can raise a fatal flush
+        // failure): the first failure is thrown last, later ones are attached to it as suppressed.
+        Throwable failure = null;
         try {
             if (timerShards != null) {
                 assert closing || timerShards.size() == 0
                         : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
-                timerShards.halt();
+                try {
+                    timerShards.halt();
+                } catch (Throwable th) {
+                    failure = Misc.foldCleanupFailure(failure, th);
+                }
             }
             // Return any base-table readers pinned by an in-flight seed sweep to the
             // reader pool before it is freed below, so the pool teardown does not report
@@ -1403,40 +1410,49 @@ public class CairoEngine implements Closeable, WriterSource {
             // turns: it holds a pinned base reader, a live-view WAL writer carrying an
             // uncommitted replacement, and a staged temporary data segment, none of
             // which can outlive the pools below.
-            liveViewRegistry.discardSuspendedRepairs();
-            liveViewRegistry.freeSeedBaseReaders();
+            try {
+                liveViewRegistry.discardSuspendedRepairs();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
+            try {
+                liveViewRegistry.freeSeedBaseReaders();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
             // Free the live-view state ABOVE the pools rather than below them. Every pooled handle a
             // live view can hold - base readers, live-view WAL writers - is returned by this free, so
             // ordering it here makes the teardown correct by construction instead of resting on the
             // hand-maintained pre-release calls above. clear() already sequences it this way; adding
             // one pooled handle to LiveViewInstance would otherwise turn the old order into a
             // use-after-free that no test catches.
-            Misc.free(liveViewRegistry);
-            Misc.free(liveViewStateStore);
-            Misc.free(sqlCompilerPool);
-            Misc.free(writerPool);
-            Misc.free(readerPool);
-            Misc.free(sequencerMetadataPool);
-            Misc.free(tableMetadataPool);
-            Misc.free(walWriterPool);
-            Misc.free(viewWalWriterPool);
-            Misc.free(tableIdGenerator);
-            Misc.free(messageBus);
-            Misc.free(tableSequencerAPI);
-            Misc.freeObjList(telemetries);
-            Misc.free(tableNameRegistry);
-            Misc.free(checkpointAgent);
-            Misc.free(metadataCache);
-            Misc.free(scoreboardPool);
-            Misc.free(matViewStateStore);
-            Misc.free(settingsStore);
-            Misc.free(frameFactory);
-            Misc.free(walLocker);
-            Misc.free(memoryTrackerProvider);
+            failure = Misc.freeBestEffort(failure, liveViewRegistry);
+            failure = Misc.freeBestEffort(failure, liveViewStateStore);
+            failure = Misc.freeBestEffort(failure, sqlCompilerPool);
+            failure = Misc.freeBestEffort(failure, writerPool);
+            failure = Misc.freeBestEffort(failure, readerPool);
+            failure = Misc.freeBestEffort(failure, sequencerMetadataPool);
+            failure = Misc.freeBestEffort(failure, tableMetadataPool);
+            failure = Misc.freeBestEffort(failure, walWriterPool);
+            failure = Misc.freeBestEffort(failure, viewWalWriterPool);
+            failure = Misc.freeBestEffort(failure, tableIdGenerator);
+            failure = Misc.freeBestEffort(failure, messageBus);
+            failure = Misc.freeBestEffort(failure, tableSequencerAPI);
+            failure = Misc.freeObjListBestEffort(failure, telemetries);
+            failure = Misc.freeBestEffort(failure, tableNameRegistry);
+            failure = Misc.freeBestEffort(failure, checkpointAgent);
+            failure = Misc.freeBestEffort(failure, metadataCache);
+            failure = Misc.freeBestEffort(failure, scoreboardPool);
+            failure = Misc.freeBestEffort(failure, matViewStateStore);
+            failure = Misc.freeBestEffort(failure, settingsStore);
+            failure = Misc.freeBestEffort(failure, frameFactory);
+            failure = Misc.freeBestEffort(failure, walLocker);
+            failure = Misc.freeBestEffort(failure, memoryTrackerProvider);
         } finally {
             // also when a free above throws, so a closed engine never hears a failure
             LIVE_ENGINES.remove(this);
         }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @TestOnly
@@ -3302,7 +3318,14 @@ public class CairoEngine implements Closeable, WriterSource {
         String lockedReason;
         if (tableMetadataPool.lock(tableToken)) {
             if (sequencerMetadataPool.lock(tableToken)) {
-                lockedReason = writerPool.lock(tableToken, lockReason);
+                try {
+                    lockedReason = writerPool.lock(tableToken, lockReason);
+                } catch (Throwable th) {
+                    // A writer close inside lock() can throw: release the metadata locks taken above.
+                    sequencerMetadataPool.unlock(tableToken);
+                    tableMetadataPool.unlock(tableToken);
+                    throw th;
+                }
                 if (lockedReason == null) {
                     // not locked
                     if (readerPool.lock(tableToken)) {

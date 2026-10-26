@@ -42,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -147,13 +148,15 @@ public class WriterPool extends AbstractPool {
     public int releaseCrashOrphanedWriters() {
         final long thread = Thread.currentThread().threadId();
         int reclaimed = 0;
+        Throwable closeFailure = null;
         final Iterator<Entry> iterator = entries.values().iterator();
         while (iterator.hasNext()) {
             final Entry e = iterator.next();
             if (e.owner != thread) {
                 continue;
             }
-            closeWriter(thread, e, PoolListener.EV_EXPIRE, PoolConstants.CR_POOL_CLOSE); // frees writer mem (no-op if locked)
+            // frees writer mem (no-op if locked)
+            closeFailure = closeWriterBestEffort(closeFailure, thread, e, PoolListener.EV_EXPIRE, PoolConstants.CR_POOL_CLOSE);
             if (e.lockFd != -1 && ff.close(e.lockFd)) {
                 e.lockFd = -1; // release the .lock fd a lock()'d orphan still holds
             }
@@ -161,6 +164,7 @@ public class WriterPool extends AbstractPool {
             iterator.remove();
             reclaimed++;
         }
+        CairoException.rethrowCleanupFailure(closeFailure);
         return reclaimed;
     }
 
@@ -299,7 +303,17 @@ public class WriterPool extends AbstractPool {
             // try to change owner
             if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                 e.ownershipReason = lockReason;
-                closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
+                try {
+                    closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
+                } catch (Throwable th) {
+                    // The writer is unusable after a close, thrown or not, and closeWriter() has already nulled it.
+                    // Leave the entry free and empty, as a failed lockAndNotify() does: the next get() opens a new
+                    // writer, the next lock() locks the table, and the reaper evicts it.
+                    e.ownershipReason = OWNERSHIP_REASON_RELEASED;
+                    Unsafe.storeFence();
+                    Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+                    throw th;
+                }
                 if (lockAndNotify(thread, e, tableToken, lockReason)) {
                     return OWNERSHIP_REASON_NONE;
                 }
@@ -519,6 +533,23 @@ public class WriterPool extends AbstractPool {
                     .$(", by=").$(thread)
                     .I$();
             notifyListener(thread, tableToken, ev);
+        }
+    }
+
+    // Closes the entry's writer and returns the failure chain with any close failure folded in, so a teardown loop
+    // can finish its other entries and throw the first failure last. The writer is unusable after a close that
+    // threw, just as after one that returned.
+    private Throwable closeWriterBestEffort(Throwable closeFailure, long thread, Entry e, short ev, int reason) {
+        final TableToken tableToken = e.getTableToken();
+        try {
+            closeWriter(thread, e, ev, reason);
+            return closeFailure;
+        } catch (Throwable th) {
+            LOG.critical().$("could not close writer [table=").$(tableToken)
+                    .$(", reason=").$(PoolConstants.closeReasonText(reason))
+                    .$(", error=").$(th)
+                    .I$();
+            return Misc.foldCleanupFailure(closeFailure, th);
         }
     }
 
@@ -747,9 +778,14 @@ public class WriterPool extends AbstractPool {
         }
 
         if (isDistressed) {
-            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
-            entries.remove(tableToken.getDirName());
-            notifyListener(thread, tableToken, PoolListener.EV_RETURN);
+            try {
+                closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
+            } finally {
+                // The writer is unusable even when its close threw: evict the entry, and let the throw reach the
+                // borrower's close() call.
+                entries.remove(tableToken.getDirName());
+                notifyListener(thread, tableToken, PoolListener.EV_RETURN);
+            }
             return true;
         }
 
@@ -812,6 +848,7 @@ public class WriterPool extends AbstractPool {
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().threadId();
         boolean removed = false;
+        Throwable closeFailure = null;
         final int reason;
 
         if (deadline == Long.MAX_VALUE) {
@@ -831,8 +868,9 @@ public class WriterPool extends AbstractPool {
                 // allocating thread can wait until the entry is released.
                 // Avoid negative thread id clashing with UNALLOCATED and QUEUE_PROCESSING values
                 if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 3)) {
-                    // lock successful
-                    closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
+                    // lock successful; a close that throws still evicts the entry, the first failure is thrown
+                    // once every entry is visited
+                    closeFailure = closeWriterBestEffort(closeFailure, thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
                     removed = true;
                 }
@@ -857,6 +895,7 @@ public class WriterPool extends AbstractPool {
                 removed = true;
             }
         }
+        CairoException.rethrowCleanupFailure(closeFailure);
         return removed;
     }
 
