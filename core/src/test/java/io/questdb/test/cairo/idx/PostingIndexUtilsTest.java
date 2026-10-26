@@ -27,6 +27,7 @@ package io.questdb.test.cairo.idx;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -69,12 +70,12 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
     };
     // owned by no posting column instance of s; s.d.0 stays out, because it marks instance 0 of s and
     // changes what the removal of NONE takes (testRemoveAllSealedFilesKeepsCoverFilesOfInstanceZero)
-    private static final String[] FOREIGN_FILES = {
+    private static final String[] FOREIGN_FILES = creatableFileNames(
             "s.pc", "s.pcX.0.1", "s.pc0.", "s.pc0.0.", "s.pc0.a.1", "s.pc.0.1", "s.pc0", "s.pc0.0.1.2.3", "s.pc0.-1.1",
             "s.pv.", "s.pv.x", "s.pv.0.", "s.pv.a.1", "s.pv.1.2.3", "s.px.1", "s.p", "s.pvv.1",
             "s2.pc0.0.1", "s2.pv.1", "sx.pv.1", "t.pc0.0.1", "s_pc0.0.1",
-            "s.pk", "s.pk.0", "s.d", "s.d.1", "s2.d.0", "s.k.0", "s.v.0",
-    };
+            "s.pk", "s.pk.0", "s.d", "s.d.1", "s2.d.0", "s.k.0", "s.v.0"
+    );
     // not sealed files: the scan ignores them, removeAllSealedFiles removes the one of its instance
     private static final String[] PCI_FILES = {"s.pci", "s.pci.0", "s.pci.1", "s.pci.10", "s.pci.5"};
     private int scanDirCount;
@@ -262,6 +263,22 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Win32 drops trailing dots and spaces from a file name: "s.pc0." would create s.pc0, which collides
+    // with the "s.pc0" entry. QuestDB never sees such a name on Windows, so the fixture leaves these names
+    // out there; every other platform creates the full list.
+    private static String[] creatableFileNames(String... names) {
+        if (Os.type != Os.WINDOWS) {
+            return names;
+        }
+        final ArrayList<String> creatable = new ArrayList<>(names.length);
+        for (String name : names) {
+            if (!name.endsWith(".") && !name.endsWith(" ")) {
+                creatable.add(name);
+            }
+        }
+        return creatable.toArray(new String[0]);
     }
 
     private static String fileName(LPSZ name) {

@@ -77,6 +77,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -2777,6 +2778,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // With a checkpoint in progress the merge leaves the old index version to the async purge, even
         // with no reader, and the purge removes it once the checkpoint is released. The table is created
         // after the checkpoint starts, so the checkpoint pins no txn of it.
+        // CHECKPOINT CREATE calls sync(), which Windows does not have.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             execute("CHECKPOINT CREATE");
