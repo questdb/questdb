@@ -356,37 +356,49 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     private void emitRange(long startEncoded, long endEncoded, LongList out) {
-        boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
         long start = evaluateExpr(startEncoded);
         long end = evaluateExpr(endEncoded);
+        // The expression, not its value, decides whether an endpoint is a whole day or a point
+        // in time, so a point in time that falls exactly on midnight stays a point in time.
+        boolean isStartDay = DateVariableExpr.isDayLevel(startEncoded);
+        boolean isEndDay = DateVariableExpr.isDayLevel(endEncoded);
 
-        long startDay = timestampDriver.startOfDay(start, 0);
-        long endDay = timestampDriver.startOfDay(end, 0);
-        boolean hasBothTimeComponents = (start != startDay) && (end != endDay);
-
-        if (hasBothTimeComponents) {
+        if (!isStartDay && !isEndDay) {
             out.add(start, end);
-        } else {
-            long currentDay = startDay;
-            while (currentDay <= endDay) {
-                if (isBusinessDay) {
-                    int dow = timestampDriver.getDayOfWeek(currentDay);
-                    if (dow == SATURDAY || dow == SUNDAY) {
-                        currentDay = timestampDriver.addDays(currentDay, 1);
-                        continue;
-                    }
+            return;
+        }
+
+        // Iterate the days of the range, then clip their intervals to the endpoint that is
+        // a point in time, if any. A whole-day endpoint covers its entire day.
+        boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
+        int outStart = out.size();
+        long currentDay = timestampDriver.startOfDay(start, 0);
+        long endDay = timestampDriver.startOfDay(end, 0);
+        while (currentDay <= endDay) {
+            if (isBusinessDay) {
+                int dow = timestampDriver.getDayOfWeek(currentDay);
+                if (dow == SATURDAY || dow == SUNDAY) {
+                    currentDay = timestampDriver.addDays(currentDay, 1);
+                    continue;
                 }
-                emitDayInterval(currentDay, out);
-                currentDay = timestampDriver.addDays(currentDay, 1);
             }
+            emitDayInterval(currentDay, out);
+            currentDay = timestampDriver.addDays(currentDay, 1);
+        }
+        if (!isStartDay || !isEndDay) {
+            IntervalUtils.clipIntervals(
+                    out,
+                    outStart,
+                    isStartDay ? Long.MIN_VALUE : start,
+                    isEndDay ? Long.MAX_VALUE : end
+            );
         }
     }
 
     private void emitSingleVar(long encoded, LongList out) {
         long timestamp = evaluateExpr(encoded);
-        boolean isDayLevel = (timestamp == timestampDriver.startOfDay(timestamp, 0));
 
-        if (isDayLevel) {
+        if (DateVariableExpr.isDayLevel(encoded)) {
             emitDayInterval(timestamp, out);
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
             long endExclusive = applyDuration(timestamp);

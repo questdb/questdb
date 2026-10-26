@@ -26,7 +26,9 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
@@ -118,6 +120,43 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         assertQuery("test where ts in ($1,$2,$3)")
                 .ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))")
                 .assertBinds(cases);
+    }
+
+    @Test
+    public void testDateVariableNowAtMidnight() throws Exception {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now and expressions on it stay points in time when they land exactly on midnight
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T01:00:00.000000Z"));
+            assertTickExprMatches("$now - 1h..$now", "2\t2024-01-02T00:00:00.000000Z\t2024-01-02T01:00:00.000000Z");
+
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
+            assertTickExprMatches("$now - 2h..$now", "3\t2024-01-01T22:00:00.000000Z\t2024-01-02T00:00:00.000000Z");
+            assertTickExprMatches("$now", "1\t2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeKeepsEndpointTimeOfDay() throws Exception {
+        // https://github.com/questdb/questdb/issues/8083
+        // A range endpoint keeps its time of day when the other endpoint is a whole day
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.123456Z"));
+
+            // both endpoints have a time of day
+            assertTickExprMatches("$today + 6h..$today + 23h", "18\t2024-01-02T06:00:00.000000Z\t2024-01-02T23:00:00.000000Z");
+            assertTickExprMatches("$now - 2h..$now", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+
+            // only one endpoint has a time of day
+            assertTickExprMatches("$today + 18h..$tomorrow", "30\t2024-01-02T18:00:00.000000Z\t2024-01-03T23:00:00.000000Z");
+            assertTickExprMatches("$now - 2h..$tomorrow", "39\t2024-01-02T09:00:00.000000Z\t2024-01-03T23:00:00.000000Z");
+            assertTickExprMatches("$yesterday + 12h..$today", "36\t2024-01-01T12:00:00.000000Z\t2024-01-02T23:00:00.000000Z");
+            assertTickExprMatches("$today + 6h..$today + 24h", "19\t2024-01-02T06:00:00.000000Z\t2024-01-03T00:00:00.000000Z");
+            assertTickExprMatches("$today..$now", "11\t2024-01-02T00:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+        });
     }
 
     @Test
@@ -235,5 +274,33 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void createHourlyTable() throws SqlException {
+        // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts
+                    FROM long_sequence(96)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+    }
+
+    private void assertTickExprMatches(String tickExpr, String expectedRow) throws Exception {
+        final String expected = "count\tmin\tmax\n" + expectedRow + "\n";
+        // the IN on the designated timestamp becomes an interval scan
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Interval forward scan")
+                .returns(expected);
+        // the OR keeps the IN in the row filter
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "' OR ts = 0")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("filter: ")
+                .returns(expected);
     }
 }

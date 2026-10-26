@@ -1029,9 +1029,27 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprMixedPrecisionRange() throws SqlException {
-        // Range where start is day-level ($today = midnight) and end is sub-day ($now).
-        // hasBothTimeComponents = false → day-based iteration (one day if same day).
+        // Range where start is a whole day ($today) and end is a point in time ($now):
+        // the range covers today up to $now.
         assertCompiledTickExpr("$today..$now");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithBusinessDays() throws SqlException {
+        // Business days from $now, each with a 09:30 session; $now clips today's session
+        assertCompiledTickExpr("[$now..$today + 3bd]T09:30;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithDayFilter() throws SqlException {
+        assertCompiledTickExpr("[$yesterday + 12h..$tomorrow]#workday");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithTimeListAndTimezone() throws SqlException {
+        // The parse path applies the timezone to a time list before clipping to $now - 2h,
+        // while the compiled path clips in local time first; both must agree
+        assertCompiledTickExpr("[$now - 2h..$tomorrow]T[09:00,14:00]@+02:00");
     }
 
     @Test
@@ -2812,6 +2830,17 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableNowAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now is a point in time even when the clock reads exactly midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T00:00:00.000000Z}]",
+                "$now",
+                "2024-01-02T00:00:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableNowBare() throws SqlException {
         // $now without brackets - same result as [$now]
         assertBracketIntervalWithNow(
@@ -2919,6 +2948,19 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeBusinessDaysFromNow() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now starts the business-day range at the current moment, not at midnight.
+        // 2024-01-02 is a Tuesday and $today + 3bd is Friday 2024-01-05, so no weekend
+        // falls inside the range.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T10:00:00.123400Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "$now..$today + 3bd",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeBusinessDaysFromWeekend() throws SqlException {
         // Start from Saturday - business day range should still work
         // 2026-01-24 is Saturday, +3bd should skip Sat/Sun and give Mon 26, Tue 27, Wed 28
@@ -3019,6 +3061,18 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeDayStartTimeEnd() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today starts the range at midnight and $now ends it at the current moment,
+        // so the range stops at $now instead of covering the rest of the day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T10:00:00.123400Z}]",
+                "$today..$now",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeEmptyEndExpression() {
         // Empty end expression
         assertBracketIntervalError("[$today..]", "Empty end expression in date range");
@@ -3046,6 +3100,12 @@ public class TickExprTest {
     public void testDateVariableRangeInvalidOrder() {
         // End before start should produce error
         assertBracketIntervalError("[$today+5d..$today]", "Invalid date range: start is after end");
+    }
+
+    @Test
+    public void testDateVariableRangeInvalidOrderMixed() {
+        // $now is after the end of $yesterday
+        assertBracketIntervalError("[$now..$yesterday]", "Invalid date range: start is after end");
     }
 
     @Test
@@ -3109,6 +3169,55 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeNowEndAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // At exactly midnight, "the last 2 hours" still covers 2 hours rather than
+        // the whole of yesterday and today
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-01T22:00:00.000000Z, hi=2024-01-02T00:00:00.000000Z}]",
+                "$now - 2h..$now",
+                "2024-01-02T00:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNowStartAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now - 1h lands exactly on midnight; the range still ends at $now
+        // rather than covering the whole day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T01:00:00.000000Z}]",
+                "$now - 1h..$now",
+                "2024-01-02T01:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNowStartAtMidnightWithTimeSuffix() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // Both endpoints have a time of day, so the range skips the T09:00 override as it
+        // does at any other moment (see testDateVariableArithmeticHoursWithTimeSuffix).
+        // A start that lands exactly on midnight must not turn the range into whole days
+        // that the override then narrows to 09:00, a window outside the range.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T02:00:00.000000Z}]",
+                "[$now - 2h..$now]T09:00",
+                "2024-01-02T02:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNowToToday() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today as the end stands for the end of today, so the range runs from $now to midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T10:00:00.123400Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "$now..$today",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeSameDaySingleBusinessDay() throws SqlException {
         // Single business day range: $today+1bd..$today+1bd (Friday 2026-01-23)
         assertBracketIntervalWithNow(
@@ -3161,6 +3270,40 @@ public class TickExprTest {
     public void testDateVariableRangeThreeDots() {
         // Three dots is invalid - parsed as ".." followed by ".$tomorrow" which fails
         assertBracketIntervalError("[$today...$tomorrow]", "Unknown date variable");
+    }
+
+    @Test
+    public void testDateVariableRangeTimeEndAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today + 24h is the point at midnight of the next day, not the whole next day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T06:00:00.000000Z, hi=2024-01-03T00:00:00.000000Z}]",
+                "$today + 6h..$today + 24h",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeTimeStartDayEnd() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today + 18h starts the range at 18:00 and $tomorrow ends it at the end of
+        // tomorrow, so the range keeps the 18h offset instead of starting at midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T18:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "$today + 18h..$tomorrow",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeTimeStartDayEndWithTimezone() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // Local range: 2024-01-02T08:00:00.1234 (+02:00) to the end of 2024-01-03 (+02:00)
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T06:00:00.123400Z, hi=2024-01-03T21:59:59.999999Z}]",
+                "[$now - 2h..$tomorrow]@+02:00",
+                "2024-01-02T10:00:00.123400Z"
+        );
     }
 
     @Test
@@ -3309,14 +3452,73 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateVariableRangeWithNowStripsTime() throws SqlException {
-        // $now has time component, but range should use start of day
-        // Range from $now (10:30 on Jan 22) to $tomorrow should be Jan 22-23 full days
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+    public void testDateVariableRangeWithNowAndTimeListAndTimezone() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // The range starts at $now - 2h = 10:00 local (+02:00), which drops the 09:00 of today
+        // but keeps its 10:30. The parse path converts the time list to UTC before clipping,
+        // so it converts the 10:00 start too: 10:30 local is 08:30Z, after 10:00 local (08:00Z).
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T08:30:00.000000Z, hi=2024-01-02T08:30:59.999999Z}," +
+                        "{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T07:00:59.999999Z}," +
+                        "{lo=2024-01-03T08:30:00.000000Z, hi=2024-01-03T08:30:59.999999Z}]",
+                "[$now - 2h..$tomorrow]T[09:00,10:30]@+02:00",
+                "2024-01-02T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListApplyEncodedFalse() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now (10:30) drops today's 09:00. In dynamic mode the first interval carries the
+        // operation and the rest carry UNION, so today's 11:00 takes over INTERSECT.
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-22T11:00:00.000000Z, hi=2026-01-22T11:00:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:59.999999Z}," +
+                        "{lo=2026-01-23T11:00:00.000000Z, hi=2026-01-23T11:00:59.999999Z}]",
+                "[$now..$tomorrow]T[09:00,11:00]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+        Assert.assertEquals(IntervalOperation.INTERSECT, IntervalUtils.getEncodedOperation(out, 0));
+        Assert.assertEquals(IntervalOperation.UNION, IntervalUtils.getEncodedOperation(out, IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
+        Assert.assertEquals(IntervalOperation.UNION, IntervalUtils.getEncodedOperation(out, 2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeSuffix() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // The range starts at $now (10:30), so today's 09:00 falls outside it
+        assertParsedAndCompiledWithNow(
+                "[{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:59.999999Z}]",
+                "[$now..$tomorrow]T09:00",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowKeepsTime() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // The range runs from $now (10:30 on Jan 22) to the end of $tomorrow (Jan 23),
+        // keeping the time of day of $now rather than starting at midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
                 "[$now..$tomorrow]",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowRepeatingIntervalApplyEncodedFalse() throws SqlException {
+        // Dynamic mode keeps a repeating interval as one encoded interval, and clipping it
+        // to $now would need its repetitions expanded
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
+        final String interval = "[$now..$tomorrow];1h;1d;2";
+        try {
+            parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
+            Assert.fail("Expected SqlException");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Repeating interval is not supported in a date variable range with a time of day");
+        }
     }
 
     @Test
@@ -3488,6 +3690,18 @@ public class TickExprTest {
                 "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
                 "[$today]",
                 "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableTodayPlusHoursAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today + 24h is a point in time, like $today + 23h, even though it lands exactly
+        // on midnight; only day-unit arithmetic such as $today + 1d yields a whole day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T00:00:00.000000Z}]",
+                "$today + 24h",
+                "2024-01-02T10:00:00.123400Z"
         );
     }
 
@@ -6081,6 +6295,36 @@ public class TickExprTest {
             Assert.fail();
         } catch (SqlException ignore) {
         }
+    }
+
+    /**
+     * Asserts that both the parse path ({@code parseTickExpr}) and the compiled path
+     * ({@link CompiledTickExpression#evaluate}) produce the expected intervals for the given "now".
+     */
+    private void assertParsedAndCompiledWithNow(String expected, String expression, String nowTimestamp) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        final String expectedForType = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                : expected;
+
+        out.clear();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+        final String parsed = intervalToString(timestampDriver, out).toString();
+
+        out.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, now);
+        }
+        final String compiled = intervalToString(timestampDriver, out).toString();
+
+        // one assertion over both paths, so a failure shows the result of each
+        TestUtils.assertEquals(
+                expression,
+                "parsed: " + expectedForType + "\ncompiled: " + expectedForType,
+                "parsed: " + parsed + "\ncompiled: " + compiled
+        );
     }
 
     private void assertShortInterval(String expected, String interval) throws SqlException {

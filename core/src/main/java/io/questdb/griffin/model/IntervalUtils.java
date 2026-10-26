@@ -85,6 +85,7 @@ public final class IntervalUtils {
             new FiberLocal<>(() -> new ObjectStackPool<>(StringSink::new, 2));
     private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<LongList> tlTzBound = new FiberLocal<>(LongList::new);
 
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
@@ -1822,6 +1823,62 @@ public final class IntervalUtils {
     }
 
     /**
+     * Clips the intervals that a date variable range produced for one day to the range endpoint
+     * that is a point in time, and drops the ones that fall entirely outside it. Dynamic mode
+     * (applyEncoded=false) keeps the 4-long format, where the first interval of an expansion
+     * carries the operation and the rest carry UNION.
+     */
+    private static void clipDateRangeIntervals(
+            LongList out,
+            int startIndex,
+            long clipLo,
+            long clipHi,
+            short operation,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            int errorPos
+    ) throws SqlException {
+        if (applyEncoded) {
+            clipIntervals(out, startIndex, clipLo, clipHi);
+            return;
+        }
+
+        int writeIndex = startIndex;
+        for (int readIndex = startIndex, n = out.size(); readIndex < n; readIndex += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
+            if (decodePeriodType(out, readIndex) != PeriodType.NONE) {
+                // clipping a repeating interval would need its repetitions expanded
+                throw SqlException.$(errorPos, "Repeating interval is not supported in a date variable range with a time of day");
+            }
+            final long lo = out.getQuick(readIndex + LO_INDEX);
+            final long hi = out.getQuick(readIndex + HI_INDEX);
+            if (hi >= clipLo && lo <= clipHi) {
+                for (int j = 0; j < STATIC_LONGS_PER_DYNAMIC_INTERVAL; j++) {
+                    out.setQuick(writeIndex + j, out.getQuick(readIndex + j));
+                }
+                out.setQuick(writeIndex + LO_INDEX, Math.max(lo, clipLo));
+                out.setQuick(writeIndex + HI_INDEX, Math.min(hi, clipHi));
+                writeIndex += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            }
+        }
+        out.setPos(writeIndex);
+
+        // When clipping dropped the first interval of the expansion, the interval that took
+        // its place carries UNION and must carry the operation instead
+        if (startIndex == outSizeBeforeExpansion && writeIndex > startIndex) {
+            final int index = startIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX;
+            final long encoded = out.getQuick(index);
+            final short periodType = Numbers.decodeHighShort(Numbers.decodeLowInt(encoded));
+            out.setQuick(
+                    index,
+                    Numbers.encodeLowHighInts(
+                            Numbers.encodeLowHighShorts(getEffectiveOp(operation, true), periodType),
+                            Numbers.decodeHighInt(encoded)
+                    )
+            );
+        }
+    }
+
+    /**
      * Compiles a bare variable (possibly a range like "$today..$today+5bd") into irList.
      */
     private static void compileBareVarElement(
@@ -3022,19 +3079,16 @@ public final class IntervalUtils {
                             timestampDriver, seq, elementStart, exprEnd, nowTimestamp, errorPos
                     );
 
-                    // Check if timestamp has time component (e.g., $now)
-                    // If so, format with full datetime; otherwise just date
+                    // The expression, not its value, decides whether the element is a whole day or a
+                    // point in time, so a point in time that falls exactly on midnight keeps its time
                     StringSink dateVarSink = tlDateVarSink.get();
                     dateVarSink.clear();
-                    long startOfDay = timestampDriver.startOfDay(resolvedTimestamp, 0);
-                    boolean hasTimeComponent = resolvedTimestamp != startOfDay;
-
-                    if (hasTimeComponent) {
-                        // $now - format with full datetime, timezone suffix still applies
-                        appendDateTime(timestampDriver, resolvedTimestamp, dateVarSink);
-                    } else {
-                        // $today, $yesterday, $tomorrow - format as date only
+                    if (DateVariableExpr.isDayLevel(DateVariableExpr.parseEncoded(seq, elementStart, exprEnd, errorPos))) {
+                        // $today, $yesterday, $tomorrow, optionally shifted by whole days - format as date only
                         appendDate(timestampDriver, resolvedTimestamp, dateVarSink);
+                    } else {
+                        // $now, or a shift below a day - format with full datetime, timezone suffix still applies
+                        appendDateTime(timestampDriver, resolvedTimestamp, dateVarSink);
                     }
 
                     // Append any suffix (timezone/day filter) from the original element
@@ -3316,6 +3370,11 @@ public final class IntervalUtils {
     /**
      * Expands a date variable range like "$today..$today+5d" or "$today..$today+5bd" into multiple individual dates.
      * <p>
+     * Each endpoint expression is either a whole day ($today, $yesterday, $tomorrow, optionally shifted by
+     * whole days) or a point in time ($now, or a shift below a day). A range between two points in time
+     * produces a single interval. Otherwise the range iterates the days from the start's day to the end's
+     * day, and clips the result to the endpoint that is a point in time, if any.
+     * <p>
      * Range type is determined by the END expression:
      * - If end expression ends with "bd", iterate business days only (skip Sat/Sun)
      * - Otherwise, iterate all calendar days
@@ -3392,20 +3451,26 @@ public final class IntervalUtils {
                 timestampDriver, seq, endExprLo, endExprHi, nowTimestamp, errorPos
         );
 
-        // Validate start <= end
-        if (startTimestamp > endTimestamp) {
+        // The expression, not its value, decides whether an endpoint is a whole day or a point in
+        // time, so a point in time that falls exactly on midnight stays a point in time
+        final boolean isStartDay = DateVariableExpr.isDayLevel(
+                DateVariableExpr.parseEncoded(seq, elementStart, startExprHi, errorPos)
+        );
+        final boolean isEndDay = DateVariableExpr.isDayLevel(
+                DateVariableExpr.parseEncoded(seq, endExprLo, endExprHi, errorPos)
+        );
+        long startDay = timestampDriver.startOfDay(startTimestamp, 0);
+        long endDay = timestampDriver.startOfDay(endTimestamp, 0);
+
+        // Validate start <= end. A whole-day endpoint starts the range at the start of its day,
+        // and ends it at the end of its day.
+        final long rangeLo = isStartDay ? startDay : startTimestamp;
+        final long rangeHi = isEndDay ? timestampDriver.endOfDay(endDay) : endTimestamp;
+        if (rangeLo > rangeHi) {
             throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
         }
 
-        // Check if BOTH endpoints have time precision (not at start of day)
-        // If so, produce a single interval from start to end instead of iterating by days
-        // Note: we require BOTH to have time precision, so that expressions like
-        // "$now..$tomorrow" still iterate by days (since $tomorrow is at midnight)
-        long startDay = timestampDriver.startOfDay(startTimestamp, 0);
-        long endDay = timestampDriver.startOfDay(endTimestamp, 0);
-        boolean hasTimePrecision = (startTimestamp != startDay) && (endTimestamp != endDay);
-
-        if (hasTimePrecision) {
+        if (!isStartDay && !isEndDay) {
             // Time-based range: produce single interval from start to end
             int outSizeBeforeInterval = out.size();
             encodeInterval(startTimestamp, endTimestamp, operation, out);
@@ -3449,7 +3514,11 @@ public final class IntervalUtils {
             return;
         }
 
-        // Day-based range: iterate from start to end by days
+        // Day-based range: iterate from start to end by days. When one endpoint is a point in time,
+        // clip the intervals of each day to it.
+        final boolean isClipped = !isStartDay || !isEndDay;
+        final long clipLo = isStartDay ? Long.MIN_VALUE : startTimestamp;
+        final long clipHi = isEndDay ? Long.MAX_VALUE : endTimestamp;
         startTimestamp = startDay;
         endTimestamp = endDay;
 
@@ -3566,6 +3635,7 @@ public final class IntervalUtils {
 
             // Check for brackets in combined string
             boolean hasBrackets = false;
+            boolean hadTimeListBracket = false;
             int expandedLen = sink.length();
             for (int j = 0; j < expandedLen; j++) {
                 if (sink.charAt(j) == '[') {
@@ -3587,7 +3657,6 @@ public final class IntervalUtils {
 
                 final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
                 final StringSink expansionSink = sinks.next();
-                final boolean hadTimeListBracket;
                 try {
                     hadTimeListBracket = expandBracketsRecursive(
                             timestampDriver,
@@ -3610,11 +3679,28 @@ public final class IntervalUtils {
                 } finally {
                     sinks.release(expansionSink);
                 }
-                if (hadTimeListBracket) {
-                    activeTzLo = -1;
-                }
             } else {
                 parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            }
+
+            if (isClipped) {
+                long dayClipLo = clipLo;
+                long dayClipHi = clipHi;
+                if (hadTimeListBracket && activeTzLo >= 0) {
+                    // Time list brackets have converted their intervals to UTC already,
+                    // so the endpoint needs the same conversion
+                    if (dayClipLo != Long.MIN_VALUE) {
+                        dayClipLo = localToUtc(timestampDriver, configuration, dayClipLo, activeTzSeq, activeTzLo, activeTzHi, errorPos);
+                    }
+                    if (dayClipHi != Long.MAX_VALUE) {
+                        dayClipHi = localToUtc(timestampDriver, configuration, dayClipHi, activeTzSeq, activeTzLo, activeTzHi, errorPos);
+                    }
+                }
+                clipDateRangeIntervals(out, outSizeBeforeElement, dayClipLo, dayClipHi, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+            }
+            if (hadTimeListBracket) {
+                // time list brackets have applied the timezone already
+                activeTzLo = -1;
             }
 
             // Day filter applies BEFORE timezone conversion (based on local time)
@@ -4179,6 +4265,26 @@ public final class IntervalUtils {
     }
 
     /**
+     * Converts a local timestamp to UTC with the timezone in tzSeq[tzLo, tzHi), the same way
+     * {@link #applyTimezoneToIntervals} converts an interval.
+     */
+    private static long localToUtc(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            long timestamp,
+            CharSequence tzSeq,
+            int tzLo,
+            int tzHi,
+            int errorPos
+    ) throws SqlException {
+        final LongList bound = tlTzBound.get();
+        bound.clear();
+        bound.add(timestamp, timestamp);
+        applyTimezoneToIntervals(timestampDriver, configuration, bound, 0, tzSeq, tzLo, tzHi, errorPos, true);
+        return bound.getQuick(0);
+    }
+
+    /**
      * Unions intervals in the range [startIndex, end) with each other.
      * Pre-existing intervals at [0, startIndex) are preserved unchanged.
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
@@ -4720,6 +4826,23 @@ public final class IntervalUtils {
                 out.add(temp.getQuick(i));
             }
         }
+    }
+
+    /**
+     * Clips the [lo, hi] pairs from {@code startIndex} on to [{@code clipLo}, {@code clipHi}]
+     * and drops the pairs that fall entirely outside it.
+     */
+    static void clipIntervals(LongList intervals, int startIndex, long clipLo, long clipHi) {
+        int writeIndex = startIndex;
+        for (int readIndex = startIndex, n = intervals.size(); readIndex < n; readIndex += 2) {
+            final long lo = intervals.getQuick(readIndex);
+            final long hi = intervals.getQuick(readIndex + 1);
+            if (hi >= clipLo && lo <= clipHi) {
+                intervals.setQuick(writeIndex++, Math.max(lo, clipLo));
+                intervals.setQuick(writeIndex++, Math.min(hi, clipHi));
+            }
+        }
+        intervals.setPos(writeIndex);
     }
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
