@@ -6135,7 +6135,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_double(2)" +
                         " from long_sequence(30)",
                 17,
-                "inconvertible types"
+                "inconvertible types: DOUBLE -> DATE [from=rnd_double, to=a]"
         ));
     }
 

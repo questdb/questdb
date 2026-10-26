@@ -4646,7 +4646,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 fromType,
                                 cursorMetadata.getColumnName(i),
                                 toType,
-                                writerMetadata.getColumnName(i)
+                                writerMetadata.getColumnName(index)
                         );
                     }
 
