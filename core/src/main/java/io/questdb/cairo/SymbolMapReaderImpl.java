@@ -58,7 +58,8 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public static final int INSERT_BACKOFF = 1024;
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
-    private static final int VALUE_HASHES_SIZE = 1024;
+    private static final int VALUE_HASH_SLOTS = 1024;
+    private static final int VALUE_HASH_SPARE_BITS = 6;
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
     private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
@@ -337,7 +338,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @TestOnly
     public void putValueHash(int key, int hash) {
-        ownView.getValueHashes()[key & (VALUE_HASHES_SIZE - 1)] = valueHashEntry(key, hash);
+        ownView.getValueHashes()[key & (VALUE_HASH_SLOTS - 1)] = valueHashEntry(key, hash);
     }
 
     @Override
@@ -395,6 +396,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
         }
         return null;
+    }
+
+    private static int spareSlot(int key) {
+        return VALUE_HASH_SLOTS + ((key * 0x9E3779B9) >>> (Integer.SIZE - VALUE_HASH_SPARE_BITS));
     }
 
     private static long valueHashEntry(int key, int hash) {
@@ -567,7 +572,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
         private long[] getValueHashes() {
             if (valueHashes == null) {
-                valueHashes = new long[VALUE_HASHES_SIZE];
+                valueHashes = new long[VALUE_HASH_SLOTS + (1 << VALUE_HASH_SPARE_BITS)];
                 valueHashesGeneration = symbolTableGeneration;
             } else if (valueHashesGeneration != symbolTableGeneration) {
                 Arrays.fill(valueHashes, 0);
@@ -578,7 +583,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
         private boolean hasValueHash(int key) {
             return valueHashes != null && valueHashesGeneration == symbolTableGeneration
-                    && (int) (valueHashes[key & (VALUE_HASHES_SIZE - 1)] >>> 32) == key + 1;
+                    && ((int) (valueHashes[key & (VALUE_HASH_SLOTS - 1)] >>> 32) == key + 1
+                    || (int) (valueHashes[spareSlot(key)] >>> 32) == key + 1);
         }
 
         /**
@@ -595,12 +601,19 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                     return super.hashCode();
                 }
                 final long[] hashes = getValueHashes();
-                final int slot = k & (VALUE_HASHES_SIZE - 1);
+                final int slot = k & (VALUE_HASH_SLOTS - 1);
                 final long entry = hashes[slot];
                 if ((int) (entry >>> 32) == k + 1) {
                     return (int) entry;
                 }
+                final long spareEntry = hashes[spareSlot(k)];
+                if ((int) (spareEntry >>> 32) == k + 1) {
+                    return (int) spareEntry;
+                }
                 final int h = super.hashCode();
+                if (entry != 0) {
+                    hashes[spareSlot((int) (entry >>> 32) - 1)] = entry;
+                }
                 hashes[slot] = valueHashEntry(k, h);
                 return h;
             }

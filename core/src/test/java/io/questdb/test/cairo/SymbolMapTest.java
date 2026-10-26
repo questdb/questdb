@@ -292,12 +292,14 @@ public class SymbolMapTest extends AbstractCairoTest {
                     reader.updateSymbolCount(4096);
                     Assert.assertEquals(0, reader.getLowCacheSize());
                     Assert.assertEquals(0, reader.getLowCacheAllocatedBytes());
-                    for (int key = 0; key < 4096; key++) {
+                    TestUtils.assertEquals("s0", reader.valueOf(0));
+                    Assert.assertEquals(64 * (64 + 2), reader.getLowCacheAllocatedBytes());
+                    for (int key = 1; key < 4096; key++) {
                         TestUtils.assertEquals("s" + key, reader.valueOf(key));
                     }
                     Assert.assertEquals(4096, reader.getLowCacheSize());
                     Assert.assertEquals(0, reader.getCacheSize());
-                    Assert.assertEquals(64 * (4096 + 2), reader.getLowCacheAllocatedBytes());
+                    Assert.assertEquals(64 * (64 + 4096 + 2 * 2), reader.getLowCacheAllocatedBytes());
                     for (int key = 0; key < 4096; key++) {
                         TestUtils.assertEquals("s" + key, reader.valueBOf(key));
                     }
@@ -440,6 +442,37 @@ public class SymbolMapTest extends AbstractCairoTest {
                         Assert.assertFalse(reader.hasValueHash(key));
                         Assert.assertEquals(others.getQuick(key).hashCode(), Chars.hashCode(reader.valueOf(key)));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolTableViewsKeepHashesOfKeysThatShareSlot() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 2049;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 4096, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    for (int key = 0; key < count; key++) {
+                        writer.put("v" + key);
+                    }
+                }
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count, pool, 0)
+                ) {
+                    reader.putValueHash(0, 42);
+                    Assert.assertEquals("v1024".hashCode(), Chars.hashCode(reader.valueOf(1024)));
+                    Assert.assertEquals("v2048".hashCode(), Chars.hashCode(reader.valueOf(2048)));
+                    for (int round = 0; round < 2; round++) {
+                        Assert.assertEquals(42, Chars.hashCode(reader.valueOf(0)));
+                        Assert.assertEquals("v1024".hashCode(), Chars.hashCode(reader.valueBOf(1024)));
+                        Assert.assertEquals("v2048".hashCode(), Chars.hashCode(reader.valueOf(2048)));
+                    }
+                    Assert.assertTrue(reader.hasValueHash(0));
+                    Assert.assertTrue(reader.hasValueHash(1024));
+                    Assert.assertTrue(reader.hasValueHash(2048));
                 }
             }
         });

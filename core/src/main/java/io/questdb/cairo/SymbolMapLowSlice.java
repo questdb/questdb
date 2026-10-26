@@ -135,7 +135,7 @@ final class SymbolMapLowSlice implements QuietCloseable {
             }
             long a = array;
             if (a == 0 || key >= Unsafe.getInt(a + CAPACITY_OFFSET)) {
-                a = grow(a, symbolCount);
+                a = grow(a, key, symbolCount);
                 if (a == 0) {
                     isFilling = false;
                     return STOPPED;
@@ -162,9 +162,11 @@ final class SymbolMapLowSlice implements QuietCloseable {
         return array + ((long) (key + 1) << SLOT_SHIFT);
     }
 
-    private long grow(long current, int symbolCount) {
+    private long grow(long current, int key, int symbolCount) {
         final int capacity = current == 0 ? 0 : Unsafe.getInt(current + CAPACITY_OFFSET);
-        final int newCapacity = Math.max(MIN_CAPACITY, Numbers.ceilPow2(Math.min(symbolCount, MAX_KEYS)));
+        final int newCapacity = current == 0 && key < MIN_CAPACITY
+                ? MIN_CAPACITY
+                : Math.max(MIN_CAPACITY, Numbers.ceilPow2(Math.min(symbolCount, MAX_KEYS)));
         // the header slot, the slots and the slack that aligns them to a cache line
         final long bytes = (newCapacity + 2L) * SLOT_SIZE;
         if (!budget.tryReserve(bytes)) {
