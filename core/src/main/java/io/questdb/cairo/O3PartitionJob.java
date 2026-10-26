@@ -90,7 +90,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static final int PIECES_STRIDE = 6;
 
 
-    private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    // Not final: tests swap in a guaranteed logger to assert on its messages.
+    private static Log LOG = LogFactory.getLog(O3PartitionJob.class);
     // Bin cap for transaction clustering: the finest bin is a minute, widened when a partition's span
     // needs more bins than this.
     // Per-worker scratch for the composite plan; none of its lists outlive the call.
@@ -906,6 +907,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int commitMode = tableWriter.getConfiguration().getCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
         final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
         partitionPath.of(pathToTable);
         TableUtils.setPathForNativePartition(
                 partitionPath,
@@ -1009,7 +1011,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                 final long o3Rows = action.getO3RowCount();
                 LOG.debug().$("composite action [table=").$safe(tableWriter.getTableToken().getTableName())
-                        .$(", partitionTs=").$ts(partitionTimestamp)
+                        .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
                         .$(", i=").$(i).$('/').$(actionCount)
                         .$(", action=").$(action.type)
                         .$(", pieceIndex=").$(action.pieceIndex)
@@ -2230,6 +2232,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         Path path = Path.getThreadLocal(pathToTable);
         setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
 
@@ -2472,7 +2475,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         resultMinTimestamp = O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, 0);
                         O3ParquetCounters.onReplaceNoop();
                         LOG.info().$("parquet replace commit leaves partition unchanged [table=").$(tableWriter.getTableToken())
-                                .$(", partition=").$ts(partitionTimestamp)
+                                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                 .I$();
                         return;
                     }
@@ -2480,7 +2483,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isReplaceRemoval = true;
                         O3ParquetCounters.onReplaceRemoval();
                         LOG.info().$("parquet replace commit removes partition [table=").$(tableWriter.getTableToken())
-                                .$(", partition=").$ts(partitionTimestamp)
+                                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                 .I$();
                         return;
                     }
@@ -2527,7 +2530,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 if (isRewrite) {
                     LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriter.getTableToken())
-                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", fileSize=").$size(parquetSize)
                             .$(", unusedBytes=").$size(unusedBytes)
                             .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
@@ -2683,13 +2686,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 final int rgSize = (int) rgRowCount;
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
-                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                         .$(", rg=").$(action.rowGroupIndex)
                                         .$(", rgHi=").$(action.rowGroupIndexHi)
                                         .$(", dataRows=").$(rgSize)
                                         .$(", o3Rows=").$(action.getO3RowCount())
-                                        .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
-                                        .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndexHi))
+                                        .$(", rgMin=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
+                                        .$(", rgMax=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndexHi))
                                         .I$();
                                 final long mergeResult = mergeRowGroup(
                                         chunkDescriptor,
@@ -2737,7 +2740,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // written. Keep them as COPY_ROW_GROUP_SLICE would.
                                     LOG.info()
                                             .$("parquet dedup merge identical to row group, kept [table=").$(tableWriter.getTableToken())
-                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .$(", rg=").$(action.rowGroupIndex)
                                             .$(", rgHi=").$(action.rowGroupIndexHi)
                                             .I$();
@@ -2786,13 +2789,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // Rewrite mode: every row group must be written to the new file.
                                     LOG.info()
                                             .$("parquet copy row group [table=").$(tableWriter.getTableToken())
-                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .$(", rg=").$(action.rowGroupIndex)
                                             .$(", rows=").$(rgSize)
                                             .$(", hasSchemaChange=").$(hasSchemaChange)
                                             .$(", deferred=").$(isCopyDeferrable && !isPartitionChanged)
-                                            .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
-                                            .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
+                                            .$(", rgMin=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
+                                            .$(", rgMax=").$ts(timestampDriver, O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
                                             .I$();
                                     if (isCopyDeferrable && !isPartitionChanged) {
                                         pendingCopyRowGroups++;
@@ -2820,10 +2823,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 }
                                 LOG.info()
                                         .$("parquet add row group from o3 [table=").$(tableWriter.getTableToken())
-                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                         .$(", rows=").$(action.o3Hi - action.o3Lo + 1)
-                                        .$(", o3Min=").$ts(Unsafe.getLong(sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES))
-                                        .$(", o3Max=").$ts(Unsafe.getLong(sortedTimestampsAddr + action.o3Hi * TIMESTAMP_MERGE_ENTRY_BYTES))
+                                        .$(", o3Min=").$ts(timestampDriver, Unsafe.getLong(sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES))
+                                        .$(", o3Max=").$ts(timestampDriver, Unsafe.getLong(sortedTimestampsAddr + action.o3Hi * TIMESTAMP_MERGE_ENTRY_BYTES))
                                         .I$();
                                 // new rows: the partition changes, so write any deferred copies first
                                 copyPendingRowGroups(
@@ -2864,7 +2867,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 // metadataPosition stays: a DROP produces no output row group
                                 LOG.info()
                                         .$("parquet drop row group [table=").$(tableWriter.getTableToken())
-                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                         .$(", rg=").$(action.rowGroupIndex)
                                         .$(", rows=").$(droppedRows)
                                         .$(", inPlace=").$(!isRewrite)
@@ -2903,7 +2906,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     O3ParquetCounters.onDedupIdentical();
                     LOG.info().$("parquet dedup commit identical to partition, partition unchanged [table=").$(tableWriter.getTableToken())
-                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .I$();
                     return;
                 }
@@ -2917,7 +2920,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 O3ParquetCounters.onPartitionWritten(isRewrite);
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
-                        .$(", partition=").$ts(partitionTimestamp)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", rowGroups=").$(metadataPosition)
                         .$(", fileSize=").$size(newParquetSize)
                         .$(", unusedBytes=").$size(resultUnusedBytes)
@@ -3258,7 +3261,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
             partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
             LOG.info().$("parquet partition compacted off reader snapshot [table=").$(tableToken)
-                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
                     .$(", rowGroups=").$(rowGroupCount)
                     .$(", fileSize=").$size(parquetSize)
                     .$(", newFileSize=").$size(newParquetSize)
@@ -4154,11 +4157,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.error().$("process existing partition error [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
-                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                O3Utils.close(ff, srcTimestampFd);
+                // Record the error before the partition completes: completing it releases the writer, which
+                // then reads the error count.
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                tableWriter.o3ClockDownPartitionUpdateCount();
-                tableWriter.o3CountDownDoneLatch();
+                O3CopyJob.closeColumnIdleQuick(0, 0, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter);
                 throw e;
             }
 
@@ -4589,8 +4591,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         int tableRootPathLen = tableRootPath.size();
         FilesFacade ff = tableWriter.getFilesFacade();
 
-        int mapMemTag = MemoryTag.MMAP_O3;
+        // releaseDedupKeyColumns() unmaps with O3Utils.unmap(), which uses the same tag
+        final int mapMemTag = MemoryTag.MMAP_O3;
+        final long dedupRowCount;
         try {
+            // From here on the sink owns every key column resource: each one goes into it as soon as it exists,
+            // so whichever call below throws, the release finds exactly what was acquired. Zeroed slots hold nothing.
             dedupCommitAddresses.clear(dedupColSinkAddr);
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
@@ -4654,6 +4660,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     srcNameTxn
                             );
                             long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
+                            DedupColumnCommitAddresses.setReservedValuesSet1(addr, 0, 0, fd);
 
                             long fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
                             long fixMappedAddress = TableUtils.mapAppendColumnBuffer(
@@ -4664,17 +4671,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     false,
                                     mapMemTag
                             );
+                            DedupColumnCommitAddresses.setReservedValuesSet1(addr, fixMappedAddress, fixMapSize, fd);
 
                             DedupColumnCommitAddresses.setColAddressValues(addr, Math.abs(fixMappedAddress) - columnTop * columnSize);
 
                             final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                            DedupColumnCommitAddresses.setReservedValuesSet1(
-                                    addr,
-                                    fixMappedAddress,
-                                    fixMapSize,
-                                    fd
-                            );
                         } else {
                             // Variable length column
                             long rows = mergeDataHi + 1 - columnTop;
@@ -4689,6 +4691,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     srcNameTxn
                             );
                             long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
+                            DedupColumnCommitAddresses.setReservedValuesSet1(addr, 0, 0, auxFd);
                             long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
                                     ff,
                                     auxFd,
@@ -4697,8 +4700,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     false,
                                     mapMemTag
                             );
+                            DedupColumnCommitAddresses.setReservedValuesSet1(addr, auxMappedAddress, auxMapSize, auxFd);
 
                             long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
+                            long varFd = -1;
+                            long varMappedAddress = 0;
                             if (varMapSize > 0) {
                                 TableUtils.setSinkForNativePartition(
                                         tableRootPath.trimTo(tableRootPathLen).slash(),
@@ -4707,19 +4713,22 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         partitionTimestamp,
                                         srcNameTxn
                                 );
+                                varFd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
+                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, 0, varFd);
+                                varMappedAddress = TableUtils.mapAppendColumnBuffer(
+                                        ff,
+                                        varFd,
+                                        0,
+                                        varMapSize,
+                                        false,
+                                        mapMemTag
+                                );
                             }
-                            long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
-                            long varMappedAddress = varMapSize > 0 ? TableUtils.mapAppendColumnBuffer(
-                                    ff,
-                                    varFd,
-                                    0,
-                                    varMapSize,
-                                    false,
-                                    mapMemTag
-                            ) : 0;
 
                             long auxRecSize = driver.auxRowsToBytes(1);
+                            // Also records varMapSize, the length releaseDedupKeyColumns() unmaps the data with.
                             DedupColumnCommitAddresses.setColAddressValues(addr, auxMappedAddress - columnTop * auxRecSize, varMappedAddress, varMapSize);
+                            DedupColumnCommitAddresses.setReservedValuesSet2(addr, varMappedAddress, varFd);
 
                             MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(i));
                             final long oooVarColAddress = oooVarCol.addressOf(0);
@@ -4727,24 +4736,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
 
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
-                            DedupColumnCommitAddresses.setReservedValuesSet1(
-                                    addr,
-                                    auxMappedAddress,
-                                    auxMapSize,
-                                    auxFd
-                            );
-                            DedupColumnCommitAddresses.setReservedValuesSet2(
-                                    addr,
-                                    varMappedAddress,
-                                    varFd
-                            );
                         }
                     }
                     dedupColumnIndex++;
                 } // if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex())
             }
 
-            return Vect.mergeDedupTimestampWithLongIndexIntKeys(
+            dedupRowCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
                     srcTimestampAddr,
                     mergeDataLo,
                     mergeDataHi,
@@ -4755,25 +4753,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dedupCommitAddresses.getColumnCount(),
                     DedupColumnCommitAddresses.getAddress(dedupColSinkAddr)
             );
-        } finally {
-            for (int i = 0, n = dedupCommitAddresses.getColumnCount(); i < n; i++) {
-                final long mappedAddress = DedupColumnCommitAddresses.getColReserved1(dedupColSinkAddr, i);
-                final long mappedAddressSize = DedupColumnCommitAddresses.getColReserved2(dedupColSinkAddr, i);
-                if (mappedAddressSize > 0) {
-                    TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
-                    final long fd = DedupColumnCommitAddresses.getColReserved3(dedupColSinkAddr, i);
-                    ff.close(fd);
-                }
-
-                final long varMappedAddress = DedupColumnCommitAddresses.getColReserved4(dedupColSinkAddr, i);
-                if (varMappedAddress > 0) {
-                    final long varMappedLength = DedupColumnCommitAddresses.getColVarDataLen(dedupColSinkAddr, i);
-                    TableUtils.mapAppendColumnBufferRelease(ff, varMappedAddress, 0, varMappedLength, mapMemTag);
-                    final long varFd = DedupColumnCommitAddresses.getColReserved5(dedupColSinkAddr, i);
-                    ff.close(varFd);
-                }
-            }
+        } catch (Throwable th) {
+            releaseDedupKeyColumnsQuietly(ff, dedupColSinkAddr, 0, dedupCommitAddresses.getColumnCount());
+            throw th;
         }
+        releaseDedupKeyColumns(ff, dedupColSinkAddr, dedupCommitAddresses.getColumnCount());
+        return dedupRowCount;
     }
 
     /**
@@ -6007,6 +5992,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 } else if (tableWriter.isCommitDedupMode()) {
                     final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                    // The catch below frees the merge index, so it owns the buffer before anything can throw.
+                    timestampMergeIndexAddr = tempIndexAddr;
+                    timestampMergeIndexSize = tempIndexSize;
                     final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
                     final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getDbRoot()).concat(tableWriter.getTableToken());
 
@@ -6027,8 +6015,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tempTablePath,
                             tempIndexAddr
                     );
-                    timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-                    timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                    final long dedupIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                    // A failed realloc leaves the buffer as it was: update the size only once it succeeds.
+                    timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, dedupIndexSize, MemoryTag.NATIVE_O3);
+                    timestampMergeIndexSize = dedupIndexSize;
                     final long duplicateCount = mergeRowCount - dedupRows;
                     boolean appendOnly = false;
                     if (duplicateCount > 0) {
@@ -6197,13 +6187,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         final int columnCount = metadata.getColumnCount();
-        columnCounter.set(compressColumnCount(metadata));
-        int columnsInFlight = columnCount;
+        // Each live column the loop below publishes owns one count of the column counter: its open column
+        // task counts it down, or its own error handler does when publishing it fails. Dropped columns own
+        // none, so the counter and the published tally both cover live columns only.
+        final int liveColumnCount = compressColumnCount(metadata);
+        columnCounter.set(liveColumnCount);
         if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE || openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
             // Partition will be re-written. Jobs will set new column top values but by default they are 0
             Vect.memset(partitionUpdateSinkAddr + PARTITION_SINK_COL_TOP_OFFSET, (long) Long.BYTES * columnCount, 0);
         }
 
+        int columnsPublished = 0;
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
@@ -6250,132 +6244,132 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter = null;
                 }
 
-                try {
-                    final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
-                    if (cursor > -1) {
-                        publishOpenColumnTaskHarmonized(
-                                cursor,
-                                openColumnMode,
-                                pathToTable,
-                                columnName,
-                                columnCounter,
-                                o3Basket.nextPartCounter(),
-                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                timestampMergeIndexAddr,
-                                timestampMergeIndexSize,
-                                srcOooFixAddr,
-                                srcOooVarAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                oooTimestampMin,
-                                partitionTimestamp,
-                                oldPartitionTimestamp,
-                                srcDataTop,
-                                srcDataMax,
-                                srcNameTxn,
-                                txn,
-                                prefixType,
-                                prefixLo,
-                                prefixHi,
-                                mergeType,
-                                mergeDataLo,
-                                mergeDataHi,
-                                mergeOOOLo,
-                                mergeOOOHi,
-                                suffixType,
-                                suffixLo,
-                                suffixHi,
-                                indexBlockCapacity,
-                                srcTimestampFd,
-                                srcTimestampAddr,
-                                srcTimestampSize,
-                                activeFixFd,
-                                activeVarFd,
-                                srcDataNewPartitionSize,
-                                srcDataOldPartitionSize,
-                                o3SplitPartitionSize,
-                                tableWriter,
-                                indexWriter,
-                                partitionUpdateSinkAddr,
-                                i,
-                                columnNameTxn
-                        );
-                    } else {
-                        publishOpenColumnTaskContended(
-                                cursor,
-                                openColumnMode,
-                                pathToTable,
-                                columnName,
-                                columnCounter,
-                                o3Basket.nextPartCounter(),
-                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                timestampMergeIndexAddr,
-                                timestampMergeIndexSize,
-                                srcOooFixAddr,
-                                srcOooVarAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                oooTimestampMin,
-                                partitionTimestamp,
-                                oldPartitionTimestamp,
-                                srcDataTop,
-                                srcDataMax,
-                                srcNameTxn,
-                                txn,
-                                prefixType,
-                                prefixLo,
-                                prefixHi,
-                                mergeType,
-                                mergeDataLo,
-                                mergeDataHi,
-                                mergeOOOLo,
-                                mergeOOOHi,
-                                suffixType,
-                                suffixLo,
-                                suffixHi,
-                                srcTimestampFd,
-                                srcTimestampAddr,
-                                srcTimestampSize,
-                                indexBlockCapacity,
-                                activeFixFd,
-                                activeVarFd,
-                                srcDataNewPartitionSize,
-                                srcDataOldPartitionSize,
-                                o3SplitPartitionSize,
-                                tableWriter,
-                                indexWriter,
-                                partitionUpdateSinkAddr,
-                                i,
-                                columnNameTxn
-                        );
-                    }
-                } catch (Throwable e) {
-                    tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
-                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                            .$(", e=").$(e)
-                            .I$();
-                    columnsInFlight = i + 1;
-                    throw e;
+                final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
+                final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
+
+                // From here on the column counts itself down, whether or not opening it succeeds.
+                columnsPublished++;
+                if (cursor > -1) {
+                    publishOpenColumnTaskHarmonized(
+                            cursor,
+                            openColumnMode,
+                            pathToTable,
+                            columnName,
+                            columnCounter,
+                            o3Basket.nextPartCounter(),
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            partitionTimestamp,
+                            oldPartitionTimestamp,
+                            srcDataTop,
+                            srcDataMax,
+                            srcNameTxn,
+                            txn,
+                            prefixType,
+                            prefixLo,
+                            prefixHi,
+                            mergeType,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            suffixType,
+                            suffixLo,
+                            suffixHi,
+                            indexBlockCapacity,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            activeFixFd,
+                            activeVarFd,
+                            srcDataNewPartitionSize,
+                            srcDataOldPartitionSize,
+                            o3SplitPartitionSize,
+                            tableWriter,
+                            indexWriter,
+                            partitionUpdateSinkAddr,
+                            i,
+                            columnNameTxn
+                    );
+                } else {
+                    publishOpenColumnTaskContended(
+                            cursor,
+                            openColumnMode,
+                            pathToTable,
+                            columnName,
+                            columnCounter,
+                            o3Basket.nextPartCounter(),
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            partitionTimestamp,
+                            oldPartitionTimestamp,
+                            srcDataTop,
+                            srcDataMax,
+                            srcNameTxn,
+                            txn,
+                            prefixType,
+                            prefixLo,
+                            prefixHi,
+                            mergeType,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            suffixType,
+                            suffixLo,
+                            suffixHi,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            indexBlockCapacity,
+                            activeFixFd,
+                            activeVarFd,
+                            srcDataNewPartitionSize,
+                            srcDataOldPartitionSize,
+                            o3SplitPartitionSize,
+                            tableWriter,
+                            indexWriter,
+                            partitionUpdateSinkAddr,
+                            i,
+                            columnNameTxn
+                    );
                 }
             }
-        } finally {
-            final int delta = columnsInFlight - columnCount;
-            LOG.debug().$("idle [delta=").$(delta).I$();
-            if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
-                O3CopyJob.closeColumnIdleQuick(
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter
-                );
-            }
+        } catch (Throwable e) {
+            // Record the error before the partition can complete: completing it releases the writer, which
+            // then reads the error count.
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", e=").$(e)
+                    .I$();
+            O3CopyJob.closeUnpublishedColumns(
+                    columnCounter,
+                    liveColumnCount - columnsPublished,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+            throw e;
         }
+        assert columnsPublished == liveColumnCount;
     }
 
     private static long readRowGroupTimestampBound(
@@ -6395,6 +6389,54 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return wantMax
                 ? partitionDecoder.rowGroupMaxTimestamp(rowGroupIndex, timestampParquetIdx)
                 : partitionDecoder.rowGroupMinTimestamp(rowGroupIndex, timestampParquetIdx);
+    }
+
+    // Releases what getDedupRowsWithAdditionalKeys() acquired into the dedup sink, once the merge succeeded: per key
+    // column, the mapping of its fixed-size data or aux vector with the fd behind it, and the mapping of a var-size
+    // key's data vector with its fd. A failing release fails the commit, and the columns after it still release,
+    // quietly, so that they cannot replace its error.
+    private static void releaseDedupKeyColumns(FilesFacade ff, long dedupColSinkAddr, int columnCount) {
+        int i = 0;
+        try {
+            for (; i < columnCount; i++) {
+                try {
+                    O3Utils.unmapAndClose(
+                            ff,
+                            DedupColumnCommitAddresses.getColReserved3(dedupColSinkAddr, i),
+                            DedupColumnCommitAddresses.getColReserved1(dedupColSinkAddr, i),
+                            DedupColumnCommitAddresses.getColReserved2(dedupColSinkAddr, i)
+                    );
+                } finally {
+                    O3Utils.unmapAndClose(
+                            ff,
+                            DedupColumnCommitAddresses.getColReserved5(dedupColSinkAddr, i),
+                            DedupColumnCommitAddresses.getColReserved4(dedupColSinkAddr, i),
+                            DedupColumnCommitAddresses.getColVarDataLen(dedupColSinkAddr, i)
+                    );
+                }
+            }
+        } catch (Throwable th) {
+            releaseDedupKeyColumnsQuietly(ff, dedupColSinkAddr, i + 1, columnCount);
+            throw th;
+        }
+    }
+
+    // The failed-commit counterpart of releaseDedupKeyColumns(), see O3Utils.closeQuietly().
+    private static void releaseDedupKeyColumnsQuietly(FilesFacade ff, long dedupColSinkAddr, int columnLo, int columnHi) {
+        for (int i = columnLo; i < columnHi; i++) {
+            O3Utils.unmapAndCloseQuietly(
+                    ff,
+                    DedupColumnCommitAddresses.getColReserved3(dedupColSinkAddr, i),
+                    DedupColumnCommitAddresses.getColReserved1(dedupColSinkAddr, i),
+                    DedupColumnCommitAddresses.getColReserved2(dedupColSinkAddr, i)
+            );
+            O3Utils.unmapAndCloseQuietly(
+                    ff,
+                    DedupColumnCommitAddresses.getColReserved5(dedupColSinkAddr, i),
+                    DedupColumnCommitAddresses.getColReserved4(dedupColSinkAddr, i),
+                    DedupColumnCommitAddresses.getColVarDataLen(dedupColSinkAddr, i)
+            );
+        }
     }
 
     private static void removePhantomPartitionDir(
@@ -6641,11 +6683,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, timestampMin, newPartitionSize, oldPartitionSize, partitionMutates);
 
-        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-        O3Utils.close(ff, srcTimestampFd);
-
-        tableWriter.o3ClockDownPartitionUpdateCount();
-        tableWriter.o3CountDownDoneLatch();
+        // Completes the partition exactly once and never throws: every caller sits inside a try block whose
+        // catch completes the partition too. A release that fails, a double close or a failed munmap, fails
+        // the commit through the error count instead.
+        try {
+            O3Utils.unmapAndClose(ff, srcTimestampFd, srcTimestampAddr, srcTimestampSize);
+        } catch (Throwable th) {
+            LOG.error().$("release error [table=").$(tableWriter.getTableToken())
+                    .$(", e=").$(th)
+                    .I$();
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+        } finally {
+            tableWriter.o3ClockDownPartitionUpdateCount();
+            tableWriter.o3CountDownDoneLatch();
+        }
     }
 
     private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
@@ -6841,14 +6892,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, parquetFileSize);
         } catch (Throwable th) {
             LOG.error().$("could not write fresh parquet partition [table=").$(tableWriter.getTableToken())
-                    .$(", ts=").$ts(partitionTimestamp)
+                    .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                     .$(", e=").$(th)
                     .I$();
             // Close parquetMetaFd before rmdir; on Windows the open _pm file
             // would prevent the partition dir from being removed, leaving an
-            // orphan directory behind. The finally block tolerates -1.
+            // orphan directory behind. The finally block tolerates -1. The close
+            // is quiet: had it thrown, the finally block would close the same
+            // descriptor again and never complete the partition.
             if (parquetMetaFd != -1) {
-                ff.close(parquetMetaFd);
+                O3Utils.closeQuietly(ff, parquetMetaFd);
                 parquetMetaFd = -1;
             }
             if (partitionDirCreated) {
