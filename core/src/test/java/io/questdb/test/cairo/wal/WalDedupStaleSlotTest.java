@@ -50,14 +50,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * checks that the commit fails with the mapping error (issue #8067).
  */
 public class WalDedupStaleSlotTest extends AbstractCairoTest {
-    private static final long ROWS_PER_PAGE = Files.PAGE_SIZE / Long.BYTES;
+    // The largest OS page (the Windows mmap granularity) is a multiple of every smaller one, so this append page
+    // gives every OS the same rows per page, and a run on one OS runs the row counts of all of them.
+    private static final long APPEND_PAGE_SIZE = Math.max(64 * 1024, Files.PAGE_SIZE);
+    // Rows of an 8-byte column per append page.
+    private static final long ROWS_PER_PAGE = APPEND_PAGE_SIZE / Long.BYTES;
 
     @Override
     @Before
     public void setUp() {
         super.setUp();
         // LAG rows that span append pages need a fresh mapping, which the test fails
-        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, APPEND_PAGE_SIZE);
+        // TableWriter parks a transaction in LAG only while LAG stays within multiplier x max uncommitted rows. The test
+        // parks 3 append pages of rows there, past the 20 x 1,000 rows of the test defaults, so pin both factors.
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 100);
         // merge-append tables take no LAG
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
         // one WAL transaction per apply job run
