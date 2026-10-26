@@ -4004,6 +4004,54 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiAggregateExpressionColumns() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE prices AS (
+                        SELECT 'A'::SYMBOL sym, 1.5 price, 1::INT qty,
+                               timestamp_sequence('2023-01-01T09:06:00.000000Z', 60_000_000) ts
+                        FROM long_sequence(3)
+                    ) TIMESTAMP(ts)
+                    """);
+
+            final String select = """
+                    SELECT
+                        SUM(p.price * 10) times_ten,
+                        SUM(p.price + 10) plus_ten,
+                        SUM(-p.price) negated,
+                        SUM(abs(p.price)) absolute,
+                        SUM(p.qty * p.qty) squared,
+                        SUM(p.qty + p.qty) doubled
+                    FROM (
+                        SELECT sym, ts
+                        FROM prices
+                        WHERE ts IN '2023-01-01T09:08:00.000000Z'
+                    ) t
+                    WINDOW JOIN prices p %s
+                    RANGE BETWEEN 5 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    """;
+            final String expected = """
+                    times_ten	plus_ten	negated	absolute	squared	doubled
+                    45.0	34.5	-4.5	4.5	3	6
+                    """;
+
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                for (String onClause : parallel ? new String[]{"ON (t.sym = p.sym)", ""} : new String[]{"ON (t.sym = p.sym)"}) {
+                    final String query = select.formatted(onClause);
+                    final String planType = parallel
+                            ? (onClause.isEmpty() ? "Async Window Join" : "Async Window Fast Join")
+                            : "Window Fast Join";
+                    assertQuery(query).noLeakCheck().assertsPlanContaining(planType, "vectorized: true");
+                    assertQuery(query).noLeakCheck().noRandomAccess().returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMultipleSlavePartitions() throws Exception {
         // Tests seekEstimate with no-key WINDOW JOIN and multiple slave partitions.
         // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.

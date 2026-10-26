@@ -73,7 +73,9 @@ public interface MultiArgFunction extends Function {
         if (other == this) {
             return true;
         }
-        if (other instanceof MultiArgFunction that) {
+        if (other instanceof MultiArgFunction that
+                && getClass() == that.getClass()
+                && getName().equals(that.getName())) {
             ObjList<Function> thatArgs = that.args();
             ObjList<Function> thisArgs = args();
             if (thatArgs.size() == thisArgs.size()) {
