@@ -153,6 +153,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private DecodedFrameBuffers boundForRecordA;
     private DecodedFrameBuffers boundForRecordB;
     private long cachedBytes;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     // Live native bytes held by retained CoveringBuffers (covered decode buffers).
     // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
     // query-lifetime and cannot be LRU-evicted mid-query (zero-copy first()/last()
@@ -808,6 +809,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * context-less owners leave it null for global-only accounting. A null
      * tracker is valid and matches pre-tracker behavior.
      */
+    /**
+     * Sets the breaker that index cursors opened through this pool's source-row resolvers consult.
+     */
+    public void setCircuitBreaker(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
+    }
+
     public void setMemoryTracker(MemoryTracker memoryTracker) {
         this.memoryTracker = memoryTracker;
     }
@@ -2303,6 +2311,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         public long getBaseRowLo() {
             prepareSourceBaseRows();
             return sourceBaseRowLo;
+        }
+
+        @Override
+        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return circuitBreaker;
         }
 
         @Override

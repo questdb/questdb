@@ -75,6 +75,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         filter.init(pageFrameCursor, executionContext);
         isRecordFound = false;
         isFindPending = false;

@@ -101,6 +101,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         recordB.of(pageFrameCursor);
         filter.init(pageFrameCursor, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         rows.setMemoryTracker(executionContext.getMemoryTracker());
         rows.reopen();
         remainingKeys.clear();

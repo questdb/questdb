@@ -13133,6 +13133,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     if (partitionIsReadOnly) {
+                        if (metadata.isWalEnabled() && srcOooBatchRowSize > 0) {
+                            // The rows were acknowledged at sequencing: fail the transaction so WAL
+                            // apply rolls it back and suspends the table instead of dropping them.
+                            // The read-only flag is sequenced, so every instance fails the same way.
+                            throw CairoException.nonCritical()
+                                    .put("cannot insert into read-only partition [table=").put(tableToken.getTableName())
+                                    .put(", partitionTimestamp=").ts(timestampType, partitionTimestamp)
+                                    .put(", rowCount=").put(srcOooBatchRowSize)
+                                    .put(']');
+                        }
                         // move over read-only partitions
                         LOG.critical()
                                 .$("o3 ignoring write on read-only partition [table=").$(tableToken)

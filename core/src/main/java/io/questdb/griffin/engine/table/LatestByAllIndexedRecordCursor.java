@@ -126,6 +126,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         bus = executionContext.getMessageBus();
         // If the worker count is 0
         sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();

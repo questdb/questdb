@@ -37,8 +37,8 @@ import org.junit.Test;
  * Asserts the read-only partition write-barrier invariant: once a
  * partition's {@code read_only} bit is set, every {@link TableWriter}
  * data-modification path (in-order INSERT, O3 INSERT, UPDATE) must
- * silently drop or hard-reject the write. On WAL apply, an UPDATE that reaches a read-only
- * partition must remain unapplied and suspend the table; advancing the apply
+ * silently drop or hard-reject the write. On WAL apply, an INSERT or UPDATE that reaches a
+ * read-only partition must remain unapplied and suspend the table; advancing the apply
  * watermark would permanently lose a statement already acknowledged by the
  * sequencer.
  */
@@ -200,6 +200,74 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
                 Assert.assertTrue("read_only bit preserved",
                         writer.getTxWriter().isPartitionReadOnly(0));
             }
+        });
+    }
+
+    @Test
+    public void testWalO3InsertReadOnlyPartitionSuspendsAndResumeSkipsIt() throws Exception {
+        // An INSERT is acknowledged when it is sequenced, so apply must not drop rows that
+        // land in a read-only partition. The writable 2020-01-01 is merged before the loop
+        // reaches the read-only 2020-01-02, so the rollback must discard that merge too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rw_wal_ins (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t_rw_wal_ins VALUES
+                    (1, '2020-01-01T00:00:00'),
+                    (2, '2020-01-02T00:00:00'),
+                    (3, '2020-01-03T00:00:00')
+                    """);
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t_rw_wal_ins");
+            final long readOnlyTs = 1_577_923_200_000_000L; // 2020-01-02
+            try (TableWriter writer = getWriter(tt)) {
+                writer.getTxWriter().setPartitionReadOnlyByTimestamp(readOnlyTs, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            final long appliedSeqTxnBeforeInsert;
+            try (TableWriter writer = getWriter(tt)) {
+                appliedSeqTxnBeforeInsert = writer.getAppliedSeqTxn();
+            }
+
+            execute("""
+                    INSERT INTO t_rw_wal_ins VALUES
+                    (10, '2020-01-01T01:00:00'),
+                    (20, '2020-01-02T01:00:00'),
+                    (21, '2020-01-02T02:00:00')
+                    """);
+            drainWalQueue();
+            execute("INSERT INTO t_rw_wal_ins VALUES (4, '2020-01-04T00:00:00')");
+            drainWalQueue();
+
+            Assert.assertTrue("late INSERT into a read-only partition must suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            try (TableWriter writer = getWriter(tt)) {
+                Assert.assertEquals("failed INSERT and the following one must remain unapplied",
+                        appliedSeqTxnBeforeInsert, writer.getAppliedSeqTxn());
+            }
+            assertQuery("SELECT errorMessage FROM wal_tables() WHERE name = 't_rw_wal_ins'").noRandomAccess().noLeakCheck().returns("""
+                    errorMessage
+                    cannot insert into read-only partition [table=t_rw_wal_ins, partitionTimestamp=2020-01-02T00:00:00.000000Z, rowCount=2]
+                    """);
+            assertQuery("t_rw_wal_ins").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    x\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    2\t2020-01-02T00:00:00.000000Z
+                    3\t2020-01-03T00:00:00.000000Z
+                    """);
+
+            // The operator skips the failed transaction; the one after it applies.
+            execute("ALTER TABLE t_rw_wal_ins RESUME WAL FROM TRANSACTION " + (appliedSeqTxnBeforeInsert + 2));
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("t_rw_wal_ins").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    x\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    2\t2020-01-02T00:00:00.000000Z
+                    3\t2020-01-03T00:00:00.000000Z
+                    4\t2020-01-04T00:00:00.000000Z
+                    """);
         });
     }
 

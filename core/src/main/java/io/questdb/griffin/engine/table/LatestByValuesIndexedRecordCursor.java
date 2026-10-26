@@ -90,6 +90,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         rows.setMemoryTracker(executionContext.getMemoryTracker());
         rows.reopen();
         remainingKeys.clear();

@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Transient;
@@ -286,6 +287,13 @@ public interface IndexReader extends Closeable {
 
         default long getBaseRowLo() {
             return 0;
+        }
+
+        /**
+         * Breaker of the query that owns this resolver; readers that scan on open can consult it.
+         */
+        default SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
         }
 
         /**
