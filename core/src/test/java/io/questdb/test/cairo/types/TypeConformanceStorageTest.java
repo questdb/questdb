@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -741,8 +742,10 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     private void assertSection(String path, String mode, CharSequence actual) {
-        // mask: the database root of the test run
-        final String masked = actual.toString().replace(root, "<dbRoot>");
+        // mask: the database root of the test run, and the separator after it, which is '\' on Windows
+        final String masked = actual.toString()
+                .replace(root + Files.SEPARATOR, "<dbRoot>/")
+                .replace(root, "<dbRoot>");
         TypeConformanceRecording.assertSection(type, path, mode, RECORDINGS.get(type.label), masked);
     }
 

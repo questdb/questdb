@@ -472,7 +472,8 @@ public class ColumnTypeTest {
         // col_type.rs answers, per tag, the data-movement tier, the NULL policy and the arithmetic
         // tier the Parquet read and write paths key on; each must equal the type driver's answer
         final Path source = sourceFile("rust/qdb-core/src/col_type.rs");
-        final String text = Files.readString(source, StandardCharsets.UTF_8);
+        // a Windows checkout has CRLF line ends; the parser below matches on '\n'
+        final String text = Files.readString(source, StandardCharsets.UTF_8).replace("\r\n", "\n");
         final Map<String, String> movements = rustTagAnswers(text, "movement");
         final Map<String, String> nullPolicies = rustTagAnswers(text, "null_policy");
         final Map<String, String> arithmetics = rustTagAnswers(text, "arithmetic");
