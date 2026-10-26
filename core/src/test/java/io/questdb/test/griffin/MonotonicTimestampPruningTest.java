@@ -366,17 +366,14 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     "(1, '2022-01-01T00:00:00.000000Z')," +
                     "(2, '9999-12-31T23:59:59.999999Z');");
             // each 4.5e18 us shift stays under the single-shift overflow gap, but their sum (9e18)
-            // overflows the micros domain for the year-9999 row. Only the innermost shift may use the
-            // domain ceiling; the outer shift stays conservative, so the chain keeps its filter and the
-            // year-9999 row (whose composed value wraps negative below the bound) is preserved
+            // overflows the micros domain for the year-9999 row, so its composed value is NULL and
+            // does not satisfy the bound. Only the innermost shift may use the domain ceiling; the
+            // outer shift stays conservative, so the chain keeps its filter instead of pruning
             assertQuery("SELECT * FROM tmax WHERE dateadd('h', 1250000000, dateadd('h', 1250000000, ts)) < '2022-06-01'")
                     .timestamp("ts")
                     .withPlanContaining("filter:")
                     .withPlanNotContaining("Interval forward scan")
-                    .returns("""
-                            price\tts
-                            2.0\t9999-12-31T23:59:59.999999Z
-                            """);
+                    .returns("price\tts\n");
         });
     }
 

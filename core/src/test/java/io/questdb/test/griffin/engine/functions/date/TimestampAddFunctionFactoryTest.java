@@ -139,6 +139,153 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testOverflowConstantStride() throws Exception {
+        // a result that does not fit the timestamp type is NULL, not a wrapped value
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('d', -200000000, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('d', 2147483647, '1970-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('w', -20000000, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('w', 2147483647, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('y', -2000000000, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('y', 2147483647, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('M', -2147483647, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('M', 2147483647, '2024-01-01'::timestamp)");
+
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('d', -200000, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('d', 200000, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('w', -30000, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('h', 2147483647, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('m', -200000000, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('y', 300, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('y', -400, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('M', 4000, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('M', -2147483647, '2024-01-01'::timestamp_ns)");
+
+        // the final addition overflows near either end of the range
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('d', 1, 9223372036854775807L::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('u', -2, (-9223372036854775807L)::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('u', 1, 9223372036854775807L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('u', -1, (-9223372036854775807L)::timestamp_ns)");
+    }
+
+    @Test
+    public void testOverflowDropPartitionWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01'), (2, '2024-01-02'), (3, '2024-01-03')");
+            // no partition is older than the (out of range) bound, so none is dropped
+            assertException(
+                    "ALTER TABLE t DROP PARTITION WHERE ts < dateadd('d', -200000000, '2024-01-01'::timestamp)",
+                    35,
+                    "no partitions matched WHERE clause"
+            );
+            assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("""
+                    count
+                    3
+                    """);
+        });
+    }
+
+    @Test
+    public void testOverflowKeepsResultsInRange() throws Exception {
+        assertSqlWithTypes("dateadd\n2262-04-11T00:00:00.000000000Z:TIMESTAMP_NS\n", "select dateadd('d', 106751, '1970-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('d', 106752, '1970-01-01'::timestamp_ns)");
+        assertSqlWithTypes("cast\n-9223286400000000000:LONG\n", "select dateadd('d', -106751, '1970-01-01'::timestamp_ns)::long");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('d', -106752, '1970-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n294024-01-01T00:00:00.000000Z:TIMESTAMP\n", "select dateadd('y', 292000, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('y', 292300, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n-288000-01-01T00:00:00.000000Z:TIMESTAMP\n", "select dateadd('y', -290024, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('y', -292400, '2024-01-01'::timestamp)");
+        assertSqlWithTypes("dateadd\n2262-01-01T00:00:00.000000000Z:TIMESTAMP_NS\n", "select dateadd('y', 238, '2024-01-01'::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('y', 239, '2024-01-01'::timestamp_ns)");
+    }
+
+    @Test
+    public void testOverflowPredicateOnDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01'), (2, '2024-01-02'), (3, '2024-01-03')");
+            // a NULL result matches neither side of a comparison, with or without the interval pushdown
+            assertQuery("SELECT v FROM t WHERE dateadd('d', -200000000, ts) > '2000-01-01'").returns("v\n");
+            assertQuery("SELECT v FROM t WHERE dateadd('d', -200000000, ts) < '2000-01-01'").returns("v\n");
+            assertQuery("SELECT v FROM (SELECT v, dateadd('d', -200000000, ts) AS x FROM t) WHERE x > '2000-01-01'").returns("v\n");
+            assertQuery("SELECT v FROM (SELECT v, dateadd('d', -200000000, ts) AS x FROM t) WHERE x < '2000-01-01'").returns("v\n");
+            assertQuery("SELECT v FROM t WHERE dateadd('d', -200000000, ts, 'Europe/Berlin') > '2000-01-01'").returns("v\n");
+        });
+    }
+
+    @Test
+    public void testOverflowVariableStrideAndPeriod() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT 'd'::char AS p, x::int AS one, -200_000_000 AS big, '2024-01-01'::timestamp AS ts, '2024-01-01'::timestamp_ns AS ts_ns
+                        FROM long_sequence(1)
+                    )
+                    """);
+            // variable stride
+            assertQuery("SELECT dateadd('d', big, ts) FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            assertQuery("SELECT dateadd('w', big * one, ts) FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            assertQuery("SELECT dateadd('y', big * one, ts) FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            assertQuery("SELECT dateadd('d', -big, ts_ns) FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            // variable period
+            assertQuery("SELECT dateadd(p, big, ts) FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            assertQuery("SELECT dateadd(p, big, ts_ns) FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            // variable period with a time zone
+            assertQuery("SELECT dateadd(p, big, ts, 'Europe/Berlin') FROM t")
+                    .expectSize()
+                    .returns("""
+                            dateadd
+
+                            """);
+            // a non-overflowing add through the same functions
+            assertQuery("SELECT dateadd(p, one, ts) FROM t")
+                    .expectSize()
+                    .expectSize()
+                    .returns("""
+                            dateadd
+                            2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT dateadd('d', one, ts) FROM t")
+                    .expectSize()
+                    .expectSize()
+                    .returns("""
+                            dateadd
+                            2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testPeriodNullChar() throws Exception {
         assertQuery("select dateadd('\0', 5, 1587275359886758L)")
                 .fails(15, "invalid time period [unit=\u0000]");
