@@ -614,11 +614,14 @@ public class QwpEgressRequestDecoderTest {
                 Unsafe.putByte(p++, (byte) 0xFF);
             }
             Unsafe.putByte(p++, (byte) 0x01);
+            // Every bit includes QUERY_FLAG_TIMEOUT, whose timeout_ms field follows.
+            p = QwpVarint.encode(p, 1_000L);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
             Assert.assertTrue("sign-bit-set query_flags must decode, not be rejected",
                     decoder.queryFlags < 0);
             Assert.assertTrue("RESET_DICT bit must survive in a sign-bit-set value",
                     (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
+            Assert.assertEquals(1_000L, decoder.timeoutMs);
         });
     }
 
@@ -683,9 +686,9 @@ public class QwpEgressRequestDecoderTest {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            p = QwpVarint.encode(p, 0x02L); // a reserved bit, NOT RESET_DICT
+            p = QwpVarint.encode(p, 0x04L); // a reserved bit, NOT RESET_DICT
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(0x02L, decoder.queryFlags);
+            Assert.assertEquals(0x04L, decoder.queryFlags);
             Assert.assertEquals("RESET_DICT must read clear when only other bits are set",
                     0, decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
         });
@@ -741,6 +744,51 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * {@link QwpEgressMsgKind#QUERY_FLAG_TIMEOUT} announces a {@code timeout_ms}
+     * varint right after {@code query_flags}; the decoder exposes it on
+     * {@link QwpEgressRequestDecoder#timeoutMs}. A request without the flag
+     * carries no timeout.
+     */
+    @Test
+    public void testDecodeQueryTimeout() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+            p = QwpVarint.encode(p, 30_000L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_TIMEOUT, decoder.queryFlags);
+            Assert.assertEquals(30_000L, decoder.timeoutMs);
+
+            int baselineLen = writeBindScaffold(buf, 0);
+            decoder.decodeQueryRequest(buf, baselineLen, bindVars);
+            Assert.assertEquals("no trailer => no timeout", 0L, decoder.timeoutMs);
+        });
+    }
+
+    /**
+     * The timeout composes with the other query flags, after binds: flag-gated
+     * fields follow the flags whatever else the flags carry.
+     */
+    @Test
+    public void testDecodeQueryTimeoutWithResetDictFlagAfterBinds() throws Exception {
+        runWithBuf(128, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 1);
+            long p = buf + len;
+            p = writeNonNullBind(p, QwpConstants.TYPE_INT);
+            Unsafe.putInt(p, 99);
+            p += 4;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT | QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+            p = QwpVarint.encode(p, 1L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(99, bindVars.getFunction(0).getInt(null));
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT | QwpEgressMsgKind.QUERY_FLAG_TIMEOUT,
+                    decoder.queryFlags);
+            Assert.assertEquals(1L, decoder.timeoutMs);
+        });
+    }
+
+    /**
      * The decoder is pooled and reused across queries on a connection. A query
      * that sets {@code query_flags} must not bleed the flag into a subsequent
      * baseline query that carries no trailer -- {@code queryFlags} is reset at
@@ -764,6 +812,31 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * A timeout must not bleed into the next request on the pooled decoder, not
+     * even when that request fails to decode.
+     */
+    @Test
+    public void testQueryTimeoutResetBetweenDecodes() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+            p = QwpVarint.encode(p, 5_000L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(5_000L, decoder.timeoutMs);
+
+            // A request whose sql_len overruns the frame.
+            int len2 = writeQueryRequest(buf, 2L, "SELECT 1".getBytes(StandardCharsets.UTF_8), 0L, 0);
+            try {
+                decoder.decodeQueryRequest(buf, len2 - 3, bindVars);
+                Assert.fail("a truncated request must not decode");
+            } catch (QwpParseException expected) {
+            }
+            Assert.assertEquals("timeout must not bleed across pooled decodes", 0L, decoder.timeoutMs);
+        });
+    }
+
+    /**
      * {@link QwpEgressRequestDecoder#reset()} clears the staged flags so a
      * recycled decoder starts clean.
      */
@@ -778,6 +851,63 @@ public class QwpEgressRequestDecoderTest {
             decoder.reset();
             Assert.assertEquals(0L, decoder.queryFlags);
         });
+    }
+
+    @Test
+    public void testResetClearsQueryTimeout() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+            p = QwpVarint.encode(p, 250L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(250L, decoder.timeoutMs);
+            decoder.reset();
+            Assert.assertEquals(0L, decoder.timeoutMs);
+        });
+    }
+
+    /**
+     * The timeout flag without its field is a malformed request.
+     */
+    @Test
+    public void testRejectsMissingQueryTimeout() throws Exception {
+        assertRejectsQueryTimeout("timeout_ms missing", p -> p);
+    }
+
+    /**
+     * A timeout varint with the sign bit set decodes negative; no client means
+     * that, so the decoder rejects it like a negative initial_credit.
+     */
+    @Test
+    public void testRejectsNegativeQueryTimeout() throws Exception {
+        assertRejectsQueryTimeout("timeout_ms must be positive", p -> {
+            for (int i = 0; i < 9; i++) {
+                Unsafe.putByte(p++, (byte) 0xFF);
+            }
+            Unsafe.putByte(p++, (byte) 0x01);
+            return p;
+        });
+    }
+
+    /**
+     * A lone continuation byte where the timeout varint should be must surface as
+     * a clean {@link QwpParseException}, not read past the frame.
+     */
+    @Test
+    public void testRejectsTruncatedQueryTimeout() throws Exception {
+        assertRejectsQueryTimeout(null, p -> {
+            Unsafe.putByte(p++, (byte) 0x80);
+            return p;
+        });
+    }
+
+    /**
+     * A zero timeout would fail the query before it starts; the decoder rejects it.
+     */
+    @Test
+    public void testRejectsZeroQueryTimeout() throws Exception {
+        assertRejectsQueryTimeout("timeout_ms must be positive", p -> QwpVarint.encode(p, 0L));
     }
 
     @Test
@@ -1010,6 +1140,30 @@ public class QwpEgressRequestDecoderTest {
      * a fixed 8-byte SQL and bind_count = N, runs the callback, and frees the buffer.
      * All wrapped in assertMemoryLeak.
      */
+    /**
+     * Decodes a request whose query_flags carry {@link QwpEgressMsgKind#QUERY_FLAG_TIMEOUT}
+     * followed by whatever {@code timeoutField} writes, and asserts the decoder
+     * rejects it -- with {@code expectedMessage} in the error when not null --
+     * leaving no timeout behind.
+     */
+    private static void assertRejectsQueryTimeout(String expectedMessage, TimeoutFieldWriter timeoutField) throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+            p = timeoutField.write(p);
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("a malformed timeout_ms must not decode");
+            } catch (QwpParseException e) {
+                if (expectedMessage != null) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                }
+            }
+            Assert.assertEquals(0L, decoder.timeoutMs);
+        });
+    }
+
     private static void runWithBuf(int bufSize, DecoderBody body) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             BindVariableServiceImpl bindVars = newBindVars();
@@ -1060,5 +1214,10 @@ public class QwpEgressRequestDecoderTest {
     @FunctionalInterface
     private interface DecoderBody {
         void run(long buf, BindVariableServiceImpl bindVars, QwpEgressRequestDecoder decoder) throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface TimeoutFieldWriter {
+        long write(long p);
     }
 }

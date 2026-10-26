@@ -220,6 +220,13 @@ public final class QwpConstants {
      */
     public static final byte STATUS_PARSE_ERROR = 0x05;
     /**
+     * Status: Egress-only. The query ran past the per-query timeout the client
+     * sent with it ({@code QwpEgressMsgKind#QUERY_FLAG_TIMEOUT}). Reported only
+     * to requests that carried a timeout; a timeout of any other request keeps
+     * {@link #STATUS_LIMIT_EXCEEDED}. The connection stays open.
+     */
+    public static final byte STATUS_QUERY_TIMEOUT = 0x0E;
+    /**
      * Status: Column type incompatible.
      */
     public static final byte STATUS_SCHEMA_MISMATCH = 0x03;

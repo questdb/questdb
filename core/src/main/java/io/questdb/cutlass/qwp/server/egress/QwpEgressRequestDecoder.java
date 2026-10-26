@@ -83,6 +83,13 @@ public class QwpEgressRequestDecoder {
     public long queryFlags;
     public long requestId;
     /**
+     * Per-query timeout in milliseconds, from the {@code timeout_ms} field that
+     * follows {@link #queryFlags} when it carries
+     * {@link QwpEgressMsgKind#QUERY_FLAG_TIMEOUT}; {@code 0} when the request
+     * carries none.
+     */
+    public long timeoutMs;
+    /**
      * Reusable scratch for the parsed null flag that {@link #readNullFlag} writes
      * into. Holding it as a field removes the {@code boolean[1]} allocation per bind.
      */
@@ -155,13 +162,15 @@ public class QwpEgressRequestDecoder {
      * {@code payloadLen}. The first byte (msg_kind) must already be QUERY_REQUEST.
      * <p>
      * Populates {@link #requestId}, {@link #sql}, {@link #initialCredit},
-     * {@link #queryFlags}, and pushes bind parameters into {@code bindVars}.
+     * {@link #queryFlags}, {@link #timeoutMs}, and pushes bind parameters into
+     * {@code bindVars}.
      */
     public void decodeQueryRequest(long payload, int payloadLen, BindVariableService bindVars)
             throws QwpParseException, SqlException {
         long limit = payload + payloadLen;
         long p = payload + 1; // skip msg_kind
         queryFlags = 0;
+        timeoutMs = 0;
         if (p + 8 > limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: header truncated");
         }
@@ -209,6 +218,23 @@ public class QwpEgressRequestDecoder {
             QwpVarint.decode(p, limit, varintScratch);
             queryFlags = varintScratch.value;
             p += varintScratch.bytesRead;
+            // Flag-gated fields follow the flags in flag-bit order.
+            if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_TIMEOUT) != 0) {
+                if (p >= limit) {
+                    throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                            .put("QUERY_REQUEST: timeout_ms missing");
+                }
+                QwpVarint.decode(p, limit, varintScratch);
+                long timeout = varintScratch.value;
+                p += varintScratch.bytesRead;
+                // A zero timeout would fail the query at once; a negative one is a
+                // varint with the sign bit set, which no client means.
+                if (timeout <= 0) {
+                    throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                            .put("QUERY_REQUEST: timeout_ms must be positive: ").put(timeout);
+                }
+                timeoutMs = timeout;
+            }
         }
     }
 
@@ -228,6 +254,7 @@ public class QwpEgressRequestDecoder {
         requestId = 0;
         initialCredit = 0;
         queryFlags = 0;
+        timeoutMs = 0;
     }
 
     private long decodeBind(long start, long limit, int index, BindVariableService bindVars)
