@@ -170,6 +170,42 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertToNativeFixedToStringColumnTopSpanningRowGroups() throws Exception {
+        // 4 rows per row group. The INT columns added after 10 of the partition's 14 rows have
+        // a column top that covers row groups 0 and 1 whole. The lazy ALTER to STRING/VARCHAR
+        // leaves the parquet data as INT, so CONVERT TO NATIVE decodes INT and converts it to
+        // the var type. The decoder skips the two whole row groups, so the first row group it
+        // writes is row group 2: it must keep the leading STRING aux entry, or the .i file ends
+        // up one entry short and the reader rejects it.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            for (String table : new String[]{"nat", "pq"}) {
+                execute("CREATE TABLE " + table + " (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+                execute("ALTER TABLE " + table + " ADD COLUMN i INT, j INT");
+                execute("INSERT INTO " + table + " SELECT (10 + x)::INT, '2024-01-01T01:00'::TIMESTAMP + x * 60_000_000L, x::INT, x::INT FROM long_sequence(4)");
+                // 2024-01-02 keeps 2024-01-01 out of the active partition
+                execute("INSERT INTO " + table + " (a, ts) VALUES (99, '2024-01-02')");
+            }
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            for (String table : new String[]{"nat", "pq"}) {
+                execute("ALTER TABLE " + table + " ALTER COLUMN i TYPE STRING");
+                execute("ALTER TABLE " + table + " ALTER COLUMN j TYPE VARCHAR");
+            }
+            execute("ALTER TABLE pq CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            assertSqlCursors("nat", "pq");
+            assertQuery("SELECT a, i, j FROM pq WHERE a BETWEEN 10 AND 12")
+                    .noLeakCheck()
+                    .returns("""
+                            a\ti\tj
+                            10\t\t
+                            11\t1\t1
+                            12\t2\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
