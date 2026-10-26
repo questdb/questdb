@@ -199,6 +199,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
     // rewritten in full on every call, read out immediately by planO3Repair.
     private final long[] applyAheadBounds = new long[2];
+    // Third out-value of the same computeApplyAheadBounds call: the lowest timestamp any
+    // DATA commit in the apply-ahead range touched, or LONG_NULL when it holds none. Set
+    // even when the range is unclassifiable, which is why the pair above cannot carry it:
+    // the repair's deletion floor needs it either way.
+    private long applyAheadDataMinTs;
     // Second out-value of the same computeApplyAheadBounds call: whether every commit in
     // the apply-ahead range only ADDED rows. Separate from the pair above because the two
     // are independent - a classifiable range whose timestamps bound the repair may still
@@ -3486,18 +3491,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * insert-only proof a localized ROWS repair needs. It is a separate verdict because
      * a range can be perfectly classifiable - every commit DATA, every timestamp
      * readable - and still have deleted rows through a REPLACE_RANGE band.
+     * <p>
+     * It also fills {@link #applyAheadDataMinTs}, the same minimum taken over the DATA
+     * commits alone, skipping the structural and non-DATA entries instead of aborting on
+     * them - exactly as {@link #drainAppliedBase}'s overlap walk does. An unclassifiable
+     * range denies the resume, but the rebuild that replaces it still materialises the
+     * range's DATA commits and walks the watermark past them, so their deletions still
+     * have to reach the repair's correction floor.
      */
     private long[] computeApplyAheadBounds(TableToken baseToken, long fromSeqTxn, long toSeqTxn, long viewLowerBoundTimestamp) {
         applyAheadBounds[0] = Numbers.LONG_NULL;
         applyAheadBounds[1] = Numbers.LONG_NULL;
+        applyAheadDataMinTs = Numbers.LONG_NULL;
         applyAheadInsertOnly = false;
         long minTs = Numbers.LONG_NULL;
         long maxTs = Numbers.LONG_NULL;
+        boolean classifiable = true;
         boolean insertOnly = true;
         try (
                 TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
-                // Every arm out of this walk is a return, and each closes the reader with
-                // the cursor - see the note on walEventReader.
+                // The walk closes the reader with the cursor - see the note on
+                // walEventReader.
                 WalEventReader eventReader = walEventReader
         ) {
             while (txnCursor.hasNext()) {
@@ -3509,7 +3523,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (walId <= 0) {
                     // Compacted / structural entry (STRUCTURAL_CHANGE / DROP_TABLE):
                     // a bounded resume cannot see whatever it changed, so refuse it.
-                    return applyAheadBounds;
+                    classifiable = false;
+                    continue;
                 }
                 final int segmentId = txnCursor.getSegmentId();
                 final int segmentTxn = txnCursor.getSegmentTxn();
@@ -3520,7 +3535,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (!WalTxnType.isDataType(eventCursor.getType())) {
                     // TRUNCATE / DROP PARTITION / UPDATE: a non-DATA change whose
                     // effect a bounded resume cannot reproduce - force the rebuild.
-                    return applyAheadBounds;
+                    classifiable = false;
+                    continue;
                 }
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 long txnMinTs = dataInfo.getMinTimestamp();
@@ -3535,12 +3551,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 maxTs = Math.max(maxTs, effectiveCommitMaxTs(dataInfo, deleteLo));
             }
         }
-        applyAheadBounds[0] = minTs;
-        // A classifiable range with no minimum holds no DATA commit, which the
-        // caller reads as unresumable; pin the maximum to the same verdict rather
-        // than publishing half a span.
-        applyAheadBounds[1] = minTs == Numbers.LONG_NULL ? Numbers.LONG_NULL : maxTs;
-        applyAheadInsertOnly = insertOnly;
+        applyAheadDataMinTs = minTs;
+        if (classifiable) {
+            applyAheadBounds[0] = minTs;
+            // A classifiable range with no minimum holds no DATA commit, which the
+            // caller reads as unresumable; pin the maximum to the same verdict rather
+            // than publishing half a span.
+            applyAheadBounds[1] = minTs == Numbers.LONG_NULL ? Numbers.LONG_NULL : maxTs;
+            applyAheadInsertOnly = insertOnly;
+        }
         return applyAheadBounds;
     }
 
@@ -3899,6 +3918,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long pinnedSeqTxn = reader.getSeqTxn();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         long applyAheadMinTs = Numbers.LONG_NULL;
+        long correctionLowTs = lateRowTs;
         long effectiveChangeMaxTs = changeMaxTs;
         boolean effectiveInsertOnly = insertOnly;
         if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, advanceTo, pinnedSeqTxn)) {
@@ -3911,6 +3931,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     ? Numbers.LONG_NULL
                     : Math.max(effectiveChangeMaxTs, aheadBounds[1]);
             effectiveInsertOnly &= applyAheadInsertOnly;
+            // The repair commits at the pinned seqTxn, so the watermark walks past the
+            // ahead range and no later cycle drains its DATA commits. Their deletions -
+            // a REPLACE_RANGE band, or a dedup replacement that dropped a row out of the
+            // WHERE filter - therefore belong to this repair's correction floor C just
+            // as the trigger's own do. Without them an unlocalized rebuild replaces only
+            // from the trigger, and the derived rows of a band the ahead range deleted
+            // below it stay on disk as ghosts. The floor skips the non-DATA entries that
+            // can make the range unclassifiable, so their removals stay frozen, as they
+            // do when such an entry is the trigger. Lowering C this way moves nothing
+            // else in the plan: the retire floor already takes the minimum with the
+            // ahead range, and an unclassifiable range retires everything regardless.
+            if (applyAheadDataMinTs != Numbers.LONG_NULL && applyAheadDataMinTs < correctionLowTs) {
+                correctionLowTs = applyAheadDataMinTs;
+            }
         }
         long rangeFrameWidth = Numbers.LONG_NULL;
         long durableOutputMaxTs = Numbers.LONG_NULL;
@@ -3981,7 +4015,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         scanCost.of(reader);
         repairPlan.of(
                 timelineAnchors,
-                lateRowTs,
+                correctionLowTs,
                 viewLowerBoundTimestamp,
                 advanceTo,
                 pinnedSeqTxn,
