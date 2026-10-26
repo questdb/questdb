@@ -575,9 +575,12 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   name to `.detached`, which never crosses a file system because both names are in the table directory, and syncs
   the table directory in `sync` and `adaptive`; a crash leaves one name or the other, never half of each. It never
   replaces or merges into an existing `.detached`. A rename that fails after the commit cannot undo the DETACH, so
-  the statement fails with the folder its files are in (a WAL table suspends); the writer keeps it pending, and a
-  repeated DETACH, `RESUME WAL` or the next writer open renames it. At writer open, a temporary name whose txn the
-  live `_txn` has not reached is a rollback leftover and is deleted; one it has reached gets its final name (on an
+  the statement fails with the folder its files are in. On a non-WAL table the writer keeps the rename pending, and
+  a repeated DETACH or the next writer open renames it. On a WAL table the apply fails and the table suspends; the
+  apply job closes that writer, so the temporary name on the disk is the only pending state: a writer open that
+  cannot rename it fails with the same error, the apply job suspends the table again, and so each `RESUME WAL`
+  ends with the table suspended with that error until the rename succeeds. At writer open, a temporary name whose
+  txn the live `_txn` has not reached is a rollback leftover and is deleted; one it has reached gets its final name (on an
   enrolled table of a primary only once every on-disk candidate covers it). A failed required publication keeps
   the temporary copy and is retryable through RESUME; fallback below the removal replays DETACH from its original
   partition. An unrelated pre-existing `.detached` destination still refuses DETACH. Without the temporary name, a crash between the link

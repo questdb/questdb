@@ -9142,8 +9142,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return enrolledAdaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled();
     }
 
-    // A committed DETACH whose rename to .detached failed: the partition is detached, its files are under the
-    // temporary name, and a repeated DETACH (RESUME WAL on a WAL table) or the next writer open renames it.
+    // A committed DETACH whose rename to .detached failed: the partition is detached and its files are under the
+    // temporary name. A repeated DETACH renames it on a non-WAL table; on a WAL table the next writer open does,
+    // which RESUME WAL reaches through the apply job.
     private CairoException detachNotNamedException(long timestamp, long detachTxn, int errno) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
@@ -16269,13 +16270,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", errno=").$(ff.errno()).I$();
                         }
                         other.trimTo(pathSize);
-                    } else if (adaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
-                        if (!hasDurableEpochCoverage(detachTxn) || !finishDetach(timestamp, detachTxn)) {
-                            detachesAfterSavePoint.add(timestamp, detachTxn);
-                        }
+                    } else if (adaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled() && !hasDurableEpochCoverage(detachTxn)) {
+                        // Named once a save point covers the DETACH
+                        detachesAfterSavePoint.add(timestamp, detachTxn);
                     } else if (!finishDetach(timestamp, detachTxn)) {
-                        // An open has no caller to tell; the log names both directories, and a repeated DETACH of the
-                        // partition in this writer, or the next open, renames it
+                        if (tableToken.isWal()) {
+                            // A WAL table must not apply on while the partition has no name: the open fails, so the
+                            // apply job suspends the table and RESUME WAL reports this until the rename succeeds.
+                            // The temporary name on the disk is what the next open retries.
+                            throw detachNotNamedException(timestamp, detachTxn, ff.errno());
+                        }
+                        // The DETACH statement reported the failure, and a repeated DETACH reports it again; the open
+                        // has no caller to tell, so the log names both directories and this writer keeps it pending
                         detachesAfterSavePoint.add(timestamp, detachTxn);
                     }
                 }

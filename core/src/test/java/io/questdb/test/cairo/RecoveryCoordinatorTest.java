@@ -3276,15 +3276,10 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         final AtomicBoolean isFailing = new AtomicBoolean();
         final FilesFacade facade = new TestFilesFacadeImpl() {
             @Override
-            public int hardLinkDirRecursive(Path src, Path dst, int mode) {
-                return isFailing.get() && Utf8s.endsWithAscii(dst, TableUtils.DETACHED_DIR_MARKER)
-                        ? -1 : super.hardLinkDirRecursive(src, dst, mode);
-            }
-
-            @Override
-            public int copyRecursive(Path src, Path dst, int mode) {
-                return isFailing.get() && Utf8s.endsWithAscii(dst, TableUtils.DETACHED_DIR_MARKER)
-                        ? -1 : super.copyRecursive(src, dst, mode);
+            public int rename(LPSZ from, LPSZ to) {
+                // The rename that gives a committed DETACH its .detached name
+                return isFailing.get() && Utf8s.containsAscii(from, TableUtils.DETACHING_DIR_MARKER) && Utf8s.endsWithAscii(to, TableUtils.DETACHED_DIR_MARKER)
+                        ? io.questdb.std.Files.FILES_RENAME_ERR_OTHER : super.rename(from, to);
             }
         };
         assertMemoryLeak(facade, () -> {
