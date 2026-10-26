@@ -15330,6 +15330,9 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
         assert model.getNestedModel() != null;
+        // the projection reads the columns that the LATERAL rewrite lifted out of a sub-query under the
+        // names that the translation of its FROM clause gave them
+        lateralJoinRewriter.bindLiftedColumns(model);
         bindPendingSubsampleColumns(model, sqlExecutionContext);
 
         groupByAliases.clear();
@@ -18421,6 +18424,7 @@ public class SqlOptimiser implements Mutable {
             lateralJoinRewriter.rewrite(rewrittenModel, sqlExecutionContext);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            lateralJoinRewriter.bindLiftedJoinCriteria();
             verifyNoResidualSubsample(rewrittenModel, true);
 
             detectTimestampOffsetsRecursive(rewrittenModel);
