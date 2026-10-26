@@ -164,40 +164,15 @@ public class O3ParquetMergeStrategy {
     }
 
     /**
-     * Overload of
-     * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)}
-     * that additionally accepts an optional replace-commit range.
-     * <p>
-     * When {@code replaceLo <= replaceHi} (a replace commit), a row group the range
-     * intersects but for which O3 brings no rows becomes a filter-only MERGE (an
-     * empty O3 slice that drops the covered rows and keeps the rest), or a DROP
-     * when the range fully covers the row group.
+     * Same as
+     * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)},
+     * plus an optional replace-commit range. In a replace commit, a row group the range
+     * intersects but O3 brings no rows for becomes a DROP when the range covers it fully,
+     * else a filter-only MERGE (empty O3 slice) that drops the covered rows.
      *
-     * @param rowGroupBounds         List of (min, max, rowCount) triples for each row group.
-     * @param sortedTimestampsAddr   Native address of sorted O3 timestamps (16 bytes per entry).
-     * @param srcOooLo               Start index of O3 data range (inclusive).
-     * @param srcOooHi               End index of O3 data range (inclusive).
-     * @param smallRowGroupThreshold Row groups with fewer rows than this are considered "small"
-     *                               and will have adjacent non-overlapping O3 data merged into them.
-     * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
-     *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
-     *                               to disable splitting.
-     * @param actionsBuf             Pre-allocated buffer to receive computed merge actions (reused across calls).
-     *                               Objects in the buffer beyond the returned count are stale and must not be read.
-     * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
-     * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
-     * @param coalesceBoundaryTies   When true, consecutive row groups joined by a shared boundary
-     *                               timestamp that the O3 batch also lands on are merged as a single
-     *                               unit, so a dedup key at the shared timestamp is compared against
-     *                               every existing copy. Pass false for non-deduplicating commits:
-     *                               the tie is then harmless and coalescing (which forces a
-     *                               full-partition rewrite) is unnecessary.
-     * @param replaceLo              Inclusive start of the replace-commit range, or Long.MAX_VALUE
-     *                               when the commit is not a replace commit.
-     * @param replaceHi              Inclusive end of the replace-commit range, or Long.MIN_VALUE
-     *                               when the commit is not a replace commit. Every O3 row must
-     *                               lie inside [replaceLo, replaceHi].
-     * @return the number of actions written into actionsBuf
+     * @param replaceLo inclusive range start, or Long.MAX_VALUE when not a replace commit
+     * @param replaceHi inclusive range end, or Long.MIN_VALUE when not a replace commit;
+     *                  every O3 row must lie inside [replaceLo, replaceHi]
      */
     public static int computeMergeActions(
             LongList rowGroupBounds,
@@ -530,11 +505,8 @@ public class O3ParquetMergeStrategy {
         COPY_O3,
 
         /**
-         * Discard an existing row group whose rows all fall inside a replace-commit
-         * range that brings no rows for it. rowGroupIndex is valid; rgLo, rgHi,
-         * o3Lo, o3Hi are -1. Update mode removes the row group from the footer
-         * (PartitionUpdater.removeRowGroup) and leaves its bytes as unused space;
-         * rewrite mode skips it.
+         * Discard a row group fully covered by a replace range that brings no rows for it.
+         * rowGroupIndex is valid; rgLo, rgHi, o3Lo, o3Hi are -1.
          */
         DROP
     }
@@ -636,9 +608,8 @@ public class O3ParquetMergeStrategy {
         }
 
         /**
-         * Set this action to rewrite a row group partially covered by a replace range
-         * that brings no rows for it: a MERGE with an empty O3 slice ({@code o3Hi < o3Lo}),
-         * which drops the covered rows and keeps the rest.
+         * Set this action to a MERGE with an empty O3 slice ({@code o3Hi < o3Lo}), which
+         * drops the rows a replace range covers and keeps the rest.
          */
         public void setFilter(int rowGroupIndex, long rgRowCount) {
             setMerge(rowGroupIndex, 0, rgRowCount - 1, 0, -1);

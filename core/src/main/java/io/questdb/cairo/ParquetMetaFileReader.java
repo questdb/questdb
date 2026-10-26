@@ -539,11 +539,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Returns the compressed byte size of the specified row group in the parquet
-     * data file: the sum of TOTAL_COMPRESSED (u64 at offset 24) over its column
-     * chunks. This is the chunk data (dictionary and data pages with their
-     * headers); it excludes the column/offset indexes and bloom filters, which
-     * are stored outside the row group's data range. O(columnCount), no allocation.
+     * Returns the compressed byte size of the row group's column chunks (pages with
+     * headers), excluding column/offset indexes and bloom filters. O(columnCount).
      *
      * @param rowGroupIndex zero-based row group index
      * @return compressed byte size of the row group's column chunks

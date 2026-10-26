@@ -4357,8 +4357,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     /**
      * Writes the rewrite's deferred leading row groups [0, pendingCopyRowGroups) to the
-     * new file, in order. Only raw chunk copies: deferral is off when a copy must be
-     * materialized, which would reuse the decode buffers a running merge holds.
+     * new file. Raw chunk copies only, so the decode buffers of a running merge stay intact.
      */
     private static void copyPendingRowGroups(
             O3ParquetMergeContext ctx,
@@ -4387,11 +4386,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Rewrite mode: writes an unchanged source row group to the new file, as its
-     * COPY_ROW_GROUP_SLICE action does. {@code isMaterialize} re-encodes it through the
-     * target types (type-converted columns or a legacy Required column), a schema
-     * change copies it with NULL chunks for missing columns, and otherwise the raw
-     * chunks are copied.
+     * Rewrite mode: copies an unchanged source row group to the new file. Re-encodes it when
+     * {@code isMaterialize}, adds NULL chunks for missing columns on a schema change, and
+     * copies raw chunks otherwise.
      */
     private static void copyRowGroupToRewrite(
             O3ParquetMergeContext ctx,
@@ -4816,9 +4813,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Returns true if row group {@code rowGroupIndex} holds at least one row whose
-     * timestamp lies in [replaceLo, replaceHi]. Decodes only the timestamp column,
-     * which {@code timestampColumn} lists as its single (parquet index, type) pair.
+     * Returns true if the row group holds a row with timestamp in [replaceLo, replaceHi].
+     * Decodes only the timestamp column, the single entry of {@code timestampColumn}.
      */
     private static boolean hasRowInReplaceRange(
             ParquetPartitionDecoder decoder,
@@ -4853,11 +4849,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     /**
      * Returns true when a dedup merge whose O3 rows all replace existing rows leaves every
-     * non-key column of the row group unchanged. Compares the prepared (Phase 1a) source
-     * buffers against the O3 buffers through the merge index, column by column, and
-     * stops at the first difference. Dedup keys (the designated timestamp included)
-     * already match. A column missing from the parquet file compares its NULL source
-     * buffer, so an O3 value there is a difference.
+     * non-key column of the row group unchanged. Compares the prepared source buffers with
+     * the O3 buffers through the merge index; a column missing from the file compares as NULL.
      */
     private static boolean isMergeIdenticalToRowGroup(
             TableRecordMetadata tableWriterMetadata,
@@ -4894,10 +4887,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return true;
     }
 
-    // Returns true when updateParquetIndexes rebuilds this column's index (bitmap, posting
-    // or covering) on a parquet partition. A dropped column has a negative type and never
-    // matches. TableWriter.versionRebuiltParquetIndexes publishes the new column name txn
-    // of an in-place rebuild for exactly these columns, so both sides use this predicate.
+    // Columns whose index updateParquetIndexes rebuilds on a parquet partition. Shared with
+    // TableWriter.versionRebuiltParquetIndexes, which versions _cv for the same columns.
     static boolean isRebuiltParquetIndex(TableRecordMetadata metadata, int columnIndex) {
         return metadata.getColumnType(columnIndex) == ColumnType.SYMBOL
                 && metadata.isColumnIndexed(columnIndex)
@@ -4905,11 +4896,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     // returns packed long: (numOutputRowGroups << 32) | (duplicateCount & 0xFFFFFFFFL),
-    // where duplicateCount is the number of rows removed by dedup or by the replace range.
-    // numOutputRowGroups is 0 when isSkipIfIdentical and the merge would leave the row
-    // group(s) unchanged: nothing is written and the caller keeps them as they are.
-    // Before its first write, the merge copies the rewrite's deferred leading row groups
-    // [0, pendingCopyRowGroups) to the new file.
+    // where duplicateCount counts rows removed by dedup or by the replace range.
+    // numOutputRowGroups is 0 when isSkipIfIdentical and the merge changes nothing.
+    // Copies the rewrite's pending leading row groups before its first write.
     private static long mergeRowGroup(
             PartitionDescriptor chunkDescriptor,
             PartitionUpdater partitionUpdater,
@@ -6457,14 +6446,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Rebuilds the partition's symbol indexes from the parquet file. Rewrite mode (and a
-     * fresh partition) writes them into the new partition directory under the column's
-     * current name txn. Update mode (in place) must not touch the committed index files:
-     * a reader pinned at the committed txn still reads them, and a failure before
-     * _txn commits must leave them intact. It therefore writes every index under the new
-     * column name txn {@code txn}, next to the committed files in the live directory, and
-     * TableWriter.versionRebuiltParquetIndexes publishes that name through _cv with the
-     * _txn commit and queues the superseded files for the column purge.
+     * Rebuilds the partition's symbol indexes from the parquet file. Rewrite mode writes
+     * them into the new directory under the current column name txn. Update mode must not
+     * touch the committed files, which pinned readers still use, so it writes them under
+     * column name txn {@code txn} next to them; TableWriter.versionRebuiltParquetIndexes
+     * then publishes that name with the _txn commit.
      */
     private static void updateParquetIndexes(
             int partitionBy,
@@ -6524,9 +6510,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                // This predicate selects the columns whose index update mode rebuilds
-                // here. TableWriter.versionRebuiltParquetIndexes versions _cv for the same
-                // columns, so keep both on this predicate.
                 if (isRebuiltParquetIndex(tableWriterMetadata, columnIndex)) {
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
 

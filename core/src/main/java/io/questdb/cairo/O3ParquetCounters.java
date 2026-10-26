@@ -29,12 +29,9 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Process-wide counts of the paths {@link O3PartitionJob} takes on a parquet partition.
- * Fuzz tests read them to check that a run reached the paths it is designed for, so a
- * test that silently stops exercising parquet O3 fails instead of passing. The job
- * bumps a counter once per partition task (once per row group for the DROP counters),
- * which costs nothing measurable next to the parquet work around it. A count includes
- * attempts whose commit failed afterwards.
+ * Process-wide counts of the paths {@link O3PartitionJob} takes on a parquet partition,
+ * so fuzz tests can assert they still reach the paths they target. Counters bump once per
+ * partition task (per row group for DROP) and include attempts whose commit later failed.
  */
 public final class O3ParquetCounters {
     private static final AtomicLong dedupIdenticalCount = new AtomicLong();

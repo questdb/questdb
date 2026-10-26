@@ -13481,13 +13481,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * values as NULL. indexParquetPartition reads the rewritten parquet and wires up
      * both the .pv and the covering sidecars.
      * <p>
-     * This is the third parquet index rebuild, next to O3PartitionJob.updateParquetIndexes
-     * (bitmap and posting). It resolves the column name txn from _cv, so it must run after
-     * o3ConsumePartitionUpdateSink: for an in-place update, versionRebuiltParquetIndexes
-     * has then moved every column O3PartitionJob.isRebuiltParquetIndex selects to the new
-     * name, and the .pk/.pv/.pci/.pc files built here are that new version, next to the
-     * committed ones a pinned reader still uses. Resolving the name before that point
-     * would rebuild the committed sidecars in place.
+     * Resolves the column name txn from _cv, so it must run after o3ConsumePartitionUpdateSink:
+     * for an in-place update, versionRebuiltParquetIndexes has moved _cv to the new name by
+     * then. Running earlier would rebuild the committed sidecars a pinned reader still uses.
      *
      * @return true if at least one covering posting column was rebuilt.
      */
@@ -15097,10 +15093,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Purges the index versions that in-place parquet O3 updates superseded in the commit
-     * that just landed. Runs after the _txn commit, so new readers already resolve the new
-     * column name txn. With a reader pinned below the committed txn (or a checkpoint in
-     * progress) the purge goes to ColumnPurgeJob, which waits until no reader is in the
-     * old version's txn range.
+     * that just landed. Defers to ColumnPurgeJob while an older reader or a checkpoint may
+     * still use them.
      */
     private void purgeSupersededParquetIndexes() {
         if (!isParquetIndexPurgePending) {
@@ -18692,16 +18686,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Publishes the index files an in-place parquet O3 update rebuilt. The O3 worker
-     * (O3PartitionJob.updateParquetIndexes) wrote every index the shared
-     * isRebuiltParquetIndex predicate selects under the new column name txn, the current
-     * txn, in the live partition directory, and left the committed files alone. Moving _cv
-     * to that name here commits it together with the parquet file size in _txn: a reader
-     * pinned at the old txn keeps its _cv snapshot and the old files, a new reader opens
-     * the new ones, and a rollback or crash before the commit leaves _cv on the old files.
-     * The superseded version goes to the column purge after the commit
-     * (purgeSupersededParquetIndexes). The column top is 0, as
-     * zeroColumnTopsAfterParquetRewrite has just set it.
+     * Publishes the index files an in-place parquet O3 update rebuilt. The O3 worker wrote
+     * them under the current txn as the new column name txn, next to the committed files.
+     * Moving _cv here commits the new name atomically with the parquet file size: pinned
+     * readers keep the old files, and a rollback leaves _cv on them. Queues the superseded
+     * version for purgeSupersededParquetIndexes.
      */
     private void versionRebuiltParquetIndexes(long partitionTimestamp, long partitionNameTxn) {
         final long newColumnNameTxn = txWriter.txn;
@@ -18817,34 +18806,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * After a parquet write, zero column tops so that column-version
-     * records match the parquet content.
-     * <p>
-     * The in-place parquet O3 update (same directory, appended row groups)
-     * calls this with {@code zeroAllColumns=true}. The rewrite (new
-     * txn-named directory) and the brand-new FORMAT PARQUET partition call
-     * {@link #zeroColumnTopsAfterFullMaterialization} with the same flag.
-     * After any parquet O3 publish, every live column's {@code _cv} top is
-     * 0, matching the file.
+     * After an in-place parquet O3 update, zero column tops so that column-version
+     * records match the parquet content: the Rust updater (update.rs end()) zeroes
+     * every column_top in the file. The rewrite and fresh-parquet paths use
+     * {@link #zeroColumnTopsAfterFullMaterialization} instead.
      *
-     * @param zeroAllColumns when {@code true}, zero column tops for ALL
-     *                       columns (including ones that had no data at all).
-     *                       Use {@code true} for every parquet O3 publish
-     *                       (rewrite, in-place update and fresh parquet): the
-     *                       Rust updater (update.rs end()) zeros all
-     *                       column_tops in the file in both rewrite and update
-     *                       mode, and the fresh-parquet encoder emits every
-     *                       column from row 0, so the decoder produces data
-     *                       for every column.  Use {@code false} for
-     *                       native→parquet conversion, where the encoder
-     *                       preserves the original column_top in the file.
-     *                       Only columns with partial data
-     *                       (0 < column_top < partitionRowCount) are zeroed.
-     *                       The Rust decoder skips every row group that lies
-     *                       whole inside the file's column_top, so a decode
-     *                       back to native does not produce all rows:
-     *                       produceNativeFromParquet sets the native column
-     *                       top itself.
+     * @param zeroAllColumns when {@code true}, zero column tops for ALL columns
+     *                       (including ones that had no data at all); when
+     *                       {@code false}, only partial ones
+     *                       (0 &lt; column_top &lt; partitionRowCount).
      */
     private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();

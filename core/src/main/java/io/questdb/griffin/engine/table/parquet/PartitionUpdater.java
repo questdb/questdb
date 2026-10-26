@@ -167,11 +167,10 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
-     * Update mode only: removes original row group {@code rowGroupIndex} (the
-     * pre-update index space, same as {@link #updateRowGroup}). The next footer
-     * omits it and its bytes become unused space; nothing below the committed
-     * file size is written. Throws CairoException in rewrite mode, on an invalid
-     * index, or if the same group is also replaced or removed in this pass.
+     * Update mode only: removes original row group {@code rowGroupIndex} (pre-update
+     * index space, as in {@link #updateRowGroup}). The next footer omits it, leaving its
+     * bytes as unused space. Throws CairoException in rewrite mode, on an invalid index,
+     * or if the group is already replaced or removed in this pass.
      */
     public void removeRowGroup(int rowGroupIndex) {
         assert ptr != 0;

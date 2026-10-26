@@ -972,11 +972,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * One entry of the source partition directory: everything but {@code data.parquet} and {@code _pm} is an index file
-     * and is carried into the staging directory, hard-linked where the file system allows - except an index file of a
-     * column name txn other than the one the snapshot's {@code _cv} names. An in-place update writes the rebuilt index
-     * under a new column name txn beside the committed one, and a pinned reader defers the superseded version's purge
-     * to {@link ColumnPurgeJob}, which targets the source directory; a copy carried into the new directory would be
-     * out of that purge's reach for good.
+     * and is carried into the staging directory, hard-linked where the file system allows. Skips superseded index
+     * versions (column name txn other than the snapshot's {@code _cv}): {@link ColumnPurgeJob} purges them from the
+     * source directory, so a copy in the new directory would leak.
      */
     private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
         if (!Files.notDots(pUtf8NameZ)) {
@@ -1532,9 +1530,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Whether {@code fileName}, an entry of the source parquet partition directory, is an index file of an indexed
-     * column under a column name txn other than the one the snapshot's {@code _cv} names for that column. A name the
-     * sweep cannot classify does not count as superseded.
+     * Whether {@code fileName} is an index file of an indexed column under a column name txn other than the one the
+     * snapshot's {@code _cv} names. Unclassifiable names do not count as superseded.
      */
     private boolean isSupersededIndexFile(CharSequence fileName) {
         // Column names cannot contain a dot, so the first one ends the column name.
