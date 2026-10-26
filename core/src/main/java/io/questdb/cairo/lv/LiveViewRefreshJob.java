@@ -17131,16 +17131,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return null;
         }
         if (t instanceof CairoException ce && ce.isAuthorizationError()) {
-            // A demote flipped the read-only flag after this cycle acquired its WalWriter but before the
-            // commit; fencedLiveViewCommit re-checked isReadOnlyMode() under the role-switch read lock and
-            // refused the mint (or getWalWriter's own eager check refused the acquire). A role-switch
-            // refusal is NOT a refresh failure: never invalidate. Invalidation is durable and sticky with
-            // no replica-side recovery, so counting a demote refusal toward the flush-retry budget could
-            // brick a view locally while the primary stays healthy. Retry later instead -- the node is
-            // becoming a replica and the next tick runs lead reconstruction; a live view is derived state,
-            // so the new primary recomputes the lead forward. The refresh job runs under the internal
-            // all-access context, so an authorization error here can only be the read-only gate. Mirrors
-            // MatViewRefreshJob.rethrowReadOnlyRefusal + handleErrorRetryRefresh.
+            // A read-only gate refused this turn's live-view write. No current refresh path meets one: the
+            // OSS getWalWriter has no gate, the enterprise override exempts live-view tokens since every
+            // node refreshes its live views locally, and the commitLiveView*Fenced methods no longer refuse.
+            // This arm is a safety net for a gate on the live-view writer, like the one enterprise applied
+            // before symmetric local refresh. A refusal is NOT a refresh failure: never invalidate, never
+            // charge. Invalidation is durable and sticky, so counting a refusal toward the flush-retry
+            // budget could brick a healthy view. Return before the mid-drain recovery and the budget
+            // instead. A window-state debt already on the instance stays for the next turn's gate. The arm
+            // does not carry a debt that only this turn's field holds. The refresh context refuses every
+            // write but the view's own insert, and no refresh path asks it for one, so only a read-only
+            // gate (or the dev-mode simulate_crash('A') function) raises an authorization error here.
+            // Mirrors MatViewRefreshJob.rethrowReadOnlyRefusal + handleErrorRetryRefresh.
             LOG.info().$("live view refresh refused by read-only gate, retrying later [view=")
                     .$(instance.getDefinition().getViewName()).I$();
             return null;
