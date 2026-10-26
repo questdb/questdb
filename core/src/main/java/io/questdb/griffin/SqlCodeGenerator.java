@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -262,6 +263,7 @@ import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.OuterJoinNullCheck;
 import io.questdb.griffin.engine.join.OuterJoinRecordSource;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
+import io.questdb.griffin.engine.join.SharedPrimary;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
@@ -512,8 +514,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final boolean enableJitDebug;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjectPool<ExpressionNode> expressionNodePool;
-    // The models whose shared primary the code generator freed with its sub-tree for a constant false filter, see
-    // freeSharedPrimariesSince(). A reader of such a model builds its own copy of it, see generateQuery0().
+    // The models whose shared primary closed because the code generator dropped every place that read it, see
+    // getSharedPrimary(). A reader of such a model builds a copy of its own, see generateQuery0().
     private final ObjHashSet<QueryModel> freedSharedModels = new ObjHashSet<>();
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
@@ -537,15 +539,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Per generation depth: the caller's scratch state that a nested generate() call saves on entry
     // and restores on exit, see generateAttempt().
     private final ObjList<GenerationScratch> scratchSnapshots = new ObjList<>();
-    // Cache of factories generated for shared models (models with shared refs).
-    // Key: the delegate QueryModel; Value: the primary factory.
-    // When a QueryModelWrapper is encountered, we look up its delegate here.
     private final QueryModelGenerationState generationState = new QueryModelGenerationState();
-    private final ObjObjHashMap<QueryModel, RecordCursorFactory> sharedFactoryCache = new ObjObjHashMap<>();
-    // The shared primaries built so far, in build order, and the models they were built for. A sub-tree that the
-    // code generator builds after taking a mark, the size of these lists, holds the primaries built from the mark
-    // on, see holdsSharedPrimarySince() and freeSharedPrimariesSince().
-    private final ObjList<RecordCursorFactory> sharedPrimaries = new ObjList<>();
+    // The shared primaries of the models with shared refs, see SharedPrimary. Key: the delegate QueryModel. When a
+    // QueryModelWrapper is encountered, we look up its delegate here.
+    private final ObjObjHashMap<QueryModel, SharedPrimary> sharedFactoryCache = new ObjObjHashMap<>();
+    // The shared primaries that the code generator owns until it hands them to the finished tree, in build order, and
+    // the models they were built for, see generateAttempt()
+    private final ObjList<SharedPrimary> sharedPrimaries = new ObjList<>();
     private final ObjList<QueryModel> sharedPrimaryModels = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
@@ -592,6 +592,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
+    // The number of places built so far that read a shared primary, its home and its SharedRecordCursorFactory
+    // readers. A sub-tree that the code generator builds after taking a mark, this count, holds the places from the
+    // mark on, see holdsSharedPlaceSince().
+    private int sharedPlaceCount;
     private int whereClauseParserDepth;
     @Nullable
     private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
@@ -977,6 +981,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParserDepth++;
         Throwable failure = null;
         boolean hasEntered = false;
+        // the shared primaries and their places that this generation builds, see handOverSharedPrimaries()
+        final int sharedPrimaryMark = sharedPrimaries.size();
+        final int sharedPlaceMark = sharedPlaceCount;
         try {
             if (parserIndex == 0) {
                 clearSharedFactories();
@@ -984,9 +991,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
             }
-            return generateQuery(model, executionContext, true);
+            final RecordCursorFactory factory = generateQuery(model, executionContext, true);
+            handOverSharedPrimaries(sharedPrimaryMark, sharedPlaceMark);
+            return factory;
         } catch (Throwable th) {
             failure = th;
+            closeSharedPrimariesSince(sharedPrimaryMark, sharedPlaceMark, th);
             throw th;
         } finally {
             generationState.exitRegion(hasEntered);
@@ -2442,6 +2452,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return metadata;
     }
 
+    // Makes the factory built for a shared model its shared primary, or returns null when the factory has no shared
+    // cursors, see RecordCursorFactory.supportsSharedCursors()
+    private @Nullable SharedPrimary addSharedPrimary(QueryModel model, RecordCursorFactory factory) {
+        if (!factory.supportsSharedCursors()) {
+            return null;
+        }
+        // every factory with shared cursors is an AbstractRecordCursorFactory, which SharedPrimary owns
+        assert factory instanceof AbstractRecordCursorFactory;
+        final SharedPrimary primary = new SharedPrimary((AbstractRecordCursorFactory) factory);
+        sharedFactoryCache.put(model, primary);
+        sharedPrimaries.add(primary);
+        sharedPrimaryModels.add(model);
+        return primary;
+    }
+
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         // Vector aggregation runs over base-table page frames, so every ast.rhs.token below names a
         // physical column (unquoted). getColumnIndex's protected-alias strip-retry is defensive
@@ -2822,10 +2847,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private void clearSharedFactories() {
-        sharedFactoryCache.clear();
-        freedSharedModels.clear();
+        // generateAttempt() hands the shared primaries to the tree it built, or closes them when the generation fails
+        assert sharedPrimaries.size() == 0;
         sharedPrimaries.clear();
         sharedPrimaryModels.clear();
+        sharedPlaceCount = 0;
+        sharedFactoryCache.clear();
+        freedSharedModels.clear();
+    }
+
+    // Closes the shared primaries built from the mark on, when the generation that built them fails
+    private void closeSharedPrimariesSince(int sharedPrimaryMark, int sharedPlaceMark, Throwable failure) {
+        for (int i = sharedPrimaryMark, n = sharedPrimaries.size(); i < n; i++) {
+            Misc.free(sharedPrimaries.getQuick(i), failure);
+            sharedFactoryCache.remove(sharedPrimaryModels.getQuick(i));
+        }
+        sharedPrimaries.setPos(sharedPrimaryMark);
+        sharedPrimaryModels.setPos(sharedPrimaryMark);
+        sharedPlaceCount = sharedPlaceMark;
     }
 
     @Nullable
@@ -4050,25 +4089,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
-    }
-
-    // A SharedRecordCursorFactory reads the state that the primary cursor of its shared primary builds, see
-    // RecordCursorFactory.getSharedCursor(), so a reader must not reach a primary that the code generator freed.
-    // The code generator frees a sub-tree when a constant false filter empties it. This method drops the shared
-    // primaries in the freed sub-tree, those built from the mark on, up to the end mark, from the cache, and a
-    // reader that the code generator builds later builds its own copy of the model, see generateQuery0().
-    private void freeSharedPrimariesSince(int sharedPrimaryMark, int sharedPrimaryEndMark) {
-        for (int i = sharedPrimaryMark; i < sharedPrimaryEndMark; i++) {
-            final QueryModel model = sharedPrimaryModels.getQuick(i);
-            if (sharedFactoryCache.get(model) == sharedPrimaries.getQuick(i)) {
-                sharedFactoryCache.remove(model);
-                freedSharedModels.add(model);
-            }
-        }
-    }
-
-    private void freeSharedPrimariesSince(int sharedPrimaryMark) {
-        freeSharedPrimariesSince(sharedPrimaryMark, sharedPrimaries.size());
     }
 
     private ObjList<Function> generateCastFunctions(
@@ -5611,11 +5631,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    // The factory holds the shared primaries built from the mark on, see holdsSharedPrimarySince().
+    // The factory holds the places that read a shared primary built from the mark on, see holdsSharedPlaceSince().
     private RecordCursorFactory generateFilter(
             RecordCursorFactory factory,
             IQueryModel model,
-            int sharedPrimaryMark,
+            int sharedPlaceMark,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode where = model.getWhereClause();
@@ -5629,7 +5649,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (tryFuseKeepFlagFilter(factory, where, model)) {
             return factory;
         }
-        return generateFilter0(factory, model, sharedPrimaryMark, executionContext);
+        return generateFilter0(factory, model, sharedPlaceMark, executionContext);
     }
 
     // Conservative pattern match for the single-keep-flag fusion. Fuses ONLY when:
@@ -5674,7 +5694,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateFilter0(
             RecordCursorFactory factory,
             IQueryModel model,
-            int sharedPrimaryMark,
+            int sharedPlaceMark,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
@@ -5736,7 +5756,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RecordMetadata metadata = factory.getMetadata();
                 assert (metadata instanceof GenericRecordMetadata);
                 Misc.free(factory);
-                freeSharedPrimariesSince(sharedPrimaryMark);
                 return new EmptyTableRecordCursorFactory(metadata);
             } finally {
                 filter.close();
@@ -5768,7 +5787,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factory,
                         filter,
                         deepClone(expressionNodePool, filterExpr),
-                        holdsSharedPrimarySince(sharedPrimaryMark)
+                        holdsSharedPlaceSince(sharedPlaceMark)
                 );
             }
 
@@ -7365,8 +7384,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<RecordMetadata> pendingHorizonSlaveProjectionMetadatas = null;
         ObjList<RecordMetadata> pendingHorizonSlaveMetadatas = null;
         boolean isHorizonJoinCompleted = false;
-        // master holds the shared primaries built from this mark on, see holdsSharedPrimarySince()
-        final int levelSharedPrimaryMark = sharedPrimaries.size();
+        // master holds the places that read a shared primary from this mark on, see holdsSharedPlaceSince()
+        final int levelSharedPlaceMark = sharedPlaceCount;
         // The loop below pushes the timestamp requirement of each join operand. Capture the
         // requirement of the enclosing query first: it applies to the output of the joins.
         final boolean isOutputTimestampRequired = executionContext.isTimestampRequired();
@@ -7440,8 +7459,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // projection renames a column
                     RecordMetadata horizonSlaveMetadata = null;
                     final IQueryModel previousHorizonSlaveModel = horizonJoinSlaveModel;
-                    // the slave holds the shared primaries built from this mark on, see holdsSharedPrimarySince()
-                    final int slaveSharedPrimaryMark = sharedPrimaries.size();
+                    // the slave holds the places that read a shared primary from this mark on, see holdsSharedPlaceSince()
+                    final int slaveSharedPlaceMark = sharedPlaceCount;
                     if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
                         horizonJoinSlaveModel = slaveModel;
                         while (horizonJoinSlaveModel.getNestedModel() != null) {
@@ -7523,7 +7542,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveToFree = generateJoinedTableGate(
                                 slaveToFree,
                                 slaveModel.getConstWhereClause(),
-                                holdsSharedPrimarySince(slaveSharedPrimaryMark),
+                                holdsSharedPlaceSince(slaveSharedPlaceMark),
                                 executionContext
                         );
                     }
@@ -8462,16 +8481,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (joinFilter != null && joinFilter.isConstant() && !joinFilter.getBool(null)) {
                                     if (joinType == IQueryModel.JOIN_LEFT_OUTER) {
                                         Misc.free(slaveToFree);
-                                        freeSharedPrimariesSince(slaveSharedPrimaryMark);
                                         slaveToFree = new EmptyTableRecordCursorFactory(slaveMetadata);
                                     } else if (joinType == IQueryModel.JOIN_INNER) {
                                         Misc.free(master);
                                         Misc.free(slaveToFree);
-                                        freeSharedPrimariesSince(levelSharedPrimaryMark);
                                         return new EmptyTableRecordCursorFactory(joinMetadata);
                                     } else if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
                                         Misc.free(master);
-                                        freeSharedPrimariesSince(levelSharedPrimaryMark, slaveSharedPrimaryMark);
                                         master = new EmptyTableRecordCursorFactory(masterMetadata);
                                         // master took the joins built so far with it, so drop what points into it:
                                         // a freed outer join never opens a cursor, see OuterJoinNullCheck. This
@@ -8591,7 +8607,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     master,
                                     filter,
                                     deepClone(expressionNodePool, filterExpr),
-                                    holdsSharedPrimarySince(levelSharedPrimaryMark)
+                                    holdsSharedPlaceSince(levelSharedPlaceMark)
                             );
                         } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
@@ -8683,7 +8699,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                             RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
                             Misc.free(master);
-                            freeSharedPrimariesSince(levelSharedPrimaryMark);
                             return factory;
                         }
                     } else {
@@ -10320,36 +10335,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return factory;
     }
 
+    // Builds a place that reads a shared model: a QueryModelWrapper, or the model itself, which holds the primary as
+    // its home. The first place that the code generator reaches builds the shared primary, whichever kind of place it
+    // is: the join planner orders the places after LateralJoinRewriter chose the place that holds the model itself,
+    // see SharedPrimary.
     private RecordCursorFactory generateQuery0(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         if (model instanceof QueryModelWrapper wrapper) {
-            QueryModel delegate = wrapper.getDelegate();
-            if (freedSharedModels.contains(delegate)) {
-                // a constant false filter freed the shared primary of the model, see freeSharedPrimariesSince()
-                return generateSharedSource(delegate, executionContext, processJoins);
+            final QueryModel delegate = wrapper.getDelegate();
+            SharedPrimary primary = getSharedPrimary(delegate);
+            if (primary == null) {
+                if (freedSharedModels.contains(delegate)) {
+                    return generateSharedSource(delegate, executionContext, processJoins);
+                }
+                final RecordCursorFactory factory = generateSharedSource(delegate, executionContext, processJoins);
+                primary = addSharedPrimary(delegate, factory);
+                if (primary == null) {
+                    // a factory without shared cursors: every place builds a copy of its own
+                    return factory;
+                }
             }
-            int sid = wrapper.getShareId();
-            RecordCursorFactory primaryFactory = sharedFactoryCache.get(delegate);
-            boolean cached = true;
-            if (primaryFactory == null) {
-                primaryFactory = generateSharedSource(delegate, executionContext, processJoins);
-                cached = false;
-            }
-            if (primaryFactory.supportsSharedCursors()) {
-                sharedFactoryCache.put(delegate, primaryFactory);
-                return new SharedRecordCursorFactory(primaryFactory, sid);
-            }
-            return cached ? generateSharedSource(delegate, executionContext, processJoins) : primaryFactory;
+            final SharedRecordCursorFactory reader = new SharedRecordCursorFactory(primary, wrapper.getShareId());
+            sharedPlaceCount++;
+            return reader;
         }
 
         if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
-            RecordCursorFactory factory = generateSharedSource(model, executionContext, processJoins);
-            if (factory.supportsSharedCursors()) {
-                sharedFactoryCache.put(qm, factory);
+            SharedPrimary primary = getSharedPrimary(qm);
+            if (primary == null) {
+                final RecordCursorFactory factory = generateSharedSource(model, executionContext, processJoins);
+                primary = addSharedPrimary(qm, factory);
+                if (primary == null) {
+                    return factory;
+                }
                 freedSharedModels.remove(qm);
-                sharedPrimaries.add(factory);
-                sharedPrimaryModels.add(qm);
             }
-            return factory;
+            sharedPlaceCount++;
+            return primary.addHome();
         }
 
         return generateQuery0Inner(model, executionContext, processJoins);
@@ -10387,9 +10408,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             RecordCursorFactory factory;
 
-            final int sharedPrimaryMark = sharedPrimaries.size();
+            final int sharedPlaceMark = sharedPlaceCount;
             factory = generateSelect(model, executionContext, processJoins);
-            factory = generateFilter(factory, model, sharedPrimaryMark, executionContext);
+            factory = generateFilter(factory, model, sharedPlaceMark, executionContext);
             factory = generateLatestBy(factory, model);
             factory = generateOrderBy(factory, model, executionContext);
             factory = generateLimit(factory, model, executionContext);
@@ -14962,6 +14983,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return -1;
     }
 
+    // Returns the shared primary of the model, or null when the code generator has not built one, or when the primary
+    // closed because the code generator dropped every place that read it, such as the sub-tree of a constant false
+    // join. A reader of such a model then builds a copy of its own, and the model itself builds a new primary.
+    private @Nullable SharedPrimary getSharedPrimary(QueryModel model) {
+        final SharedPrimary primary = sharedFactoryCache.get(model);
+        if (primary != null && primary.isClosed()) {
+            sharedFactoryCache.remove(model);
+            freedSharedModels.add(model);
+            return null;
+        }
+        return primary;
+    }
+
     private int getTimestampIndex(IQueryModel model, RecordCursorFactory factory) throws SqlException {
         return getTimestampIndex(model, factory.getMetadata());
     }
@@ -15003,18 +15037,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    // Returns whether the sub-tree built from the mark on holds a shared primary, which a SharedRecordCursorFactory
-    // outside the sub-tree may read. The primary cursor builds the state that such a reader reads, see
-    // RecordCursorFactory.getSharedCursor(), so a runtime constant that gates the sub-tree opens it while false,
-    // see RuntimeConstGateRecordCursorFactory. The optimiser can leave a shared primary without a reader, as an
-    // equality LATERAL correlation does; the gate then opens the sub-tree without reading a row.
-    private boolean holdsSharedPrimarySince(int sharedPrimaryMark) {
+    // Gives the shared primaries built from the mark on to the tree that the generation built, see
+    // SharedPrimary.handOver(). A nested generation, such as that of the cursor of a scalar sub-query, builds a tree of
+    // its own, which holds every place that reads its shared primaries, so the code generator also drops them from the
+    // cache, and their places from the count of places.
+    private void handOverSharedPrimaries(int sharedPrimaryMark, int sharedPlaceMark) {
         for (int i = sharedPrimaryMark, n = sharedPrimaries.size(); i < n; i++) {
-            if (sharedFactoryCache.get(sharedPrimaryModels.getQuick(i)) == sharedPrimaries.getQuick(i)) {
-                return true;
-            }
+            sharedPrimaries.getQuick(i).handOver();
+            sharedFactoryCache.remove(sharedPrimaryModels.getQuick(i));
         }
-        return false;
+        sharedPrimaries.setPos(sharedPrimaryMark);
+        sharedPrimaryModels.setPos(sharedPrimaryMark);
+        sharedPlaceCount = sharedPlaceMark;
+    }
+
+    // Returns whether the sub-tree built from the mark on holds a place that reads a shared primary, see SharedPrimary.
+    // The cursor of the primary builds the state that every place reads, see RecordCursorFactory.getSharedCursor(),
+    // and the place that reads that cursor closes it, so a runtime constant that gates the sub-tree opens it while
+    // false, see RuntimeConstGateRecordCursorFactory. Which place reads the cursor of the primary is known only when
+    // the code generator finishes the tree, see SharedPrimary.handOver(), so every place counts, also one that the
+    // code generator dropped since. The optimiser can leave a shared primary without a reader, as an equality LATERAL
+    // correlation does; the gate then opens the sub-tree without reading a row.
+    private boolean holdsSharedPlaceSince(int sharedPlaceMark) {
+        return sharedPlaceCount > sharedPlaceMark;
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

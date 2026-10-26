@@ -65,11 +65,12 @@ import org.jetbrains.annotations.Nullable;
  * The gate owns both the base factory and the filter and frees each exactly once on close,
  * including on the record-cursor false path where the base cursor was never opened.
  * <p>
- * A base that holds a shared primary, which a {@code SharedRecordCursorFactory} outside the base
- * may read, has to open in every execution, see
- * {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}. Over such a base the false
- * record-cursor path opens the base cursor, without reading a row of it, and closes it with the
- * empty cursor that it returns.
+ * A base that holds a place that reads a shared primary, see
+ * {@link io.questdb.griffin.engine.join.SharedPrimary}, has to open in every execution: the place
+ * that reads the cursor of the primary opens and closes the state that the places outside the base
+ * read, see {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}. Over such a base
+ * the false record-cursor path opens the base cursor, without reading a row of it, and closes it
+ * with the empty cursor that it returns.
  * <p>
  * The gate also preserves the base's page-frame capability: {@link #supportsPageFrameCursor()}
  * reports the base's value, so a parent parallel/vectorized operator (count/sum aggregation,
@@ -114,7 +115,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
 
     /**
      * @param isBaseOpenRequired whether the false record-cursor path opens the base, because the
-     *                           base holds a shared primary, see the class comment
+     *                           base holds a place that reads a shared primary, see the class comment
      */
     public RuntimeConstGateRecordCursorFactory(
             RecordCursorFactory base,

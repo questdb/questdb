@@ -156,6 +156,55 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseJoinDropsSharedSubQuery() throws Exception {
+        // A constant false ON conjunct drops the join that holds the shared GROUP BY before the code generator reaches
+        // the LATERAL that reads it, so the LATERAL computes the GROUP BY on its own. DuckDB returns the same rows.
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("""
+                    SELECT a.id aid, d.id did, l.cid FROM a
+                    JOIN (SELECT k, count() n FROM o GROUP BY k) g ON a.x = g.k
+                    RIGHT JOIN d ON d.x = a.x AND 1 = 0
+                    CROSS JOIN LATERAL (SELECT max(c.id) cid FROM c WHERE c.y > g.k) l
+                    ORDER BY did
+                    """)
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanNotContaining("(Shared)")
+                    .returns("""
+                            aid\tdid\tcid
+                            null\t40\tnull
+                            null\t41\tnull
+                            null\t42\tnull
+                            null\t43\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinPlan() throws Exception {
+        // The join that holds the shared sub-query sits in the dropped side of the RIGHT join, so the copy in its kept
+        // side reads the cursor of the sub-query itself, and the plan shows no shared cursor.
+        assertMemoryLeak(() -> {
+            createTables();
+            final String body = "SELECT a.id aid, b.id bid, d.id did FROM a RIGHT JOIN b ON a.x = b.x AND b.x = {K} RIGHT JOIN d ON d.x = b.x AND d.x = {K} AND 1 = 0";
+            assertQuery(lateralSql(OUTER, "JOIN", body))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining(
+                            "Empty table\n"
+                                    + "                        Hash\n"
+                                    + "                            SelectedRecord\n"
+                                    + "                                Cross Join\n"
+                                    + "                                    SelectedRecord\n"
+                                    + "                                        GroupBy vectorized:"
+                    )
+                    .withPlanNotContaining("(Shared)")
+                    .returns(expectedRows(OUTER_ROWS, "JOIN", body));
+        });
+    }
+
+    @Test
     public void testCopiesInSeveralBranches() throws Exception {
         assertBodies(
                 "SELECT a.id aid, c.id cid, g.id gid FROM a JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x JOIN (SELECT x, max(y) y, min(id) id FROM c WHERE y > {K} GROUP BY x) g ON g.x = a.x WHERE a.y > {K}",
@@ -477,8 +526,62 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
                 "SELECT a.id aid, c.id cid FROM a JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x AND now() > '2000-01-01' WHERE a.y > {K}",
                 "SELECT a.id aid, c.id cid FROM a JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x AND now() < '2000-01-01' WHERE a.y > {K}",
                 "SELECT a.id aid, c.id cid, d.id did FROM a JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x LEFT JOIN d ON d.x = a.x AND now() < '2000-01-01' WHERE a.y > {K}",
-                "SELECT a.id aid, d.id did, c.id cid FROM a JOIN d ON d.x = a.x AND now() < '2000-01-01' JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x WHERE d.y > {K}"
+                "SELECT a.id aid, d.id did, c.id cid FROM a JOIN d ON d.x = a.x AND now() < '2000-01-01' JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x WHERE d.y > {K}",
+                "SELECT a.id aid, c.id cid FROM a JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x WHERE a.y > {K} AND now() < '2000-01-01'",
+                "SELECT a.id aid, c.id cid FROM a JOIN (SELECT * FROM c WHERE y > {K}) c ON c.x = a.x WHERE a.y > {K} AND now() > '2000-01-01'"
         );
+        // a runtime constant filter of a query over the LATERAL query
+        assertMemoryLeak(() -> {
+            final String from = lateralFrom(OUTER, "JOIN", FILTERED_BODY);
+            final String expected = expectedRows(OUTER_ROWS, "JOIN", FILTERED_BODY);
+            assertContext("SELECT * FROM (" + from + ") WHERE now() > '2000-01-01'" + orderBy(FILTERED_BODY), expected);
+            assertContext("SELECT * FROM (" + from + ") WHERE now() < '2000-01-01'" + orderBy(FILTERED_BODY), expected.substring(0, expected.indexOf('\n') + 1));
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantGateOverSharedOuterSource() throws Exception {
+        // A runtime constant in the ON clause of an INNER join followed by a RIGHT or FULL join gates the GROUP BY of
+        // the joined table, which the LATERAL reads through a shared cursor, and which also holds the outer-ref
+        // sub-query of the LATERAL body. DuckDB returns the same rows, with IS NOT DISTINCT FROM in the ON clause.
+        assertMemoryLeak(() -> {
+            createTables();
+            final String query = """
+                    SELECT a.id aid, g.n, l.cid, d.id did FROM a
+                    JOIN (SELECT k, count() n FROM o GROUP BY k) g ON a.x = g.k AND now() %s '2000-01-01'
+                    CROSS JOIN LATERAL (
+                        SELECT c.id cid FROM c JOIN (SELECT * FROM b WHERE y < g.k) b ON b.x = c.x WHERE c.y > g.k
+                    ) l
+                    %s JOIN d ON d.x = a.x
+                    ORDER BY did, aid, cid
+                    """;
+            final String gateFalse = """
+                    aid\tn\tcid\tdid
+                    null\tnull\tnull\t40
+                    null\tnull\tnull\t41
+                    null\tnull\tnull\t42
+                    null\tnull\tnull\t43
+                    """;
+            final String gateTrue = """
+                    aid\tn\tcid\tdid
+                    null\tnull\tnull\t40
+                    null\tnull\tnull\t41
+                    13\t1\t33\t42
+                    null\tnull\tnull\t43
+                    """;
+            assertContext(query.formatted("<", "RIGHT"), gateFalse);
+            assertContext(query.formatted(">", "RIGHT"), gateTrue);
+            assertContext(query.formatted("<", "FULL"), gateFalse);
+            assertContext(query.formatted(">", "FULL"), gateTrue);
+            // one factory with a gate that changes between executions
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select(query.formatted("<", "RIGHT").replace("now() < '2000-01-01'", "$1"))) {
+                for (boolean isOpen : new boolean[]{false, true, false, true}) {
+                    bindVariableService.setBoolean(0, isOpen);
+                    assertFactoryRows(factory, isOpen ? gateTrue : gateFalse);
+                }
+            }
+        });
     }
 
     @Test

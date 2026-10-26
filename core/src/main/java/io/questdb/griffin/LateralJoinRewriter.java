@@ -4802,11 +4802,11 @@ class LateralJoinRewriter implements Mutable {
 
     // The optimiser processes a shared sub-query of sharedModels where it meets the sub-query itself,
     // which it must meet before any wrapper of it in the order in which it walks the FROM clauses, see
-    // SqlOptimiser.rewriteSelectClause(), and the code generator builds the models in that order too:
-    // a wrapper that it builds first reads a factory of its own, which no cursor of the query opens.
-    // Pass 3 can remove the join that holds the sub-query itself, and a copy of an outer-ref join
-    // that reads it through a wrapper can come ahead of that join, so the first reference in that order
-    // takes the sub-query itself, and the others read it through wrappers.
+    // SqlOptimiser.rewriteSelectClause(). Pass 3 can remove the join that holds the sub-query itself,
+    // and a copy of an outer-ref join that reads it through a wrapper can come ahead of that join, so
+    // the first reference in that order takes the sub-query itself, and the others read it through
+    // wrappers. The join planner reorders the references afterwards, and the code generator builds the
+    // sub-query at whichever reference it reaches first, see SharedPrimary.
     private void rehomeSharedSubqueries(IQueryModel model) {
         rehomedSubqueries.clear();
         rehomeSharedSubqueries0(model);
