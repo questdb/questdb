@@ -1850,6 +1850,125 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
         });
     }
 
+    // #8068: a keyed GROUP BY outer source is shared, and the outer-ref DISTINCT reads its SYMBOL key
+    // through the shared cursor, whose record functions are never initialized. Fails on master too.
+    @Test
+    public void testSharedCursorSymbolKeyOfGroupByOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            assertQuery("""
+                    SELECT o.sym, o.f, l.c
+                    FROM (SELECT sym, first(id) f FROM orders GROUP BY sym) o
+                    JOIN LATERAL (SELECT count(*) c FROM quotes q WHERE q.sym = o.sym AND q.px > o.f) l
+                    ORDER BY o.sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tf\tc
+                            AAPL\t1\t1
+                            MSFT\t2\t1
+                            """);
+        });
+    }
+
+    // #8064: the RIGHT/FULL join rewrite shares the outer-ref GROUP BY as the build side of a
+    // symbol-translating hash join. Master answers these; the branch fails with a NullPointerException.
+    @Test
+    public void testSharedCursorSymbolKeyOuterRefFullJoinProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            assertQuery("""
+                    SELECT o.id, l.qty, l.px
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT f.qty, q.px FROM fills f FULL JOIN quotes q ON q.sym = o.sym WHERE f.order_id = o.id
+                    ) l
+                    ORDER BY o.id, l.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tqty\tpx
+                            1\t50\t10.0
+                            1\t100\t10.0
+                            3\t10\t10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedCursorSymbolKeyOuterRefRightJoinCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            assertQuery("""
+                    SELECT o.id, l.n
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT count(*) n FROM fills f RIGHT JOIN quotes q ON q.sym = o.sym WHERE f.order_id = o.id
+                    ) l
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn
+                            1\t2
+                            2\t0
+                            3\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedCursorSymbolKeyOuterRefRightJoinTopN() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolOuterRefTables();
+            assertQuery("""
+                    SELECT o.id, l.qty, l.px
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT f.qty, q.px FROM fills f RIGHT JOIN quotes q ON q.sym = o.sym WHERE f.order_id = o.id
+                        ORDER BY f.qty LIMIT 1
+                    ) l
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tqty\tpx
+                            1\t50\t10.0
+                            3\t10\t10.0
+                            """);
+        });
+    }
+
+    // #8068: the second UNION ALL branch reads the outer-ref DISTINCT through a shared cursor. Fails on master too.
+    @Test
+    public void testSharedCursorSymbolKeyUnionAllBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x SYMBOL)");
+            execute("CREATE TABLE a (id INT, x SYMBOL)");
+            execute("CREATE TABLE b (id INT, k SYMBOL)");
+            execute("INSERT INTO o VALUES (1, '1'), (2, NULL), (3, '3')");
+            execute("INSERT INTO a VALUES (10, '1'), (11, '3'), (12, NULL), (0, '1')");
+            execute("INSERT INTO b VALUES (20, '5'), (21, '1'), (22, '7'), (23, '1'), (24, '3')");
+            assertQuery("""
+                    SELECT o.id, l.v FROM o JOIN LATERAL (
+                        SELECT a.id v FROM a WHERE a.x = o.x AND a.id > o.id
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.k = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t10
+                            1\t21
+                            1\t23
+                            2\t12
+                            3\t11
+                            3\t24
+                            """);
+        });
+    }
+
     @Test
     public void testSharedCursorUnordered8Map() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
@@ -2101,5 +2220,14 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
         execute("INSERT INTO u VALUES (1, 100), (2, 200), (3, 300)");
         execute("CREATE TABLE d (id INT, k INT)");
         execute("INSERT INTO d VALUES (1, 1), (2, 2), (3, 5)");
+    }
+
+    private static void createSymbolOuterRefTables() throws Exception {
+        execute("CREATE TABLE orders (id INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE fills (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO orders VALUES (1, 'AAPL', '2024-01-01T00:00:01Z'), (2, 'MSFT', '2024-01-01T00:00:02Z'), (3, 'AAPL', '2024-01-01T00:00:03Z')");
+        execute("INSERT INTO fills VALUES (1, 100, '2024-01-01T00:00:04Z'), (1, 50, '2024-01-01T00:00:05Z'), (3, 10, '2024-01-01T00:00:06Z')");
+        execute("INSERT INTO quotes VALUES ('AAPL', 10.0, '2024-01-01T00:00:01Z'), ('MSFT', 20.0, '2024-01-01T00:00:02Z'), ('IBM', 30.0, '2024-01-01T00:00:03Z')");
     }
 }
