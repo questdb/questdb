@@ -13135,9 +13135,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     if (partitionIsReadOnly) {
-                        if (metadata.isWalEnabled() && srcOooBatchRowSize > 0) {
-                            // The rows were acknowledged at sequencing: fail the transaction so WAL
-                            // apply rolls it back and suspends the table instead of dropping them.
+                        if (metadata.isWalEnabled() && srcOooBatchRowSize > 0 && isDeduplicationEnabled()) {
+                            // Dedup rows may replace sealed rows: fail the transaction so WAL apply
+                            // rolls it back and suspends the table instead of dropping them.
                             // The read-only flag is sequenced, so every instance fails the same way.
                             throw CairoException.nonCritical()
                                     .put("cannot insert into read-only partition [table=").put(tableToken.getTableName())
