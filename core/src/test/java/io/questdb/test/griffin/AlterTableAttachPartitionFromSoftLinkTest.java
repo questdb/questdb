@@ -698,7 +698,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(replaceTimestampSuffix1("""
                             min\tmax\tcount
                             2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000
@@ -730,7 +730,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(replaceTimestampSuffix("""
                             min\tmax\tcount
                             2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000
@@ -753,7 +753,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(replaceTimestampSuffix1("""
                             min\tmax\tcount
                             2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000
@@ -785,7 +785,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(replaceTimestampSuffix("""
                             min\tmax\tcount
                             2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000

@@ -268,16 +268,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 ORDER BY timestamp DESC
                 LIMIT 6;""")
                 .withPlan("""
-                        Long Top K lo: 6
-                          keys: [Time desc]
-                            Async JIT Group By workers: 1
-                              keys: [Time]
-                              keyFunctions: [timestamp_floor_utc('1s',timestamp)]
-                              values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]
-                              filter: symbol='''
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: market_data
+                        Limit value: 6 skip-rows-max: 0 take-rows-max: 6
+                            Encode sort
+                              keys: [Time desc]
+                                Async JIT Stream Group By workers: 1
+                                  keys: [Time]
+                                  keyFunctions: [timestamp_floor_utc('1s',timestamp)]
+                                  values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]
+                                  filter: symbol='''
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: market_data
                         """)
                 .ddl("""
                         
@@ -292,7 +293,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         "VALUES " +
                         "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +
                         "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);")
-                .expectSize()
+                .sizeMayVary()
                 .returns("Time\tSpread\tBid_Volume\task_volume\n", """
                         Time\tSpread\tBid_Volume\task_volume
                         1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0

@@ -84,7 +84,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp (ts) partition by DAY")
                 .timestamp("ts")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         i\tsym\tts
                         1\tmsft\t1970-01-06T18:53:20.000000Z
@@ -130,6 +130,8 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
 
             assertQuery("select distinct * from x")
                     .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
                     .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n");
         });
     }
@@ -161,7 +163,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     .mutateWith(// duplicate timestamp and symbol shouldn't change the result
                             "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
                     .timestampAsc("ts")
-                    .sizeMayVary()
+                    .noRandomAccess()
                     .returns(expected, expected);
         });
     }

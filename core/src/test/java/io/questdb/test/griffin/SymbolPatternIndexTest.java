@@ -3739,7 +3739,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT /*+ no_symbol_pattern_index(t) */ ts, count() FROM t WHERE sym LIKE 'a%' SAMPLE BY 1d")
                     .noLeakCheck()
-                    .assertsPlanContaining("Async Group By");
+                    .assertsPlanContaining("Async Stream Group By");
             assertQuery("SELECT ts, count() FROM t WHERE sym LIKE 'a%' SAMPLE BY 1d")
                     .noLeakCheck()
                     .assertsPlanContaining("Async Group By");

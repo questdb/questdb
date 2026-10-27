@@ -6236,7 +6236,6 @@ public class IPv4Test extends AbstractCairoTest {
             assertQuery("select ip, ts, sum(bytes) from test sample by 1y align to calendar order by 2,1")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
                     .returns("""
                             ip\tts\tsum
                             12.214.12.100\t1970-01-01T00:00:00.000000Z\t598
