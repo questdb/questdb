@@ -2600,8 +2600,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             seqTxnTracker.registerWriterPending(walId, seqTxn);
         }
         pendingDurableSeqTxn = seqTxn;
-        // Register before the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
-        // not, the writer is left registered so the background flusher can pick up the idle tail.
+        // Register before the trigger, so the background flusher can pick up the idle tail if the trigger does not
+        // flush. A flush leaves the writer registered, so a later batch finds it in the queue and allocates nothing.
         sequencer.getWalGroupCommitFlushQueue().register(this, pendingSinceMicros);
         final long windowUs = configuration.getAdaptiveCommitGroupWindowUs();
         final long nowMicros = configuration.getMicrosecondClock().getTicks();
@@ -2667,7 +2667,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
             pendingDurableSeqTxn = -1L;
             pendingSinceMicros = -1L;
-            sequencer.getWalGroupCommitFlushQueue().unregister(this);
         } catch (CairoException e) {
             if (sequencer.isDataSyncFailureFatal(e)) {
                 distressed = true;

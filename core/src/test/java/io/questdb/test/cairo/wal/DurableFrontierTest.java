@@ -871,6 +871,34 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     /**
+     * Two writers of one table are two entries in the group-commit registry, so a pass a window after both batches
+     * started flushes both, and the frontier passes both commits.
+     */
+    @Test
+    public void testPassFlushesEveryWriterOfOneTable() throws Exception {
+        setGroupCommit(WINDOW_US, 16);
+        assertMemoryLeak(() -> {
+            final SeqTxnTracker tracker = createTable("x");
+            final TableToken tt = engine.verifyTableName("x");
+            try (
+                    WalWriter a = engine.getWalWriter(tt);
+                    WalWriter b = engine.getWalWriter(tt);
+                    ExposedFlusher flusher = new ExposedFlusher(engine)
+            ) {
+                Assert.assertNotEquals("test setup: the writers must have their own WALs", a.getWalId(), b.getWalId());
+                setCurrentMicros(T0 + 1000);
+                commitRow(a, 0, 1);
+                commitRow(b, 1, 2);
+                final long lastSeqTxn = tracker.getSeqTxn();
+                Assert.assertTrue("test setup: both batches must wait for a flush", tracker.getLocalDurableSeqTxn() < lastSeqTxn - 1);
+                setCurrentMicros(T0 + 1000 + WINDOW_US);
+                flusher.flushNow();
+                Assert.assertEquals("the pass must flush the batches of both writers", lastSeqTxn, tracker.getLocalDurableSeqTxn());
+            }
+        });
+    }
+
+    /**
      * The clock steps back below a batch that started after the last pass, but stays above an older batch and
      * above that pass's reading. The newer batch's age is negative, so the pass must flush it at once, as it flushes
      * any batch after a backwards step; the older batch, still inside its window, waits.

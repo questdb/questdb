@@ -27,28 +27,29 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Engine-wide set of {@link WalWriter}s whose adaptive group commit is not yet flushed to the device.
+ * Engine-wide set of the {@link WalWriter}s that defer the device flush of their adaptive group commits.
  * <p>
  * A committing thread flushes on its own later commits, but once commits stop nothing on the commit path flushes
  * the tail. The background flusher, driven by {@code WalPurgeJob}, sweeps this set and forces the deferred
  * fdatasync of every writer whose pending commit is older than the group window, so an idle writer's last commit
- * becomes durable within the window. A writer adds itself when it enters the pending state and removes itself once
- * its backlog is flushed, or on close; one added or removed during a sweep is handled by the next sweep.
+ * becomes durable within the window. A writer adds itself at its first deferred commit and removes itself when it
+ * closes or a flush of it fails. A flush leaves it in the set, so a batch neither adds nor removes an entry and
+ * allocates nothing; a sweep finds a writer with nothing pending and moves on. One added or removed during a sweep
+ * is handled by the next sweep.
  * {@link WalWriter#forceDurableIfPending(long)} synchronizes on the writer, so at most one of the flusher and a
  * committing thread flushes it.
  * <p>
  * The queue keeps a lower and an upper bound on the batch start of every pending writer, so that
  * {@link #sweepIfDue(long, MicrosecondClock)} enters no writer's monitor while no batch can be due. Three sites keep
  * the bounds: {@link #register(WalWriter, long)} widens them after adding the writer; a walk resets them before it
- * creates its iterator; and the walk widens them, when it ends, by the batch starts that
+ * starts its iterator; and the walk widens them, when it ends, by the batch starts that
  * {@link WalWriter#forceDurableIfPending(long)} reports for the writers it left pending. A batch start dropped by a
  * reset therefore belongs to a writer whose add preceded the walk's iterator, and that walk reports it. Bounds
  * left by a flushed or closed writer are only wider than needed, which costs one more walk.
@@ -68,9 +69,10 @@ public class WalGroupCommitFlushQueue {
     private final AtomicLong failedFlushes = new AtomicLong();
     // Upper bound on the batch start of every pending writer; a clock reading below it is a backwards step.
     private final AtomicLong latestBatchStartMicros = new AtomicLong(NO_LATEST_BATCH_START);
-    // Identity set of writers with a pending durable commit. Its iterator is weakly consistent, so a sweep can
-    // traverse it while writers register and deregister.
-    private final Set<WalWriter> pending = ConcurrentHashMap.newKeySet();
+    // The writers that defer device flushes, with a pending batch or not, keyed by keyOf(). Its values() iterator is
+    // weakly consistent, so a sweep can traverse it while writers register and deregister, and it is reused per
+    // thread, so a sweep allocates nothing.
+    private final ConcurrentLongHashMap<WalWriter> pending = new ConcurrentLongHashMap<>();
 
     /**
      * Number of background flushes that threw and dropped their writer from the set. Zero in healthy operation.
@@ -82,12 +84,16 @@ public class WalGroupCommitFlushQueue {
 
     /**
      * Register {@code writer} as having a pending (deferred) device flush whose batch started at
-     * {@code batchStartMicros} on the writer's clock. Idempotent. The caller holds the writer monitor.
+     * {@code batchStartMicros} on the writer's clock. Idempotent. The caller holds the writer monitor. Only the
+     * first call adds the writer to the set; a later one finds it there, which allocates nothing.
      */
     public void register(WalWriter writer, long batchStartMicros) {
-        // Add before widening the bounds: a walk that resets them after this point creates its iterator later
-        // and so reaches this writer.
-        pending.add(writer);
+        // Add before widening the bounds: a walk that resets them after this point starts its iterator later
+        // and so reaches this writer. Look the writer up first: put() locks the bucket even when it is there.
+        final long key = keyOf(writer);
+        if (pending.get(key) != writer) {
+            pending.put(key, writer);
+        }
         lowerEarliestBatchStart(batchStartMicros);
         raiseLatestBatchStart(batchStartMicros);
     }
@@ -95,8 +101,8 @@ public class WalGroupCommitFlushQueue {
     /**
      * Forces the deferred fdatasync of every registered writer whose oldest pending commit is at least
      * {@code windowUs} old, or whose age is negative because the clock stepped back. Each writer reads the clock under
-     * its own monitor, which orders the read after its batch start. A writer whose backlog the flush drains, or that
-     * has no pending work, removes itself through {@link #unregister(WalWriter)}.
+     * its own monitor, which orders the read after its batch start. A flushed writer stays in the set for its next
+     * batch.
      * <p>
      * A failure other than a data sync failure is logged and drops the writer from the set, so one distressed
      * writer cannot abort the sweep. A data sync failure is rethrown, because the writer has already stopped the
@@ -132,11 +138,17 @@ public class WalGroupCommitFlushQueue {
     }
 
     /**
-     * Deregister {@code writer} (its backlog is flushed, or it is closing). Idempotent. The bounds are left as
-     * they are: they may only be wider than the pending set needs.
+     * Deregister {@code writer} (it is closing, or a flush of it failed). Idempotent. The bounds are left as
+     * they are: they may only be wider than the pending writers need.
      */
     public void unregister(WalWriter writer) {
-        pending.remove(writer);
+        pending.remove(keyOf(writer), writer);
+    }
+
+    // A table id and a WAL id name one WAL directory, which one open writer locks. The table id is positive, so the
+    // key is never negative, as ConcurrentLongHashMap requires.
+    private static long keyOf(WalWriter writer) {
+        return ((long) writer.getTableToken().getTableId() << 32) | Integer.toUnsignedLong(writer.getWalId());
     }
 
     private void lowerEarliestBatchStart(long batchStartMicros) {
@@ -158,7 +170,7 @@ public class WalGroupCommitFlushQueue {
     }
 
     private boolean walk(long windowUs) {
-        // Reset before the iterator is created; see the class comment.
+        // Reset before the iterator starts; see the class comment.
         final long earliestBefore = earliestBatchStartMicros.getAndSet(NO_EARLIEST_BATCH_START);
         final long latestBefore = latestBatchStartMicros.getAndSet(NO_LATEST_BATCH_START);
         long earliest = NO_EARLIEST_BATCH_START;
@@ -166,7 +178,7 @@ public class WalGroupCommitFlushQueue {
         boolean flushed = false;
         boolean walked = false;
         try {
-            for (WalWriter w : pending) {
+            for (WalWriter w : pending.values()) {
                 try {
                     final long batchStartMicros = w.forceDurableIfPending(windowUs);
                     if (batchStartMicros == BATCH_FLUSHED) {
@@ -185,7 +197,7 @@ public class WalGroupCommitFlushQueue {
                     LOG.error().$("group-commit background flush failed [table=").$(w.getTableToken())
                             .$(", error=").$(th).I$();
                     failedFlushes.incrementAndGet();
-                    pending.remove(w);
+                    pending.remove(keyOf(w), w);
                 }
             }
             walked = true;
