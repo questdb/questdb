@@ -46,9 +46,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    "ts",
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -66,7 +70,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":-1" +
+                    "\"timestampIndex\":0" +
                     "}");
 
             final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
@@ -79,9 +83,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    "ts",
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [min(v)]
                               filter: 6<v
@@ -99,7 +107,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_min\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":-1" +
+                    "\"timestampIndex\":0" +
                     "}");
 
             final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
@@ -180,9 +188,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    "ts",
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -200,7 +212,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":-1" +
+                    "\"timestampIndex\":0" +
                     "}");
 
             final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
@@ -213,9 +225,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    "ts",
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [min(v)]
                               filter: 6<v
@@ -233,7 +249,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_min\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":-1" +
+                    "\"timestampIndex\":0" +
                     "}");
 
             final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
