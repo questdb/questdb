@@ -488,6 +488,18 @@ mod tests {
     }
 
     #[test]
+    fn mark_records_a_file_questdb_8_wrote() {
+        let parquet = std::fs::read(format!(
+            "{}/../../src/test/resources/parquet/questdb_8_3_5_nan.parquet",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let (parquet_file, pm_file) = files(&parquet, None);
+        assert!(mark(&parquet_file, parquet.len() as u64, &pm_file) > 0);
+        assert!(committed_footer_is_written_by_questdb(&read_pm(&pm_file)));
+    }
+
+    #[test]
     fn mark_leaves_another_writers_file_and_a_stale_pm_alone() {
         let mut parquet = questdb_parquet(&[1.0, 2.0, 3.0]);
         let created_by = b"QuestDB version 9.0";

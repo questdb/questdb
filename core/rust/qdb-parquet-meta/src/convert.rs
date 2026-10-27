@@ -57,13 +57,14 @@ use crate::types::{
 use crate::writer::ParquetMetaWriter;
 use crate::ParquetFieldId;
 
-/// The `created_by` QuestDB's parquet writer stamps on every file it writes. That writer has
-/// always written NaN as a Parquet null, see `FooterFeatureFlags::WRITTEN_BY_QUESTDB_BIT`.
+/// The `created_by` QuestDB's parquet writer stamps on every file it writes.
 pub const QUESTDB_CREATED_BY: &str = "QuestDB version 9.0";
 
-/// Reports whether QuestDB's parquet writer wrote the file with this `created_by`.
+/// Reports whether a QuestDB parquet writer wrote the file with this `created_by`. Releases 8.1.0
+/// to 9.0.1 stamped `QuestDB version 8.0`, and later releases stamp [`QUESTDB_CREATED_BY`]. Every
+/// one of them writes NaN as a Parquet null, see `FooterFeatureFlags::WRITTEN_BY_QUESTDB_BIT`.
 pub fn is_written_by_questdb(created_by: Option<&str>) -> bool {
-    created_by == Some(QUESTDB_CREATED_BY)
+    matches!(created_by, Some("QuestDB version 8.0" | QUESTDB_CREATED_BY))
 }
 
 /// Resolves a column's QuestDB id, preferring the authoritative id carried in
@@ -957,5 +958,15 @@ mod tests {
         assert!(!sf.has_min_stat() && !sf.is_min_exact());
         assert!(!sf.has_max_stat() && !sf.is_max_exact());
         assert!(ool_min.is_none() && ool_max.is_none());
+    }
+
+    #[test]
+    fn written_by_questdb_covers_every_questdb_created_by() {
+        assert!(is_written_by_questdb(Some("QuestDB version 8.0")));
+        assert!(is_written_by_questdb(Some(QUESTDB_CREATED_BY)));
+        assert!(!is_written_by_questdb(Some(
+            "parquet-cpp-arrow version 15.0.0"
+        )));
+        assert!(!is_written_by_questdb(None));
     }
 }

@@ -829,6 +829,9 @@ final class AggregateBinder implements Mutable {
         if (left == null || right == null || left.type != right.type || left.paramCount != right.paramCount) {
             return false;
         }
+        if (left.type == ExpressionNode.QUERY) {
+            return ExpressionNode.compareNodesExact(left, right);
+        }
         if (left.type == ExpressionNode.LITERAL) {
             final CharSequence alias = sourceAlias(source);
             final int leftIndex = FunctionBinder.findColumn(left, input, alias);

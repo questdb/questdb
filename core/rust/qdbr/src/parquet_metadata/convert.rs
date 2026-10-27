@@ -401,6 +401,8 @@ mod tests {
                 .is_written_by_questdb()
         };
         assert!(is_written_by_questdb(&metadata));
+        metadata.created_by = Some("QuestDB version 8.0".to_string());
+        assert!(is_written_by_questdb(&metadata));
         metadata.created_by = Some("parquet-cpp-arrow version 15.0.0".to_string());
         assert!(!is_written_by_questdb(&metadata));
         metadata.created_by = None;

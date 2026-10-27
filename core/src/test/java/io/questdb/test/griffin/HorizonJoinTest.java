@@ -5834,6 +5834,23 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithGroupBySubqueryNotInSelect() throws Exception {
+        // SELECT compares t.qty with one sub-query, GROUP BY with another
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertQuery("SELECT h.offset, t.qty = (SELECT 1.0) k, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset, t.qty = (SELECT 2.0)")
+                    .noLeakCheck()
+                    .fails(173, "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column");
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithHorizonOffsetExpressionKey() throws Exception {
         // Test with an expression involving only h.offset (h.offset / divisor + constant)
         assertMemoryLeak(() -> {

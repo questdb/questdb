@@ -206,6 +206,9 @@ final class TemporalJoinBinder {
         if (a.type != b.type) {
             return false;
         }
+        if (a.type == ExpressionNode.QUERY) {
+            return ExpressionNode.compareNodesExact(a, b);
+        }
         if (a.type == ExpressionNode.LITERAL) {
             return Chars.equalsIgnoreCase(a.token, b.token) || Chars.equalsIgnoreCase(unqualified(a.token), b.token)
                     || Chars.equalsIgnoreCase(a.token, unqualified(b.token));

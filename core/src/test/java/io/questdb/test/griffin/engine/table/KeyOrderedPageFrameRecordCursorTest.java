@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -37,6 +38,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -323,6 +326,54 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredSkipLandsPastWindowThatShrankAfterSize() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024L);
+        assertMemoryLeak(() -> {
+            // the first 400 rows hold one-byte payloads and the 400 after them 4 KiB ones, in key order
+            execute("""
+                    CREATE TABLE t (id LONG, s SYMBOL INDEX, payload VARCHAR, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT x, ('k' || lpad(((x - 1) / 4)::STRING, 3, '0'))::SYMBOL,
+                        (CASE WHEN x <= 400 THEN 'a' ELSE rpad('w', 4_096, 'w') END)::VARCHAR, timestamp_sequence(0, 1_000)
+                    FROM long_sequence(800)
+                    """);
+            execute("INSERT INTO t VALUES (801, 'k0', 'x', '1970-01-02')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final StringSink keys = new StringSink();
+            keys.put("'k000'");
+            for (int i = 1; i < 200; i++) {
+                keys.put(", 'k").put(i / 100).put(i / 10 % 10).put(i % 10).put('\'');
+            }
+            final String tail = "id, s, payload, ts FROM t WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(t) */ " + tail + " LIMIT 150, 155", expected);
+            final StringSink actual = new StringSink();
+            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                // the size pass gathers the narrow rows in one window, and the wide rows in windows that the memory of
+                // the gather plans anew, which the window of the narrow rows takes when the skip gathers it again
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.assertEquals(800, counter.get());
+                cursor.toTop();
+                counter.set(150);
+                cursor.skipRows(counter, 5);
+                CursorPrinter.println(factory.getMetadata(), actual);
+                for (int i = 0; i < 5 && cursor.hasNext(); i++) {
+                    CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), actual);
+                }
+                TestUtils.assertEquals(expected, actual);
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredWindowsLandSkipAfterSize() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024L);
@@ -379,6 +430,69 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 // the 40_000 rows take 1.12 MB in the record chain, a link, a LONG, a SYMBOL and a TIMESTAMP each, which
                 // a chain that doubled its memory as it grew would hold 2 MB for
                 Assert.assertTrue("the record chain holds what its rows take", sqlExecutionContext.getMemoryTracker().getUsed() < 1_400_000);
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfRowsWiderThanTheirSampleFitsQueryMemoryLimit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024L);
+        assertMemoryLeak(() -> {
+            // the first row group holds one-byte payloads, which the gather samples, and the 99 after it hold 4 KiB ones
+            execute("""
+                    CREATE TABLE t (id LONG, s SYMBOL INDEX, payload VARCHAR, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT x, ('k' || (x % 4))::SYMBOL, (CASE WHEN x <= 8 THEN 'a' ELSE rpad('w', 4_096, 'w') END)::VARCHAR,
+                        timestamp_sequence(0, 1_000)
+                    FROM long_sequence(800)
+                    """);
+            execute("INSERT INTO t VALUES (801, 'k0', 'x', '1970-01-02')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            // the payloads grow with time and the keys run against it, so that the rows of the first keys of a window
+            // come last in its pass
+            execute("""
+                    CREATE TABLE r (id LONG, s SYMBOL INDEX, payload VARCHAR, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO r
+                    SELECT x, ('k' || lpad((199 - (x - 1) / 4)::STRING, 3, '0'))::SYMBOL,
+                        (CASE WHEN x <= 8 THEN 'a' ELSE rpad('w', (x * 16)::INT, 'w') END)::VARCHAR, timestamp_sequence(0, 1_000)
+                    FROM long_sequence(800)
+                    """);
+            execute("INSERT INTO r VALUES (801, 'k0', 'x', '1970-01-02')");
+            execute("ALTER TABLE r CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final String[] tails = {
+                    "t WHERE ts IN '1970-01-01' ORDER BY s, ts",
+                    "t WHERE ts IN '1970-01-01' ORDER BY s, ts LIMIT 300, 310",
+                    "t WHERE ts IN '1970-01-01' ORDER BY s DESC, ts DESC",
+                    "t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2') ORDER BY s, ts",
+                    "t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2') AND id > 0 ORDER BY s, ts",
+                    "t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2') AND id > 0 ORDER BY s, ts LIMIT -7",
+                    "t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2') AND id > 0 ORDER BY s DESC, ts DESC",
+                    "r WHERE ts IN '1970-01-01' ORDER BY s, ts",
+                    "r WHERE ts IN '1970-01-01' AND s IN ('k000', 'k001', 'k002', 'k100', 'k199') ORDER BY s, ts",
+                    "r WHERE ts IN '1970-01-01' AND s IN ('k000', 'k001', 'k002', 'k100', 'k199') AND id > 0 ORDER BY s, ts"
+            };
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (String tail : tails) {
+                printSql("SELECT /*+ no_index(" + tail.charAt(0) + ") */ id, s, payload, ts FROM " + tail, expected);
+                final String expectedRows = expected.toString();
+                try (RecordCursorFactory factory = select("SELECT id, s, payload, ts FROM " + tail)) {
+                    // a sort of the rows, which reads their payloads back through the decode cache, fits the limit
+                    node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                    } finally {
+                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                    }
+                    assertQuery("SELECT id, s, payload, ts FROM " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expectedRows);
+                }
             }
         });
     }
@@ -450,6 +564,7 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
             assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
             PageFrameRecordCursorImpl.testDenseScanFrames.set(0);
             PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+            final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
             try (RecordCursorFactory factory = select("SELECT " + tail);
                  RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
                 int count = 0;
@@ -457,7 +572,8 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                     count++;
                 }
                 Assert.assertEquals(1024, count);
-                Assert.assertFalse("the read gathers its rows in one window", cursor.getRecord() instanceof DelegatingRecord);
+                // the record chain holds the 36 bytes each row takes past its payload, which a window of fewer rows does not
+                Assert.assertTrue("the read gathers its rows in one window", Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - chainBytesLo >= 1024 * 36);
                 final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
                 Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
                 Assert.assertEquals("payload decodes", 128, pool.getDecodeCount());
@@ -483,6 +599,7 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
             for (long cacheBytes : new long[]{1024, 6 * 1024 * 1024L}) {
                 node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheBytes);
+                final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
                 try (RecordCursorFactory factory = select("""
                         SELECT id, s, payload, ts FROM t WHERE ts IN '1970-01-01'
                         AND s IN ('k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8',
@@ -496,7 +613,8 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(272, count);
                     Assert.assertNotEquals("the read gathers its rows", stateSize, cursor.preComputedStateSize());
-                    Assert.assertEquals("a small decode cache splits the read into windows", cacheBytes == 1024, cursor.getRecord() instanceof DelegatingRecord);
+                    // one window holds the 8 KiB payloads of all 272 rows in the record chain
+                    Assert.assertEquals("a small decode cache splits the read into windows", cacheBytes == 1024, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - chainBytesLo < 272 * 8192L);
                     final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
                     Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
                     // a window of the small decode cache holds a row, and decodes the row group that holds it

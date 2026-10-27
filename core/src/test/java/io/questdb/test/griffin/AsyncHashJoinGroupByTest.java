@@ -1994,10 +1994,15 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
                 @Override
                 public void statefulThrowExceptionIfTrippedNoThrottle() {
-                    if (getState() == STATE_TIMEOUT) {
+                    // A reducer thread cancels while others check, so one read decides both whether
+                    // and why the breaker trips.
+                    final int state = getState();
+                    if (state == STATE_TIMEOUT) {
                         throw CairoException.queryTimedOut();
                     }
-                    super.statefulThrowExceptionIfTrippedNoThrottle();
+                    if (state == STATE_CANCELLED) {
+                        throw CairoException.queryCancelled();
+                    }
                 }
             };
             // A parallel build filters its frames on the workers, which reducer threads run.

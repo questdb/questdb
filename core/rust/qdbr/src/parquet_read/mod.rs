@@ -2756,6 +2756,39 @@ mod tests {
         Ok(())
     }
 
+    /// `questdb_8_3_5_nan.parquet` holds DOUBLE `d` and FLOAT `f`, both `1, 2 | NaN, 4 | 5, 6` in
+    /// row groups of two, as QuestDB 8.3.5's parquet writer wrote them under `QuestDB version 8.0`.
+    #[test]
+    fn null_matching_range_prunes_finite_row_groups_questdb_8_wrote() -> ParquetResult<()> {
+        let buf = std::fs::read(format!(
+            "{}/../../src/test/resources/parquet/questdb_8_3_5_nan.parquet",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let decoder = read_decoder(&buf)?;
+        let double_bound = 5.0f64.to_le_bytes();
+        let float_bound = 5.0f32.to_le_bytes();
+        for (column, column_type, bound) in [
+            (0, ColumnTypeTag::Double, &double_bound[..]),
+            (1, ColumnTypeTag::Float, &float_bound[..]),
+        ] {
+            // NOT (v < 5.0)
+            let filters = [make_filter_with_op_and_type(
+                column,
+                1,
+                bound.as_ptr() as u64,
+                FILTER_OP_GE | FILTER_OP_NULL_MATCHING_FLAG,
+                column_type as i32,
+            )];
+            let buf_end = bound.as_ptr_range().end as u64;
+            let skips = (0..3)
+                .map(|rg| decoder.can_skip_row_group(rg, &buf, &filters, buf_end))
+                .collect::<ParquetResult<Vec<_>>>()?;
+            assert_eq!(vec![true, false, false], skips, "{column_type:?}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn has_no_sql_nulls_excludes_char_sentinel_and_truncation() -> ParquetResult<()> {
         use parquet::data_type::Int32Type;

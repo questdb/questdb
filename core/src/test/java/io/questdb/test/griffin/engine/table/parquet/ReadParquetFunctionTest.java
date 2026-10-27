@@ -1126,6 +1126,21 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedFloatingPointRangePrunesFiniteRowGroupsQuestDB8Wrote() throws Exception {
+        assertMemoryLeak(() -> {
+            // QuestDB 8.3.5 wrote d DOUBLE and f FLOAT, both 1, 2 | NaN, 4 | 5, 6, with created_by "QuestDB version 8.0".
+            copyParquetFixture("/parquet/", "questdb_8_3_5_nan.parquet");
+            for (String column : new String[]{"d", "f"}) {
+                assertRowGroupsSkipped(
+                        "SELECT count() FROM read_parquet('questdb_8_3_5_nan.parquet') WHERE NOT (" + column + " < 5.0)",
+                        "count\n3\n",
+                        1
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNegatedFloatingPointRangePrunesOnlyQuestDBWrittenFiniteRowGroups() throws Exception {
         assertMemoryLeak(() -> {
             // Rows 101-150 hold NULLs, row 250 +Infinity and row 350 -Infinity, which QuestDB also reads as NULL.

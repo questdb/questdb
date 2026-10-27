@@ -113,12 +113,19 @@ public class ExpressionNode implements Mutable, Sinkable {
     private ExpressionNode() {
     }
 
+    /**
+     * Whether two expressions of one query are the same expression: equal trees, whose sub-queries are the same
+     * sub-queries, see {@link QueryModel#isSameSubQuery}.
+     */
     public static boolean compareNodesExact(ExpressionNode a, ExpressionNode b) {
-        if (a == null && b == null) {
+        if (a == b) {
             return true;
         }
         if (a == null || b == null || a.type != b.type) {
             return false;
+        }
+        if (a.type == QUERY) {
+            return a.queryModel != null && a.queryModel.isSameSubQuery(b.queryModel);
         }
         return (a.type == FUNCTION || a.type == LITERAL ? Chars.equalsIgnoreCase(a.token, b.token) : Chars.equals(a.token, b.token))
                 && compareArgsExact(a, b)
@@ -208,6 +215,9 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static int hashNodesExact(ExpressionNode node) {
         if (node == null) {
             return 0;
+        }
+        if (node.type == QUERY) {
+            return node.queryModel != null ? node.queryModel.hashSubQuery() : QUERY;
         }
         int hash = node.token == null ? 0
                 : node.type == FUNCTION || node.type == LITERAL ? Chars.lowerCaseHashCode(node.token) : Chars.hashCode(node.token);

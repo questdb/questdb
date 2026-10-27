@@ -160,6 +160,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private boolean cacheable = true;
+    // The model the declaration of a declared sub-query parsed: this model itself, or the one it copies.
+    private QueryModel declaredQuery;
     private boolean distinct = false;
     private boolean explicitTimestamp;
     private boolean isCommaJoin;
@@ -195,6 +197,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int showCreateDatabaseInclude = ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
     private int showKind = -1;
     private boolean standaloneUnnest;
+    // The tokens of a sub-query written in place in an expression, case-folded where QuestDB ignores case.
+    private CharSequence subQueryTokens;
     private ExpressionNode subsample;
     private int subsamplePosition;
     private int tableId = -1;
@@ -366,6 +370,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFrom = null;
         subsample = null;
         subsamplePosition = 0;
+        subQueryTokens = null;
+        declaredQuery = null;
         decls.clear();
         auditedDecls.clear();
         overridableDecls.clear();
@@ -723,6 +729,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestamp != null && explicitTimestamp;
     }
 
+    /**
+     * A hash of this sub-query that agrees with {@link #isSameSubQuery}: sub-queries that are the same hash equally.
+     */
+    public int hashSubQuery() {
+        if (declaredQuery != null) {
+            return System.identityHashCode(declaredQuery);
+        }
+        return subQueryTokens != null ? Chars.hashCode(subQueryTokens) : System.identityHashCode(this);
+    }
+
     public boolean isArtificialStar() {
         return artificialStar;
     }
@@ -760,6 +776,27 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isPivotGroupByColumnHasNoAlias() {
         return pivotGroupByColumnHasNoAlias;
+    }
+
+    /**
+     * Whether this sub-query of an expression and {@code that}, a sub-query of an expression of the same query,
+     * compute the same rows: the same model, two reads of one declared sub-query, or two sub-queries written in place
+     * with the same tokens. Their keywords, function names and identifiers can differ in case, and comments and
+     * whitespace do not count; every other token has to match exactly. Sub-queries the query writes in place resolve
+     * names in its scope, so the same tokens read the same names. A declared sub-query resolves them where it was
+     * declared, so it is the same only as a read of the same declaration, whatever the tokens of either.
+     */
+    public boolean isSameSubQuery(@Nullable QueryModel that) {
+        if (that == this) {
+            return true;
+        }
+        if (that == null) {
+            return false;
+        }
+        if (declaredQuery != null || that.declaredQuery != null) {
+            return declaredQuery == that.declaredQuery;
+        }
+        return subQueryTokens != null && that.subQueryTokens != null && Chars.equals(subQueryTokens, that.subQueryTokens);
     }
 
     public boolean isStandaloneUnnest() {
@@ -827,6 +864,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setCacheable(boolean b) {
         cacheable = b;
+    }
+
+    /**
+     * Records the model the declaration of this declared sub-query parsed: this model for the declaration's own parse,
+     * otherwise the declaration's model, which this one copies.
+     */
+    public void setDeclaredQuery(QueryModel declaredQuery) {
+        this.declaredQuery = declaredQuery;
     }
 
     public void setDistinct(boolean distinct) {
@@ -949,6 +994,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setStandaloneUnnest(boolean standaloneUnnest) {
         this.standaloneUnnest = standaloneUnnest;
+    }
+
+    public void setSubQueryTokens(CharSequence subQueryTokens) {
+        this.subQueryTokens = subQueryTokens;
     }
 
     public void setSubsample(ExpressionNode subsample, int position) {

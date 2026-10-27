@@ -56,6 +56,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.rowCountTolerantContext;
 
 public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     // The optimiser pushes the interval below dateadd() as and_offset, which the fused analysis cannot
@@ -252,7 +253,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     public void testSymbolClonesRebindingAndDictionaryGrowth() throws Exception {
         assertMemoryLeak(() -> {
             createTables(false);
-            try (SqlExecutionContextImpl context = context(engine, 4)) {
+            // Each factory runs over every state, past the row counts its compile kept its choices
+            // for, which the context tolerates, as a holder that never compiles the statement again does.
+            try (SqlExecutionContextImpl context = rowCountTolerantContext(engine, 4)) {
                 context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
                 context.changePageFrameSizes(1, 2);
                 for (int format = 0; format < 3; format++) {

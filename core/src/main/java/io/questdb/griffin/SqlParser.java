@@ -666,6 +666,25 @@ public class SqlParser {
         return false;
     }
 
+    /**
+     * Whether QuestDB resolves {@code token} whatever its case: a keyword, a function name, a
+     * declared variable or an identifier, quoted with double quotes or not. A token with a single
+     * quote or a backtick in it, such as {@code E'text'}, keeps its case.
+     */
+    private static boolean isCaseInsensitiveToken(CharSequence token) {
+        final char c = token.charAt(0);
+        if (!Character.isLetter(c) && c != '_' && c != '"' && c != '@') {
+            return false;
+        }
+        for (int i = 1, n = token.length(); i < n; i++) {
+            final char ch = token.charAt(i);
+            if (ch == '\'' || ch == '`') {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isDeclaredVariableReference(ExpressionNode node) {
         return node.token != null && !node.isQuoted && Chars.startsWith(node.token, '@');
     }
@@ -878,6 +897,7 @@ public class SqlParser {
                 declaredQueries.add(node);
                 declaredQueryDigits.add(declaredValueQueryDigits.getQuick(index));
                 declaredQueryModels.add(node.queryModel);
+                node.queryModel.setDeclaredQuery(node.queryModel);
                 declaredQuerySources.add(source);
                 declaredQueryViewDepths.add(viewsBeingCompiled.size());
                 // A copy, because the query that declares the value can go on to define CTEs of
@@ -4721,7 +4741,9 @@ public class SqlParser {
         final int readDigit = digit;
         digit = declaredQueryDigits.getQuick(index);
         try {
-            return parseAsSubQuery(queryLexer, declaredQueryWithClauses.getQuick(index), false, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
+            final QueryModel model = parseAsSubQuery(queryLexer, declaredQueryWithClauses.getQuick(index), false, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
+            model.setDeclaredQuery(declaredQueryModels.getQuick(index));
+            return model;
         } finally {
             digit = readDigit;
             idleViewLexers.add(queryLexer);
@@ -8426,6 +8448,34 @@ public class SqlParser {
     }
 
     /**
+     * The tokens of {@code content} from {@code lo} up to the token at {@code hi}, each followed by
+     * a space, so comments and the whitespace between tokens drop out. The tokens QuestDB resolves
+     * whatever their case, see {@link #isCaseInsensitiveToken}, are in lower case. Every other token
+     * keeps its case: quoted text, numbers and the units glued to them, such as {@code 1m} and
+     * {@code 1M}, and bind variables.
+     */
+    private CharSequence subQueryTokens(CharSequence content, int lo, int hi) throws SqlException {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, lo);
+        try {
+            final CharacterStoreEntry entry = characterStore.newEntry();
+            CharSequence tok;
+            while ((tok = SqlUtil.fetchNext(lookahead)) != null && lookahead.lastTokenPosition() < hi) {
+                if (isCaseInsensitiveToken(tok)) {
+                    for (int i = 0, n = tok.length(); i < n; i++) {
+                        entry.put(Character.toLowerCase(tok.charAt(i)));
+                    }
+                } else {
+                    entry.put(tok);
+                }
+                entry.put(' ');
+            }
+            return entry.toImmutable();
+        } finally {
+            viewLexers.release(lookahead);
+        }
+    }
+
+    /**
      * Returns the model a {@code FROM @var} reads a declared sub-query through: the model the
      * declaration parsed if no other read has taken it, and a copy of it otherwise.
      * <p>
@@ -8757,16 +8807,28 @@ public class SqlParser {
     }
 
     /**
-     * Parses a sub-query in an expression. It resolves a table name as a FROM clause at its
-     * position does: against the WITH clauses of the query it sits in, which hold the ones of the
-     * queries around it, and then against tables. Inside a view body, those are the body's own.
+     * Parses a sub-query in an expression, whose first keyword is at {@code position}, and records
+     * on the model its tokens, see {@link #subQueryTokens}. It resolves a table name as a FROM
+     * clause at its position does: against the WITH clauses of the query it sits in, which hold
+     * the ones of the queries around it, and then against tables. Inside a view body, those are
+     * the body's own.
      */
     QueryModel parseExpressionSubQuery(
             GenericLexer lexer,
+            int position,
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        return parseAsSubQuery(lexer, withScope, false, sqlParserCallback, decls, false, false);
+        final QueryModel model = parseAsSubQuery(lexer, withScope, false, sqlParserCallback, decls, false, false);
+        int hi = lexer.getPosition();
+        final CharSequence next = SqlUtil.fetchNext(lexer);
+        if (next != null) {
+            // From the token's end: a token put back after a CTE parsed again can carry a stale start.
+            hi = lexer.getPosition() - next.length();
+            lexer.unparseLast();
+        }
+        model.setSubQueryTokens(subQueryTokens(lexer.getContent(), position, hi));
+        return model;
     }
 
     String parseViewSql(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {

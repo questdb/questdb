@@ -628,11 +628,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     }
 
     static SqlExecutionContextImpl context(CairoEngine engine, int workers) {
-        SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, workers)
-                .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
-        context.setParallelGroupByEnabled(true);
-        context.setParallelHashJoinGroupByEnabled(true);
-        return context;
+        return context(new SqlExecutionContextImpl(engine, workers));
     }
 
     @Nullable
@@ -676,6 +672,27 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
             return sink.toString();
         }
+    }
+
+    /**
+     * A context that runs a held factory with the choices its compile took from the tables' row counts, however the
+     * tables grow or shrink, as a holder that never compiles the statement again does; see
+     * {@link SqlExecutionContext#isTableRowCountChangeTolerated()}.
+     */
+    static SqlExecutionContextImpl rowCountTolerantContext(CairoEngine engine, int workers) {
+        return context(new SqlExecutionContextImpl(engine, workers) {
+            @Override
+            public boolean isTableRowCountChangeTolerated() {
+                return true;
+            }
+        });
+    }
+
+    private static SqlExecutionContextImpl context(SqlExecutionContextImpl context) {
+        context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
+        context.setParallelGroupByEnabled(true);
+        context.setParallelHashJoinGroupByEnabled(true);
+        return context;
     }
 
     private void createTypedTable(String table, int offset) throws Exception {
