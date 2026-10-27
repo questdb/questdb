@@ -113,7 +113,8 @@ class LateralJoinRewriter implements Mutable {
     private final ObjList<IQueryModel> carrierChain;
     private final CharacterStore characterStore;
     private final ObjList<ExpressionNode> correlatedPreds = new ObjList<>();
-
+    // the columns that isEquatedInLayer() finds equal to the first one
+    private final LowerCaseCharSequenceHashSet equatedColumns = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final ObjList<ExpressionNode> groupingCols;
@@ -121,6 +122,8 @@ class LateralJoinRewriter implements Mutable {
     private final ObjList<ExpressionNode> innerJoinNonCorrelated = new ObjList<>();
     // the conjuncts of the criteria of a join whose outer-ref join Pass 3 removes, see liftJoinCriteria()
     private final ObjList<ExpressionNode> joinCriteriaConjuncts = new ObjList<>();
+    // the equalities of two columns that hold in every row of a layer, see isEquatedInLayer()
+    private final ObjList<ExpressionNode> layerColumnEqualities = new ObjList<>();
     // outer-ref column -> the column that WHERE equates it with in a layer above the data source
     // layer, see tryEliminateOuterRefInBranch()
     private final LowerCaseCharSequenceObjHashMap<CharSequence> layerEqualities = new LowerCaseCharSequenceObjHashMap<>();
@@ -258,11 +261,13 @@ class LateralJoinRewriter implements Mutable {
         carrierChain.clear();
         carrierId = 0;
         correlatedPreds.clear();
+        equatedColumns.clear();
         innerJoinCorrelated.clear();
         innerJoinNonCorrelated.clear();
         joinCriteriaConjuncts.clear();
         nonCorrelatedPreds.clear();
         nullRejectionConjuncts.clear();
+        layerColumnEqualities.clear();
         layerEqualities.clear();
         liftBindingJoinModels.clear();
         liftBindingScopes.clear();
@@ -365,6 +370,19 @@ class LateralJoinRewriter implements Mutable {
             return ROW_UNPROVABLE;
         }
         return (lo <= 0 && hi >= 1) ? ROW_KEPT : ROW_DROPPED;
+    }
+
+    // Adds the conjuncts of the condition that equate two columns to sink
+    private static void collectColumnEqualities(ExpressionNode node, ObjList<ExpressionNode> sink) {
+        if (node == null) {
+            return;
+        }
+        if (SqlKeywords.isAndKeyword(node.token)) {
+            collectColumnEqualities(node.lhs, sink);
+            collectColumnEqualities(node.rhs, sink);
+        } else if (Chars.equals(node.token, "=") && isSimpleColumnRef(node.lhs) && isSimpleColumnRef(node.rhs)) {
+            sink.add(node);
+        }
     }
 
     private static boolean compare(int op, long l, long r) {
@@ -493,6 +511,21 @@ class LateralJoinRewriter implements Mutable {
             case CMP_GE -> CMP_LE;
             default -> op;
         };
+    }
+
+    // Returns the type of the column that the literal names when it is a column of the first table of the layer
+    // or of a table of an INNER or CROSS join of it, see getTableColumnType(), and -1 otherwise
+    private static int getInnerTableColumnType(IQueryModel layer, ExpressionNode node) {
+        final int columnType = getTableColumnType(layer, node, 0, layer.getJoinModels().size() - 1);
+        if (columnType < 0) {
+            return -1;
+        }
+        final int index = layer.getModelAliasIndex(node.token, 0, Chars.indexOfLastUnquoted(node.token, '.'));
+        if (index == 0) {
+            return columnType;
+        }
+        final int joinType = layer.getJoinModels().getQuick(index).getJoinType();
+        return joinType == IQueryModel.JOIN_INNER || joinType == IQueryModel.JOIN_CROSS ? columnType : -1;
     }
 
     // Returns the type of the column that the literal names when it is a column of a table of the layer at an
@@ -1809,8 +1842,14 @@ class LateralJoinRewriter implements Mutable {
     // Collects the conjuncts of the criteria of an outer-ref join other than the equalities that
     // give the outer-ref columns their equivalents in outerToInnerAlias. When Pass 3 removes the
     // join, the lateral join enforces only those equalities, by comparing each equivalent with its
-    // outer column.
-    private void collectResidualConjuncts(ExpressionNode criteria, CharSequence outerRefAlias, ObjList<ExpressionNode> result) {
+    // outer column. It enforces as well an equality of an outer-ref column with another column that
+    // the data source layer keeps equal to the equivalent, see isEquatedInLayer().
+    private void collectResidualConjuncts(
+            ExpressionNode criteria,
+            CharSequence outerRefAlias,
+            IQueryModel dataSourceLayer,
+            ObjList<ExpressionNode> result
+    ) {
         splitAndPredicates(criteria, result);
         for (int i = result.size() - 1; i >= 0; i--) {
             final ExpressionNode conjunct = result.getQuick(i);
@@ -1818,7 +1857,9 @@ class LateralJoinRewriter implements Mutable {
             if (outerRef != null) {
                 final ExpressionNode equivalent = outerRef == conjunct.lhs ? conjunct.rhs : conjunct.lhs;
                 final CharSequence mapped = outerToInnerAlias.get(outerRef.token);
-                if (mapped != null && Chars.equalsIgnoreCase(mapped, equivalent.token)) {
+                if (mapped != null
+                        && (Chars.equalsIgnoreCase(mapped, equivalent.token)
+                        || isEquatedInLayer(dataSourceLayer, outerRefAlias, equivalent.token, mapped))) {
                     result.remove(i);
                 }
             }
@@ -3365,6 +3406,67 @@ class LateralJoinRewriter implements Mutable {
             }
             parent = m;
             m = m.getNestedModel();
+        }
+        return false;
+    }
+
+    // True when the columns a and b of tables of the data source layer hold the same value in every row of
+    // the layer, so that an equality of a with an outer column holds exactly when that of b does: a chain of
+    // equalities leads from a to b, each a conjunct of the WHERE clause of the layer or of the ON clause of an
+    // INNER join, over columns of one type, which = compares without a conversion. Each of the columns belongs
+    // to the first table of the layer or to an INNER or CROSS join, so no join NULL-extends some of them and
+    // not the others: a LEFT, ASOF or LT join NULL-extends only its own table, a RIGHT, FULL or SPLICE join all
+    // the tables before it, whose columns = then matches as NULL to NULL, and UNNEST none. The conditions of
+    // the outer-ref join do not count, as they are the ones that the chain makes redundant.
+    private boolean isEquatedInLayer(IQueryModel layer, CharSequence outerRefAlias, CharSequence a, CharSequence b) {
+        final ObjList<IQueryModel> joinModels = layer.getJoinModels();
+        layerColumnEqualities.clear();
+        collectColumnEqualities(layer.getWhereClause(), layerColumnEqualities);
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            switch (joinModel.getJoinType()) {
+                case IQueryModel.JOIN_INNER:
+                    if (joinModel.getAlias() == null
+                            || !Chars.equalsIgnoreCase(joinModel.getAlias().token, outerRefAlias)) {
+                        collectColumnEqualities(joinModel.getJoinCriteria(), layerColumnEqualities);
+                    }
+                    break;
+                case IQueryModel.JOIN_CROSS, IQueryModel.JOIN_UNNEST, IQueryModel.JOIN_LEFT_OUTER,
+                     IQueryModel.JOIN_ASOF, IQueryModel.JOIN_LT, IQueryModel.JOIN_RIGHT_OUTER,
+                     IQueryModel.JOIN_FULL_OUTER, IQueryModel.JOIN_SPLICE:
+                    break;
+                default:
+                    return false;
+            }
+        }
+        equatedColumns.clear();
+        equatedColumns.add(a);
+        int columnType = -1;
+        for (boolean isGrowing = true; isGrowing; ) {
+            isGrowing = false;
+            for (int i = 0, n = layerColumnEqualities.size(); i < n; i++) {
+                final ExpressionNode equality = layerColumnEqualities.getQuick(i);
+                final boolean isFromLhs = equatedColumns.contains(equality.lhs.token);
+                if (isFromLhs == equatedColumns.contains(equality.rhs.token)) {
+                    continue;
+                }
+                if (columnType < 0) {
+                    // the first equality reached reads a, whose type the others must have
+                    columnType = getInnerTableColumnType(layer, isFromLhs ? equality.lhs : equality.rhs);
+                    if (columnType < 0) {
+                        return false;
+                    }
+                }
+                final ExpressionNode to = isFromLhs ? equality.rhs : equality.lhs;
+                if (getInnerTableColumnType(layer, to) != columnType) {
+                    continue;
+                }
+                if (Chars.equalsIgnoreCase(to.token, b)) {
+                    return true;
+                }
+                equatedColumns.add(to.token);
+                isGrowing = true;
+            }
         }
         return false;
     }
@@ -6279,7 +6381,7 @@ class LateralJoinRewriter implements Mutable {
         // move into the criteria of the lateral join.
         ExpressionNode residualCriteria = null;
         if (isAllEqualities && joinModel != null && joinCrit != null) {
-            collectResidualConjuncts(joinCrit, outerRefAlias, residualConjuncts);
+            collectResidualConjuncts(joinCrit, outerRefAlias, dataSourceLayer, residualConjuncts);
             if (residualConjuncts.size() > 0) {
                 if (!isMainOuterRefJoin(outerRefJm)) {
                     // A copy in a join branch stays: its conjuncts read the outer row of a lateral join

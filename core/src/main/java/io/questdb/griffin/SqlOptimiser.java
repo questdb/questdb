@@ -2302,7 +2302,11 @@ public class SqlOptimiser implements Mutable {
             if (addAlias || removeAlias) {
                 CharacterStoreEntry entry = characterStore.newEntry();
                 if (addAlias) {
-                    CharSequence alias = baseModel.getModelAliasIndexes().keys().get(modelIndex);
+                    // The name of the join model, which code generation gives its columns, see
+                    // SqlCodeGenerator.createJoinMetadata(). The order of the keys of the alias map need not
+                    // follow the join models: the LATERAL rewrite inserts join models ahead of others.
+                    final CharSequence alias = baseModel.getJoinModels().getQuick(modelIndex).getName();
+                    assert alias != null && baseModel.getModelAliasIndex(alias, 0, alias.length()) == modelIndex;
                     entry.put(alias).put('.').put(col);
                 } else {
                     entry.put(col, dot + 1, col.length());
