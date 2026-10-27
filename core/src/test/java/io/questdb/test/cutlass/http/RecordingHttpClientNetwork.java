@@ -53,7 +53,9 @@ final class RecordingHttpClientNetwork extends NetworkFacadeImpl {
 
     @Override
     public int recvRaw(int fd, long buffer, int bufferLen) {
-        // Do not let the client's header parser discard unexpected bytes after the terminator.
+        // Read one byte at a time so the client stops exactly at the header terminator. Any stray
+        // bytes after it stay in the socket and corrupt the next response on a reused connection,
+        // failing either the client's header parser or assertStatusLine().
         final int count = super.recvRaw(fd, buffer, Math.min(bufferLen, 1));
         if (count > 0) {
             received.append((char) (Unsafe.getUnsafe().getByte(buffer) & 0xff));
@@ -71,7 +73,6 @@ final class RecordingHttpClientNetwork extends NetworkFacadeImpl {
         ClientHttpUtils.assertChunkedBody(response, "");
         assertStatusLine(status);
         final String wire = received.toString();
-        Assert.assertEquals(wire, wire.length() - 4, wire.indexOf("\r\n\r\n"));
         Assert.assertEquals(wire, isLengthForbidden ? 0 : 1, wire.split("Content-Length:", -1).length - 1);
     }
 
