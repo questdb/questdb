@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.client.std.Unsafe;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
@@ -43,6 +44,9 @@ public class QwpTableBlockCursorSchemaCacheTest {
 
     @Test
     public void testIdenticalSchemaReusesParseAndDifferentSchemaDoesNot() throws Exception {
+        // assertMemoryLeak() tracks only the server's native memory counter. The
+        // client encoder and table buffer allocate through the client's own.
+        final long clientMemUsedBefore = Unsafe.getMemUsed();
         assertMemoryLeak(() -> {
             try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
                 ObjList<QwpColumnDef> first = decode(decoder, "val");
@@ -60,11 +64,15 @@ public class QwpTableBlockCursorSchemaCacheTest {
                 Assert.assertNotSame(third, decode(decoder, "val"));
             }
         });
+        Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
     }
 
     private static ObjList<QwpColumnDef> decode(QwpStreamingDecoder decoder, String columnName) throws Exception {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+        // The encoder does not own the table buffer; both hold native memory.
+        try (
+                QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                QwpTableBuffer buffer = new QwpTableBuffer("test_table")
+        ) {
             QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn(columnName, TYPE_LONG, false);
             QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
             for (int i = 0; i < 3; i++) {
