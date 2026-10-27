@@ -605,6 +605,7 @@ public final class IntervalUtils {
      * invert(list, 0);
      * // After inversion, list contains: [Long.MIN_VALUE, 99, 201, 499, 601, Long.MAX_VALUE]
      * </pre>
+     * An empty list inverts to the full range {@code [Long.MIN_VALUE, Long.MAX_VALUE]}.
      *
      * @param intervals  A {@code LongList} containing a flat sequence of sorted, non-overlapping,
      *                   inclusive intervals (e.g., {@code [start1, end1, start2, end2, ...]}).
@@ -613,8 +614,15 @@ public final class IntervalUtils {
      *                   before this index are ignored and preserved.
      */
     public static void invert(LongList intervals, int startIndex) {
+        final int n = intervals.size();
+        if (n == startIndex) {
+            // The loop below would leave the list empty: it can't tell an empty list from a list
+            // whose last interval ends at Long.MAX_VALUE, as both leave last at Long.MIN_VALUE.
+            intervals.extendAndSet(startIndex + 1, Long.MAX_VALUE);
+            intervals.setQuick(startIndex, Long.MIN_VALUE);
+            return;
+        }
         long last = Long.MIN_VALUE;
-        int n = intervals.size();
         int writeIndex = startIndex;
         for (int i = startIndex; i < n; i += 2) {
             final long lo = intervals.getQuick(i);

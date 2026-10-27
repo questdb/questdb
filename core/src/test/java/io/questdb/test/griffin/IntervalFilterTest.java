@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import org.junit.Test;
@@ -1135,6 +1136,56 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             8.486964232560668\t1970-01-01T00:00:00.010000Z
                             8.43832076262595\t1970-01-01T00:00:00.020000Z
                             """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testNotInIntervalWithNoIntervals() throws Exception {
+        // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval, and neither does
+        // '$today#workday' on that day. Subtracting no interval used to leave no row.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE x (k INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-05T12:00:00.000000Z'),
+                    (2, '2024-01-06T12:00:00.000000Z'),
+                    (3, '2024-01-08T12:00:00.000000Z')
+                    """);
+            setCurrentMicros(Micros.toMicros(2024, 1, 6, 1, 0));
+            bindVariableService.clear();
+            bindVariableService.setStr("i", "2024-01-06#workday");
+            final String all = """
+                    k
+                    1
+                    2
+                    3
+                    """;
+            assertQuery("SELECT k FROM x WHERE ts NOT IN '2024-01-06#workday'")
+                    .noLeakCheck()
+                    .withPlanContaining("intervals: [(\"MIN\",\"MAX\")]")
+                    .returns(all);
+            assertQuery("SELECT k FROM x WHERE ts NOT IN '$today#workday'").noLeakCheck().returns(all);
+            assertQuery("SELECT k FROM x WHERE NOT ts IN '$today#workday'").noLeakCheck().returns(all);
+            assertQuery("SELECT k FROM x WHERE ts NOT IN :i").noLeakCheck().returns(all);
+
+            final String fifthAndSixth = """
+                    k
+                    1
+                    2
+                    """;
+            assertQuery("SELECT k FROM x WHERE ts IN '[2024-01-05, 2024-01-06]' AND ts NOT IN '2024-01-06#workday'").noLeakCheck().returns(fifthAndSixth);
+            assertQuery("SELECT k FROM x WHERE ts IN '[2024-01-05, 2024-01-06]' AND ts NOT IN '$today#workday'").noLeakCheck().returns(fifthAndSixth);
+            assertQuery("SELECT k FROM x WHERE ts IN '[2024-01-05, 2024-01-06]' AND ts NOT IN :i").noLeakCheck().returns(fifthAndSixth);
+            assertQuery("SELECT k FROM x WHERE ts NOT IN '$today#workday' AND ts NOT IN '2024-01-08'").noLeakCheck().returns(fifthAndSixth);
+            assertQuery("SELECT k FROM x WHERE ts NOT IN :i AND ts NOT IN '2024-01-08'").noLeakCheck().returns(fifthAndSixth);
+
+            // An empty set stays empty.
+            assertQuery("SELECT k FROM x WHERE ts IN '$today#workday' AND ts NOT IN '2024-01-07#workday'").noLeakCheck().returns("k\n");
+            assertQuery("SELECT k FROM x WHERE ts NOT IN '2024-01-07#workday' AND ts IN '$today#workday'").noLeakCheck().returns("k\n");
+            assertQuery("SELECT k FROM x WHERE ts IN '$today#workday' AND ts NOT IN '$today#workday'").noLeakCheck().returns("k\n");
+            assertQuery("SELECT k FROM x WHERE ts NOT IN '$today#workday' AND ts IN '$today#workday'").noLeakCheck().returns("k\n");
+            assertQuery("SELECT k FROM x WHERE ts IN '$today#workday' AND ts NOT IN :i").noLeakCheck().returns("k\n");
+            assertQuery("SELECT k FROM x WHERE ts NOT IN :i AND ts IN '$today#workday'").noLeakCheck().returns("k\n");
         });
     }
 
