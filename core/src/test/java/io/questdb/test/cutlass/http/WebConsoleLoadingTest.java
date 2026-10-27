@@ -141,8 +141,7 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         // Closing ResponseHeaders disconnects the client, so consume and follow without closing it.
         network.clearReceived();
         final HttpClient.ResponseHeaders page = httpClient.newRequest("localhost", HTTP_PORT).GET().url(expectedLocation).send();
-        page.await();
-        TestUtils.assertEquals("200", page.getStatusCode().asAsciiCharSequence());
+        ClientHttpUtils.awaitStatusCode(page, "200");
         Assert.assertEquals(TEST_PAYLOAD.length(), page.getContentLength());
         ClientHttpUtils.assertChunkedBody(page, TEST_PAYLOAD);
         network.assertStatusLine(HTTP_OK);

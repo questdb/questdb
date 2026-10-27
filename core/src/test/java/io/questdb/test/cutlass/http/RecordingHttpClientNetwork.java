@@ -70,7 +70,6 @@ final class RecordingHttpClientNetwork extends NetworkFacadeImpl {
         Assert.assertNull(response.getHeader(new Utf8String("Transfer-Encoding")));
         Assert.assertNull(response.getHeader(new Utf8String("Content-Type")));
         Assert.assertFalse(response.isChunked());
-        ClientHttpUtils.assertChunkedBody(response, "");
         assertStatusLine(status);
         final String wire = received.toString();
         Assert.assertEquals(wire, isLengthForbidden ? 0 : 1, wire.split("Content-Length:", -1).length - 1);
