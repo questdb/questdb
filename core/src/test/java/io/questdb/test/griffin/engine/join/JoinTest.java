@@ -9264,6 +9264,143 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnKeysSharingMasterColumnMixedTimestamps() throws Exception {
+        // Both ON clauses leave the keys hs.n = hm.t and hs.t = hm.t, which share hm.t: the first one
+        // next to the filter hm.t = hm.n that the optimiser derives, the second one because hm.T in upper
+        // case keeps mergeContexts, which compares column names case-sensitively, from merging the keys.
+        // The record copier writes hm.t once, so both keys compare nanoseconds, and the copier of hs must
+        // convert hs.t, which no key compares with a TIMESTAMP_NS column. hm row 2 fails the filter, or
+        // matches one key of hs row 11 only: hs.n is 500 nanoseconds off hm.t. A NULL TIMESTAMP must stay
+        // NULL rather than turn into 1970-01-01: the NULL rows match each other, and hs row 14, a NULL t
+        // next to a 1970-01-01 n, matches nothing. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE hm (id INT, t TIMESTAMP, n TIMESTAMP_NS)");
+            execute("""
+                    INSERT INTO hm VALUES
+                        (1, 1::TIMESTAMP, 1_000::TIMESTAMP_NS),
+                        (2, 2::TIMESTAMP, 2_500::TIMESTAMP_NS),
+                        (3, NULL, NULL),
+                        (4, 0::TIMESTAMP, 0::TIMESTAMP_NS)
+                    """);
+            execute("CREATE TABLE hs (sid INT, t TIMESTAMP, n TIMESTAMP_NS)");
+            execute("""
+                    INSERT INTO hs VALUES
+                        (10, 1::TIMESTAMP, 1_000::TIMESTAMP_NS),
+                        (11, 2::TIMESTAMP, 2_500::TIMESTAMP_NS),
+                        (12, NULL, NULL),
+                        (13, 0::TIMESTAMP, 0::TIMESTAMP_NS),
+                        (14, NULL, 0::TIMESTAMP_NS)
+                    """);
+            final String[] joins = {"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"};
+            final String[] expectedRows = {
+                    """
+                    1\t10
+                    3\t12
+                    4\t13
+                    """,
+                    """
+                    1\t10
+                    2\tnull
+                    3\t12
+                    4\t13
+                    """,
+                    """
+                    null\t11
+                    null\t14
+                    1\t10
+                    3\t12
+                    4\t13
+                    """,
+                    """
+                    null\t11
+                    null\t14
+                    1\t10
+                    2\tnull
+                    3\t12
+                    4\t13
+                    """
+            };
+            final String[][] onClauses = {
+                    {"hs.n = hm.t AND hs.t = hm.n AND hs.t = hm.t", "condition: hs.t=hm.t and hs.n=hm.t"},
+                    {"hs.n = hm.t AND hs.t = hm.T", "condition: hs.t=hm.T and hs.n=hm.t"}
+            };
+            for (int i = 0; i < joins.length; i++) {
+                final String expected = "id\tsid\n" + expectedRows[i];
+                for (String[] onClause : onClauses) {
+                    final String query = "SELECT hm.id, hs.sid FROM hm " + joins[i] + " hs ON " + onClause[0] + " ORDER BY 1, 2";
+                    assertQuery(query).noLeakCheck().withPlanContaining(onClause[1]).returns(expected);
+                    // only the full-fat INNER join knows its size
+                    assertQuery(query).noLeakCheck().expectSize(i == 0).fullFatJoins().returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnKeysSharingMasterColumnMixedTypes() throws Exception {
+        // Both ON clauses leave the keys s.v = m.sy and s.sy = m.sy, which share m.sy: the first one next
+        // to the filter m.sy = m.v that the optimiser derives, the second one because m.SY in upper case
+        // keeps mergeContexts, which compares column names case-sensitively, from merging the keys. The
+        // same holds for the STRING column st. The record copier writes m.sy once, so both keys compare
+        // VARCHAR values, and the copier of s must write s.sy, which no key compares with a VARCHAR
+        // column, as VARCHAR too. m row 1 matches s row 10 and the NULL rows match each other. m row 2
+        // fails the filter, or matches one key of s row 11 only, and m row 4 matches one key of s row 13
+        // and one of s row 14. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy SYMBOL, st STRING, v VARCHAR)");
+            execute("INSERT INTO m VALUES (1, 'a', 'a', 'a'), (2, 'b', 'b', 'c'), (3, NULL, NULL, NULL), (4, 'd', 'd', 'd')");
+            execute("CREATE TABLE s (id INT, sy SYMBOL, st STRING, v VARCHAR)");
+            execute("INSERT INTO s VALUES (10, 'a', 'a', 'a'), (11, 'c', 'c', 'b'), (12, NULL, NULL, NULL), (13, 'd', 'd', 'x'), (14, 'y', 'y', 'd')");
+            final String[] joins = {"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"};
+            final String[] expectedRows = {
+                    """
+                    1\t10
+                    3\t12
+                    """,
+                    """
+                    1\t10
+                    2\tnull
+                    3\t12
+                    4\tnull
+                    """,
+                    """
+                    null\t11
+                    null\t13
+                    null\t14
+                    1\t10
+                    3\t12
+                    """,
+                    """
+                    null\t11
+                    null\t13
+                    null\t14
+                    1\t10
+                    2\tnull
+                    3\t12
+                    4\tnull
+                    """
+            };
+            for (String[] names : new String[][]{{"sy", "SY"}, {"st", "ST"}}) {
+                final String c = names[0];
+                final String upperC = names[1];
+                final String[][] onClauses = {
+                        {"s.v = m." + c + " AND s." + c + " = m.v AND s." + c + " = m." + c, "condition: s." + c + "=m." + c + " and s.v=m." + c},
+                        {"s.v = m." + c + " AND s." + c + " = m." + upperC, "condition: s." + c + "=m." + upperC + " and s.v=m." + c}
+                };
+                for (int i = 0; i < joins.length; i++) {
+                    final String expected = "id\tid1\n" + expectedRows[i];
+                    for (String[] onClause : onClauses) {
+                        final String query = "SELECT m.id, s.id FROM m " + joins[i] + " s ON " + onClause[0] + " ORDER BY 1, 2";
+                        assertQuery(query).noLeakCheck().withPlanContaining(onClause[1]).returns(expected);
+                        // only the full-fat INNER join knows its size
+                        assertQuery(query).noLeakCheck().expectSize(i == 0).fullFatJoins().returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnLong256() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";

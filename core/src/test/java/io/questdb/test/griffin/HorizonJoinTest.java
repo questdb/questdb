@@ -3284,6 +3284,67 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumnsKeepsBothKeys() throws Exception {
+        // t.ST in upper case keeps mergeContexts, which compares column names case-sensitively, from
+        // turning p.v = t.st AND p.st = t.ST into one key and a right-hand filter, so both key pairs share
+        // t.st. The left key copier writes t.st once, so both pairs compare VARCHAR values, and the right
+        // key copier must write p.st, which no pair compares with a VARCHAR column, as VARCHAR too. In
+        // the same way both pairs on t.tm compare nanoseconds. Trade 2 matches one pair of price row 2
+        // only. A query with two right-hand tables builds the key copiers of each of them. Rows checked
+        // with DuckDB.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, st STRING, tm TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (st STRING, v VARCHAR, tm TIMESTAMP, tn TIMESTAMP_NS, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('C', 'B', 7::TIMESTAMP, 7_500::TIMESTAMP_NS, 2.0, '1970-01-01T00:00:00.000002Z'),
+                        (NULL, NULL, NULL, NULL, 3.0, '1970-01-01T00:00:00.000003Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 'A', 5::TIMESTAMP, '1970-01-01T00:00:00.000010Z'),
+                        (2, 'B', 7::TIMESTAMP, '1970-01-01T00:00:00.000020Z'),
+                        (3, NULL, NULL, '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            for (String onClause : new String[]{"p.v = t.st AND p.st = t.ST", "p.tn = t.tm AND p.tm = t.TM"}) {
+                for (String offsets : new String[]{"RANGE FROM 0s TO 0s STEP 1s", "LIST (0)"}) {
+                    assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                            offsets + " AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanNotContaining("slave filter")
+                            .returns("""
+                                    id\tavg
+                                    1\t1.0
+                                    2\tnull
+                                    3\t3.0
+                                    """);
+                }
+            }
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (p.v = t.st AND p.st = t.ST)
+                    HORIZON JOIN prices AS q ON (q.tn = t.tm AND q.tm = t.TM)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Multi Horizon Join")
+                    .withPlanNotContaining("slave filter")
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t1.0\t1.0
+                            2\tnull\tnull
+                            3\t3.0\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumnsMultiSlave() throws Exception {
         assertMemoryLeak(() -> {
             createMasterSymbolSharedBySlaveColumnsTables();

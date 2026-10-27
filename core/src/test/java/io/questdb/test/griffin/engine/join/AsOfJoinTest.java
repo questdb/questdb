@@ -1674,6 +1674,62 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingMasterColumnMixedTypes() throws Exception {
+        // Each ON clause compares one master column with two slave columns of different key types. The
+        // reference in upper case keeps mergeContexts, which compares column names case-sensitively, from
+        // turning the second key into a slave filter, so both keys share the master column. The master
+        // key copier writes that column once, so both keys compare the widest type, VARCHAR or
+        // TIMESTAMP_NS, and the slave key copier must write sl.sy, sl.st or sl.t, which no key compares
+        // with a column of that type, as that type too. Master row 2 matches one key of slave row 11
+        // only. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy SYMBOL, st STRING, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 'A', 'A', 5::TIMESTAMP, 10::TIMESTAMP),
+                        (2, 'B', 'B', 7::TIMESTAMP, 20::TIMESTAMP),
+                        (3, NULL, NULL, NULL, 30::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE sl (id INT, sy SYMBOL, st STRING, v VARCHAR, t TIMESTAMP, n TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO sl VALUES
+                        (10, 'A', 'A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 1::TIMESTAMP),
+                        (11, 'C', 'C', 'B', 7::TIMESTAMP, 7_500::TIMESTAMP_NS, 2::TIMESTAMP),
+                        (12, NULL, NULL, NULL, NULL, NULL, 3::TIMESTAMP)
+                    """);
+
+            final String expected = """
+                    id\tid1
+                    1\t10
+                    2\tnull
+                    3\t12
+                    """;
+            final String[][] onClauses = {
+                    {"sl.v = m.sy AND sl.sy = m.SY", "condition: sl.sy=m.SY and sl.v=m.sy"},
+                    {"sl.v = m.st AND sl.st = m.ST", "condition: sl.st=m.ST and sl.v=m.st"},
+                    {"sl.n = m.t AND sl.t = m.T", "condition: sl.t=m.T and sl.n=m.t"}
+            };
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String[] onClause : onClauses) {
+                    final String query = "SELECT m.id, sl.id FROM m " + join + " JOIN sl ON " + onClause[0];
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(onClause[1])
+                            .returns(expected);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .fullFatJoins()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnChecksMasterKey() throws Exception {
         // m.s1 = s.sym AND m.s2 = s.sym matches only master rows whose s1 and s2 are equal, NULL
         // included. The join checks that before it scans the slave table, so a master row whose
