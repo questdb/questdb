@@ -1703,7 +1703,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // individually acked, so the client's store-and-forward slots
                 // (and, in durable-ack mode, seqTxn tracking) all hinge on the
                 // ack that covers this group-closing sequence.
-                closesDeferredGroup = state.hasUncommittedDeferredRows();
+                // A rowless deferred frame also opens a group that this frame
+                // closes. This frame must commit through commit(), which clears
+                // the rowless marker, instead of joining a commit batch: the
+                // batch's boundary commits bypass commit() and would leave the
+                // ack watermark pinned below rows already in the WAL, so the
+                // client's replay would duplicate them.
+                closesDeferredGroup = state.hasUncommittedDeferredRows() || state.hasWithheldRowlessDeferredFrame();
                 if (isBatchPending && !state.isFrameJoinableToCommitBatch()) {
                     // A singleton lookup can replace the batch's cached writer
                     // only after successful salvage and seqTxn reporting. Retain

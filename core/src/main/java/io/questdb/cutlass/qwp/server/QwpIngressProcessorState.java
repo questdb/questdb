@@ -463,6 +463,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * batch; its sequence stays out of the ack watermark until the batch commits.
      */
     public void addToCommitBatch(long seq) {
+        // The batch-commit paths that bypass commit() rely on this: only commit() closes a deferred group.
+        assert firstRowlessDeferredSequence == -1 && !uncommittedDeferredRows : "commit batch must not form while a deferred group is open";
         if (commitBatchFrames == 0) {
             firstCommitBatchSequence = seq;
         }
@@ -765,6 +767,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public boolean hasUncommittedDeferredRows() {
         return uncommittedDeferredRows;
+    }
+
+    /**
+     * True while a rowless FLAG_DEFER_COMMIT frame is withheld and blocks ack
+     * coverage until {@link #commit()} closes its group -- see
+     * {@link #markRowlessDeferredSequence(long)}.
+     */
+    public boolean hasWithheldRowlessDeferredFrame() {
+        return firstRowlessDeferredSequence != -1;
     }
 
     public boolean isDeferCommit() {

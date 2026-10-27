@@ -732,6 +732,43 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    // A plain frame closing a rowless deferred group commits and acks on its own, so a later NACK cannot strand its rows.
+    @Test
+    public void testPlainFrameAfterRowlessDeferredFrameIsAckedBeforeLaterNack() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    denyCommitTo("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, rowlessDeferredMessage()),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L))
+            );
+
+            Assert.assertEquals("the ack must cover the committed frame and stop at the refused one", 1, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the refused frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 2));
+            Assert.assertFalse("a NACK at seq=1 would replay committed rows", hasErrorResponseForSeq(sent, 1));
+            int ackIndex = indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1);
+            int errorIndex = -1;
+            for (int i = 0, n = sent.size(); i < n && errorIndex < 0; i++) {
+                byte[] f = sent.getQuick(i);
+                if (isBinaryFrame(f) && f[2] != QwpConstants.STATUS_OK && readLeLong(f, 3) == 2) {
+                    errorIndex = i;
+                }
+            }
+            Assert.assertTrue("the committed frame must be acked", ackIndex >= 0);
+            Assert.assertTrue("the ack must precede the error", ackIndex < errorIndex);
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n");
+        });
+    }
+
     /**
      * A failed batch commit is NACKed at the batch's first frame: nothing from it
      * on is committed, and it is the frame the client replays first, so a
