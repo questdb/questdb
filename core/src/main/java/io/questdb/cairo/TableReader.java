@@ -1493,6 +1493,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
     }
 
+    private boolean hasDelta(long partitionTimestamp) {
+        final int partitionIndex = txFile.getPartitionIndex(partitionTimestamp);
+        return partitionIndex > -1 && txFile.getPartitionHasDelta(partitionIndex);
+    }
+
     private void init() {
         txPartitionVersion = txFile.getPartitionTableVersion();
         txColumnVersion = txFile.getColumnVersion();
@@ -2212,7 +2217,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
 
-                if (metadata.isColumnIndexed(columnIndex)) {
+                // getIndexReader() serves a Delta partition's indexes from its catalog, never from this cache. A
+                // reader cached before the partition's first Delta write must not reopen the folder's index files,
+                // which the catalog removes once their base retires. A metadata reload runs before the partitions
+                // are reconciled, so find the partition by its timestamp.
+                if (metadata.isColumnIndexed(columnIndex) && !hasDelta(partitionTimestamp)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
                         indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
