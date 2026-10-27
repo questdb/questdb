@@ -1,0 +1,42 @@
+# One hosted macOS or Windows test job: a matrix of legs that run steps.yml against the Rust
+# library their OS's build job published (rust-build-job.yml). The display name stays
+# "on", so the check names ("Hosted Running tests on <leg>") are unchanged.
+parameters:
+  - name: name
+    type: string
+  - name: dependsOn
+    type: string
+  - name: prebuiltRustArtifact
+    type: string
+  - name: legs
+    type: object
+
+jobs:
+  - job: ${{ parameters.name }}
+    displayName: "on"
+    # The default succeeded() condition skips the legs when the Rust build fails.
+    dependsOn: ${{ parameters.dependsOn }}
+    strategy:
+      matrix: ${{ parameters.legs }}
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    # 90, not 60: the slowest group (windows-cairo-2) takes 40 to 46 minutes on
+    # a normal hosted agent. A slow agent put one run past 60 minutes with every
+    # test still passing (macwin 276777), back when each leg also compiled the
+    # Rust crate; the legs now download it from their OS's Rust build job.
+    timeoutInMinutes: 90
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      DIFF_COVER_THRESHOLD_PCT: 50
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
+      # Hosted groups only run core-module tests; compile just core and its deps.
+      TEST_REACTOR_ARGS: "-pl core -am"
+    steps:
+      - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: ${{ parameters.prebuiltRustArtifact }}

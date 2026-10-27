@@ -23,6 +23,8 @@ jobs:
       poolName: "hetzner-incus-arm"
     steps:
       - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: qdbr-native-linux-aarch64
 
   - job: linux_x64_zfs_jdk25
     workspace:
@@ -48,6 +50,8 @@ jobs:
       poolName: "hetzner-incus-zfs"
     steps:
       - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: qdbr-native-linux-x86-64
 
   - job: linux_x64_graal
     workspace:
@@ -73,3 +77,5 @@ jobs:
       poolName: "hetzner-incus"
     steps:
       - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: qdbr-native-linux-x86-64

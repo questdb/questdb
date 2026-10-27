@@ -764,6 +764,91 @@
                 </plugins>
             </build>
         </profile>
+        <!--
+        Uses a host Rust library that another job already built instead of compiling the crate again.
+        CI only: the hosted macOS/Windows test legs build libquestdbr once per OS (ci/templates/hosted-jobs.yml)
+        and pass -DskipNative -Dqdbr.prebuilt.dir=<dir>. The library is copied into target/classes after
+        `clean`, at the same path the build-rust-library profile writes to.
+        -->
+        <profile>
+            <id>prebuilt-rust-native</id>
+            <activation>
+                <property>
+                    <name>qdbr.prebuilt.dir</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.0.0-M3</version>
+                        <executions>
+                            <execution>
+                                <id>require-skip-native-for-prebuilt-rust</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>skipNative</property>
+                                            <message>qdbr.prebuilt.dir requires -DskipNative</message>
+                                            <!-- Same reason as include-rust-native-artifacts: an empty -DskipNative=
+                                                 leaves build-rust-library active and rebuilds the library. -->
+                                            <regex>true</regex>
+                                            <regexMessage>qdbr.prebuilt.dir requires a bare -DskipNative (value true), not -DskipNative=</regexMessage>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>validate-prebuilt-rust-native</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <fail message="qdbr.prebuilt.dir must contain exactly one Rust library (libquestdbr.so, libquestdbr.dylib or questdbr.dll): ${qdbr.prebuilt.dir}">
+                                            <condition>
+                                                <not>
+                                                    <resourcecount count="1">
+                                                        <fileset dir="${qdbr.prebuilt.dir}" includes="libquestdbr.so,libquestdbr.dylib,questdbr.dll" />
+                                                    </resourcecount>
+                                                </not>
+                                            </condition>
+                                        </fail>
+                                    </target>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>copy-prebuilt-rust-native</id>
+                                <phase>process-resources</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <copy todir="${project.build.outputDirectory}/io/questdb/bin/${platform.dir.name}" overwrite="true" failonerror="true">
+                                            <fileset dir="${qdbr.prebuilt.dir}" includes="libquestdbr.so,libquestdbr.dylib,questdbr.dll" />
+                                        </copy>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>platform-windows-x86-64</id>
             <activation>

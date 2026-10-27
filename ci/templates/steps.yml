@@ -5,6 +5,11 @@ parameters:
   - name: isHetznerAptMirrorEnabled
     type: boolean
     default: true
+  # Name of a pipeline artifact holding this platform's prebuilt Rust library
+  # (rust-build-job.yml). Empty: Maven compiles the crate in this job.
+  - name: prebuiltRustArtifact
+    type: string
+    default: ''
 
 steps:
   - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
@@ -206,56 +211,44 @@ steps:
       destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
+  # Where the Rust library comes from. With prebuiltRustArtifact, the leg tests against the
+  # library a rust-build-job.yml job published instead of compiling the crate; RUST_NATIVE_ARGS
+  # carries the Maven flags for that. It is set on every agent, empty where Maven compiles the
+  # crate itself, because an undefined $(VAR) would reach Maven as literal text. Fork PRs get no
+  # build job on the self-hosted pools (fork code does not run there), so a fork leg on such a
+  # pool falls back to compiling the crate.
+  - ${{ if ne(parameters.prebuiltRustArtifact, '') }}:
+      - bash: |
+          if [ "${IS_FORK}" = "true" ] && [[ "${POOL_NAME}" == hetzner-* ]]; then
+            echo "##vso[task.setvariable variable=RUST_PREBUILT]false"
+            echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
+          else
+            echo "##vso[task.setvariable variable=RUST_PREBUILT]true"
+            echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-native"
+          fi
+        displayName: "Select Rust library source"
+        env:
+          IS_FORK: $(System.PullRequest.IsFork)
+          POOL_NAME: $(poolName)
+      - task: DownloadPipelineArtifact@2
+        displayName: "Download prebuilt Rust library"
+        inputs:
+          buildType: current
+          artifactName: ${{ parameters.prebuiltRustArtifact }}
+          targetPath: $(Pipeline.Workspace)/qdbr-native
+        condition: and(succeeded(), eq(variables['RUST_PREBUILT'], 'true'))
+  - ${{ else }}:
+      - bash: |
+          echo "##vso[task.setvariable variable=RUST_PREBUILT]false"
+          echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
+        displayName: "Select Rust library source"
+
   - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
-
-  - bash: |
-      set -eux
-      SCCACHE_VERSION="0.10.0"
-
-      export PATH="$(CARGO_INSTALL_PATH)/bin:$PATH"
-
-      if [ "$(uname)" == "Darwin" ]; then
-        SCCACHE_BINARY="sccache"
-        ARCH="$(uname -m)"
-        if [ "$ARCH" == "arm64" ]; then
-          ARCHIVE="sccache-v${SCCACHE_VERSION}-aarch64-apple-darwin.tar.gz"
-        else
-          ARCHIVE="sccache-v${SCCACHE_VERSION}-x86_64-apple-darwin.tar.gz"
-        fi
-      else
-        SCCACHE_BINARY="sccache.exe"
-        ARCHIVE="sccache-v${SCCACHE_VERSION}-x86_64-pc-windows-msvc.tar.gz"
-      fi
-
-      if [ -f "$(CARGO_INSTALL_PATH)/bin/${SCCACHE_BINARY}" ]; then
-        echo "sccache already installed at: $(CARGO_INSTALL_PATH)/bin"
-      else
-        echo "Installing sccache ${SCCACHE_VERSION} for $(uname)..."
-
-        URL="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${ARCHIVE}"
-        echo "Downloading from: $URL"
-
-        curl -L "$URL" -o sccache.tar.gz
-        tar xzf sccache.tar.gz
-
-        mkdir -p "$(CARGO_INSTALL_PATH)/bin"
-        find . -name "${SCCACHE_BINARY}" | head -1 | xargs -I {} mv {} "$(CARGO_INSTALL_PATH)/bin/"
-
-        rm -rf sccache.tar.gz sccache-v${SCCACHE_VERSION}-*
-
-        echo "sccache installed successfully"
-      fi
-
-      sccache --version
-      set +x  # workaround for https://github.com/microsoft/azure-pipelines-tasks/issues/10331
-      echo "##vso[task.setvariable variable=RUSTC_WRAPPER]$(CARGO_INSTALL_PATH)/bin/${SCCACHE_BINARY}"
-    displayName: "Install sccache (Windows and macOS)"
-    condition: or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
-    env:
-      SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
-      SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
+    # A leg on a prebuilt library compiles no Rust, except the coverage legs, whose
+    # coverage run builds the instrumented library (qdbr-coverage profile).
+    condition: and(succeeded(), or(ne(variables['RUST_PREBUILT'], 'true'), startsWith(variables['testset'], 'coverage')))
 
   - template: install-llvm.yml
     parameters:
@@ -274,7 +267,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
-      options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+      options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: a bare variable condition replaces Azure's implicit
     # succeeded() guard, so without it this step runs after an earlier step (e.g.
@@ -289,7 +282,7 @@ steps:
         )
       )
   - task: Maven@3
-    displayName: "Run tests (with sccache)"
+    displayName: "Run tests (prebuilt Rust library)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
@@ -302,17 +295,10 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         $(WEB_CONSOLE_PROFILE)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
-      RUSTC_WRAPPER: $(RUSTC_WRAPPER)
-      SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
-      SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
-      # sccache's client gives its server 10 seconds to start by default; a
-      # cold hosted macOS agent exceeded that once (macwin build 272495).
-      SCCACHE_STARTUP_TIMEOUT: "60"
-      CARGO_INCREMENTAL: 0
     timeoutInMinutes: 55
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
@@ -336,7 +322,7 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         $(WEB_CONSOLE_PROFILE)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -365,9 +351,11 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "install"
+      # RUST_NATIVE_ARGS skips the release Rust build here; the coverage run below
+      # compiles the instrumented library either way (qdbr-coverage profile).
       options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests
         -P build-web-console
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |

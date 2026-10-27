@@ -1,8 +1,34 @@
+# Hosted macOS/Windows jobs. The Rust library is compiled once per OS by a build job;
+# every test leg of that OS downloads it instead of compiling the crate itself.
 jobs:
-  - job: RunOn
-    displayName: "on"
-    strategy:
-      matrix:
+  - template: rust-build-job.yml
+    parameters:
+      name: RustBuildMac
+      displayName: "mac-rust-build"
+      pool:
+        vmImage: "macOS-15-arm64"
+        name: "Azure Pipelines"
+      artifact: qdbr-native-darwin-aarch64
+      libName: libquestdbr.dylib
+      expectedArch: arm64
+      isHosted: true
+  - template: rust-build-job.yml
+    parameters:
+      name: RustBuildWindows
+      displayName: "windows-rust-build"
+      pool:
+        vmImage: "windows-latest"
+        name: "Azure Pipelines"
+      artifact: qdbr-native-windows-x86-64
+      libName: questdbr.dll
+      expectedArch: x86_64
+      isHosted: true
+  - template: hosted-test-job.yml
+    parameters:
+      name: RunOnMac
+      dependsOn: RustBuildMac
+      prebuiltRustArtifact: qdbr-native-darwin-aarch64
+      legs:
         # macOS legs run on Apple Silicon: the plain macOS-14/15/26 Azure images
         # are Intel x64, and x86-64 macOS is not a supported platform - aarch64 is
         # the only macOS build we ship. Shard layout is unchanged from those legs.
@@ -100,6 +126,12 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
+  - template: hosted-test-job.yml
+    parameters:
+      name: RunOnWindows
+      dependsOn: RustBuildWindows
+      prebuiltRustArtifact: qdbr-native-windows-x86-64
+      legs:
         windows-griffin-base:
           WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
@@ -230,23 +262,3 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
 
-    pool:
-      vmImage: $(imageName)
-      name: $(poolName)
-    # 90, not 60: the slowest group (windows-cairo-2) takes 40 to 46 minutes on
-    # a normal hosted agent, and the build in front of its tests now compiles
-    # the Rust crate from source. A slow agent put one run past 60 minutes with
-    # every test still passing (macwin 276777).
-    timeoutInMinutes: 90
-    variables:
-      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
-      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
-      DIFF_COVER_THRESHOLD_PCT: 50
-      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
-      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
-      # Hosted groups only run core-module tests; compile just core and its deps.
-      TEST_REACTOR_ARGS: "-pl core -am"
-    steps:
-      - template: steps.yml
