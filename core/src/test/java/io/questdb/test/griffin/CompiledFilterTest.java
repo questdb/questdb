@@ -544,25 +544,39 @@ public class CompiledFilterTest extends AbstractCairoTest {
     public void testEmptyIntervalInFilterMatchesNoRow() throws Exception {
         // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval. The JIT used to push
         // no value for it: under OR or NOT the JVM crashed, and under AND or alone the filter
-        // stored rows. The JIT now compiles the IN as a comparison that is false on every row.
+        // stored rows.
         assertMemoryLeak(() -> {
             createTemporalDaysTable();
             final String empty = " IN '2024-01-06#workday'";
             for (String c : new String[]{"dt", "tm", "tn"}) {
-                assertFilterWithAndWithoutJit(c + empty, keys(), true);
-                assertFilterWithAndWithoutJit(c + " IN ('2024-01-06#workday')", keys(), true);
+                // The IN function is the constant false, and the parser folds the tree around it to
+                // a constant. The code generator then skips the scan or the filter, and with it the JIT.
+                assertFilterWithAndWithoutJit(c + empty, keys(), false);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-06#workday')", keys(), false);
+                assertFilterWithAndWithoutJit(c + empty + " AND k = 6", keys(), false);
+                assertFilterWithAndWithoutJit("NOT " + c + empty, allDayKeysExcept(), false, QueryAssertion::expectSize);
+                assertFilterWithAndWithoutJit(c + " NOT IN ('2024-01-06#workday')", allDayKeysExcept(), false, QueryAssertion::expectSize);
+                assertFilterWithAndWithoutJit(c + empty + " AND " + c + " IN '2024-01'", keys(), false);
+                // The Java filter folds to its other operand, while the JIT compiles the whole tree,
+                // the IN as a comparison that is false on every row.
                 assertFilterWithAndWithoutJit(c + empty + " OR k = 2", keys(2), true);
-                assertFilterWithAndWithoutJit(c + empty + " AND k = 6", keys(), true);
-                assertFilterWithAndWithoutJit("NOT " + c + empty, allDayKeysExcept(), true);
-                assertFilterWithAndWithoutJit(c + " NOT IN ('2024-01-06#workday')", allDayKeysExcept(), true);
                 assertFilterWithAndWithoutJit(c + " NOT" + empty + " AND k < 3", keys(0, 1, 2), true);
-                // A key of a single width leaves the filter vectorized.
                 assertFilterWithAndWithoutJit(c + empty + " OR " + c + " IN '2024-01-02'", keys(2), true);
-                assertFilterWithAndWithoutJit(c + empty + " AND " + c + " IN '2024-01'", keys(), true);
             }
             // The interval scan takes an IN on the designated timestamp only from an AND chain.
             assertFilterWithAndWithoutJit("ts" + empty + " OR k = 2", keys(2), true);
-            assertFilterWithAndWithoutJit("NOT ts" + empty + " OR k = 2", allDayKeysExcept(), true);
+            assertFilterWithAndWithoutJit("NOT ts" + empty + " OR k = 2", allDayKeysExcept(), false, QueryAssertion::expectSize);
+
+            assertQuery("SELECT k FROM x WHERE tm" + empty + " AND k = 6").noLeakCheck().assertsPlan("""
+                    SelectedRecord
+                        Empty table
+                    """);
+            assertQuery("SELECT k FROM x WHERE tm NOT" + empty).noLeakCheck().assertsPlan("""
+                    SelectedRecord
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                    """);
         });
     }
 
@@ -2295,11 +2309,21 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     private void assertFilterWithAndWithoutJit(String filter, String expected, boolean isJitExpected) throws Exception {
+        assertFilterWithAndWithoutJit(filter, expected, isJitExpected, UnaryOperator.identity());
+    }
+
+    // The options configure the factory properties that QueryAssertion checks.
+    private void assertFilterWithAndWithoutJit(
+            String filter,
+            String expected,
+            boolean isJitExpected,
+            UnaryOperator<QueryAssertion> options
+    ) throws Exception {
         final String query = "SELECT k FROM x WHERE " + filter;
         try {
             for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_DISABLED}) {
                 sqlExecutionContext.setJitMode(mode);
-                assertQuery(query).noLeakCheck().returns(expected);
+                options.apply(assertQuery(query).noLeakCheck()).returns(expected);
                 try (RecordCursorFactory factory = select(query)) {
                     Assert.assertEquals(query + ", jit mode " + mode, isJitExpected && mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
                 }
