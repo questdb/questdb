@@ -6404,9 +6404,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     /**
      * Rebuilds the partition's symbol indexes from the parquet file. Rewrite mode writes them
-     * under the current column name txn. Update mode leaves the committed files to pinned
-     * readers and writes under column name txn {@code txn}, which
-     * TableWriter.versionRebuiltParquetIndexes publishes with the _txn commit.
+     * into the new partition directory under each column's committed name txn. Update mode
+     * writes them next to the committed files, which pinned readers still use, under column
+     * name txn {@code txn}; TableWriter.versionRebuiltParquetIndexes points _cv at them in the
+     * same _txn commit.
      */
     private static void updateParquetIndexes(
             int partitionBy,

@@ -443,8 +443,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * The column name txn an unsealed index file name spells after its kind: none for
-     * {@link TableUtils#COLUMN_NAME_TXN_NONE}, otherwise the one remaining dot-free segment.
+     * Parses the column name txn that follows the kind in an unsealed index file name:
+     * {@code sym.k} gives {@link TableUtils#COLUMN_NAME_TXN_NONE} and {@code sym.k.12} gives 12.
+     * Returns {@link #UNKNOWN_COLUMN_NAME_TXN} when the rest of the name is not one numeric segment.
      */
     private static long parseUnsealedIndexFileColumnNameTxn(CharSequence fileName, int kindHi) {
         final int len = fileName.length();
