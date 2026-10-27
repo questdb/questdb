@@ -30,6 +30,7 @@ compile_error!("parquet meta format requires a little-endian target");
 use crate::error::ParquetMetaErrorKind;
 use crate::error::ParquetMetaResult;
 use crate::parquet_meta_err;
+use serde::{Deserialize, Serialize};
 
 // ── File format constants ──────────────────────────────────────────────
 
@@ -80,10 +81,11 @@ pub const SUPPORTED_FOOTER_SECTIONS: usize = 2;
 pub const MAX_SCRATCHPAD_SIZE: usize = 1 << 20;
 
 /// Apply-time `seqTxn` stamped into the `_pm` footer's SEQ_TXN section.
-/// `-1` is the unset sentinel; any other value (including other negative
-/// values) is a real `seqTxn`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// `-1` is the unset sentinel. Serde deserialization accepts only this sentinel
+/// or a non-negative sequence number.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[repr(transparent)]
+#[serde(transparent)]
 pub struct SeqTxn(i64);
 
 impl SeqTxn {
@@ -105,6 +107,22 @@ impl SeqTxn {
 impl Default for SeqTxn {
     fn default() -> Self {
         Self::UNSET
+    }
+}
+
+impl<'de> Deserialize<'de> for SeqTxn {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = i64::deserialize(deserializer)?;
+        if value < -1 {
+            return Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Signed(value),
+                &"seqTxn >= -1",
+            ));
+        }
+        Ok(Self::new(value))
     }
 }
 
@@ -681,6 +699,27 @@ pub const fn decode_stat_sizes(stat_sizes: u8) -> (u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seq_txn_serde_round_trip() {
+        for value in [-1, 0, 1, i64::MAX] {
+            let json = value.to_string();
+            let seq_txn = serde_json::from_str::<SeqTxn>(&json).unwrap();
+            assert_eq!(seq_txn.get(), value);
+            assert_eq!(serde_json::to_string(&seq_txn).unwrap(), json);
+        }
+    }
+
+    #[test]
+    fn seq_txn_serde_rejects_invalid_values() {
+        for value in [i64::MIN, -2] {
+            let error = serde_json::from_str::<SeqTxn>(&value.to_string()).unwrap_err();
+            assert!(error.to_string().contains("seqTxn >= -1"));
+        }
+        for json in ["null", "true", "1.5", "\"1\"", "9223372036854775808"] {
+            assert!(serde_json::from_str::<SeqTxn>(json).is_err(), "{json}");
+        }
+    }
 
     // ── Codec tests ────────────────────────────────────────────────────
 

@@ -825,7 +825,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                             parquetFileSize,
                             partitionBy,
                             timestampType,
-                            doRebuild
+                            doRebuild,
+                            txWriter.getPartitionHasDelta(i)
                     );
                 } finally {
                     // POSTING seal() retains Path thread-locals; clear per partition.
@@ -1154,6 +1155,8 @@ public class TableSnapshotRestore implements QuietCloseable {
      * shallow-copies its state, so the {@code _pm} footer is resolved and
      * CRC-verified once instead of three times. The caller owns {@code path}; the
      * rebuild-only buffers are non-null only when {@code rebuildIndexes} is set.
+     * With {@code hasDelta}, only {@code data.parquet} is validated: the Delta
+     * catalog owns {@code _pm}.
      */
     private void processParquetPartition(
             Path path,
@@ -1172,7 +1175,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetFileSize,
             int partitionBy,
             int timestampType,
-            boolean rebuildIndexes
+            boolean rebuildIndexes,
+            boolean hasDelta
     ) {
         // Reset the reused path to the table root.
         path.of(tablePathStr).trimTo(pathTableLen);
@@ -1180,6 +1184,13 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Set path to partition dir
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionDirLen = path.size();
+
+        if (hasDelta) {
+            // The Delta catalog owns this partition's base. Its checkpoint restore has installed
+            // the selected _pm slot and checked the local data.parquet when that base reads it;
+            // a base the catalog replaced leaves no local data file to check.
+            return;
+        }
 
         // Validate data.parquet by size before touching _pm: regeneration reads
         // it at the committed size, so an undersized file must fail first. Runs
@@ -1200,7 +1211,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .put(", onDisk=").put(onDiskSize)
                     .put(']');
         }
-
         long parquetMetaAddr = 0;
         long parquetMetaFileSize = 0;
         try {

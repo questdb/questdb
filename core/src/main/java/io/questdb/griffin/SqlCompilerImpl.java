@@ -1785,48 +1785,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 };
 
                 final int functionPosition = lexer.getPosition();
-                ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
-                String designatedTimestampColumnName = null;
-                int tsIndex = tableMetadata.getTimestampIndex();
-                if (tsIndex >= 0) {
-                    designatedTimestampColumnName = tableMetadata.getColumnName(tsIndex);
-                }
-                if (designatedTimestampColumnName != null) {
-                    GenericRecordMetadata metadata = new GenericRecordMetadata();
-                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, tableMetadata.getTimestampType(), null));
-                    Function function = functionParser.parseFunction(expr, metadata, executionContext);
-                    try {
-                        if (function != null && ColumnType.isBoolean(function.getType())) {
-                            function.init(null, executionContext);
-                            if (deltaCheckReader != null) {
-                                rejectDeltaPartitionConversion(deltaCheckReader, tableToken, function, Long.MIN_VALUE,
-                                        action == PartitionAction.CONVERT_TO_PARQUET, functionPosition);
-                            }
-                            if (reader != null) {
-                                int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
-                                if (affected == 0) {
-                                    throw CairoException.partitionManipulationRecoverable().position(functionPosition)
-                                            .put("no partitions matched WHERE clause");
-                                }
-                            }
-                            // Check for WITH clause for CONVERT TO PARQUET
-                            CharSequence nextTok = SqlUtil.fetchNext(lexer);
-                            if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
-                                parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
-                                nextTok = SqlUtil.fetchNext(lexer);
-                            }
-                            if (nextTok != null && !isSemicolon(nextTok)) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
-                            }
-                            compiledQuery.ofAlter(this.alterOperationBuilder.build());
-                        } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
-                        }
-                    } finally {
-                        Misc.free(function);
+                try (Function function = parsePartitionFilter(tableMetadata, executionContext)) {
+                    if (deltaCheckReader != null) {
+                        rejectDeltaPartitionConversion(deltaCheckReader, tableToken, function, Long.MIN_VALUE,
+                                action == PartitionAction.CONVERT_TO_PARQUET, functionPosition);
                     }
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
+                    if (reader != null) {
+                        int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
+                        if (affected == 0) {
+                            throw CairoException.partitionManipulationRecoverable().position(functionPosition)
+                                    .put("no partitions matched WHERE clause");
+                        }
+                    }
+                    // Check for WITH clause for CONVERT TO PARQUET
+                    CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                    if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
+                        parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                        nextTok = SqlUtil.fetchNext(lexer);
+                    }
+                    if (nextTok != null && !isSemicolon(nextTok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+                    }
+                    compiledQuery.ofAlter(this.alterOperationBuilder.build());
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
@@ -3091,7 +3071,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isDisableKeyword(tok)) {
                 compileAlterTableDisableExt(executionContext, tok, tableToken, tableNamePosition);
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+                compileAlterTableExt(executionContext, tok, tableToken, tableNamePosition);
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken)
@@ -5556,8 +5536,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             AlterOperationBuilder changePartitionStatement,
             long timestamp
     ) {
-        partitionFunctionRec.setTimestamp(timestamp);
-        if (filter.getBool(partitionFunctionRec)) {
+        if (matchesPartition(filter, timestamp)) {
             changePartitionStatement.addPartitionToList(timestamp, functionPosition);
             return 1;
         }
@@ -6303,6 +6282,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
     }
 
+    protected void compileAlterTableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
     protected void compileAlterTableSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
         LOG.debug().$("'param', 'ttl' or 'type' expected [tableToken=").$(tableToken)
                 .$(", tableNamePosition=").$(tableNamePosition)
@@ -6391,6 +6374,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return new AlterOperationBuilder();
     }
 
+    protected void expectStatementEnd(CharSequence tok) throws SqlException {
+        if (tok != null) {
+            if (!isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+            if (isSingleQueryMode && (tok = SqlUtil.fetchNext(lexer)) != null) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+        }
+    }
+
     /**
      * Exposed so that a subclass can compile expressions the base compiler captured but does not
      * itself consume - the audited-view parameters, which Enterprise turns into functions.
@@ -6434,6 +6428,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         SqlUtil.fetchNext(lexer);
     }
 
+    protected boolean matchesPartition(Function filter, long timestamp) {
+        partitionFunctionRec.setTimestamp(timestamp);
+        return filter.getBool(partitionFunctionRec);
+    }
+
     @NotNull
     protected SqlOptimiser newSqlOptimiser(
             CairoConfiguration configuration,
@@ -6459,6 +6458,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 functionParser,
                 path
         );
+    }
+
+    /** Parses a partition predicate against the designated timestamp column. The caller closes the function. */
+    protected Function parsePartitionFilter(TableRecordMetadata tableMetadata, SqlExecutionContext executionContext) throws SqlException {
+        ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
+        int timestampIndex = tableMetadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
+        }
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata(tableMetadata.getColumnName(timestampIndex), tableMetadata.getTimestampType(), null));
+        Function function = functionParser.parseFunction(expr, metadata, executionContext);
+        try {
+            if (function == null || !ColumnType.isBoolean(function.getType())) {
+                throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+            }
+            function.init(null, executionContext);
+            return function;
+        } catch (Throwable th) {
+            Misc.free(function);
+            throw th;
+        }
     }
 
     protected void registerKeywordBasedExecutors() {

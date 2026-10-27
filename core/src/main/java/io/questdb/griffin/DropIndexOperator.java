@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -77,13 +76,12 @@ public class DropIndexOperator {
                 long pVersion = tableWriter.getPartitionNameTxn(pIndex);
                 long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                 long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1);
-                byte partitionFormat = tableWriter.getPartitionFormat(pIndex);
-
                 if (columnTop != -1) {
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
 
-                    if (partitionFormat == PartitionFormat.NATIVE) {
+                    // An evicted Delta partition's base is remote: it has no native column file to link.
+                    if (tableWriter.isPartitionBaseNative(pIndex)) {
                         final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                         // create hard link to column data
                         // src

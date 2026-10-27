@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameSource;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -294,6 +295,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final StringSink debugInvariantSink = new StringSink();
     private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
     private final ObjList<PostingSealPurgeTask> deferredPostingSealPurges = new ObjList<>();
+    private final PartitionFrameSource deltaBaseSource = new PartitionFrameSource();
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
@@ -2826,7 +2828,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long txn = txWriter.getPartitionNameTxn(partitionIndex);
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
                         try {
-                            readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
+                            if (!readDeltaParquetBaseMinMaxTimestamps(partitionIndex)) {
+                                readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
+                            }
                             includeDeltaTimestampBounds(partitionIndex);
                             maxTimestamp = attachMaxTimestamp;
                         } finally {
@@ -3272,6 +3276,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit(metadata.getO3MaxLag(), configuration.getCommitMode());
     }
 
+    /**
+     * Gives a delta-active partition without a Delta catalog an empty one, keeping the WAL seqTxn.
+     * Returns false when the partition is gone, not delta-active, or already has a catalog.
+     */
+    public boolean initDeltaPartition(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0 || !isPartitionDeltaActive(partitionIndex) || txWriter.getPartitionHasDelta(partitionIndex)) {
+            return false;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return false;
+        }
+        deltaWriter.initialize(this, partitionIndex);
+        txWriter.setPartitionHasDelta(partitionIndex, true);
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+        return true;
+    }
+
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
@@ -3306,6 +3330,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    /**
+     * Whether the partition's rows are in its native column files: a native partition whose Delta
+     * catalog, if any, still reads its native base. An evicted Delta partition reads a remote base,
+     * and its native column files may be gone.
+     */
+    public boolean isPartitionBaseNative(int partitionIndex) {
+        if (txWriter.isPartitionParquet(partitionIndex)) {
+            return false;
+        }
+        if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+            return true;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return true;
+        }
+        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
+        return deltaBaseSource.getKind() == PartitionFrameSource.NATIVE;
     }
 
     public boolean isPartitionDeltaActive(int partitionIndex) {
@@ -9007,7 +9051,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                     try {
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                        readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
+                        if (!readDeltaParquetBaseMinMaxTimestamps(prevIndex)) {
+                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
+                        }
                         includeDeltaTimestampBounds(prevIndex);
                         nextMaxTimestamp = attachMaxTimestamp;
                     } finally {
@@ -11950,7 +11996,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long partitionSize = txWriter.getPartitionSize(0);
                         setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
                         CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-                        if (!readCompositePartitionBoundaryTimestamp(0, path, tsColumnName, false)) {
+                        if (!readCompositePartitionBoundaryTimestamp(0, path, tsColumnName, false)
+                                && !readDeltaParquetBaseMinMaxTimestamps(0)) {
                             readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, tsColumnName, txWriter.isPartitionParquet(0), -1, partitionSize);
                         }
                         includeDeltaTimestampBounds(0);
@@ -11963,7 +12010,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
                         CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-                        if (!readCompositePartitionBoundaryTimestamp(lastPartitionIndex, path, tsColumnName, true)) {
+                        if (!readCompositePartitionBoundaryTimestamp(lastPartitionIndex, path, tsColumnName, true)
+                                && !readDeltaParquetBaseMinMaxTimestamps(lastPartitionIndex)) {
                             readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, tsColumnName, txWriter.isPartitionParquet(lastPartitionIndex), -1, partitionSize);
                         }
                         includeDeltaTimestampBounds(lastPartitionIndex);
@@ -12389,7 +12437,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                         try {
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, prevSize);
+                            if (!readDeltaParquetBaseMinMaxTimestamps(prevIndex)) {
+                                readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, prevSize);
+                            }
                             includeDeltaTimestampBounds(prevIndex);
                             o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
                         } finally {
@@ -13468,19 +13518,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in a frame no commit can reuse: they would keep its disk space, and on Windows block its removal.
                     compositeFrameCache.evict(timestamp, txn);
                 }
+                setPathForNativePartition(other, timestampType, partitionBy, timestamp, txn);
+                other.$();
+                if (deltaWriter != null) {
+                    deltaWriter.cancel(other);
+                }
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
                 // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
-                    setPathForNativePartition(
-                            other,
-                            timestampType,
-                            partitionBy,
-                            timestamp,
-                            txn
-                    );
-                    other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
                     if (deltaWriter != null && !deltaWriter.purge(other)) {
                         // Delta files of this version remain; the async purge retries both.
@@ -15477,6 +15524,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Reads the timestamp bounds of a Delta partition's Parquet base into attachMinTimestamp and
+     * attachMaxTimestamp, from the metadata slot the catalog selects at its committed length. Returns
+     * false without a catalog or for a native base, which the caller reads as before.
+     */
+    private boolean readDeltaParquetBaseMinMaxTimestamps(int partitionIndex) {
+        if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+            return false;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return false;
+        }
+        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
+        final int kind = deltaBaseSource.getKind();
+        if (kind != PartitionFrameSource.PARQUET && kind != PartitionFrameSource.REMOTE_PARQUET) {
+            return false;
+        }
+        // The catalog's base can sit in either slot and outgrow the _txn Parquet size.
+        final long committedBytes = deltaBaseSource.getMetadataCommittedBytes();
+        final Path metaPath = Path.getThreadLocal2(path).trimTo(pathSize);
+        setPathForNativePartition(metaPath, timestampType, partitionBy, txWriter.getPartitionTimestampByIndex(partitionIndex), deltaBaseSource.getPartitionNameTxn());
+        metaPath.concat(deltaBaseSource.getMetadataSlot() == 0 ? PARQUET_METADATA_FILE_NAME : PARQUET_METADATA_B_FILE_NAME);
+        final long fd = openRO(ff, metaPath.$(), LOG);
+        final long addr;
+        try {
+            final long available = ff.length(fd);
+            if (committedBytes <= 0 || available < committedBytes) {
+                throw CairoException.critical(0)
+                        .put("Parquet metadata is shorter than catalog prefix [path=").put(metaPath)
+                        .put(", required=").put(committedBytes)
+                        .put(", available=").put(available).put(']');
+            }
+            addr = mapRO(ff, fd, committedBytes, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        } finally {
+            ff.close(fd);
+        }
+        // The committed prefix ends with the base's own footer.
+        try {
+            parquetMetaReader.of(addr, committedBytes);
+            parquetMetaReader.resolveLastFooter(false);
+            final int rowGroupCount = parquetMetaReader.getRowGroupCount();
+            final int timestampIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
+            if (rowGroupCount == 0) {
+                attachMinTimestamp = Long.MAX_VALUE;
+                attachMaxTimestamp = Long.MIN_VALUE;
+            } else {
+                assert timestampIndex > -1;
+                attachMinTimestamp = parquetMetaReader.getRowGroupMinTimestamp(0, timestampIndex);
+                attachMaxTimestamp = parquetMetaReader.getRowGroupMaxTimestamp(rowGroupCount - 1, timestampIndex);
+            }
+        } finally {
+            parquetMetaReader.clear();
+            ff.munmap(addr, committedBytes, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        }
+        return true;
+    }
+
     private void readDeltaTimestampBounds(int partitionIndex) {
         final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
         if (deltaWriter == null) {
@@ -15519,9 +15624,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
             setStateForTimestamp(other, timestamp);
-            final long minTimestamp = isParquet
-                    ? readMinTimestampParquet(other, partitionIndex)
-                    : readMinTimestampNative(other, timestamp);
+            final long minTimestamp;
+            if (readDeltaParquetBaseMinMaxTimestamps(partitionIndex)) {
+                minTimestamp = attachMinTimestamp;
+            } else {
+                minTimestamp = isParquet
+                        ? readMinTimestampParquet(other, partitionIndex)
+                        : readMinTimestampNative(other, timestamp);
+            }
             if (txWriter.getPartitionHasDelta(partitionIndex)) {
                 readDeltaTimestampBounds(partitionIndex);
                 return Math.min(minTimestamp, Unsafe.getLong(tempMem16b));

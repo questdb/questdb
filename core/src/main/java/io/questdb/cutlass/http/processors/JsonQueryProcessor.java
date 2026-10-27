@@ -122,6 +122,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
             this.queryExecutors.extendAndSet(CompiledQuery.VACUUM, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.COMPACT, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
