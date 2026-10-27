@@ -473,10 +473,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return commitBatchBytes;
     }
 
-    public int getCommitBatchFrames() {
-        return commitBatchFrames;
-    }
-
     public long getFirstCommitBatchSequence() {
         return firstCommitBatchSequence;
     }
