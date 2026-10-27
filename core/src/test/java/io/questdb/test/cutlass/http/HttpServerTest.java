@@ -190,7 +190,7 @@ public class HttpServerTest extends AbstractBootstrapTest {
 
     private void testEmptySimpleResponseFraming(int sendFragmentSize) throws Exception {
         assertMemoryLeak(() -> {
-            final WebConsoleLoadingTest.RecordingHttpClientNetwork network = new WebConsoleLoadingTest.RecordingHttpClientNetwork();
+            final RecordingHttpClientNetwork network = new RecordingHttpClientNetwork();
             try (HttpServerMock server = new HttpServerMock(1, 9001, sendFragmentSize);
                  io.questdb.client.cutlass.http.client.HttpClient client = network.newClient()) {
                 server.registerEndpoint(request -> {

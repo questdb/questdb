@@ -31,9 +31,6 @@ import io.questdb.ServerMain;
 import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
-import io.questdb.client.network.NetworkFacade;
-import io.questdb.client.network.NetworkFacadeImpl;
-import io.questdb.client.std.Unsafe;
 import io.questdb.client.std.str.Utf8String;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -118,14 +115,6 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         testWebConsoleRootRedirects("/context");
     }
 
-    private void assertRequest(HttpClient.Request request, int responseCode, String expectedResponse) {
-        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
-            responseHeaders.await();
-            TestUtils.assertEquals(String.valueOf(responseCode), responseHeaders.getStatusCode().asAsciiCharSequence());
-            ClientHttpUtils.assertChunkedBody(responseHeaders, expectedResponse);
-        }
-    }
-
     private void assertRequest(
             HttpClient httpClient,
             String contextPath,
@@ -139,7 +128,7 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         if (cachedResponse) {
             request.header(HEADER_IF_NONE_MATCH.toString(), "\"" + indexFileLastModified + "\"");
         }
-        assertRequest(request, expectedResponseCode, expectedResponse);
+        ClientHttpUtils.assertResponse(request, expectedResponseCode, expectedResponse);
     }
 
     private void followRedirect(HttpClient httpClient, RecordingHttpClientNetwork network, String path, String expectedLocation) {
@@ -157,7 +146,7 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         Assert.assertEquals(TEST_PAYLOAD.length(), page.getContentLength());
         ClientHttpUtils.assertChunkedBody(page, TEST_PAYLOAD);
         network.assertStatusLine(HTTP_OK);
-        Assert.assertEquals(1, network.connectCount);
+        network.assertSingleConnection();
     }
 
     private void testEmptyRedirectFraming(String contextPath, int sendFragmentSize) throws Exception {
@@ -174,7 +163,7 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
                             env.put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
                             env.put(PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(sendFragmentSize));
                             env.put(PropertyKey.HTTP_REDIRECT_COUNT.getEnvVarName(), "1");
-                            env.put("QDB_HTTP_REDIRECT_1", "/custom -> " + pagePath);
+                            env.put(PropertyKey.HTTP_REDIRECT_PREFIX.getEnvVarName() + "1", "/custom -> " + pagePath);
                             return Collections.unmodifiableMap(env);
                         }
 
@@ -213,7 +202,6 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
 
                 followRedirect(httpClient, network, "/custom", pagePath + "?test=1");
                 followRedirect(httpClient, network, normalizedContext, pagePath + "?test=1");
-                Assert.assertEquals(1, network.connectCount);
             }
         });
     }
@@ -228,7 +216,7 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
                     request.GET().url(contextPathWebConsole + "/exec").query("query", "select 1");
-                    assertRequest(
+                    ClientHttpUtils.assertResponse(
                             request,
                             HttpURLConnection.HTTP_OK,
                             "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
@@ -298,66 +286,4 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    static class RecordingHttpClientNetwork extends NetworkFacadeImpl {
-        private final StringBuilder received = new StringBuilder();
-        private int connectCount;
-
-        @Override
-        public int connectAddrInfo(int fd, long addrInfo) {
-            connectCount++;
-            return super.connectAddrInfo(fd, addrInfo);
-        }
-
-        @Override
-        public int recvRaw(int fd, long buffer, int bufferLen) {
-            // Do not let the client's header parser discard unexpected bytes after the terminator.
-            final int count = super.recvRaw(fd, buffer, Math.min(bufferLen, 1));
-            if (count > 0) {
-                received.append((char) (Unsafe.getUnsafe().getByte(buffer) & 0xff));
-            }
-            return count;
-        }
-
-        void assertEmptyResponse(HttpClient.ResponseHeaders response, int status) {
-            TestUtils.assertEquals(Integer.toString(status), response.getStatusCode().asAsciiCharSequence());
-            final boolean isLengthForbidden = status == HTTP_NO_CONTENT || status == HTTP_NOT_MODIFIED;
-            Assert.assertEquals("empty responses need status-appropriate framing", isLengthForbidden ? -1 : 0, response.getContentLength());
-            Assert.assertNull(response.getHeader(new Utf8String("Transfer-Encoding")));
-            Assert.assertNull(response.getHeader(new Utf8String("Content-Type")));
-            Assert.assertFalse(response.isChunked());
-            ClientHttpUtils.assertChunkedBody(response, "");
-            assertStatusLine(status);
-            final String wire = received.toString();
-            Assert.assertEquals(wire, wire.length() - 4, wire.indexOf("\r\n\r\n"));
-            Assert.assertEquals(wire, isLengthForbidden ? 0 : 1, wire.split("Content-Length:", -1).length - 1);
-        }
-
-        void assertSingleConnection() {
-            Assert.assertEquals(1, connectCount);
-        }
-
-        void assertStatusLine(int status) {
-            Assert.assertTrue(received.toString(), received.toString().startsWith("HTTP/1.1 " + status + " "));
-        }
-
-        void clearReceived() {
-            received.setLength(0);
-        }
-
-        HttpClient newClient() {
-            return HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration() {
-                @Override
-                public NetworkFacade getNetworkFacade() {
-                    return RecordingHttpClientNetwork.this;
-                }
-
-                @Override
-                public int getTimeout() {
-                    return 10_000;
-                }
-            });
-        }
-    }
-
 }
