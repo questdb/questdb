@@ -378,10 +378,11 @@ public class SqlUtil {
      * This also adds {@code *} for the tables in {@code wildcardSources} whose wildcard the optimised
      * model keeps whole: the optimiser keeps every column of the sub-query the wildcard sits in, so the
      * view reads every column of the table, including one the table gains after the view is created.
-     * For that, the scans of the table have to read every column the optimiser enumerated for them, not
-     * every column the table has by the time this runs: a column an ALTER TABLE adds while the view
-     * compiles is not in the plan built before it, and the {@code *} covers it once the plan is built
-     * again.
+     * For that, the scans of the table under the wildcard have to read every column the optimiser
+     * enumerated for them, not every column the table has by the time this runs: a column an ALTER TABLE
+     * adds while the view compiles is not in the plan built before it, and the {@code *} covers it once
+     * the plan is built again. A scan of the table elsewhere in the plan can have enumerated the columns
+     * after the ALTER TABLE, so the check leaves it out.
      *
      * @param engine          the engine, which resolves the table names
      * @param model           the SELECT of the view, after optimisation
@@ -2237,9 +2238,10 @@ public class SqlUtil {
             }
             // The scan of a table whose wildcard the plan keeps whole reads every column of it. One that
             // does not has met a rewrite this does not recognise, and the map keeps only its columns. Every
-            // column is every one the optimiser enumerated for the plan: one that an ALTER TABLE adds while
-            // the view compiles is in the metadata of the table, but not in the plan built before it.
-            if (wildcardSources.isEveryScannedColumnRead(tableToken.getTableName(), columns)) {
+            // column is every one the optimiser enumerated for the scans under the holder: one that an ALTER
+            // TABLE adds while the view compiles is in the metadata of the table, but not in the plan built
+            // before it, and a scan of the table elsewhere in the plan may already list it.
+            if (wildcardSources.isEveryScannedColumnRead(sourceModel, tableToken.getTableName(), columns)) {
                 columns.add("*");
             }
         }
@@ -2778,13 +2780,21 @@ public class SqlUtil {
             scans.add(scan);
         }
 
-        // Whether the plan scans the table, and its scans read every column the optimiser enumerated for
-        // them from the metadata of the table, the columns a wildcard of the plan expands to.
-        private boolean isEveryScannedColumnRead(String tableName, LowerCaseCharSequenceHashSet readColumns) {
+        // Whether the plan scans the table under sourceModel, and the plan reads every column the optimiser
+        // enumerated for those scans from the metadata of the table, the columns the wildcard sourceModel
+        // keeps expands to. The optimiser enumerates the columns of each scan of the table separately, so a
+        // scan elsewhere in the plan can list a column that an ALTER TABLE added after the optimiser
+        // enumerated the scans under sourceModel, and that the plan built on them does not read.
+        private boolean isEveryScannedColumnRead(
+                IQueryModel sourceModel,
+                String tableName,
+                LowerCaseCharSequenceHashSet readColumns
+        ) {
             boolean isScanned = false;
             for (int i = 0, n = scans.size(); i < n; i++) {
-                if (Chars.equalsIgnoreCase(scanTableNames.getQuick(i), tableName)) {
-                    final ObjList<CharSequence> columnNames = scans.getQuick(i).getWildcardColumnNames();
+                final IQueryModel scan = scans.getQuick(i);
+                if (Chars.equalsIgnoreCase(scanTableNames.getQuick(i), tableName) && isReachable(sourceModel, scan)) {
+                    final ObjList<CharSequence> columnNames = scan.getWildcardColumnNames();
                     for (int j = 0, m = columnNames.size(); j < m; j++) {
                         if (readColumns.excludes(columnNames.getQuick(j))) {
                             return false;

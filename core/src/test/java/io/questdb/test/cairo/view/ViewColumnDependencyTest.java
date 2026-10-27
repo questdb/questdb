@@ -516,36 +516,36 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testUnnarrowedNestedWildcardOfTableAlteredBetweenItsScans() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The view scans x twice. x gains a column after the optimiser has read the columns of the scan
+            // under the wildcard and before it reads those of the other scan, which then lists the column the
+            // plan built before the ALTER TABLE does not read. Only the scan under the wildcard decides its "*".
+            assertWildcardKeptWhileTableAltered(
+                    "SELECT count() FROM (SELECT * FROM x) CROSS JOIN y CROSS JOIN (SELECT a FROM x)",
+                    """
+                            count
+                            8
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testUnnarrowedNestedWildcardOfTableAlteredWhileViewCompiles() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             // x gains a column after the optimiser has read its columns and before the statement records the
             // dependencies, as it does when an ALTER TABLE commits while the view compiles. The plan, built
             // again on the new metadata, reads the added column, and the "*" the view records for x covers it.
-            final ColumnAddingSecurityContext securityContext = new ColumnAddingSecurityContext();
-            try (
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
-                    SqlExecutionContext denyContext = denyBaseTableSelectContext()
-            ) {
-                final String[] statements = {"CREATE VIEW", "ALTER VIEW"};
-                final String[] expectedDependencies = {"{x=[*, a, b, k, ts], y=[]}", "{x=[*, a, b, e1, k, ts], y=[]}"};
-                for (int i = 0; i < statements.length; i++) {
-                    securityContext.addColumnOnce("e" + (i + 1));
-                    execute(statements[i] + " v AS (SELECT count() FROM (SELECT * FROM x) CROSS JOIN y)", context);
-                    drainWalAndViewQueues();
-                    Assert.assertFalse(statements[i], securityContext.isColumnPending());
-                    Assert.assertEquals(statements[i], expectedDependencies[i], dependenciesOf("v"));
-                    assertQuery("SELECT * FROM v")
-                            .withContext(denyContext)
-                            .noLeakCheck()
-                            .noRandomAccess()
-                            .expectSize()
-                            .returns("""
-                                    count
-                                    4
-                                    """);
-                }
-            }
+            assertWildcardKeptWhileTableAltered(
+                    "SELECT count() FROM (SELECT * FROM x) CROSS JOIN y",
+                    """
+                            count
+                            4
+                            """
+            );
         });
     }
 
@@ -864,6 +864,33 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             }
         } catch (AssertionError e) {
             throw new AssertionError(statement + ": " + viewSql, e);
+        }
+    }
+
+    // Records the SELECT as the definition of the view v with CREATE VIEW, then with ALTER VIEW, while x gains
+    // a column after the optimiser has read the columns of x, and asserts that the view records "*" for x and
+    // that a principal with no permission on the columns of the base tables reads it.
+    private void assertWildcardKeptWhileTableAltered(String viewSql, String expectedResult) throws Exception {
+        final ColumnAddingSecurityContext securityContext = new ColumnAddingSecurityContext();
+        try (
+                SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
+                SqlExecutionContext denyContext = denyBaseTableSelectContext()
+        ) {
+            final String[] statements = {"CREATE VIEW", "ALTER VIEW"};
+            final String[] expectedDependencies = {"{x=[*, a, b, k, ts], y=[]}", "{x=[*, a, b, e1, k, ts], y=[]}"};
+            for (int i = 0; i < statements.length; i++) {
+                securityContext.addColumnOnce("e" + (i + 1));
+                execute(statements[i] + " v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+                Assert.assertFalse(statements[i], securityContext.isColumnPending());
+                Assert.assertEquals(statements[i], expectedDependencies[i], dependenciesOf("v"));
+                assertQuery("SELECT * FROM v")
+                        .withContext(denyContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expectedResult);
+            }
         }
     }
 
