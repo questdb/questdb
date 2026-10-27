@@ -216,6 +216,7 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
     public void testEscapeJsonStrExhaustionAndExactFit() throws Exception {
         assertMemoryLeak(() -> {
             assertNativeHttpOverflow("abcdef", "preabcde");
+            assertNativeHttpOverflow("abcdefgh", "preabcde");
             assertNativeHttpOverflow("ab\u0000", "preab\\u0");
             assertNativeHttpOverflow("abcd\u0000", "preabcd\\");
             try (DirectUtf16Sink nativeInput = new DirectUtf16Sink(64); HttpConnectionContext http = newHttp(8)) {
