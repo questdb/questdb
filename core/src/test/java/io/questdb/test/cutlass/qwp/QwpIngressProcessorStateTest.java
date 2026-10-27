@@ -87,6 +87,241 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
+    @Test
+    public void testPreparedSingletonMalformedValueRestoresBatchSavepoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prepared_strings (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int pass = 0; pass < 2; pass++) {
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer("prepared_strings")) {
+                        var value = table.getOrCreateColumn("val", QwpConstants.TYPE_VARCHAR, false);
+                        var timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                        value.addString(pass == 0 ? "prefix" : "ok");
+                        timestamp.addLong(1_000_000L);
+                        table.nextRow();
+                        if (pass == 1) {
+                            value.addString("ab");
+                            timestamp.addLong(2_000_000L);
+                            table.nextRow();
+                        }
+                        int length = encoder.encode(table);
+                        long address = encoder.getBuffer().getBufferPtr();
+                        if (pass == 1) {
+                            corruptQwpUtf8Value(address, length, QwpConstants.TYPE_VARCHAR);
+                        }
+                        state.addData(address, address + length);
+                    }
+                    state.prepareMessage();
+                    Assert.assertTrue(state.isOk());
+                    if (pass == 1) {
+                        Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                        state.armCommitBatchSavepoints(true);
+                    }
+                    state.processPreparedMessage();
+                    if (pass == 0) {
+                        Assert.assertTrue(state.isOk());
+                        state.addToCommitBatch(0);
+                        state.clearMessageState();
+                    } else {
+                        Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                        Assert.assertTrue(state.rollbackToCommitBatchSavepoints());
+                        state.clearErrorForBatchSalvage();
+                        state.commit();
+                        Assert.assertTrue(state.isOk());
+                    }
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT val FROM prepared_strings").expectSize().returns("val\nprefix\n");
+        });
+    }
+
+    @Test
+    public void testPreparedMessageConsumesEachBlockOnceAndReusesSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int pass = 0; pass < 2; pass++) {
+                    prepareLongBlocks(state, 1, "prepared", "prepared");
+                    Assert.assertFalse(state.isFrameJoinableToCommitBatch());
+                    state.processPreparedMessage();
+                    Assert.assertTrue(state.isOk());
+                    state.processPreparedMessage(); // the prepared first cursor cannot be consumed twice
+                    state.commit();
+                    Assert.assertTrue(state.isOk());
+                    state.clearMessageState();
+                }
+                prepareLongBlocks(state, 1, "prepared");
+                state.clearMessageState();
+                state.processPreparedMessage();
+                prepareLongBlocks(state, 1, "prepared");
+                state.clear();
+                state.processPreparedMessage();
+                prepareLongBlocks(state, 1, "prepared");
+                state.onDisconnected();
+                state.processPreparedMessage();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testPreparedMessageClassifiesEmptyAndRowlessBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareLongBlocks(state, 0);
+                Assert.assertFalse(state.isFrameJoinableToCommitBatch());
+                state.processPreparedMessage();
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+                prepareLongBlocks(state, 0, "prepared");
+                Assert.assertTrue(state.isFrameJoinableToCommitBatch());
+                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                state.processPreparedMessage();
+                state.addToCommitBatch(0);
+                state.clearMessageState();
+                prepareLongBlocks(state, 1, "prepared");
+                Assert.assertFalse("a rowless anonymous batch cannot authorize a lookup", state.isPreparedMessageJoinableToCommitBatch());
+                state.resetCommitBatch();
+                state.processPreparedMessage();
+                state.addToCommitBatch(1);
+                state.clearMessageState();
+                prepareLongBlocks(state, 0, "prepared");
+                Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                state.processPreparedMessage();
+                state.clearMessageState();
+                prepareLongBlocks(state, 0, "prepared", "prepared");
+                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                Assert.assertFalse(state.isFrameJoinableToCommitBatch());
+                state.commitCommitBatchTable();
+                state.resetCommitBatch();
+                state.processPreparedMessage();
+                Assert.assertTrue(state.isOk());
+                state.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testPreparedSingletonReplacementBeforePrecheckRefusesBatch() throws Exception {
+        assertPreparedReplacement(false, false, true);
+    }
+
+    @Test
+    public void testPreparedSingletonDropBeforePrecheckRefusesBatch() throws Exception {
+        assertPreparedReplacement(true, false, true);
+    }
+
+    @Test
+    public void testPreparedSingletonReplacementAfterPrecheckRefusesFailedSalvage() throws Exception {
+        assertPreparedReplacement(false, true, true);
+    }
+
+    @Test
+    public void testPreparedSingletonDropAfterPrecheckRefusesDiscard() throws Exception {
+        assertPreparedReplacement(true, true, true);
+    }
+
+    @Test
+    public void testPreparedSingletonReplacementAfterPrecheckReportsSalvageFirst() throws Exception {
+        assertPreparedReplacement(false, true, false);
+    }
+
+    private void assertPreparedReplacement(boolean isDrop, boolean isAfterPrecheck, boolean isRefused) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            AtomicBoolean isCommitRefused = new AtomicBoolean();
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken tableToken) {
+                        if (isCommitRefused.get()) {
+                            throw CairoException.authorization().put("refused prepared prefix");
+                        }
+                    }
+                });
+                state.setDurableAckEnabled(true);
+                prepareLongBlocks(state, 1, "prepared");
+                state.processPreparedMessage();
+                Assert.assertTrue(state.isOk());
+                state.addToCommitBatch(0);
+                state.clearMessageState();
+                prepareLongBlocks(state, 1, "prepared");
+                if (isAfterPrecheck) {
+                    Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                }
+                execute(isDrop ? "DROP TABLE prepared" : "RENAME TABLE prepared TO prepared_old");
+                execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                long replacementTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
+                isCommitRefused.set(isRefused);
+                if (!isAfterPrecheck) {
+                    Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                    state.commitCommitBatchTable();
+                } else {
+                    state.armCommitBatchSavepoints(true);
+                    state.processPreparedMessage();
+                }
+                if (isRefused) {
+                    Assert.assertFalse(state.isOk());
+                    Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+                } else {
+                    Assert.assertTrue(state.isOk());
+                    Assert.assertFalse(state.isFrameJoinableToCommitBatch());
+                    Assert.assertTrue("salvage reports before replacement commit", state.getPendingAckSeqTxns().get("prepared_old") > 0);
+                    Assert.assertTrue(state.getPendingAckSeqTxns().keyIndex("prepared") >= 0);
+                    state.commitCommitBatchTable(); // no longer owns the salvaged writer
+                    state.resetCommitBatch();
+                    state.commit();
+                    Assert.assertTrue(state.isOk());
+                    Assert.assertTrue(state.getPendingAckSeqTxns().get("prepared") > replacementTxn);
+                }
+                state.onDisconnected();
+                Assert.assertEquals(replacementTxn + (isRefused ? 0 : 1),
+                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n" + (isRefused ? 0 : 1) + "\n");
+            if (!isDrop) {
+                assertQuery("SELECT count() FROM prepared_old").noRandomAccess().expectSize().returns("count\n" + (isRefused ? 0 : 1) + "\n");
+            }
+        });
+    }
+
+    private static void prepareLongBlocks(QwpIngressProcessorState state, int rows, String... names) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            encoder.beginMessage(names.length, new GlobalSymbolDictionary(), -1, -1);
+            for (String name : names) {
+                try (QwpTableBuffer table = new QwpTableBuffer(name)) {
+                    var value = table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false);
+                    var timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    for (int row = 0; row < rows; row++) {
+                        value.addLong(row);
+                        timestamp.addLong(1_000_000L + row);
+                        table.nextRow();
+                    }
+                    encoder.addTable(table);
+                }
+            }
+            int length = encoder.finishMessage();
+            long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
     /**
      * Connection-reuse resets in {@code onDisconnected()}. The state instance
      * stays in the HttpConnectionContext's LocalValue slot across reconnects,

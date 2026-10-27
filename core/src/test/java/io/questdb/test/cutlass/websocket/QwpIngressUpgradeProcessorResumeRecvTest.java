@@ -24,7 +24,12 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -76,6 +81,131 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     private static final byte[] DEFAULT_MASK_KEY = {0x12, 0x34, 0x56, 0x78};
     private static final int RECV_BUFFER_SIZE = 1024;
     private static final int SEND_BUFFER_SIZE = 256;
+
+    @Test
+    public void testBoundaryFailureResumesPrefixAckBeforeErrorWithoutAppendingTail() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] a = encodedBoundaryFrame("boundary_a");
+            byte[] b = encodedBoundaryFrame("boundary_b");
+            byte[] c = encodedBoundaryFrame("boundary_c");
+            byte[] wire = new byte[a.length + b.length + c.length];
+            System.arraycopy(a, 0, wire, 0, a.length);
+            System.arraycopy(b, 0, wire, a.length, b.length);
+            System.arraycopy(c, 0, wire, a.length + b.length, c.length);
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                state.of(-1, new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken token) {
+                        if ("boundary_b".equals(token.getTableName())) {
+                            throw CairoException.authorization().put("refused boundary prefix");
+                        }
+                    }
+                });
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("prefix ACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals(0, state.getHighestProcessedSequence());
+                    Assert.assertEquals(1, state.getDeferredErrorSequence());
+                    Assert.assertTrue(state.hasUnresolvedSequence());
+                    Assert.assertEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                    Assert.assertEquals(0, Unsafe.getLong(send + 3));
+                }
+                processor.resumeSend(context);
+                Assert.assertTrue("resume drains the parked ACK before writing the error", context.resumeResponseSendCalled);
+                Assert.assertEquals(2, socket.sendCallCount);
+                Assert.assertNotEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                Assert.assertEquals(1, Unsafe.getLong(send + 3));
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals("no repeated error or frame processing on resume", 2, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").expectSize().returns("v\n");
+            assertQuery("SELECT v FROM boundary_c").expectSize().returns("v\n");
+        });
+    }
+
+    @Test
+    public void testBoundarySuccessConsumesStandaloneFrameBeforeBlockedAck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] a = encodedBoundaryFrame("boundary_a");
+            byte[] b = encodedBoundaryFrame("boundary_b", "boundary_b");
+            byte[] wire = new byte[a.length + b.length];
+            System.arraycopy(a, 0, wire, 0, a.length);
+            System.arraycopy(b, 0, wire, a.length, b.length);
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("ACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals("both frames must finish before any send", 1, state.getHighestProcessedSequence());
+                }
+                processor.resumeSend(context);
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals(1, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").expectSize().returns("v\n1\n1\n");
+        });
+    }
+
+    private static byte[] encodedBoundaryFrame(String... names) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            encoder.beginMessage(names.length, new GlobalSymbolDictionary(), -1, -1);
+            for (String name : names) {
+                try (QwpTableBuffer table = new QwpTableBuffer(name)) {
+                    table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false).addLong(1);
+                    table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                    table.nextRow();
+                    encoder.addTable(table);
+                }
+            }
+            int length = encoder.finishMessage();
+            byte[] payload = new byte[length];
+            long address = encoder.getBuffer().getBufferPtr();
+            for (int i = 0; i < length; i++) {
+                payload[i] = Unsafe.getByte(address + i);
+            }
+            return createMaskedFrame(WebSocketOpcode.BINARY, payload);
+        }
+    }
 
     @Test
     public void testAckBlocked() throws Exception {

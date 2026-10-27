@@ -171,6 +171,67 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testBoundaryAndStandaloneFrameReportSeqTxnsToRealSender() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TestServerMain server = startWithEnvVariables(
+                    PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getEnvVarName(), "1000000")) {
+                server.execute("CREATE TABLE boundary_a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.execute("CREATE TABLE boundary_b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final List<byte[]> frames;
+                try (AckTee tee = new AckTee(HTTP_PORT, true)) {
+                    try (Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + tee.localPort())
+                            .autoFlushRows(0).autoFlushBytes(0)
+                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS).build()) {
+                        sender.table("boundary_a").longColumn("val", 1).at(1_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        sender.table("boundary_a").longColumn("val", 2).at(2_000_000L, ChronoUnit.MICROS);
+                        sender.table("boundary_b").longColumn("val", 3).at(3_000_000L, ChronoUnit.MICROS);
+                        long last = sender.flushAndGetSequence();
+                        Assert.assertTrue("the real sender must consume the boundary/current ACKs",
+                                sender.awaitAckedFsn(last, RELAY_PROBE_TIMEOUT_MS));
+                    }
+                    tee.close();
+                    Assert.assertTrue("relay must release both actual client frames together", tee.hasCoalescedFrames);
+                    frames = tee.serverBinaryFrames();
+                }
+                TestUtils.assertEventually(() -> server.assertSql("SELECT val FROM boundary_a", "val\n1\n2\n"));
+                TestUtils.assertEventually(() -> server.assertSql("SELECT val FROM boundary_b", "val\n3\n"));
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_a'", "sequencerTxn\n2\n");
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_b'", "sequencerTxn\n1\n");
+                long aTxn = -1;
+                long bTxn = -1;
+                long lastAck = -1;
+                WebSocketResponse response = new WebSocketResponse();
+                for (byte[] payload : frames) {
+                    long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        for (int i = 0; i < payload.length; i++) {
+                            Unsafe.putByte(ptr + i, payload[i]);
+                        }
+                        Assert.assertTrue(response.readFrom(ptr, payload.length));
+                        if (response.isSuccess()) {
+                            lastAck = Math.max(lastAck, response.getSequence());
+                            for (int i = 0; i < response.getTableEntryCount(); i++) {
+                                if ("boundary_a".equals(response.getTableName(i))) {
+                                    aTxn = Math.max(aTxn, response.getTableSeqTxn(i));
+                                } else if ("boundary_b".equals(response.getTableName(i))) {
+                                    bTxn = Math.max(bTxn, response.getTableSeqTxn(i));
+                                }
+                            }
+                        }
+                    } finally {
+                        Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+                Assert.assertEquals(1, lastAck);
+                Assert.assertEquals(2, aTxn);
+                Assert.assertEquals(1, bTxn);
+            }
+        });
+    }
+
+    @Test
     public void testOkAckReportsSeqTxnBelowCap() throws Exception {
         assertMemoryLeak(() -> assertAckReportsSeqTxn("1000000", "ack_cov_below"));
     }
@@ -451,6 +512,8 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
      */
     private static final class AckTee implements Closeable {
         private final Thread acceptor;
+        private final boolean isCoalescingFrames;
+        private volatile boolean hasCoalescedFrames;
         private final ServerSocket listener;
         private final List<Thread> pumps = new ArrayList<>();
         private final ByteArrayOutputStream serverToClient = new ByteArrayOutputStream();
@@ -461,6 +524,11 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
         private boolean isClosed;
 
         private AckTee(int upstreamPort) throws IOException {
+            this(upstreamPort, false);
+        }
+
+        private AckTee(int upstreamPort, boolean isCoalescingFrames) throws IOException {
+            this.isCoalescingFrames = isCoalescingFrames;
             listener = new ServerSocket(0, 4, InetAddress.getLoopbackAddress());
             acceptor = new Thread(() -> acceptLoop(upstreamPort), "qwp-ack-tee-acceptor");
             acceptor.setDaemon(true);
@@ -569,6 +637,45 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             }
         }
 
+        // Forward the actual client's HTTP handshake, then hold its first two
+        // frames for one transport write. No QWP payload or peer response is forged.
+        private void coalesceFirstTwoFrames(InputStream in, OutputStream out) throws IOException {
+            int suffix = 0;
+            while (suffix != 0x0d0a0d0a) {
+                int next = in.read();
+                if (next < 0) {
+                    throw new IOException("client closed during handshake");
+                }
+                out.write(next);
+                suffix = (suffix << 8) | next;
+            }
+            out.flush();
+            ByteArrayOutputStream frames = new ByteArrayOutputStream();
+            for (int frame = 0; frame < 2; frame++) {
+                byte[] header = new byte[2];
+                readFully(in, header);
+                if ((header[0] & 0x0f) != 2) {
+                    throw new IOException("expected a client binary frame");
+                }
+                frames.write(header);
+                int length = header[1] & 0x7f;
+                if (length == 126) {
+                    byte[] extended = new byte[2];
+                    readFully(in, extended);
+                    frames.write(extended);
+                    length = ((extended[0] & 0xff) << 8) | (extended[1] & 0xff);
+                } else if (length == 127) {
+                    throw new IOException("unexpected large client frame");
+                }
+                byte[] payload = new byte[length + ((header[1] & 0x80) == 0 ? 0 : 4)];
+                readFully(in, payload);
+                frames.write(payload);
+            }
+            out.write(frames.toByteArray());
+            out.flush();
+            hasCoalescedFrames = true;
+        }
+
         private int localPort() {
             return listener.getLocalPort();
         }
@@ -577,6 +684,9 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             final Thread t = new Thread(() -> {
                 final byte[] buf = new byte[8192];
                 try {
+                    if (isCoalescingFrames && tee == null) {
+                        coalesceFirstTwoFrames(in, out);
+                    }
                     int n;
                     while ((n = in.read(buf)) > 0) {
                         if (tee != null) {

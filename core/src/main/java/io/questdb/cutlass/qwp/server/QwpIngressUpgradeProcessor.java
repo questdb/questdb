@@ -1654,18 +1654,32 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // replays first -- is the one to NACK, and a deterministic failure keeps
         // striking it. This frame is refused behind it.
         boolean isBatchCommitFailed = false;
-        // A failure in this frame must drop only this frame's rows: frame by
-        // frame, the batch would already be committed and acked, and the
-        // client's poison detector strikes the frame a NACK names.
-        state.armCommitBatchSavepoints(isBatchPending);
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
             deferCommit = state.isDeferCommit();
 
-            // Process the QWP v1 message
-            state.processMessage();
+            state.prepareMessage();
+            if (state.isOk() && isBatchPending && !state.isPreparedMessageJoinableToCommitBatch()) {
+                // Resolve the prefix before any current-frame cache lookup: both
+                // cache eviction and the appender's row cap can commit writers.
+                // Do not send here while the prepared cursor is still live.
+                state.commitCommitBatchTable();
+                if (state.isOk()) {
+                    state.resetCommitBatch();
+                    state.setHighestProcessedSequence(batchLastSeq);
+                    isBatchPending = false;
+                } else {
+                    isBatchCommitFailed = true;
+                }
+            }
+            // A prepare/append failure drops only this frame's rows from the
+            // batch that remains after the boundary, preserving its prefix.
+            state.armCommitBatchSavepoints(isBatchPending);
+            if (!isBatchCommitFailed) {
+                state.processPreparedMessage();
+            }
             final boolean isProcessed = state.isOk();
             if (isBatchPending && state.isCommitBatchCommittedBehind()) {
                 // The appender committed the batch's table on its own (the
@@ -1691,10 +1705,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // ack that covers this group-closing sequence.
                 closesDeferredGroup = state.hasUncommittedDeferredRows();
                 if (isBatchPending && !state.isFrameJoinableToCommitBatch()) {
-                    // This frame wrote to a table the batch does not hold. A commit
-                    // never spans tables -- one writer's commit is all or nothing,
-                    // commitAll goes table by table -- so commit the batch's table on
-                    // its own first; this frame's rows wait for their own commit.
+                    // A singleton lookup can replace the batch's cached writer
+                    // only after successful salvage and seqTxn reporting. Retain
+                    // the identity split for that late-replacement path.
                     state.commitCommitBatchTable();
                     if (state.isOk()) {
                         state.resetCommitBatch();
@@ -1766,7 +1779,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         .$(", error=").$safe(errorMessage).I$();
                 responseStatus = responseStatusOf(state);
             }
-            if (isBatchPending && !isProcessed) {
+            if (isBatchPending && !isProcessed && !isBatchCommitFailed) {
                 // This frame failed before any commit: keep the batch's rows,
                 // drop this frame's, commit the batch -- the wire then carries
                 // exactly what one-commit-per-frame would: an ack through the
