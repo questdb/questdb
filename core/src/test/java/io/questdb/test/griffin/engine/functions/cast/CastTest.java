@@ -1348,33 +1348,6 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCharWindowBoundsRejectHighByteDigits() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE bounds (v INT, ts TIMESTAMP) TIMESTAMP(ts)");
-            String window = "SELECT sum(v) OVER (ORDER BY ts ROWS BETWEEN 'İ' PRECEDING AND CURRENT ROW) FROM bounds";
-            assertQuery(window).noLeakCheck().fails(window.indexOf("'İ'"), "non-negative integer expression expected");
-            String join = "SELECT a.ts, sum(b.v) FROM bounds a WINDOW JOIN bounds b RANGE BETWEEN 'İ' PRECEDING AND CURRENT ROW";
-            assertQuery(join).noLeakCheck().fails(join.indexOf("'İ'"), "non-negative integer expression expected");
-        });
-    }
-
-    @Test
-    public void testCharToNumbersRejectHighByteDigits() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE chars (c CHAR)");
-            execute("INSERT INTO chars VALUES ('İ')");
-            for (String type : new String[]{"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP", "TIMESTAMP_NS"}) {
-                assertQuery("SELECT 'İ'::" + type).noLeakCheck().fails(0, "inconvertible value");
-                assertQuery("SELECT c::" + type + " FROM chars").noLeakCheck().fails(-1, "inconvertible value");
-                execute("CREATE TABLE target_" + type + " (v " + type + ")");
-                assertQuery("INSERT INTO target_" + type + " SELECT c FROM chars")
-                        .noLeakCheck().fails(-1, "inconvertible value");
-            }
-            assertQuery("SELECT c + 1 FROM chars").noLeakCheck().fails(-1, "inconvertible value");
-        });
-    }
-
-    @Test
     public void testCharToNumbersException() throws Exception {
         assertQuery("select 'm'::byte")
                 .fails(0, "inconvertible value: m [CHAR -> BYTE]");
@@ -1396,6 +1369,25 @@ public class CastTest extends AbstractCairoTest {
                 .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP_NS]");
         assertQuery("select 'm'::boolean")
                 .fails(0, "inconvertible value: m [CHAR -> BOOLEAN]");
+    }
+
+    @Test
+    public void testCharToNumbersRejectHighByteDigits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE chars (c CHAR)");
+            execute("INSERT INTO chars VALUES ('İ')");
+            for (String type : new String[]{"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP", "TIMESTAMP_NS"}) {
+                // ::FLOAT is the PostgreSQL spelling of DOUBLE; ::FLOAT4 reaches the FLOAT cast
+                final String castType = "FLOAT".equals(type) ? "FLOAT4" : type;
+                final String error = "inconvertible value: İ [CHAR -> " + type + "]";
+                assertQuery("SELECT 'İ'::" + castType).noLeakCheck().fails(0, error);
+                assertQuery("SELECT c::" + castType + " FROM chars").noLeakCheck().fails(-1, error);
+                execute("CREATE TABLE target_" + type + " (v " + type + ")");
+                assertQuery("INSERT INTO target_" + type + " SELECT c FROM chars")
+                        .noLeakCheck().fails(-1, error);
+            }
+            assertQuery("SELECT c + 1 FROM chars").noLeakCheck().fails(-1, "inconvertible value: İ [CHAR -> INT]");
+        });
     }
 
     @Test
@@ -1675,6 +1667,17 @@ public class CastTest extends AbstractCairoTest {
                         Y
                         Z
                         """);
+    }
+
+    @Test
+    public void testCharWindowBoundsRejectHighByteDigits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bounds (v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            String window = "SELECT sum(v) OVER (ORDER BY ts ROWS BETWEEN 'İ' PRECEDING AND CURRENT ROW) FROM bounds";
+            assertQuery(window).noLeakCheck().fails(window.indexOf("'İ'"), "non-negative integer expression expected");
+            String join = "SELECT a.ts, sum(b.v) FROM bounds a WINDOW JOIN bounds b RANGE BETWEEN 'İ' PRECEDING AND CURRENT ROW";
+            assertQuery(join).noLeakCheck().fails(join.indexOf("'İ'"), "non-negative integer expression expected");
+        });
     }
 
     @Test
