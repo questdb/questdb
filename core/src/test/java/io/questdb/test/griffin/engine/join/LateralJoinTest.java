@@ -5287,6 +5287,22 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // a.x > o.x, with no equality to o.x, in a GROUP BY body over two tables. Per outer row, a row 11
+    // is the only a row with x above 1, and b row 24 shares its x; no a row has x above 3, and > is
+    // false for the NULL o.x. DuckDB returns 1 11 1.
+    @Test
+    public void testLateralWhereComparisonOnTwoTablesGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            assertQuery("SELECT o.id, l.aid, l.n FROM o JOIN LATERAL (SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x WHERE a.x > o.x GROUP BY a.id) l ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tn
+                            1\t11\t1
+                            """);
+        });
+    }
+
     @Test
     public void testLateralWhereDuplicatedKeyAndComparison() throws Exception {
         assertKeyAndComparison(
@@ -5978,6 +5994,333 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // a.x = o.x and b.x = o.x key both tables of a GROUP BY body to o.x, and b.x = a.x joins them on
+    // that key. Per outer row, a rows 10 and 0 each count b rows 20 and 21 for o.x = 1, a row 12 counts
+    // b rows 22 and 23 for the NULL o.x, as = matches NULL to NULL, and a row 11 counts b row 24 for
+    // o.x = 3. Every outer row has a group, so LEFT and CROSS JOIN LATERAL return the rows of JOIN
+    // LATERAL. DuckDB, with IS NOT DISTINCT FROM for =, returns the same rows.
+    @Test
+    public void testLateralWhereKeysOfTwoTablesGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String body = " LATERAL (SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id) l ORDER BY 1, 2";
+            for (String join : new String[]{"JOIN", "LEFT JOIN", "CROSS JOIN"}) {
+                assertQuery("SELECT o.id, l.aid, l.n FROM o " + join + body)
+                        .noLeakCheck()
+                        .returns("""
+                                id\taid\tn
+                                1\t0\t2
+                                1\t10\t2
+                                2\t12\t2
+                                3\t11\t1
+                                """);
+            }
+        });
+    }
+
+    // The body of testLateralWhereKeysOfTwoTablesGroupBy() with the tables joined on b.k = a.x, so
+    // neither key implies the other, and each filters its table before the GROUP BY. Per outer row, a
+    // rows 10 and 0 match b row 21 for o.x = 1, a row 11 matches b row 24 for o.x = 3, and a row 12 of
+    // the NULL o.x matches no b.k, so LEFT JOIN LATERAL gives o row 2 NULLs. Without a.x = o.x, a rows
+    // 10 and 0 would match b row 23, whose x is NULL, for o row 2. DuckDB, with IS NOT DISTINCT FROM
+    // for =, returns the same rows.
+    @Test
+    public void testLateralWhereKeysOfTwoTablesGroupByJoinedOnOtherColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String body = " LATERAL (SELECT a.id aid, count(*) n FROM a JOIN b ON b.k = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id) l ORDER BY 1, 2";
+            assertQuery("SELECT o.id, l.aid, l.n FROM o JOIN" + body)
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tn
+                            1\t0\t1
+                            1\t10\t1
+                            3\t11\t1
+                            """);
+            assertQuery("SELECT o.id, l.aid, l.n FROM o LEFT JOIN" + body)
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tn
+                            1\t0\t1
+                            1\t10\t1
+                            2\tnull\tnull
+                            3\t11\t1
+                            """);
+        });
+    }
+
+    // a.x = o.x and b.x = o.x over a LEFT join of b, which NULL-extends b for a row 13: no b row has its x,
+    // 9. b.x = a.x then does not make the two equalities equivalent, and both filter before the GROUP BY. Per
+    // outer row, a row 10 matches b row 20 for o.x = 1, a row 12 matches b row 21 for the NULL o.x, as =
+    // matches NULL to NULL, and a row 11 matches b row 22 for o.x = 3. The NULL b.x of a row 13 equals the
+    // NULL o.x, but its x does not. DuckDB, with IS NOT DISTINCT FROM for =, returns the same rows.
+    @Test
+    public void testLateralWhereKeysOfTwoTablesGroupByLeftJoinedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+            execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (13, 9)");
+            execute("INSERT INTO b VALUES (20, 1), (21, NULL), (22, 3)");
+            assertQuery("SELECT o.id, l.aid, l.n FROM o JOIN LATERAL (SELECT a.id aid, count(*) n FROM a LEFT JOIN b ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id) l ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tn
+                            1\t10\t1
+                            2\t12\t1
+                            3\t11\t1
+                            """);
+        });
+    }
+
+    // b.x = a.x equates the keys of the query of testLateralWhereKeysOfTwoTablesGroupBy(), so the lateral join
+    // enforces both equalities with o.x by b.x = o.x alone, and the plan is the one of a body with that key
+    // only: no outer-ref join, whose sub-query would scan o once more, and the GROUP BY over the join of a and
+    // b. A chain of such equalities, through a second b, does the same; a row of a counts the four pairs of
+    // b rows of its x for o.x = 1 and the NULL o.x.
+    @Test
+    public void testLateralWhereKeysOfTwoTablesGroupByPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            assertQuery("SELECT o.id, l.aid, l.n FROM o JOIN LATERAL (SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id) l ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, aid]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: l.__qdb_outer_ref__0_x=o.x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            VirtualRecord
+                                              functions: [id,n,x]
+                                                Async Hash Join Group By workers: 1
+                                                  logicalJoinType: inner
+                                                  physicalJoinType: inner
+                                                  inputSwapped: true
+                                                  condition: b.x=a.x
+                                                  buildStrategy: shared
+                                                  buildPayload: copied when the probe is large enough
+                                                  keys: [id,x]
+                                                  values: [count(*)]
+                                                    Probe
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                                                    Build
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: a
+                            """)
+                    .returns("""
+                            id\taid\tn
+                            1\t0\t2
+                            1\t10\t2
+                            2\t12\t2
+                            3\t11\t1
+                            """);
+            assertQuery("SELECT o.id, l.aid, l.n FROM o JOIN LATERAL (SELECT a.id aid, count(*) n FROM a JOIN b b2 ON b2.x = a.x JOIN b ON b.x = b2.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id) l ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, aid]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: l.__qdb_outer_ref__0_x=o.x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            VirtualRecord
+                                              functions: [id,n,x]
+                                                GroupBy vectorized: false
+                                                  keys: [id,x]
+                                                  values: [count(*)]
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: b.x=b2.x
+                                                            Hash Join Light
+                                                              condition: b2.x=a.x
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: a
+                                                                Hash
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: b
+                                                            Hash
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: b
+                            """)
+                    .returns("""
+                            id\taid\tn
+                            1\t0\t4
+                            1\t10\t4
+                            2\t12\t4
+                            3\t11\t1
+                            """);
+        });
+    }
+
+    // Other GROUP BY bodies that key a and b to o.x, with the rows of
+    // testLateralWhereKeysOfTwoTablesGroupBy(): the tables in the other order, a comma join, the
+    // equalities with o.x first, a GROUP BY and an aggregate on a column of b, an ORDER BY with a
+    // LIMIT, which keeps the largest a.id of each outer row, and a third table, c, which matches b rows
+    // 20 to 23 once each and b row 24 not at all. Then bodies whose other joins and conditions bear on
+    // whether b.x = a.x makes the two equalities equivalent: a second conjunct in the ON clause, b.id > 20,
+    // which drops b row 20; a RIGHT join of c, which drops b row 24, the only one of o.x = 3, and adds c row
+    // 104 with a NULL a and b, which the NULL o.x keeps; a sub-query in place of a; a join of c on an
+    // expression, which matches each b row once; a LEFT join of c, which NULL-extends every row, so that
+    // c.sid = a.x keeps a row 12 only; and UNNEST of two elements, which doubles each count. DuckDB, with IS
+    // NOT DISTINCT FROM for =, returns the rows of each.
+    @Test
+    public void testLateralWhereKeysOfTwoTablesGroupByShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyAndComparisonTables();
+            final String countRows = """
+                    id\taid\tn
+                    1\t0\t2
+                    1\t10\t2
+                    2\t12\t2
+                    3\t11\t1
+                    """;
+            final String[][] cases = {
+                    {"SELECT a.id aid, count(*) n FROM b JOIN a ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id", countRows},
+                    {"SELECT a.id aid, count(*) n FROM a, b WHERE b.x = a.x AND a.x = o.x AND b.x = o.x GROUP BY a.id", countRows},
+                    {"SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x WHERE o.x = a.x AND o.x = b.x GROUP BY a.id", countRows},
+                    {
+                            "SELECT b.id bid, count(*) n FROM a JOIN b ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY b.id",
+                            """
+                                    id\tbid\tn
+                                    1\t20\t2
+                                    1\t21\t2
+                                    2\t22\t1
+                                    2\t23\t1
+                                    3\t24\t1
+                                    """
+                    },
+                    {
+                            "SELECT a.id aid, sum(b.id) s FROM a JOIN b ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id",
+                            """
+                                    id\taid\ts
+                                    1\t0\t41
+                                    1\t10\t41
+                                    2\t12\t45
+                                    3\t11\t24
+                                    """
+                    },
+                    {
+                            "SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x WHERE a.x = o.x AND b.x = o.x GROUP BY a.id ORDER BY aid DESC LIMIT 1",
+                            """
+                                    id\taid\tn
+                                    1\t10\t2
+                                    2\t12\t2
+                                    3\t11\t1
+                                    """
+                    },
+                    {
+                            "SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x JOIN c ON c.sid = b.id WHERE a.x = o.x AND b.x = o.x GROUP BY a.id",
+                            """
+                                    id\taid\tn
+                                    1\t0\t2
+                                    1\t10\t2
+                                    2\t12\t2
+                                    """
+                    },
+                    {
+                            "SELECT a.id aid, count(*) n FROM a JOIN b ON a.x = b.x AND b.id > 20 WHERE a.x = o.x AND b.x = o.x GROUP BY a.id",
+                            """
+                                    id\taid\tn
+                                    1\t0\t1
+                                    1\t10\t1
+                                    2\t12\t2
+                                    3\t11\t1
+                                    """
+                    },
+                    {
+                            "SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x RIGHT JOIN c ON c.sid = b.id WHERE a.x = o.x AND b.x = o.x GROUP BY a.id",
+                            """
+                                    id\taid\tn
+                                    1\t0\t2
+                                    1\t10\t2
+                                    2\tnull\t1
+                                    2\t12\t2
+                                    """
+                    },
+                    {"SELECT a2.id aid, count(*) n FROM (SELECT id, x FROM a) a2 JOIN b ON b.x = a2.x WHERE a2.x = o.x AND b.x = o.x GROUP BY a2.id", countRows},
+                    {"SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x JOIN c ON c.id = b.id + 80 WHERE a.x = o.x AND b.x = o.x GROUP BY a.id", countRows},
+                    {"SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x JOIN c ON b.id + 80 = c.id WHERE a.x = o.x AND b.x = o.x GROUP BY a.id", countRows},
+                    {
+                            "SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x LEFT JOIN c ON c.sid = a.id WHERE c.sid = a.x AND a.x = o.x AND b.x = o.x GROUP BY a.id",
+                            """
+                                    id\taid\tn
+                                    2\t12\t2
+                                    """
+                    },
+                    {
+                            "SELECT a.id aid, count(*) n FROM a JOIN b ON b.x = a.x, UNNEST(ARRAY[1.0, 2.0]) u(v) WHERE a.x = o.x AND b.x = o.x GROUP BY a.id",
+                            """
+                                    id\taid\tn
+                                    1\t0\t4
+                                    1\t10\t4
+                                    2\t12\t4
+                                    3\t11\t2
+                                    """
+                    },
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + c[0] + ") l ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .returns(c[1]);
+            }
+        });
+    }
+
+    // Each type of key, with values v1, v2 and NULL; = matches NULL to NULL. Per outer row, b.k = a.k
+    // joins the a and b rows that a.k = o.k and b.k = o.k key to o.k: a rows 10 and 11 each count b row
+    // 20 for v1, a row 12 counts b rows 21 and 22 for v2, and a row 13 counts b row 23 for NULL.
+    @Test
+    public void testLateralWhereKeysOfTwoTablesGroupByTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] types = {
+                    {"SYMBOL", "'p'", "'q'"},
+                    {"VARCHAR", "'p'", "'q'"},
+                    {"STRING", "'p'", "'q'"},
+                    {"TIMESTAMP", "'2024-01-01T00:00:00.000000Z'", "'2024-01-02T00:00:00.000000Z'"},
+                    {"DOUBLE", "1.5", "2.5"},
+                    {"UUID", "'11111111-1111-1111-1111-111111111111'", "'22222222-2222-2222-2222-222222222222'"},
+                    {"IPv4", "'1.1.1.1'", "'2.2.2.2'"},
+                    {"LONG256", "'0x01'", "'0x02'"},
+            };
+            for (String[] type : types) {
+                final String v1 = type[1];
+                final String v2 = type[2];
+                execute("CREATE TABLE o (id INT, k " + type[0] + ")");
+                execute("CREATE TABLE a (id INT, k " + type[0] + ")");
+                execute("CREATE TABLE b (id INT, k " + type[0] + ")");
+                execute("INSERT INTO o VALUES (1, " + v1 + "), (2, " + v2 + "), (3, NULL)");
+                execute("INSERT INTO a VALUES (10, " + v1 + "), (11, " + v1 + "), (12, " + v2 + "), (13, NULL)");
+                execute("INSERT INTO b VALUES (20, " + v1 + "), (21, " + v2 + "), (22, " + v2 + "), (23, NULL)");
+                assertQuery("SELECT o.id, l.aid, l.n FROM o JOIN LATERAL (SELECT a.id aid, count(*) n FROM a JOIN b ON b.k = a.k WHERE a.k = o.k AND b.k = o.k GROUP BY a.id) l ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .returns("""
+                                id\taid\tn
+                                1\t10\t1
+                                1\t11\t1
+                                2\t12\t2
+                                3\t13\t1
+                                """);
+                execute("DROP TABLE o");
+                execute("DROP TABLE a");
+                execute("DROP TABLE b");
+            }
+        });
+    }
+
     // Both equalities read o.x: a.x = o.x and a.id = o.x. Per outer row, only a row 1 has both
     // a.x = 1 and a.id = 1; without either equality, a row 3 would match too.
     @Test
@@ -5992,6 +6335,55 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             id\taid
                             1\t1
+                            """);
+        });
+    }
+
+    // The data of testT102WindowJoinInsideLateral() with a second key on the trades, iid, which equals o.id
+    // only where instrument_id does, except for the trade at 00:02: its instrument_id is 1 and its iid 2, so
+    // no instrument keeps it. The trade of instrument 1 at 00:01 sums 19.5 and the one of instrument 2 sums
+    // 39.0 over their quotes, as in that test.
+    @Test
+    public void testLateralWhereTwoKeysOnOneOuterColumnWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, iid INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 2, 11.0, 'A', '2024-01-01T00:02:00.000000Z'),
+                    (2, 2, 20.0, 'B', '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z'),
+                    (10.5, 'A', '2024-01-01T00:01:30.000000Z'),
+                    (19.0, 'B', '2024-01-01T00:00:30.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT i.id, sub.sum
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT sum(t.price + q.price) AS sum
+                        FROM trades t
+                        WINDOW JOIN quotes q ON tag
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                        WHERE t.instrument_id = i.id AND t.iid = i.id
+                    ) sub
+                    ORDER BY i.id, sub.sum
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tsum
+                            1\t19.5
+                            2\t39.0
                             """);
         });
     }

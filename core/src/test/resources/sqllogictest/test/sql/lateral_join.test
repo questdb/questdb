@@ -1824,3 +1824,46 @@ JOIN LATERAL (
 ORDER BY 1, 2, 3
 ----
 1 10 100
+
+# ============================================================
+# WHERE keys of two tables on one outer column in a GROUP BY body
+# a.x = o.x and b.x = o.x key a_kc and b_kc to o.x. Joined on b.x = a.x,
+# the keys imply each other; joined on b.k = a.x, each one filters its
+# own table before the GROUP BY. QuestDB's = matches the NULL o.x to the
+# NULL x of a row 12 and b rows 22 and 23, where DuckDB and PostgreSQL
+# need IS NOT DISTINCT FROM.
+# ============================================================
+
+query III nosort
+SELECT o.id, l.aid, l.n
+FROM o_kc o
+JOIN LATERAL (
+    SELECT a.id aid, count(*) n
+    FROM a_kc a
+    JOIN b_kc b ON b.x = a.x
+    WHERE a.x = o.x AND b.x = o.x
+    GROUP BY a.id
+) l
+ORDER BY 1, 2
+----
+1 0 2
+1 10 2
+2 12 2
+3 11 1
+
+query III nosort
+SELECT o.id, l.aid, l.n
+FROM o_kc o
+LEFT JOIN LATERAL (
+    SELECT a.id aid, count(*) n
+    FROM a_kc a
+    JOIN b_kc b ON b.k = a.x
+    WHERE a.x = o.x AND b.x = o.x
+    GROUP BY a.id
+) l
+ORDER BY 1, 2
+----
+1 0 1
+1 10 1
+2 NULL NULL
+3 11 1
