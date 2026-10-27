@@ -40,6 +40,12 @@ import org.jetbrains.annotations.Nullable;
  * also finds the table and the LIMITs that bound the rows the factory returns, see {@link #rowBoundScan}.
  */
 public final class PhysicalProperties {
+    /**
+     * The rows a LIMIT whose count only execution knows, a bind variable or another runtime constant, is estimated to
+     * allow, see {@link #rowBoundLimit}: the planner cannot read the count when it compiles the statement, and most
+     * LIMITs are small.
+     */
+    public static final long RUNTIME_LIMIT_ROWS = 100;
     public static final int UNKNOWN_TIMESTAMP = -2;
     private static final int DIRECTION = 8;
     private static final int LIMIT = 4;
@@ -112,14 +118,15 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The fewest rows a LIMIT of a constant count allows along the inputs that bound the rows of the plan, see
-     * {@link #rowBoundScan}; {@link Long#MAX_VALUE} for none.
+     * The fewest rows a LIMIT of a count allows along the inputs that bound the rows of the plan, see
+     * {@link #rowBoundScan}: the count of a constant, and {@link #RUNTIME_LIMIT_ROWS} for a count only execution knows;
+     * {@link Long#MAX_VALUE} for none.
      */
     public static long rowBoundLimit(LogicalPlan plan) {
         long limit = Long.MAX_VALUE;
         for (LogicalPlan node = plan; node != null; node = boundingInput(node)) {
-            if (node instanceof LimitPlan limitPlan && limitPlan.getHi() == null && limitPlan.getLo() instanceof ConstantExpression lo) {
-                final long count = LogicalPlans.limitValue(lo);
+            if (node instanceof LimitPlan limitPlan && limitPlan.getHi() == null) {
+                final long count = limitPlan.getLo() instanceof ConstantExpression lo ? LogicalPlans.limitValue(lo) : RUNTIME_LIMIT_ROWS;
                 if (count > -1) {
                     limit = Math.min(limit, count);
                 }

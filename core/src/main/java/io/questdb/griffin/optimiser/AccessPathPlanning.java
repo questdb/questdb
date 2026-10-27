@@ -828,8 +828,9 @@ final class AccessPathPlanning {
 
     /**
      * Plans the access path of every scan of a plan the generator builds at {@code depth}, whose consumer requires
-     * its designated timestamp when {@code isTimestampRequired}, and the operators over them; rejects what the
-     * generator cannot build.
+     * its designated timestamp when {@code isTimestampRequired}, and the operators over them, which keep the order of
+     * the rows an UPDATE writes back, see {@link OperatorPlanning#readUpdateOrder}; rejects what the generator cannot
+     * build.
      */
     void plan(LogicalPlan root, int depth, boolean isTimestampRequired) throws SqlException {
         subqueries.clear();
@@ -844,6 +845,7 @@ final class AccessPathPlanning {
         try {
             operatorPlanning.countSharedConsumers(root);
             walk(root, isTimestampRequired);
+            operatorPlanning.readUpdateOrder(root);
         } finally {
             operatorPlanning.settleMasterSides();
         }

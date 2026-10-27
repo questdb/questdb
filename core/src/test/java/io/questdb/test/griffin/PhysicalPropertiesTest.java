@@ -559,7 +559,8 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             assertRowBound("SELECT * FROM (SELECT * FROM t LIMIT 3) LIMIT 2", "t", 2);
             assertRowBound("SELECT * FROM t LIMIT 1, 3", "t", Long.MAX_VALUE);
             bindVariableService.setLong("n", 2);
-            assertRowBound("SELECT * FROM t LIMIT :n", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT * FROM t LIMIT :n", "t", PhysicalProperties.RUNTIME_LIMIT_ROWS);
+            assertRowBound("SELECT * FROM (SELECT * FROM t LIMIT :n) LIMIT 2", "t", 2);
             // a sort and a window return the rows of their input
             assertRowBound("SELECT * FROM (SELECT * FROM t ORDER BY x) LIMIT 2", "t", 2);
             assertRowBound("SELECT * FROM t ORDER BY x", "t", Long.MAX_VALUE);

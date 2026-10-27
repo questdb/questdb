@@ -73,14 +73,12 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
-import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.BytecodeAssembler;
@@ -109,7 +107,6 @@ import static io.questdb.griffin.model.QueryModel.CREATE_MAT_VIEW;
  */
 public class SqlCodeGenerator implements Mutable, Closeable {
     private static final int MIN_RETAINED_FRAMES = 32;
-    private static final PlanVisitor UPDATE_SCANS = plan -> plan instanceof ScanPlan scan && scan.isUpdate() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final AggregateFactoryGenerator aggregateGenerator;
     private final CairoConfiguration configuration;
@@ -452,7 +449,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
                 return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, producerLo,
-                        executionContext, hasUpdateScan(input), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL, null, false);
+                        executionContext, LogicalPlans.hasUpdateScan(input), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL, null, false);
             }
             case ProjectPlan project -> {
                 return projectionGenerator.generateProjection(frame, project, base, executionContext);
@@ -495,10 +492,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         return factory;
-    }
-
-    static boolean hasUpdateScan(LogicalPlan plan) {
-        return !plan.walkTopDown(UPDATE_SCANS);
     }
 
     static int queryModelDirection(SortDirection direction) {
@@ -607,7 +600,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try {
                 final Function function = functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
                 target.of(predicate, input.getOutput(), function, filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL
-                        && FilterFactoryGenerator.isJitApplicable(hasUpdateScan(input), executionContext));
+                        && FilterFactoryGenerator.isJitApplicable(LogicalPlans.hasUpdateScan(input), executionContext));
                 if (input instanceof FunctionSourcePlan source) {
                     scanGenerator.configurePushdown(frame, source, leaf, predicate, executionContext);
                 }

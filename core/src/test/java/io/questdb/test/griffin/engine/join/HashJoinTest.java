@@ -489,7 +489,7 @@ public class HashJoinTest extends AbstractCairoTest {
                             2\t1
                             3\t2
                             """);
-            // a LIMIT of a bind variable leaves the bound of its table
+            // a LIMIT of a bind variable counts as min(100, the 9 rows of a), more than the 3 rows of o
             bindVariableService.setLong("n", 2);
             assertQuery("SELECT o.id, l.id FROM o JOIN (SELECT id, x FROM a LIMIT :n) l ON l.x = o.x")
                     .noRandomAccess()
@@ -503,6 +503,140 @@ public class HashJoinTest extends AbstractCairoTest {
                             id\tid1
                             2\t1
                             3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinLightBuildsRuntimeLimitedInput() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1_048_576);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE small_input AS (SELECT x::INT id, x::INT k FROM long_sequence(100_000))");
+            execute("CREATE TABLE large_input AS (SELECT x::INT id, x::INT k FROM long_sequence(200_000))");
+            bindVariableService.setLong("n", 2);
+            final String sql = "SELECT s.id, l.id FROM small_input s JOIN (SELECT id, k FROM large_input LIMIT :n) l ON s.k = l.k";
+            assertQuery(sql)
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.k=s.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: small_input
+                                    Hash
+                                        Limit value: :n::long[2] skip-rows: 0 take-rows: 2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: large_input
+                            """)
+                    .returns("""
+                            id\tid1
+                            1\t1
+                            2\t2
+                            """);
+            assertQuery("SELECT l.id, s.id FROM (SELECT id, k FROM large_input LIMIT :n) l JOIN small_input s ON s.k = l.k")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: s.k=l.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: small_input
+                                    Hash
+                                        Limit value: :n::long[2] skip-rows: 0 take-rows: 2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: large_input
+                            """)
+                    .returns("""
+                            id\tid1
+                            1\t1
+                            2\t2
+                            """);
+            assertQuery("SELECT s.id, l.id FROM small_input s JOIN (SELECT id, k FROM large_input LIMIT 2) l ON s.k = l.k")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.k=s.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: small_input
+                                    Hash
+                                        Limit value: 2 skip-rows: 0 take-rows: 2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: large_input
+                            """)
+                    .returns("""
+                            id\tid1
+                            1\t1
+                            2\t2
+                            """);
+            try (RecordCursorFactory factory = select(sql)) {
+                execute("INSERT INTO large_input SELECT (x + 200_000)::INT, (x + 200_000)::INT FROM long_sequence(100_000)");
+                bindVariableService.setLong("n", 3);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertCursor("""
+                            id\tid1
+                            1\t1
+                            2\t2
+                            3\t3
+                            """, cursor, factory.getMetadata(), true, sink);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinLightBuildsRuntimeLimitedInputsByEstimate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ten AS (SELECT x::INT id, x::INT k FROM long_sequence(10))");
+            execute("CREATE TABLE mid AS (SELECT x::INT id, x::INT k FROM long_sequence(500))");
+            execute("CREATE TABLE big AS (SELECT x::INT id, x::INT k FROM long_sequence(1_000))");
+            bindVariableService.setLong("n", 2);
+            assertQuery("SELECT t.id, l.id FROM ten t JOIN (SELECT id, k FROM big LIMIT :n) l ON l.k = t.k")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.k=t.k
+                                    Limit value: :n::long[2] skip-rows: 0 take-rows: 2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: big
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: ten
+                            """)
+                    .returns("""
+                            id\tid1
+                            1\t1
+                            2\t2
+                            """);
+            assertQuery("SELECT m.id, b.id FROM (SELECT id, k FROM mid LIMIT :n) m JOIN (SELECT id, k FROM big LIMIT :n) b ON b.k = m.k")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.k=m.k
+                                    Limit value: :n::long[2] skip-rows: 0 take-rows: 2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: mid
+                                    Hash
+                                        Limit value: :n::long[2] skip-rows: 0 take-rows: 2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: big
+                            """)
+                    .returns("""
+                            id\tid1
+                            1\t1
+                            2\t2
                             """);
         });
     }

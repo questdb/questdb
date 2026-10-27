@@ -79,6 +79,7 @@ public final class LogicalPlans {
     private static final ExpressionVisitor OUTER_COLUMN_READS = expression -> expression instanceof OuterColumnExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final int RESULT_STABLE = 1;
     private static final int SEQUENCE_STABLE = RESULT_STABLE | ORDER_STABLE;
+    private static final PlanVisitor UPDATE_SCANS = plan -> plan instanceof ScanPlan scan && scan.isUpdate() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final ExpressionVisitor VOLATILE_NODES = expression -> !isStableWithinExecution(expression)
             || !(expression instanceof FunctionExpression || expression instanceof ColumnExpression || expression instanceof ConstantExpression
             || expression instanceof CursorExpression || expression instanceof BindVariableExpression || expression instanceof TypeExpression)
@@ -415,6 +416,13 @@ public final class LogicalPlans {
             }
         }
         return false;
+    }
+
+    /**
+     * True when the plan reads the target of an UPDATE, see {@link ScanPlan#isUpdate}.
+     */
+    public static boolean hasUpdateScan(LogicalPlan plan) {
+        return !plan.walkTopDown(UPDATE_SCANS);
     }
 
     /**

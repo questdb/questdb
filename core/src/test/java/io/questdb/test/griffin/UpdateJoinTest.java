@@ -146,6 +146,91 @@ public class UpdateJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinReadsTargetInRowOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean isParallelFilter : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilter);
+                for (boolean isPartitioned : new boolean[]{false, true}) {
+                    execute(isPartitioned
+                            ? "CREATE TABLE dst (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"
+                            : "CREATE TABLE dst (k INT, v INT)");
+                    execute("CREATE TABLE src (k INT, v INT)");
+                    execute(isPartitioned
+                            ? "INSERT INTO dst VALUES (1, 10, '2024-01-01'), (2, 20, '2024-01-02')"
+                            : "INSERT INTO dst VALUES (1, 10), (2, 20)");
+                    execute("INSERT INTO src VALUES (2, 200), (1, 100), (3, 300)");
+                    Assert.assertEquals(2, update("UPDATE dst d SET v = s.v FROM src s WHERE d.k = s.k AND d.v > 0"));
+                    assertQuery("SELECT k, v FROM dst").expectSize().returns("""
+                            k\tv
+                            1\t100
+                            2\t200
+                            """);
+                    Assert.assertEquals(2, update("UPDATE dst d SET v = s.v + 1 FROM src s WHERE d.k = s.k"));
+                    assertQuery("SELECT k, v FROM dst").expectSize().returns("""
+                            k\tv
+                            1\t101
+                            2\t201
+                            """);
+                    execute(isPartitioned
+                            ? "INSERT INTO dst VALUES (3, 30, '2024-01-03'), (4, 40, '2024-01-04'), (5, 50, '2024-01-05')"
+                            : "INSERT INTO dst VALUES (3, 30), (4, 40), (5, 50)");
+                    Assert.assertEquals(3, update("UPDATE dst d SET v = s.v + 2 FROM src s WHERE d.k = s.k AND d.v > 0"));
+                    assertQuery("SELECT k, v FROM dst").expectSize().returns("""
+                            k\tv
+                            1\t102
+                            2\t202
+                            3\t302
+                            4\t40
+                            5\t50
+                            """);
+                    execute("DROP TABLE dst");
+                    execute("DROP TABLE src");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinTargetRowOrderPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            execute("CREATE TABLE dst (k INT, v INT)");
+            execute("CREATE TABLE src (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO dst VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO src VALUES (2, 200, '2024-01-01'), (1, 100, '2024-01-02'), (3, 300, '2024-01-03')");
+            drainWalQueue();
+            final String sql = "UPDATE dst d SET v = s.v FROM src s WHERE d.k = s.k AND d.v > 0";
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    UpdateOperation update = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()
+            ) {
+                TestUtils.assertEquals("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: s.k=d.k
+                                Filter filter: 0<v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: dst
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: src
+                        """, planText(update.getFactory()));
+            }
+            Assert.assertEquals(2, update(sql));
+            assertQuery("SELECT k, v FROM dst").expectSize().returns("""
+                    k\tv
+                    1\t100
+                    2\t200
+                    """);
+            execute("CREATE TABLE dst_wal (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertExceptionNoLeakCheck("UPDATE dst_wal d SET v = s.v FROM src s WHERE d.k = s.k AND d.v > 0", 0,
+                    "UPDATE statements with join are not supported yet for WAL tables");
+        });
+    }
+
+    @Test
     public void testNoMatchAndDuplicateMatchesPreserveAffectedRows() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

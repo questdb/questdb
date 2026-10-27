@@ -1739,6 +1739,17 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Reads, for the UPDATE whose target the plan reads, see {@link ScanPlan#isUpdate}, the direction of the plan, see
+     * {@link #readOrder}: the UPDATE writes the target's rows back by row id in the order the target scan reads them,
+     * so every light INNER hash join they pass through keeps its master side.
+     */
+    void readUpdateOrder(LogicalPlan root) {
+        if (LogicalPlans.hasUpdateScan(root)) {
+            readOrder(root, false, true);
+        }
+    }
+
+    /**
      * True when the node requires the designated timestamp of its input at {@code inputIndex}, the ordered input of
      * a join: it consumes it, see {@link LogicalPlans#consumesInputTimestamp}, or its own consumer requires its timestamp,
      * {@code isTimestampRequired}, and its factory designates that input's, see

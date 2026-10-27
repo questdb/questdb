@@ -181,7 +181,7 @@ final class OptimiserContext implements Mutable {
     /**
      * An upper bound of the rows the factory of the plan returns, -1 when unknown: the row count of the table whose scan
      * bounds them, see {@link PhysicalProperties#rowBoundScan}, capped by the LIMITs along the way, see
-     * {@link PhysicalProperties#rowBoundLimit}.
+     * {@link PhysicalProperties#rowBoundLimit}, which estimates the count of a LIMIT only execution knows.
      */
     long rowBound(LogicalPlan plan) {
         final ScanPlan scan = PhysicalProperties.rowBoundScan(plan);

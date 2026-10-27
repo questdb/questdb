@@ -2827,6 +2827,39 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullTimezoneBindVariableNullWithTo() throws Exception {
+        final String berlin = """
+                ts\tsum
+                2024-06-14T22:00:00.000000Z\tnull
+                2024-06-15T22:00:00.000000Z\tnull
+                2024-06-16T22:00:00.000000Z\tnull
+                2024-06-17T22:00:00.000000Z\tnull
+                """;
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("Europe/Berlin", berlin, bindVariableService -> bindVariableService.setStr(0, "Europe/Berlin")));
+        cases.add(BindVarTuple.ok(
+                "NULL",
+                """
+                        ts\tsum
+                        2024-06-15T00:00:00.000000Z\tnull
+                        2024-06-16T00:00:00.000000Z\tnull
+                        2024-06-17T00:00:00.000000Z\tnull
+                        2024-06-18T00:00:00.000000Z\tnull
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, null)
+        ));
+        cases.add(BindVarTuple.ok("back to Europe/Berlin", berlin, bindVariableService -> bindVariableService.setStr(0, "Europe/Berlin")));
+
+        assertQuery(
+                "SELECT ts, sum(v) FROM t WHERE false SAMPLE BY 1d FROM '2024-06-15' TO '2024-06-18T01:00:00' " +
+                        "FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")
+                .ddl("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
+    }
+
+    @Test
     public void testFillNullTimezoneBindVariableReExecute() throws Exception {
         // The TIME ZONE clause is a runtime-constant bind variable. Re-executing
         // the same compiled factory with a different bind value must rebind
