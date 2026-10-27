@@ -31,12 +31,14 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -50,6 +52,7 @@ public class UpdateOperation extends AbstractOperation {
     private final AtomicInteger closeState = new AtomicInteger();
     private final ObjList<CharSequence> updateColumnNames = new ObjList<>();
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private RecordCursorFactory clientPlan;
     private boolean executingAsync;
     private RecordCursorFactory factory;
     private volatile boolean requesterTimeout;
@@ -61,7 +64,25 @@ public class UpdateOperation extends AbstractOperation {
             int tableNamePosition,
             @NotNull ObjList<CharSequence> updateColumnNames
     ) {
+        this(tableToken, tableId, tableVersion, tableNamePosition, updateColumnNames, null);
+    }
+
+    /**
+     * An UPDATE of a WAL table, which the WAL records as SQL text and its bind variables.
+     *
+     * @param clientPlan the plan the client compiled for the statement, over no rows, which the operation adopts;
+     *                   see {@link #initClientPlan()}
+     */
+    public UpdateOperation(
+            @NotNull TableToken tableToken,
+            int tableId,
+            long tableVersion,
+            int tableNamePosition,
+            @NotNull ObjList<CharSequence> updateColumnNames,
+            @Nullable RecordCursorFactory clientPlan
+    ) {
         this(tableToken, tableId, tableVersion, tableNamePosition, null, updateColumnNames);
+        this.clientPlan = clientPlan;
     }
 
     public UpdateOperation(
@@ -102,6 +123,7 @@ public class UpdateOperation extends AbstractOperation {
 
     @Override
     public void close() {
+        clientPlan = Misc.free(clientPlan);
         requesterTimeout = true;
         if (!executingAsync || closeState.addAndGet(SENDER_CLOSED_INCREMENT) == FULLY_CLOSED_STATE) {
             factory = Misc.free(factory);
@@ -132,6 +154,26 @@ public class UpdateOperation extends AbstractOperation {
 
     public RecordCursorFactory getFactory() {
         return factory;
+    }
+
+    /**
+     * Initializes the functions of the client plan with the values of the caller's bind variables by opening and
+     * closing its cursor, which reads no rows, so a value the statement cannot take fails before the WAL records
+     * the statement for every node to apply. The open is a {@link SqlExecutionContext#isMetadataProbe() metadata
+     * probe}: it hands nobody rows. Does nothing without a client plan.
+     */
+    public void initClientPlan() {
+        if (clientPlan != null) {
+            final boolean wasMetadataProbe = sqlExecutionContext.isMetadataProbe();
+            sqlExecutionContext.setMetadataProbe(true);
+            try {
+                Misc.free(clientPlan.getCursor(sqlExecutionContext));
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
+            } finally {
+                sqlExecutionContext.setMetadataProbe(wasMetadataProbe);
+            }
+        }
     }
 
     @Override

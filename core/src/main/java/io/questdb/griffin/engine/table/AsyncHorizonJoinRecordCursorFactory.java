@@ -58,6 +58,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -114,6 +115,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
@@ -156,6 +158,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
+                    keyCheck,
                     groupByColumnFilter,
                     columnSources,
                     columnIndexes,
@@ -231,7 +234,12 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null) {
+            sink.attr("filter").val(filter, masterFactory);
+        }
         sink.child(masterFactory);
+        sink.optAttr("keyCheck", frameSequence.getAtom().getKeyCheck());
         final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);

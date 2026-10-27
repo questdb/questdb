@@ -60,6 +60,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -80,6 +81,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private HorizonJoinRecordCursor cursor;
     private JoinRecordMetadata horizonJoinMetadata;
+    private final @Nullable JoinKeyCheck keyCheck;
     private ObjList<Function> keyFunctions;
     private RecordCursorFactory masterFactory;
     private final long[] offsets;
@@ -108,6 +110,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes
@@ -119,6 +122,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.slaveFilter = slaveFilter;
+            this.keyCheck = keyCheck;
             this.offsets = offsets;
             this.recordFunctions = recordFunctions;
 
@@ -154,7 +158,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     columnIndexes,
                     masterTsScale,
                     slaveTsScale,
-                    slaveFilter
+                    slaveFilter,
+                    keyCheck
             );
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -213,6 +218,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.optAttr("values", cursor.groupByFunctions);
         sink.setMetadata(null);
         sink.child(masterFactory);
+        sink.optAttr("keyCheck", keyCheck);
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
         }
@@ -301,7 +307,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 int[] columnIndexes,
                 long masterTsScale,
                 long slaveTsScale,
-                @Nullable Function slaveFilter
+                @Nullable Function slaveFilter,
+                @Nullable JoinKeyCheck keyCheck
         ) {
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
@@ -370,7 +377,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
                     configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
                     slaveFilter,
-                    asOfJoinKeyTypes
+                    asOfJoinKeyTypes,
+                    keyCheck
             );
             this.isOpen = false;
         }

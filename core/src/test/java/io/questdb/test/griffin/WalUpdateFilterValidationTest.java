@@ -182,6 +182,44 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidTextBindFailsBeforeSequencing() throws Exception {
+        assertMemoryLeak(() -> {
+            createSecondTimestampTable();
+            assertInvalidTextBind("ts = $1::varchar", 32, "VARCHAR");
+            assertInvalidTextBind("other::timestamp = $1::varchar", 46, "VARCHAR");
+            assertInvalidTextBind("other = $1::string", 35, "STRING");
+            assertInvalidTextBind("ts > $1::varchar", 32, "VARCHAR");
+            assertInvalidTextBind("ts BETWEEN $1::varchar AND '2030'", 38, "VARCHAR");
+            assertInvalidTextBind("other < $1::varchar", 35, "VARCHAR");
+            assertInvalidTextBind("ts = $1::string", 32, "STRING");
+            assertInvalidTextBind("other = $1", 33, "STRING");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("u");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            assertQuery("SELECT ts, v FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-07-09T00:00:00.000000Z");
+            update("UPDATE u SET v = 999 WHERE other = $1::varchar");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            assertQuery("SELECT ts, v FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tv\n" + LAST_ROW_UPDATED);
+        });
+    }
+
+    @Test
     public void testOutOfRangeNanoTextBoundFailsBeforeSequencing() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE n (ts TIMESTAMP_NS, other TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY DAY"
@@ -442,6 +480,14 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns("ts\tv\n" + ALL_ROWS_UPDATED);
+    }
+
+    private void assertInvalidTextBind(String predicate, int position, String textType) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "garbage");
+        assertQuery("UPDATE u SET v = 0 WHERE " + predicate)
+                .noLeakCheck()
+                .fails(position, "inconvertible value: `garbage` [" + textType + " -> TIMESTAMP]");
     }
 
     private void assertShortOrByteBindUpdate(String updateSql, String expectedRows) throws Exception {

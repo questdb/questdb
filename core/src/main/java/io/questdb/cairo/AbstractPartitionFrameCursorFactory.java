@@ -28,13 +28,13 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.view.ViewGraph;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -158,23 +158,20 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             }
             securityContext.authorizeSelect(viewDefinition);
 
-            // columns not referenced by the view require explicit permission
-            final LowerCaseCharSequenceHashSet depCols = viewDefinition.getDependencies().get(tableToken.getTableName());
-            // A null depCols means the view's persisted dependency map has no entry for this base
-            // table - either a dependency-collector gap missed the reference, or the base table was
-            // renamed after the view was created. Fail safe: treat the table as not covered by the
-            // view, so every column read here requires explicit per-column SELECT on the base table.
-            if (depCols == null || !depCols.contains("*")) {
-                columnNames.clear();
-                for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                    final String columnName = table.getColumnName(columnIndexes.getQuick(i));
-                    if (depCols == null || !depCols.contains(columnName)) {
-                        columnNames.add(columnName);
-                    }
+            // Columns the view does not read, directly or through the views it reads, require explicit
+            // permission. That includes every column of a table the dependency maps do not record, which
+            // a dependency-collector gap or a rename of the table after the view was created can cause.
+            final ViewGraph viewGraph = engine.getViewGraph();
+            final String tableName = tableToken.getTableName();
+            columnNames.clear();
+            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                final String columnName = table.getColumnName(columnIndexes.getQuick(i));
+                if (!viewGraph.readsColumn(engine, viewDefinition, tableName, columnName)) {
+                    columnNames.add(columnName);
                 }
-                if (columnNames.size() > 0) {
-                    securityContext.authorizeSelect(tableToken, columnNames);
-                }
+            }
+            if (columnNames.size() > 0) {
+                securityContext.authorizeSelect(tableToken, columnNames);
             }
         } else if (columnIndexes.size() > 0) {
             columnNames.clear();

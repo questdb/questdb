@@ -2044,6 +2044,121 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinMasterKeysShareSlaveColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (s SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO p VALUES
+                        ('A', 1.0, '2024-01-01T00:00:01Z'),
+                        ('B', 2.0, '2024-01-01T00:00:02Z'),
+                        (NULL, 3.0, '2024-01-01T00:00:03Z'),
+                        ('A', 4.0, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', 'A', 'A', '2024-01-01T00:00:02Z'),
+                        ('A', 'B', 'A', '2024-01-01T00:00:03Z'),
+                        ('B', 'B', 'B', '2024-01-01T00:00:04Z'),
+                        (NULL, NULL, NULL, '2024-01-01T00:00:05Z'),
+                        ('C', 'C', 'C', '2024-01-01T00:00:06Z'),
+                        (NULL, 'A', '', '2024-01-01T00:00:07Z')
+                    """);
+            final String q = "HORIZON JOIN p q ON (t.s1 = q.s AND t.s2 = q.s)";
+            final String r = "HORIZON JOIN p r ON (t.s1 = r.s AND t.v = r.s)";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT count(*), count(q.price), sum(q.price) FROM t " + q + " LIST (0s, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=s2")
+                        .returns("""
+                                count\tcount1\tsum
+                                12\t6\t12.0
+                                """);
+                assertQuery("SELECT count(*), count(r.price), sum(r.price) FROM t " + r + " LIST (0s, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=v")
+                        .returns("""
+                                count\tcount1\tsum
+                                12\t8\t17.0
+                                """);
+                assertQuery("SELECT h.offset, count(q.price), sum(q.price) FROM t " + q + " LIST (0s, 1s) AS h ORDER BY 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=s2")
+                        .returns("""
+                                offset\tcount\tsum
+                                0\t3\t6.0
+                                1000000\t3\t6.0
+                                """);
+                assertQuery("SELECT h.offset, count(q.price), sum(q.price), count(r.price), sum(r.price) FROM t " + q + " " + r
+                        + " LIST (0s, 1s) AS h ORDER BY 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=s2", "keyCheck: s1=v")
+                        .returns("""
+                                offset\tcount\tsum\tcount1\tsum1
+                                0\t3\t6.0\t4\t7.0
+                                1000000\t3\t6.0\t4\t10.0
+                                """);
+                assertQuery("SELECT count(q.price), sum(q.price), count(r.price), sum(r.price) FROM t " + q + " " + r + " LIST (0s, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=s2", "keyCheck: s1=v")
+                        .returns("""
+                                count\tsum\tcount1\tsum1
+                                6\t12.0\t8\t17.0
+                                """);
+                assertQuery("SELECT t.ts, h.offset, q.price, r.price r_price FROM t " + q + " " + r + " LIST (0s, 1s) AS h ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=s2", "keyCheck: s1=v")
+                        .returns("""
+                                ts\toffset\tprice\tr_price
+                                2024-01-01T00:00:02.000000Z\t0\t1.0\t1.0
+                                2024-01-01T00:00:02.000000Z\t1000000\t1.0\t1.0
+                                2024-01-01T00:00:03.000000Z\t0\tnull\t1.0
+                                2024-01-01T00:00:03.000000Z\t1000000\tnull\t4.0
+                                2024-01-01T00:00:04.000000Z\t0\t2.0\t2.0
+                                2024-01-01T00:00:04.000000Z\t1000000\t2.0\t2.0
+                                2024-01-01T00:00:05.000000Z\t0\t3.0\t3.0
+                                2024-01-01T00:00:05.000000Z\t1000000\t3.0\t3.0
+                                2024-01-01T00:00:06.000000Z\t0\tnull\tnull
+                                2024-01-01T00:00:06.000000Z\t1000000\tnull\tnull
+                                2024-01-01T00:00:07.000000Z\t0\tnull\tnull
+                                2024-01-01T00:00:07.000000Z\t1000000\tnull\tnull
+                                """);
+                assertQuery("SELECT t.ts, h.offset, q.price FROM t " + q + " LIST (0s, 1s) AS h ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("keyCheck: s1=s2")
+                        .returns("""
+                                ts\toffset\tprice
+                                2024-01-01T00:00:02.000000Z\t0\t1.0
+                                2024-01-01T00:00:02.000000Z\t1000000\t1.0
+                                2024-01-01T00:00:03.000000Z\t0\tnull
+                                2024-01-01T00:00:03.000000Z\t1000000\tnull
+                                2024-01-01T00:00:04.000000Z\t0\t2.0
+                                2024-01-01T00:00:04.000000Z\t1000000\t2.0
+                                2024-01-01T00:00:05.000000Z\t0\t3.0
+                                2024-01-01T00:00:05.000000Z\t1000000\t3.0
+                                2024-01-01T00:00:06.000000Z\t0\tnull
+                                2024-01-01T00:00:06.000000Z\t1000000\tnull
+                                2024-01-01T00:00:07.000000Z\t0\tnull
+                                2024-01-01T00:00:07.000000Z\t1000000\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
@@ -3298,6 +3413,91 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         TestUtils.assertContains(result, "sec_offs");
                     }
             );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinParallelPlanShowsLeftFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createHorizonTradesAndQuoteTables();
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            final String single = "FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h WHERE ";
+            final String multi = "FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h WHERE ";
+
+            assertQuery("SELECT t.sym, h.offset, avg(q.bid) a " + single + "t.price > 15 ORDER BY sym, offset")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("""
+                                Async JIT Horizon Join workers: 1 offsets: 2
+                                  keys: [sym,offset]
+                                  values: [avg(q.bid)]
+                                  filter: 15<price
+                            """)
+                    .returns("""
+                            sym\toffset\ta
+                            A\t0\t30.0
+                            A\t#1s\t30.0
+                            B\t0\t20.0
+                            B\t#1s\t60.0
+                            C\t0\t40.0
+                            C\t#1s\t40.0
+                            """.replace("#1s", oneSecond));
+            assertQuery("SELECT sum(q.bid) s, count() c " + single + "t.price > 15")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                            Async JIT Horizon Join workers: 1 offsets: 2
+                              values: [sum(q.bid),count(*)]
+                              filter: 15<price
+                            """)
+                    .returns("""
+                            s\tc
+                            220.0\t6
+                            """);
+            assertQuery("SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k " + multi + "concat(t.sym, '') != 'B' ORDER BY sym, offset")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("""
+                                Async Multi Horizon Join workers: 1 offsets: 2 tables: 2
+                                  keys: [sym,offset]
+                                  values: [avg(b.bid),avg(k.ask)]
+                                  filter: concat([sym,''])!='B'
+                            """)
+                    .returns("""
+                            sym\toffset\ta\tk
+                            A\t0\t20.0\t21.0
+                            A\t#1s\t40.0\t41.0
+                            C\t0\t40.0\t41.0
+                            C\t#1s\t40.0\t41.0
+                            """.replace("#1s", oneSecond));
+            assertQuery("SELECT sum(b.bid) s, sum(k.ask) k " + multi + "concat(t.sym, '') != 'B'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                            Async Multi Horizon Join workers: 1 offsets: 2 tables: 2
+                              values: [sum(b.bid),sum(k.ask)]
+                              filter: concat([sym,''])!='B'
+                            """)
+                    .returns("""
+                            s\tk
+                            200.0\t206.0
+                            """);
+            assertQuery("SELECT sum(q.bid) s " + single + "concat(t.sym, '') != 'B'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                            Async Horizon Join workers: 1 offsets: 2
+                              values: [sum(q.bid)]
+                              filter: concat([sym,''])!='B'
+                            """)
+                    .returns("""
+                            s
+                            200.0
+                            """);
         });
     }
 

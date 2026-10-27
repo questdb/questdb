@@ -61,6 +61,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
+    private final @Nullable JoinKeyCheck keyCheck;
     private final RecordSink masterKeySink;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final RecordSink slaveKeySink;
@@ -83,6 +84,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
      * @param slaveNullRecord       null record to be used when the slave record is not found, projection is NOT applied on this record
      * @param slaveColumnCrossIndex optional crossindex for projecting the slave records, can be null
      * @param slaveTimestampIndex   timestamp column index in slave table after projection
+     * @param keyCheck              compares the master columns of the keys the join checks instead of looking them
+     *                              up, or null when it looks up every key
      */
     public FilteredAsOfJoinFastRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -98,10 +101,12 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             int slaveTimestampIndex,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.keyCheck = keyCheck;
         this.slaveRecordFilter = slaveRecordFilter;
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
@@ -180,6 +185,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     public void toPlan(PlanSink sink) {
         sink.type("Filtered AsOf Join Fast");
         sink.attr("filter").val(slaveRecordFilter, slaveFactory);
+        sink.optAttr("keyCheck", keyCheck);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -271,6 +277,10 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
 
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
+            if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                record.hasSlave(false);
+                return true;
+            }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.resetNonExistentKeyFlag();
             }

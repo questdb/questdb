@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.std.Decimals;
@@ -56,11 +57,11 @@ public final class SetOperationCasts {
             {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  5}, //  5 = INT
             {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  6}, //  6 = LONG
             {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  7}, //  7 = DATE
-            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  8}, //  8 = TIMESTAMP
+            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  8}, //  8 = TIMESTAMP
             {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  9}, //  9 = FLOAT
             {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 10}, // 10 = DOUBLE
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
-            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 11}, // 12 = SYMBOL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 11}, // 12 = SYMBOL
             {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 13}, // 13 = LONG256
             {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = GEOBYTE
             {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = GEOSHORT
@@ -115,12 +116,16 @@ public final class SetOperationCasts {
 
     /**
      * The type the set operation's branches cast column {@code index} to when the operation casts its branches,
-     * {@code isCastRequired}, see {@link #isCastRequired}, else the left branch's type. It leaves out the SYMBOL type
-     * the binder restores on a UNION column both branches read as SYMBOL.
+     * {@code isCastRequired}, see {@link #isCastRequired}, else the left branch's type. A branch column that
+     * {@link #isSymbolColumn reads as SYMBOL} widens as SYMBOL, so the type does not depend on where the column's
+     * UNION chain restores SYMBOL. It leaves out the SYMBOL type the binder restores on a UNION column both branches
+     * read as SYMBOL.
      */
     public static int getCastType(SetOperationPlan plan, int index, boolean isCastRequired) throws SqlException {
-        final int leftType = plan.getLeft().getOutput().getColumnType(index);
-        return isCastRequired ? getUnionCastType(leftType, plan.getRight().getOutput().getColumnType(index)) : leftType;
+        if (!isCastRequired) {
+            return plan.getLeft().getOutput().getColumnType(index);
+        }
+        return getUnionCastType(getWideningType(plan.getLeft(), index), getWideningType(plan.getRight(), index));
     }
 
     public static int getUnionCastType(int typeA, int typeB) throws SqlException {
@@ -232,6 +237,16 @@ public final class SetOperationCasts {
     }
 
     /**
+     * Whether the branch reads column {@code index} as SYMBOL: the column is SYMBOL, or the branch is a UNION that
+     * continues into the next UNION of its chain and carries as STRING a column all its branches read as SYMBOL.
+     */
+    public static boolean isSymbolColumn(LogicalPlan branch, int index) {
+        return ColumnType.isSymbol(branch.getOutput().getColumnType(index))
+                || branch instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
+                && operation.getSymbolColumns().contains(index);
+    }
+
+    /**
      * Rejects a branch column type that the set operation cannot cast to the column's output type.
      */
     public static void validateCast(int fromType, int toType, CharSequence column, int position) throws SqlException {
@@ -253,6 +268,10 @@ public final class SetOperationCasts {
         } else if (!isSupportedCast(fromTag, fromType, toTag)) {
             throw SqlException.unsupportedCast(position, column, fromType, toType);
         }
+    }
+
+    private static int getWideningType(LogicalPlan branch, int index) {
+        return isSymbolColumn(branch, index) ? SYMBOL : branch.getOutput().getColumnType(index);
     }
 
     private static boolean isSupportedCast(int fromTag, int fromType, int toTag) {

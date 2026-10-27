@@ -56,6 +56,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
 
+    private final @Nullable JoinKeyCheck keyCheck;
     private final RecordSink masterKeyCopier;
     private final RecordSink slaveKeyCopier;
     private final @Nullable SymbolJoinKeyMapping symbolJoinKeyMapping;
@@ -76,9 +77,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         Map joinKeyMap = null;
         try {
@@ -144,6 +147,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Light");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", keyCheck);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -278,6 +282,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     this.lastSlaveRowID = slaveRowID;
                 }
 
+                if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                    record.hasSlave(false);
+                    return true;
+                }
                 key = joinKeyToRowId.withKey();
                 // Use the translating record (if available) so that getInt() on symbol
                 // key columns returns slave symbol IDs for integer-based map lookup.

@@ -59,6 +59,7 @@ import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -1009,6 +1010,7 @@ public final class AggregateFactoryGenerator {
                 final ArrayColumnTypes joinKeyTypes = key == null ? null : key.keyTypes;
                 final int[] masterSymbols = key == null ? null : key.masterSymbolKeys;
                 final int[] slaveSymbols = key == null ? null : key.slaveSymbolKeys;
+                final JoinKeyCheck keyCheck = key == null ? null : key.keyCheck;
                 final PreparedFilter slaveFilter = slaveFilters.getQuick(0);
                 if (!isParallel) {
                     final RecordSink masterSink = key == null ? null : key.createMasterSink(configuration, asm, masterMetadata);
@@ -1018,10 +1020,10 @@ public final class AggregateFactoryGenerator {
                     return isKeyed
                             ? new HorizonJoinRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slave, slaveFilterFunction, offsets,
                             masterTimestampIndex, groupByFunctions, recordFunctions, keyFunctions, keyTypes, valueTypes, joinKeyTypes,
-                            masterSink, slaveSink, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices)
+                            masterSink, slaveSink, masterColumnCount, masterSymbols, slaveSymbols, keyCheck, columnFilter, columnSources, columnIndices)
                             : new HorizonJoinNotKeyedRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slave, slaveFilterFunction, offsets,
                             masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSink, slaveSink,
-                            masterColumnCount, masterSymbols, slaveSymbols, columnSources, columnIndices);
+                            masterColumnCount, masterSymbols, slaveSymbols, keyCheck, columnSources, columnIndices);
                 }
                 final RecordSinkTemplate masterSinkTemplate = key == null ? null : key.masterSinkTemplate(configuration, asm, masterMetadata);
                 final RecordSinkTemplate slaveSinkTemplate = key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata());
@@ -1033,12 +1035,12 @@ public final class AggregateFactoryGenerator {
                         ? new AsyncHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
                         groupByFunctions, recordFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkTemplate,
-                        slaveSinkTemplate, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
+                        slaveSinkTemplate, masterColumnCount, masterSymbols, slaveSymbols, keyCheck, columnFilter, columnSources, columnIndices,
                         resources, workerCount)
                         : new AsyncHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
                         groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSinkTemplate, slaveSinkTemplate,
-                        masterColumnCount, masterSymbols, slaveSymbols, columnSources, columnIndices, resources, workerCount);
+                        masterColumnCount, masterSymbols, slaveSymbols, keyCheck, columnSources, columnIndices, resources, workerCount);
             }
             final ColumnTypes[] joinKeyTypes = new ColumnTypes[slaveCount];
             final int masterTimestampType = masterMetadata.getTimestampType();
@@ -1058,7 +1060,8 @@ public final class AggregateFactoryGenerator {
                         key == null ? null : key.masterSinkTemplate(configuration, asm, masterMetadata),
                         key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata()),
                         masterColumnCount,
-                        key == null ? null : key.masterSymbolKeys, key == null ? null : key.slaveSymbolKeys);
+                        key == null ? null : key.masterSymbolKeys, key == null ? null : key.slaveSymbolKeys,
+                        key == null ? null : key.keyCheck);
                 slaveStates.add(state);
                 slaves.setQuick(s, null);
                 final PreparedFilter slaveFilter = slaveFilters.getQuick(s);

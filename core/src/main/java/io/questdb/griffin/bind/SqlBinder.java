@@ -264,7 +264,7 @@ public final class SqlBinder implements Mutable {
     private static boolean isVisible(QueryModel source, TableToken token, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode view = source.getViewNameExpr();
         return executionContext.getSecurityContext().isTableVisible(token)
-                || view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token);
+                || view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token, executionContext.getCairoEngine());
     }
 
     /**

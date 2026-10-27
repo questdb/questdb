@@ -115,17 +115,19 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         // compute return type in this loop
         final int argsSize = args.size();
         int returnType = -1;
+        final IntList foldedTypes = new IntList();
         for (int i = 0; i < argsSize; i++) {
             returnType = CaseCommon.getCommonType(
                     returnType,
                     args.getQuick(i).getType(),
                     argPositions.getQuick(i),
+                    foldedTypes,
                     "coalesce cannot be used with bind variables"
             );
         }
 
         for (int i = 0; i < argsSize; i++) {
-            args.setQuick(i, CaseCommon.getValueCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
         }
 
         return switch (tagOf(returnType)) {

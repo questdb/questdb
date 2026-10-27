@@ -30,6 +30,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -47,6 +48,7 @@ import org.jetbrains.annotations.Nullable;
 public class HorizonJoinSlaveState implements QuietCloseable {
     private final @Nullable ColumnTypes asOfJoinKeyTypes;
     private final boolean isKeyed;
+    private final @Nullable JoinKeyCheck keyCheck;
     private final @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate;
     private final int masterColumnCount;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
@@ -67,7 +69,8 @@ public class HorizonJoinSlaveState implements QuietCloseable {
             @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         this.factory = factory;
         this.masterTsScale = masterTsScale;
@@ -78,6 +81,7 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         this.masterColumnCount = masterColumnCount;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
+        this.keyCheck = keyCheck;
         this.isKeyed = asOfJoinKeyTypes != null;
         assert !isKeyed || (masterAsOfJoinMapSinkTemplate != null && slaveAsOfJoinMapSinkTemplate != null);
     }
@@ -115,6 +119,14 @@ public class HorizonJoinSlaveState implements QuietCloseable {
 
     public @Nullable Function getFilter() {
         return filter;
+    }
+
+    /**
+     * Compares the master columns of the keys the join checks instead of looking them up, or null when it looks up
+     * every key of this slave.
+     */
+    public @Nullable JoinKeyCheck getKeyCheck() {
+        return keyCheck;
     }
 
     public int getMasterColumnCount() {

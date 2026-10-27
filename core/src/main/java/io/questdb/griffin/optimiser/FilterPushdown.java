@@ -85,9 +85,13 @@ final class FilterPushdown implements OptimiserPass {
     private final ConjunctSplit conjunctSplit = new ConjunctSplit();
     private final OptimiserContext context;
     private final ObjectPool<FilterPlan> filters;
+    private final ExpressionVisitor identityColumns = this::mapColumnToItself;
     private final IntList joinConjunctTargets;
     private final ConjunctTest keyConjuncts;
     private final ObjectPool<ColumnExpression> narrowingColumns;
+    private final ObjList<BoundExpression> nullRejectingCopied = new ObjList<>();
+    private final ObjList<BoundExpression> nullRejectingCopies = new ObjList<>();
+    private final IntList nullRejectingCopySources = new IntList();
     private final PlanVisitor sharedDomainFilters = plan -> {
         filterSharedDomain(plan);
         return TreeWalk.CONTINUE;
@@ -164,6 +168,9 @@ final class FilterPushdown implements OptimiserPass {
         isLatestKeyScope = false;
         latestKeyLimit = null;
         latestKeySort = null;
+        nullRejectingCopied.clear();
+        nullRejectingCopies.clear();
+        nullRejectingCopySources.clear();
         pushedSetOperation = null;
     }
 
@@ -530,6 +537,24 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
+     * Collects a copy of a conjunct that stays above the join because an outer step NULL-extends the one input it reads,
+     * for that input to filter its rows too: the conjunct drops the rows the outer steps NULL-extend, see
+     * {@link OptimiserContext#isNullRejecting}, so the rows the copy drops lose only the joined rows the conjunct drops.
+     * A conjunct the pass copied once stays above the join, where the pass visits it again, and gets no second copy.
+     */
+    private void collectNullRejectingCopy(BoundExpression conjunct, JoinPlan join, int lastInput) {
+        final int source = joinSourceOrdinal(conjunct, join);
+        if (source >= 0 && nullRejectingCopied.indexOf(conjunct) < 0 && LogicalPlans.isOrderIndependent(conjunct)
+                && LogicalPlans.canPushNullRejectingJoinFilter(join, source, lastInput) && context.isNullRejecting(conjunct)) {
+            columnMap.clear();
+            conjunct.walk(identityColumns);
+            nullRejectingCopied.add(conjunct);
+            nullRejectingCopies.add(context.getRewriter().copyRemappedColumns(conjunct, columnMap));
+            nullRejectingCopySources.add(source);
+        }
+    }
+
+    /**
      * Collects one transitive fact per column from the join's WHERE and INNER ON conjuncts. A later
      * conjunct replaces an earlier fact on the same column, except that an ON conjunct never replaces
      * a WHERE fact.
@@ -714,10 +739,6 @@ final class FilterPushdown implements OptimiserPass {
         return context.getRewriter().retainConjuncts(predicate, unhoistedJoinConjuncts);
     }
 
-    private boolean isNullRejectingFact(FunctionExpression fact) {
-        return context.isNullRejecting(fact, fact.argumentAt(0) == transitiveFilterColumn(fact) ? 0 : 1);
-    }
-
     /**
      * An INNER ON fact holds for every output row only up to the first master-nulling join after its
      * column's source; rows that join NULL-extends satisfy it only when the fact rejects NULL.
@@ -735,7 +756,7 @@ final class FilterPushdown implements OptimiserPass {
         if (sourcePosition < 0 || boundaryPosition < 0) {
             return true;
         }
-        return ordered.indexOf(target) < boundaryPosition && (!"=".equals(fact.getName()) || isNullRejectingFact(fact)
+        return ordered.indexOf(target) < boundaryPosition && (!"=".equals(fact.getName()) || context.isNullRejecting(fact)
                 || ordered.indexOf(join.getInputs().getQuick(origin)) < boundaryPosition);
     }
 
@@ -757,10 +778,17 @@ final class FilterPushdown implements OptimiserPass {
         }
         final FunctionExpression call = (FunctionExpression) fact;
         if ("=".equals(call.getName())) {
-            return isNullRejectingFact(call);
+            return context.isNullRejecting(call);
         }
         return call.argumentAt(1) instanceof ConstantExpression constant && constant.isLiteral()
                 && ColumnType.tagOf(constant.getDataType()) != ColumnType.NULL;
+    }
+
+    private int mapColumnToItself(BoundExpression expression) {
+        if (expression instanceof ColumnExpression column) {
+            columnMap.put(column.getColumnId(), column.getColumnId());
+        }
+        return TreeWalk.CONTINUE;
     }
 
     /**
@@ -1117,10 +1145,16 @@ final class FilterPushdown implements OptimiserPass {
             return null;
         }
         final int base = joinConjunctTargets.size();
+        final int copyBase = nullRejectingCopies.size();
         tmpExpressions.clear();
         LogicalPlans.collectConjuncts(predicate, tmpExpressions);
         for (int i = 0, n = tmpExpressions.size(); i < n; i++) {
-            joinConjunctTargets.add(joinConjunctTarget(tmpExpressions.getQuick(i), join, lastInput));
+            final BoundExpression conjunct = tmpExpressions.getQuick(i);
+            final int target = joinConjunctTarget(conjunct, join, lastInput);
+            joinConjunctTargets.add(target);
+            if (target < 0) {
+                collectNullRejectingCopy(conjunct, join, lastInput);
+            }
         }
         tmpExpressions.clear();
         final BoundExpression residual = selectJoinConjuncts(predicate, base, -1);
@@ -1128,6 +1162,11 @@ final class FilterPushdown implements OptimiserPass {
             pushSourceJoinFilter(join.getInputs().getQuick(i), selectJoinConjuncts(predicate, base, i));
         }
         joinConjunctTargets.setPos(base);
+        for (int i = copyBase, n = nullRejectingCopies.size(); i < n; i++) {
+            pushSourceJoinFilter(join.getInputs().getQuick(nullRejectingCopySources.getQuick(i)), nullRejectingCopies.getQuick(i));
+        }
+        nullRejectingCopies.setPos(copyBase);
+        nullRejectingCopySources.setPos(copyBase);
         return residual;
     }
 

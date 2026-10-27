@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.view;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -37,6 +38,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.BiConsumer;
@@ -90,6 +92,24 @@ public class ViewGraph implements Mutable {
         for (ViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getViewToken());
         }
+    }
+
+    /**
+     * Whether the view reads the column of the table, directly or through the views it reads as they are defined
+     * now, which is what the view lends its authority to. A view records what it reads through another view as of
+     * its own CREATE VIEW or ALTER VIEW, which a later ALTER VIEW of the other view does not update, so the
+     * dependencies of the views it reads count as they are now. A recorded {@code *} stands for every column.
+     */
+    public boolean readsColumn(CairoEngine engine, ViewDefinition view, CharSequence tableName, CharSequence columnName) {
+        return reads(engine, view, tableName, columnName, definitionsByTableDirName.size());
+    }
+
+    /**
+     * Whether the view reads the table, directly or through the views it reads as they are defined now, see
+     * {@link #readsColumn}.
+     */
+    public boolean readsTable(CairoEngine engine, ViewDefinition view, CharSequence tableName) {
+        return reads(engine, view, tableName, null, definitionsByTableDirName.size());
     }
 
     public synchronized void removeView(TableToken viewToken) {
@@ -171,6 +191,28 @@ public class ViewGraph implements Mutable {
     @NotNull
     private ViewDependencyList getOrCreateDependentViews(CharSequence tableName) {
         return dependentViewsByTableName.computeIfAbsent(tableName, CREATE_DEPENDENCY_LIST);
+    }
+
+    // depth bounds the walk by the number of views, which no chain of distinct views exceeds
+    private boolean reads(CairoEngine engine, ViewDefinition view, CharSequence tableName, @Nullable CharSequence columnName, int depth) {
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = view.getDependencies();
+        final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+        if (columns != null && (columnName == null || columns.contains("*") || columns.contains(columnName))) {
+            return true;
+        }
+        if (depth > 0) {
+            final ObjList<CharSequence> names = dependencies.keys();
+            for (int i = 0, n = names.size(); i < n; i++) {
+                final TableToken token = engine.getTableTokenIfExists(names.getQuick(i));
+                if (token != null && token.isView()) {
+                    final ViewDefinition innerView = getViewDefinition(token);
+                    if (innerView != null && reads(engine, innerView, tableName, columnName, depth - 1)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private void updateDependencies(TableToken viewToken, ViewDefinition viewDefinition, BiConsumer<ObjList<TableToken>, TableToken> operation) {

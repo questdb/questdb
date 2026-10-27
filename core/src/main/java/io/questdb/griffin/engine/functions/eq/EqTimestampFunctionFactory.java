@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction.TimestampTextRuntimeConstFunction;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
@@ -71,6 +72,12 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
+        if (right instanceof TimestampTextRuntimeConstFunction text) {
+            return new TextFunc(left, text);
+        }
+        if (left instanceof TimestampTextRuntimeConstFunction text) {
+            return new TextFunc(right, text);
+        }
         final int timestampType = ColumnType.getHigherPrecisionTimestampType(
                 ColumnType.getTimestampType(left.getType()),
                 ColumnType.getTimestampType(right.getType())
@@ -378,6 +385,25 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             value = left.getTimestamp(null);
+        }
+    }
+
+    /**
+     * Compares the operand with text at the operand's precision: equal only when the text spells a value of the
+     * operand's type, so text finer than the operand equals no value.
+     */
+    private static class TextFunc extends AbstractEqBinaryFunction {
+        private final TimestampTextRuntimeConstFunction text;
+
+        public TextFunc(Function operand, TimestampTextRuntimeConstFunction text) {
+            super(operand, text);
+            this.text = text;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long value = left.getTimestamp(rec);
+            return negated != (text.getCeil() <= value && value <= text.getFloor());
         }
     }
 }

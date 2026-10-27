@@ -222,6 +222,7 @@ public final class LogicalPlanPrinter {
             case LT -> sink.put("LT");
             case SPLICE -> sink.put("SPLICE");
             case UNNEST -> sink.put("UNNEST");
+            case OUTER_CROSS -> sink.put("OUTER CROSS");
         }
     }
 

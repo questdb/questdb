@@ -7758,7 +7758,7 @@ public class SqlParser {
 
             // args are in inverted order, hence last list item is the first arg
             ExpressionNode first = node.args.getQuick(paramCount - 1);
-            if (first.token != null) {
+            if (first.type != ExpressionNode.LITERAL || first.token != null) {
                 // simple case of 'case' :) e.g.
                 // case x
                 //   when 1 then 'A'

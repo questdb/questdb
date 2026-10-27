@@ -182,6 +182,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.child(masterFactory);
         for (int i = 0, n = slaveStates.size(); i < n; i++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(i);
+            sink.optAttr("keyCheck", state.getKeyCheck());
             if (state.getFilter() != null) {
                 sink.attr("slave filter").val(state.getFilter(), state.getFactory());
             }
@@ -346,7 +347,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
                             ss.getFilter(),
-                            ss.getAsOfJoinKeyTypes()
+                            ss.getAsOfJoinKeyTypes(),
+                            ss.getKeyCheck()
                     ));
                 }
                 this.isOpen = false;

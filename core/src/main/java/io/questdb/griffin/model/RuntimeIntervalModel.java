@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction.TimestampTextRuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,7 +43,6 @@ import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -484,16 +484,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             SqlExecutionContext sqlExecutionContext,
             int cursorFunctionIndex
     ) throws SqlException {
-        if (ColumnType.isString(functionType)) {
-            final CharSequence value = dynamicFunction.getStrA(null);
-            if (value != null) {
-                try {
-                    return ColumnType.getTimestampDriver(valueType).parseFloorLiteral(value);
-                } catch (NumericException e) {
-                    return Numbers.LONG_NULL;
-                }
-            }
-            return Numbers.LONG_NULL;
+        if (dynamicFunction instanceof TimestampTextRuntimeConstFunction text) {
+            return text.getValue();
         } else if (functionType == ColumnType.CURSOR) {
             // special case for ts = (<subquery>) and similar cases
             final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
@@ -508,13 +500,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     /**
-     * The timestamp type of a dynamic bound's value: a sub-query's column type, the precision of a
-     * literal, or the function's own timestamp type.
+     * The timestamp type of a dynamic bound's value: a sub-query's column type, the precision text spells, or the
+     * function's own timestamp type.
      */
     private int getTimestampType(Function dynamicFunction, int functionType) {
-        if (ColumnType.isString(functionType)) {
-            final CharSequence value = dynamicFunction.getStrA(null);
-            return value == null ? timestampDriver.getTimestampType() : IntervalUtils.literalTimestampType(timestampDriver, value);
+        if (dynamicFunction instanceof TimestampTextRuntimeConstFunction text) {
+            return text.getValueType();
         }
         if (functionType == ColumnType.CURSOR) {
             return ColumnType.getTimestampType(dynamicFunction.getRecordCursorFactory().getMetadata().getColumnType(0));

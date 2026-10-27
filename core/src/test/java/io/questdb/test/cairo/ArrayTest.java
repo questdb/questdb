@@ -2138,11 +2138,11 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("ARRAY\n[]\n");
-            execute("CREATE TABLE tango AS (SELECT ARRAY[])");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[]::DOUBLE[])");
             assertQuery("tango")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("ARRAY\n[]\n");
+                    .returns("cast\n[]\n");
         });
     }
 
@@ -2154,16 +2154,41 @@ public class ArrayTest extends AbstractCairoTest {
             assertQuery("SELECT array_sum(a) FROM (SELECT ARRAY[] a)")
                     .noLeakCheck()
                     .fails(17, "argument type mismatch");
-            execute("CREATE TABLE tango AS (SELECT ARRAY[] a FROM long_sequence(1))");
-            assertQuery("SELECT array_sum(a) FROM tango")
-                    .noLeakCheck()
-                    .fails(17, "argument type mismatch");
-            assertQuery("SELECT a = a FROM tango")
+            assertQuery("SELECT a = a FROM (SELECT ARRAY[] a)")
                     .noLeakCheck()
                     .fails(9, "no matching operator");
-            assertQuery("SELECT a[1] FROM tango")
+            assertQuery("SELECT a[1] FROM (SELECT ARRAY[] a)")
                     .noLeakCheck()
                     .fails(8, "no matching function");
+        });
+    }
+
+    @Test
+    public void testEmptyArrayColumnRequiresCast() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("CREATE TABLE tango AS (SELECT ARRAY[] a FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[]");
+            assertQuery("CREATE TABLE tango AS (SELECT ARRAY[[]] a FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[][]");
+            assertQuery("CREATE VIEW tango AS (SELECT ARRAY[] a FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[]");
+            execute("CREATE TABLE src (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertQuery("CREATE MATERIALIZED VIEW tango AS (SELECT ts, ARRAY[] a, max(d) m FROM src SAMPLE BY 1h)")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[]");
+
+            execute("CREATE TABLE tango AS (SELECT ARRAY[]::DOUBLE[] a FROM long_sequence(1))");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0])");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n[]\n[1.0]\n");
+            assertQuery("INSERT INTO tango SELECT ARRAY[] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(30, "inconvertible types: ARRAY -> DOUBLE[]");
         });
     }
 

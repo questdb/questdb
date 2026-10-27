@@ -25,13 +25,18 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -49,7 +54,8 @@ import io.questdb.griffin.plan.logical.BoundExpression;
  * of that by hand, which is exactly where a wrong-field read can sneak in.
  * <p>
  * {@link #wrapTemporalText(Function, int)} reuses the TIMESTAMP and DATE wrappers for runtime-constant text that a
- * TIMESTAMP or DATE parameter receives, so the text parses once per cursor.
+ * TIMESTAMP or DATE parameter receives, so the text parses once per cursor; {@link #wrapTimestampText} wraps the
+ * text a comparison reads at the precision of its TIMESTAMP operand.
  * <p>
  * Every subclass is read-only after init(), so it inherits the argument's thread-safety
  * ({@link UnaryFunction#isThreadSafe()}) and a single instance serves every parallel worker.
@@ -168,6 +174,18 @@ public interface RuntimeConstFunction extends UnaryFunction {
             return arg;
         }
         return temporalType == ColumnType.DATE ? new DateRuntimeConstFunction(arg) : new TimestampRuntimeConstFunction(arg);
+    }
+
+    /**
+     * Wraps runtime-constant text that a comparison reads as a TIMESTAMP of {@code operandType}, the type of the
+     * compared operand, see {@link TimestampTextRuntimeConstFunction}.
+     *
+     * @param position the position of the text, where a conversion error points
+     * @param isCeil   whether {@link TimestampTextRuntimeConstFunction#getTimestamp} serves the first operand value not
+     *                 before the text, as a bound the operand must reach does, rather than the last one not after it
+     */
+    static TimestampTextRuntimeConstFunction wrapTimestampText(Function arg, int operandType, int position, boolean isCeil) {
+        return new TimestampTextRuntimeConstFunction(arg, operandType, position, isCeil);
     }
 
     // Correctness hinges on this gate: only a composite foldable-type function is ever wrapped, and the
@@ -588,6 +606,87 @@ public interface RuntimeConstFunction extends UnaryFunction {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             value = arg.getTimestamp(null);
+        }
+    }
+
+    /**
+     * Text a comparison reads as a TIMESTAMP of its operand's type. Each cursor converts the text once, as
+     * {@code FunctionBinder} converts the same text written as a literal in that comparison: at the precision the
+     * text spells ({@link IntervalUtils#literalTimestampType}), which may be finer than the operand's, then to the
+     * operand's precision, rounded up ({@link #getCeil()}) or down ({@link #getFloor()}). A value of the operand's
+     * type therefore never fails for lying outside another precision's range. Text that spells no timestamp fails
+     * with {@code inconvertible value} at the text's position, naming the operand's type.
+     */
+    final class TimestampTextRuntimeConstFunction extends TimestampFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private final TimestampDriver driver;
+        private final boolean isCeil;
+        private final int position;
+        private long ceil;
+        private long floor;
+        private long value;
+        private int valueType;
+
+        TimestampTextRuntimeConstFunction(Function arg, int operandType, int position, boolean isCeil) {
+            super(operandType);
+            this.arg = arg;
+            this.driver = ColumnType.getTimestampDriver(operandType);
+            this.position = position;
+            this.isCeil = isCeil;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        /**
+         * The first value of the operand's type that is not before the text; NULL for NULL text.
+         */
+        public long getCeil() {
+            return ceil;
+        }
+
+        /**
+         * The last value of the operand's type that is not after the text; NULL for NULL text.
+         */
+        public long getFloor() {
+            return floor;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return isCeil ? ceil : floor;
+        }
+
+        /**
+         * The text's value at the precision it spells, {@link #getValueType()}.
+         */
+        public long getValue() {
+            return value;
+        }
+
+        public int getValueType() {
+            return valueType;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            final CharSequence text = arg.getStrA(null);
+            if (text == null) {
+                value = Numbers.LONG_NULL;
+                valueType = driver.getTimestampType();
+            } else {
+                valueType = IntervalUtils.literalTimestampType(driver, text);
+                try {
+                    value = ColumnType.getTimestampDriver(valueType).parseFloorLiteral(text);
+                } catch (NumericException e) {
+                    throw ImplicitCastException.inconvertibleValue(text, arg.getType(), driver.getTimestampType()).position(position);
+                }
+            }
+            ceil = driver.ceilFrom(value, valueType);
+            floor = driver.floorFrom(value, valueType);
         }
     }
 

@@ -116,6 +116,7 @@ public final class PlanVerifier {
     public static final String JOIN_FILTER_ORIGIN = "join filter conjunct origin is neither WHERE nor an input of the join";
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
+    public static final String JOIN_KEY_LOOKUP = "join key lookups contradict the keys operator planning checks instead of looking them up";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTPUT = "join output does not list every input column exactly once";

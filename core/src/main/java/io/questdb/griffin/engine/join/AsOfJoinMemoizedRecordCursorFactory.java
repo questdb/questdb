@@ -101,7 +101,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             SymbolJoinKeyMapping symbolJoinKeyMapping,
             Plannable joinContext,
             long toleranceInterval,
-            boolean driveByCaching
+            boolean driveByCaching,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -117,7 +118,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     masterFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
                     slaveFactory.getMetadata().getTimestampIndex(),
-                    slaveFactory.getMetadata().getTimestampType()
+                    slaveFactory.getMetadata().getTimestampType(),
+                    keyCheck
             );
         } catch (Throwable t) {
             Misc.free(this, t);
@@ -165,6 +167,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Memoized Scan");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", cursor.keyCheck);
         sink.attr("driveByCache").val(driveByCaching);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -203,7 +206,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 int masterTimestampIndex,
                 int masterTimestampType,
                 int slaveTimestampIndex,
-                int slaveTimestampType
+                int slaveTimestampType,
+                @Nullable JoinKeyCheck keyCheck
         ) {
             super(
                     columnSplit,
@@ -212,7 +216,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     masterTimestampType,
                     slaveTimestampIndex,
                     slaveTimestampType,
-                    configuration.getSqlAsOfJoinLookAhead()
+                    configuration.getSqlAsOfJoinLookAhead(),
+                    keyCheck
             );
             this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
         }

@@ -145,10 +145,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
         Function elseBranch;
         final int elseBranchPosition;
         int returnType = -1;
+        final IntList foldedTypes = new IntList();
         if (n % 2 == 0) {
             elseBranch = args.getLast();
             elseBranchPosition = argPositions.getLast();
-            returnType = elseBranch.getType();
+            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, foldedTypes, "CASE values cannot be bind variables");
             n--;
         } else {
             elseBranch = null;
@@ -185,13 +186,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 }
             }
 
-            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
+            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), foldedTypes, "CASE values cannot be bind variables");
         }
 
         for (int i = 2; i < n; i += 2) {
             args.setQuick(
                     i,
-                    CaseCommon.getValueCastFunction(
+                    CaseCommon.getCastFunction(
                             args.getQuick(i),
                             argPositions.getQuick(i),
                             returnType,
@@ -202,7 +203,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getValueCastFunction(
+            elseBranch = CaseCommon.getCastFunction(
                     elseBranch,
                     elseBranchPosition,
                     returnType,

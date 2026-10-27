@@ -39,6 +39,9 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.JoinDependency;
+import io.questdb.griffin.plan.logical.JoinEquality;
+import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -105,6 +108,29 @@ public final class LogicalPlans {
         }
         for (int i = position + 1; i <= lastPosition; i++) {
             if (steps.getQuick(i).getJoinType().isMasterNulling()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether a filter of the columns of the join input {@code source} alone, which drops the rows whose columns it
+     * reads are all NULL, can also filter the input before the step at ordered position {@code lastPosition}, where
+     * a RIGHT or FULL step NULL-extends the input as part of its master: the input's own step does not NULL-extend it
+     * and the steps after it that NULL-extend their master up to that position are RIGHT or FULL joins, so the input's
+     * rows the filter drops only turn joined rows into NULL-extended rows, which the filter drops at that position too.
+     */
+    public static boolean canPushNullRejectingJoinFilter(JoinPlan join, int source, int lastPosition) {
+        final ObjList<JoinInput> steps = join.getOrderedInputs();
+        final int position = steps.indexOf(join.getInputs().getQuick(source));
+        if (position < 0 || position > lastPosition || steps.getQuick(position).getInput() == null
+                || position > 0 && steps.getQuick(position).getJoinType().isSlaveNulling()) {
+            return false;
+        }
+        for (int i = position + 1; i <= lastPosition; i++) {
+            final JoinKind type = steps.getQuick(i).getJoinType();
+            if (type.isMasterNulling() && !type.isRelational()) {
                 return false;
             }
         }
@@ -526,6 +552,32 @@ public final class LogicalPlans {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether the outer join step at {@code step} of the join's graph keys on the equalities a later INNER join implies,
+     * see {@link JoinGraph#collectImpliedOuterKeys}, which it collects into {@code pairs}: a LEFT, RIGHT or FULL step
+     * whose ON clause states no equality the hash key can match, see {@link #isJoinKeyTypeCompatible}. Such a step
+     * NULL-extends by its whole ON clause, see {@link JoinInput.NullExtension#BY_ON_RESIDUAL}.
+     */
+    public static boolean isImpliedKeyStep(ObjList<JoinInput> inputs, JoinGraph graph, int step, ObjList<JoinEquality> pairs) {
+        final JoinKind type = inputs.getQuick(step).getJoinType();
+        if (type != JoinKind.LEFT_OUTER && type != JoinKind.RIGHT_OUTER && type != JoinKind.FULL_OUTER) {
+            return false;
+        }
+        final JoinDependency dependency = graph.getDependencies().getQuick(step);
+        if (dependency != null) {
+            final ObjList<JoinEquality> keys = dependency.getKeys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                final JoinEquality key = keys.getQuick(i);
+                final int master = key.getOtherSource(step);
+                if (isJoinKeyTypeCompatible(JoinGraph.sourceColumnType(inputs, master, key.getColumnId(master)),
+                        JoinGraph.sourceColumnType(inputs, step, key.getColumnId(step)))) {
+                    return false;
+                }
+            }
+        }
+        return graph.collectImpliedOuterKeys(inputs, step, pairs);
     }
 
     /**

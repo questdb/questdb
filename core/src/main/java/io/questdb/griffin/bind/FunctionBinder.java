@@ -438,7 +438,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     @Override
     public SqlException timestampTextError(CharSequence operator, int index, CharSequence text, int position) {
         final boolean isBetween = SqlKeywords.isBetweenKeyword(operator);
-        if (!isBetween && !isTemporalComparisonOperator(operator)
+        if (!isBetween && !FunctionResolver.isTemporalComparisonOperator(operator)
                 || arguments.getQuick(isBetween ? 0 : 1 - index).getDataType() == ColumnType.DATE) {
             return SqlException.invalidDate(text, position);
         }
@@ -446,7 +446,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (isBetween) {
             return isLiteral ? SqlException.invalidDate(position) : SqlException.invalidDate(text, position);
         }
-        if (Chars.equals(operator, '=') || isNotEqualsOperator(operator)) {
+        if (Chars.equals(operator, '=') || FunctionResolver.isNotEqualsOperator(operator)) {
             if (Chars.indexOf(text, ';') >= 0) {
                 return SqlException.$(position, isLiteral ? "not a timestamp, use IN keyword with intervals" : "Not a date, use IN keyword with intervals");
             }
@@ -518,10 +518,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     private static boolean isNegatedLiteral(CharSequence name, ObjList<BoundExpression> arguments) {
         return arguments.size() == 1 && Chars.equals(name, "-") && isLiteral(arguments.getQuick(0));
-    }
-
-    private static boolean isNotEqualsOperator(CharSequence operator) {
-        return Chars.equals(operator, "!=") || Chars.equals(operator, "<>");
     }
 
     private static boolean isPrimitiveNumeric(int type) {
@@ -900,7 +896,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             final long ceil = driver.ceilFrom(value, type);
             final long floor = driver.floorFrom(value, type);
             final boolean isExact = ceil == floor;
-            if (Chars.equals(operator, '=') || isNotEqualsOperator(operator)) {
+            if (Chars.equals(operator, '=') || FunctionResolver.isNotEqualsOperator(operator)) {
                 if (!isExact) {
                     return Chars.equals(operator, '=') ? BooleanConstant.FALSE : BooleanConstant.TRUE;
                 }
@@ -925,7 +921,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     private Function canonicalizeTemporalComparison(CharSequence operator, ObjList<Function> args, IntList positions) throws SqlException {
         final int count = args == null ? 0 : args.size();
-        if (count == 2 && isTemporalComparisonOperator(operator)) {
+        if (count == 2 && FunctionResolver.isTemporalComparisonOperator(operator)) {
             return canonicalizeTemporalBinary(operator, args);
         }
         if (count == 3 && SqlKeywords.isBetweenKeyword(operator)) {
@@ -1849,14 +1845,14 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     typeQuotedCharAsText(args, i);
                 }
             }
-        } else if (count == 2 && isTemporalComparisonOperator(name)) {
+        } else if (count == 2 && FunctionResolver.isTemporalComparisonOperator(name)) {
             for (int i = 0; i < 2; i++) {
                 if (isTemporalOperand(args.getQuick(1 - i))) {
                     typeQuotedCharAsText(args, i);
                 }
             }
         }
-        if (!isBetween && (count != 2 || !isTemporalComparisonOperator(name))) {
+        if (!isBetween && (count != 2 || !FunctionResolver.isTemporalComparisonOperator(name))) {
             return;
         }
         final int type = args.getQuick(isBetween || args.getQuick(1).isUndefined() ? 0 : 1).getType();
@@ -2010,7 +2006,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private void validateTimestampText(FunctionFactoryDescriptor overload, CharSequence operator, ObjList<Function> args,
                                        SqlExecutionContext executionContext) throws SqlException {
         final int count = args == null ? 0 : args.size();
-        if (count == 2 && isTemporalComparisonOperator(operator)) {
+        if (count == 2 && FunctionResolver.isTemporalComparisonOperator(operator)) {
             for (int i = 0; i < 2; i++) {
                 final Function symbol = args.getQuick(i);
                 final int timestampType = args.getQuick(1 - i).getType();
@@ -2116,11 +2112,22 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return index;
     }
 
+    /**
+     * The index of the input column the literal names, or -1. A quoted name names the column it spells out in full
+     * when the input has one, whatever dots it holds; otherwise, as an unquoted name, its last dot separates a table
+     * qualifier from the column name.
+     */
     static int findColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
         final CharSequence name = node.token;
         final int dot = Chars.indexOfLastUnquoted(name, '.');
         if (dot < 0) {
             return getColumnIndexQuiet(input, null, name, 0, name.length());
+        }
+        if (node.isQuoted) {
+            final int index = getColumnIndexQuiet(input, null, name, 0, name.length());
+            if (index != -1) {
+                return index;
+            }
         }
         final CharSequence qualifier = GenericLexer.unquote(name.subSequence(0, dot));
         if (input.hasColumnQualifiers() ? input.hasColumnQualifier(qualifier)
@@ -2128,11 +2135,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             return getColumnIndexQuiet(input, input.hasColumnQualifiers() ? qualifier : null, name, dot + 1, name.length());
         }
         return -1;
-    }
-
-    static boolean isTemporalComparisonOperator(CharSequence operator) {
-        return Chars.equals(operator, '=') || Chars.equals(operator, '<') || Chars.equals(operator, '>')
-                || Chars.equals(operator, "<=") || Chars.equals(operator, ">=") || isNotEqualsOperator(operator);
     }
 
     static boolean isUnknownQualifier(CharSequence qualifier, OutputSchema input, CharSequence inputAlias) {

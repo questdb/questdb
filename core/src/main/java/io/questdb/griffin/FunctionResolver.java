@@ -311,6 +311,18 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         return year < 1678 || year >= 2262;
     }
 
+    public static boolean isNotEqualsOperator(CharSequence operator) {
+        return Chars.equals(operator, "!=") || Chars.equals(operator, "<>");
+    }
+
+    /**
+     * Whether the operator compares two values of one type: =, !=, <>, <, <=, > or >=.
+     */
+    public static boolean isTemporalComparisonOperator(CharSequence operator) {
+        return Chars.equals(operator, '=') || Chars.equals(operator, '<') || Chars.equals(operator, '>')
+                || Chars.equals(operator, "<=") || Chars.equals(operator, ">=") || isNotEqualsOperator(operator);
+    }
+
     /**
      * Rejects an aggregate passed as the argument at the given index; the error releases every argument.
      */
@@ -473,7 +485,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
      * untyped bind variables (a side effect on the bind variable service, in argument order), NULL substitution,
      * the conversion of constant text to TIMESTAMP, whose failure the caller's {@code timestampTextError} reports,
      * and to DATE, and implicit casts, recorded for {@link #getImplicitConversion}. An operand compared with a
-     * scalar sub-query takes no implicit cast. Releases the arguments on failure.
+     * scalar sub-query takes no implicit cast. A CASE condition, a BOOLEAN context, reads a scalar BOOLEAN
+     * sub-query as BOOLEAN, as an operand of AND does. Releases the arguments on failure.
      */
     public void coerceArguments(
             FunctionFactoryDescriptor candidateDescriptor,
@@ -509,6 +522,15 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         }
 
         try {
+            if (candidateDescriptor.isCase()) {
+                for (int k = 0, n = argCount - (argCount & 1); k < n; k += 2) {
+                    assert argPositions != null;
+                    final Function wrapped = BooleanSubQueryFunction.maybeWrap(args.getQuick(k), argPositions.getQuick(k));
+                    if (wrapped != null) {
+                        args.setQuick(k, wrapped);
+                    }
+                }
+            }
             if (candidateSigVarArgConst) {
                 for (int k = candidateSigArgCount; k < argCount; k++) {
                     Function func = args.getQuick(k);
@@ -802,7 +824,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         final FunctionFactory factory = overload.getFactory();
         try {
             admitStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
-            wrapTemporalText(overload, args);
+            wrapTemporalText(overload, args, argPositions);
         } catch (Throwable th) {
             Misc.freeObjList(args, th);
             throw th;
@@ -1513,14 +1535,36 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         ex.put(ColumnType.nameOf(arg.getType()));
     }
 
-    private static void wrapTemporalText(FunctionFactoryDescriptor overload, @Nullable ObjList<Function> args) {
+    /**
+     * The index of the TIMESTAMP operand whose type the other operands of a comparison or BETWEEN take, as
+     * FunctionBinder canonicalizes comparison constants; -1 for any other call.
+     */
+    private static int timestampOperandIndex(CharSequence name, ObjList<Function> args) {
+        if (args.size() == 2 && isTemporalComparisonOperator(name)) {
+            return ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.TIMESTAMP ? 0
+                    : ColumnType.tagOf(args.getQuick(1).getType()) == ColumnType.TIMESTAMP ? 1 : -1;
+        }
+        return args.size() == 3 && isBetweenKeyword(name) && ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.TIMESTAMP ? 0 : -1;
+    }
+
+    private static void wrapTemporalText(FunctionFactoryDescriptor overload, @Nullable ObjList<Function> args, IntList argPositions) {
         if (args == null || hasCursorParameter(overload)) {
             return;
         }
+        final CharSequence name = overload.getName();
+        final int operandIndex = timestampOperandIndex(name, args);
         for (int i = 0, n = Math.min(args.size(), overload.getSigArgCount()); i < n; i++) {
             final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(i));
             if (sigArgTypeTag == ColumnType.TIMESTAMP || sigArgTypeTag == ColumnType.DATE) {
-                args.setQuick(i, RuntimeConstFunction.wrapTemporalText(args.getQuick(i), sigArgTypeTag));
+                final Function arg = args.getQuick(i);
+                if (operandIndex > -1 && i != operandIndex && sigArgTypeTag == ColumnType.TIMESTAMP
+                        && ColumnType.isVarcharOrString(arg.getType()) && arg.isRuntimeConstant()) {
+                    final boolean isCeil = args.size() == 3 ? i == 1 : (Chars.equals(name, '<') || Chars.equals(name, ">=")) == (i == 1);
+                    args.setQuick(i, RuntimeConstFunction.wrapTimestampText(arg, args.getQuick(operandIndex).getType(),
+                            argPositions.getQuick(i), isCeil));
+                } else {
+                    args.setQuick(i, RuntimeConstFunction.wrapTemporalText(arg, sigArgTypeTag));
+                }
             }
         }
     }

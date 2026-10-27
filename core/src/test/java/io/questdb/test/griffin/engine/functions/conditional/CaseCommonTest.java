@@ -41,6 +41,7 @@ import java.util.*;
 public class CaseCommonTest extends BaseFunctionFactoryTest {
     private static final short MAX_COLUMN_TYPE_ID = ColumnType.VARCHAR;
     private static final short MIN_COLUMN_TYPE_ID = ColumnType.BOOLEAN;
+    private static final int NO_COMMON_TYPE = -1;
     private static final Map<Short, Set<Short>> IGNORED_TYPE = buildIgnoredTypeMap();
     private FunctionParser functionParser;
 
@@ -146,6 +147,22 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testCommonTypeIsSymmetric() {
+        // CASE, SWITCH and coalesce fold their value types in order, so the common type of a pair must not
+        // depend on which value comes first
+        for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {
+            for (short r = MIN_COLUMN_TYPE_ID; r <= MAX_COLUMN_TYPE_ID; r++) {
+                Assert.assertEquals(
+                        "l = " + ColumnType.nameOf(l) + ", r = " + ColumnType.nameOf(r),
+                        getCommonTypeOrNone(l, r),
+                        getCommonTypeOrNone(r, l)
+                );
+            }
+        }
+        Assert.assertEquals(ColumnType.STRING, getCommonTypeOrNone(ColumnType.CHAR, ColumnType.SYMBOL));
     }
 
     private static void addGlobalExceptions(Map<Short, Set<Short>> map) {
@@ -492,6 +509,14 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                 ColumnType.TIMESTAMP
         );
         return res;
+    }
+
+    private static int getCommonTypeOrNone(short l, short r) {
+        try {
+            return CaseCommon.getCommonType(l, r, 0, "UNDEFINED is not expected");
+        } catch (SqlException e) {
+            return NO_COMMON_TYPE;
+        }
     }
 
     private static boolean isAuxType(short type) {

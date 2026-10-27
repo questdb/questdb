@@ -236,7 +236,10 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             final ObjList<Function> args = new ObjList<>();
             args.add(textIndex == 0 ? text : new ColumnFunction(timestampType.getTimestampType(), value));
             args.add(textIndex == 0 ? new ColumnFunction(timestampType.getTimestampType(), value) : text);
-            try (Function function = parser.getFunctionResolver().createFunction(descriptor, 0, "<", args, new IntList(), sqlExecutionContext)) {
+            final IntList positions = new IntList();
+            positions.add(0);
+            positions.add(0);
+            try (Function function = parser.getFunctionResolver().createFunction(descriptor, 0, "<", args, positions, sqlExecutionContext)) {
                 function.init(null, sqlExecutionContext);
                 for (int i = 0; i < 1_000; i++) {
                     Assert.assertEquals(textIndex == 1, function.getBool(null));

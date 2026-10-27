@@ -57,6 +57,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -747,6 +748,53 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), "too short to hold");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testDottedColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (colqzx VARCHAR, k INT)");
+            execute("INSERT INTO x VALUES ('a', 1), ('b', 2)");
+            execute("CREATE TABLE pub (symbol SYMBOL, price DOUBLE)");
+            execute("INSERT INTO pub VALUES ('a', 1.0), ('b', 2.0)");
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+            // A table column cannot hold a dot, so the file gets the name the way another writer would write it.
+            final java.nio.file.Path file = java.nio.file.Paths.get(root, "x.parquet");
+            final String content = new String(java.nio.file.Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
+            java.nio.file.Files.write(file, content.replace("colqzx", "col.zx").getBytes(StandardCharsets.ISO_8859_1));
+
+            assertQuery("SELECT \"col.zx\", k FROM read_parquet('x.parquet')")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .returns("zx\tk\na\t1\nb\t2\n");
+            assertQuery("SELECT * FROM (SELECT \"col.zx\" FROM read_parquet('x.parquet') WHERE \"col.zx\" = 'b')")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .returns("zx\nb\n");
+            assertQuery("SELECT t.\"col.zx\" FROM read_parquet('x.parquet') t ORDER BY \"col.zx\" DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("col.zx\nb\na\n");
+            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT \"col.zx\" FROM read_parquet('x.parquet')))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("a\tb\n1.0\t2.0\n");
+            assertQuery("SELECT \"t.k\" FROM read_parquet('x.parquet') t")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .returns("k\n1\n2\n");
         });
     }
 

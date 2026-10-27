@@ -70,6 +70,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
         final ObjList<Function> argsToPoke = new ObjList<>(n);
+        final IntList foldedTypes = new IntList();
 
         Function elseBranch;
         int elseBranchPosition;
@@ -90,7 +91,7 @@ public class CaseFunctionFactory implements FunctionFactory {
             }
 
             final Function value = args.getQuick(i + 1);
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
+            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1), foldedTypes, "CASE values cannot be bind variables");
 
             vars.add(bool);
             vars.add(value);
@@ -100,13 +101,13 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, "CASE values cannot be bind variables");
+            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, foldedTypes, "CASE values cannot be bind variables");
             argsToPoke.add(elseBranch);
         }
 
         // next calculate cast functions
         for (int i = 1; i < n; i += 2) {
-            vars.setQuick(i, CaseCommon.getValueCastFunction(
+            vars.setQuick(i, CaseCommon.getCastFunction(
                     vars.getQuick(i),
                     argPositions.getQuick(i),
                     returnType,
@@ -116,7 +117,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getValueCastFunction(elseBranch, elseBranchPosition, returnType, configuration, sqlExecutionContext);
+            elseBranch = CaseCommon.getCastFunction(elseBranch, elseBranchPosition, returnType, configuration, sqlExecutionContext);
         }
 
         final int argsLen = vars.size();

@@ -130,6 +130,106 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullRejectingSymbolInFiltersNullExtendedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ns_a (s SYMBOL, x INT)");
+            execute("CREATE TABLE ns_c (z INT)");
+            execute("CREATE TABLE ns_d (k INT)");
+            execute("INSERT INTO ns_a VALUES ('a', 1), ('b', 2), (NULL, 3)");
+            execute("INSERT INTO ns_c VALUES (1)");
+            execute("INSERT INTO ns_d VALUES (1), (2), (3), (4)");
+            final String query = "SELECT a.s, a.x, d.k FROM ns_a a RIGHT JOIN ns_d d ON a.x = d.k WHERE %s ORDER BY 3";
+            assertQuery(query.formatted("a.s IN ('a')"))
+                    .withPlanContaining("filter: s in [a]")
+                    .returns("""
+                            s\tx\tk
+                            a\t1\t1
+                            """);
+            assertQuery(query.formatted("a.s IN ('a', NULL)"))
+                    .withPlanNotContaining("filter: s in [a,null]")
+                    .returns("""
+                            s\tx\tk
+                            a\t1\t1
+                            \t3\t3
+                            \tnull\t4
+                            """);
+            assertQuery("SELECT a.s, a.x, d.k FROM ns_c c, ns_a a RIGHT JOIN ns_d d ON a.x = d.k WHERE a.x > 1 ORDER BY 3")
+                    .withPlanContaining("filter: 1<x")
+                    .withPlanNotContaining("1<x and 1<x")
+                    .returns("""
+                            s\tx\tk
+                            b\t2\t2
+                            \t3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullRejectingWhereFiltersNullExtendedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nr_a (x INT, y INT)");
+            execute("CREATE TABLE nr_c (z INT)");
+            execute("CREATE TABLE nr_d (k INT)");
+            execute("INSERT INTO nr_a VALUES (1, 1), (2, 2), (3, 5), (4, NULL), (5, 0), (NULL, 9)");
+            execute("INSERT INTO nr_c VALUES (1), (2)");
+            execute("INSERT INTO nr_d VALUES (2), (3), (4), (5), (7), (NULL)");
+            final String query = "SELECT a.x, c.z, d.k FROM nr_a a CROSS JOIN nr_c c %s JOIN nr_d d ON a.x = d.k WHERE %s ORDER BY 1, 2, 3";
+            assertQuery(query.formatted("RIGHT", "a.x > 3"))
+                    .withPlanContaining("filter: 3<x")
+                    .returns("""
+                            x\tz\tk
+                            4\t1\t4
+                            4\t2\t4
+                            5\t1\t5
+                            5\t2\t5
+                            """);
+            final String sum = """
+                    x\tz\tk
+                    2\t1\t2
+                    2\t2\t2
+                    3\t1\t3
+                    3\t2\t3
+                    5\t1\t5
+                    5\t2\t5
+                    """;
+            assertQuery(query.formatted("RIGHT", "a.x + a.y > 3"))
+                    .withPlanContaining("filter: 3<x+y")
+                    .returns(sum);
+            assertQuery(query.formatted("FULL", "a.x + a.y > 3"))
+                    .withPlanContaining("filter: 3<x+y")
+                    .returns(sum);
+            assertQuery(query.formatted("RIGHT", "a.x = 4 OR a.y = 2"))
+                    .withPlanContaining("filter: (x=4 or y=2)")
+                    .returns("""
+                            x\tz\tk
+                            2\t1\t2
+                            2\t2\t2
+                            4\t1\t4
+                            4\t2\t4
+                            """);
+            assertQuery(query.formatted("RIGHT", "a.x = 4 OR a.y = NULL"))
+                    .withPlanNotContaining("filter: (x=4 or y=null)")
+                    .returns("""
+                            x\tz\tk
+                            null\tnull\t7
+                            4\t1\t4
+                            4\t2\t4
+                            """);
+            assertQuery("SELECT d.k, a.x, c.z FROM nr_d d LEFT JOIN nr_a a ON a.x = d.k CROSS JOIN nr_c c WHERE a.x + a.y > 3 ORDER BY 1, 2, 3")
+                    .withPlanNotContaining("filter: 3<x+y")
+                    .returns("""
+                            k\tx\tz
+                            2\t2\t1
+                            2\t2\t2
+                            3\t3\t1
+                            3\t3\t2
+                            5\t5\t1
+                            5\t5\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testOrRemainsIndivisibleAndConstantsKeepTheirBoundary() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

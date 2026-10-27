@@ -27,7 +27,6 @@ package io.questdb.griffin.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.std.IntList;
@@ -39,15 +38,9 @@ final class SetOperationBinder {
     private SetOperationBinder() {
     }
 
-    private static boolean isSymbolColumn(LogicalPlan plan, int index) {
-        return ColumnType.isSymbol(plan.getOutput().getColumnType(index))
-                || plan instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
-                && operation.getSymbolColumns().contains(index);
-    }
-
-    private static void validateCasts(OutputSchema branch, OutputSchema left, OutputSchema right, int position) throws SqlException {
+    private static void validateCasts(OutputSchema branch, IntList targetTypes, int position) throws SqlException {
         for (int i = 0, n = branch.getColumnCount(); i < n; i++) {
-            SetOperationCasts.validateCast(branch.getColumnType(i), SetOperationCasts.getUnionCastType(left.getColumnType(i), right.getColumnType(i)), branch.getColumnName(i), position);
+            SetOperationCasts.validateCast(branch.getColumnType(i), targetTypes.getQuick(i), branch.getColumnName(i), position);
         }
     }
 
@@ -73,7 +66,7 @@ final class SetOperationBinder {
         plan.getSymbolColumns().clear();
         for (int i = 0, n = left.getColumnCount(); i < n; i++) {
             int type = SetOperationCasts.getCastType(plan, i, isCastRequired);
-            if (isUnion && isSymbolColumn(plan.getLeft(), i) && isSymbolColumn(plan.getRight(), i)) {
+            if (isUnion && SetOperationCasts.isSymbolColumn(plan.getLeft(), i) && SetOperationCasts.isSymbolColumn(plan.getRight(), i)) {
                 plan.getSymbolColumns().add(i);
                 if (plan.isSymbolRestorationRequired()) {
                     type = ColumnType.SYMBOL;
@@ -82,8 +75,8 @@ final class SetOperationBinder {
             targetTypes.add(type);
         }
         if (isCastRequired) {
-            validateCasts(left, left, right, plan.getPosition());
-            validateCasts(right, left, right, plan.getRightPosition());
+            validateCasts(left, targetTypes, plan.getPosition());
+            validateCasts(right, targetTypes, plan.getRightPosition());
         }
     }
 }

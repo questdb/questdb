@@ -61,6 +61,7 @@ public final class JoinInput implements Mutable {
     private int markoutSequenceColumnId = -1;
     private int markoutTimestampColumnId = -1;
     private MasterSide masterSide;
+    private NullExtension nullExtension = NullExtension.BY_KEYS;
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
@@ -102,6 +103,7 @@ public final class JoinInput implements Mutable {
         markoutSequenceColumnId = -1;
         markoutTimestampColumnId = -1;
         masterSide = null;
+        nullExtension = NullExtension.BY_KEYS;
         onResidual = null;
         position = -1;
         postJoinFilter = null;
@@ -170,6 +172,13 @@ public final class JoinInput implements Mutable {
      */
     public MasterSide getMasterSide() {
         return masterSide;
+    }
+
+    /**
+     * How the outer step decides which of the rows it preserves it NULL-extends.
+     */
+    public NullExtension getNullExtension() {
+        return nullExtension;
     }
 
     public BoundExpression getOnResidual() {
@@ -331,6 +340,10 @@ public final class JoinInput implements Mutable {
         this.masterSide = masterSide;
     }
 
+    public void setNullExtension(NullExtension nullExtension) {
+        this.nullExtension = Objects.requireNonNull(nullExtension);
+    }
+
     public void setOnResidual(BoundExpression onResidual) {
         this.onResidual = onResidual;
     }
@@ -428,6 +441,24 @@ public final class JoinInput implements Mutable {
          * Expands each master row by the UNNEST expressions.
          */
         UNNEST
+    }
+
+    /**
+     * How an outer step decides which of the rows it preserves it NULL-extends.
+     */
+    public enum NullExtension {
+        /**
+         * A preserved row whose key partners all fail the ON residual: the keys state the ON clause's equalities.
+         */
+        BY_KEYS,
+        /**
+         * A preserved row whose keys are all NULL and whom every row of the other input fails the ON residual; the step
+         * drops every other preserved row without a key partner that passes the ON residual. The keys are equalities a
+         * later INNER join implies, which hold for every row that join keeps, and the ON residual holds the whole ON
+         * clause: the later join drops every other row the ON clause pairs or NULL-extends, so every row the step emits
+         * holds its keys.
+         */
+        BY_ON_RESIDUAL
     }
 
     /**

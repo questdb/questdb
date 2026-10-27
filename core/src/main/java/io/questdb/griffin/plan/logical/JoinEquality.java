@@ -62,6 +62,13 @@ public final class JoinEquality implements Mutable {
         leftSource = rightSource = -1;
     }
 
+    /**
+     * The column of the equality on the side of {@code source}, one of its two inputs.
+     */
+    public int getColumnId(int source) {
+        return leftSource == source ? leftColumnId : rightColumnId;
+    }
+
     public int getLeftColumnId() {
         return leftColumnId;
     }
@@ -85,8 +92,22 @@ public final class JoinEquality implements Mutable {
         return leftSource == source ? rightSource : leftSource;
     }
 
+    /**
+     * The name of the column of the equality on the side of {@code source}, one of its two inputs.
+     */
+    public CharSequence getName(int source) {
+        return leftSource == source ? leftName : rightName;
+    }
+
     public IntList getOwners() {
         return owners;
+    }
+
+    /**
+     * The position of the column of the equality on the side of {@code source}, one of its two inputs.
+     */
+    public int getPosition(int source) {
+        return leftSource == source ? leftPosition : rightPosition;
     }
 
     public int getRightColumnId() {

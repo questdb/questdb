@@ -604,10 +604,10 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     )""");
             assertQuery("SELECT CASE WHEN x > 0 THEN c WHEN x > 1 THEN s ELSE u END FROM t")
                     .noLeakCheck()
-                    .fails(28, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+                    .fails(53, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
             assertQuery("SELECT CASE WHEN x > 0 THEN sym WHEN x > 1 THEN s ELSE ip END FROM t")
                     .noLeakCheck()
-                    .fails(28, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+                    .fails(55, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
         });
     }
 
@@ -638,6 +638,46 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         895\tf
                         -6\t1W씌䒙\uD8F2\uDE8E>
                         """);
+    }
+
+    @Test
+    public void testCommonTypeErrorIndependentOfValueOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BOOLEAN, c CHAR, s SYMBOL, ip IPv4, u UUID)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (true, 'x', 'sym', '1.2.3.4', '11111111-1111-1111-1111-111111111111'),
+                        (false, 'y', 'abc', '1.2.3.4', '11111111-1111-1111-1111-111111111111')
+                    """);
+            assertQuery("SELECT CASE WHEN b THEN c WHEN NOT b THEN s ELSE ip END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN s WHEN NOT b THEN c ELSE ip END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN c WHEN NOT b THEN s ELSE u END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN s WHEN NOT b THEN c ELSE u END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN c ELSE s END r FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r
+                            x
+                            abc
+                            """);
+            assertQuery("SELECT CASE WHEN b THEN s ELSE c END r FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r
+                            sym
+                            y
+                            """);
+        });
     }
 
     @Test
@@ -2294,5 +2334,39 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         940\t
                         841\t
                         """);
+    }
+
+    @Test
+    public void testWhenScalarBooleanSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT x FROM long_sequence(3)
+                    WHERE x >= CASE WHEN (SELECT max(x) = 3 FROM long_sequence(3)) THEN 2 ELSE 1 END
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            2
+                            3
+                            """);
+            assertQuery("SELECT CASE WHEN (SELECT x > 1 FROM long_sequence(1)) THEN 1 WHEN (SELECT true) THEN 2 ELSE 3 END c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            2
+                            """);
+            assertQuery("SELECT x, CASE WHEN (SELECT false) THEN 'a' ELSE 'b' END c FROM long_sequence(2)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tc
+                            1\tb
+                            2\tb
+                            """);
+            assertQuery("SELECT CASE WHEN (SELECT x FROM long_sequence(1)) THEN 1 ELSE 2 END c")
+                    .noLeakCheck()
+                    .fails(18, "BOOLEAN expected, found CURSOR");
+        });
     }
 }

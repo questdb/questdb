@@ -139,6 +139,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         sink.child(masterFactory);
         for (int s = 0, n = slaveStates.size(); s < n; s++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(s);
+            sink.optAttr("keyCheck", state.getKeyCheck());
             if (state.getFilter() != null) {
                 sink.attr("slave filter").val(state.getFilter(), state.getFactory());
             }

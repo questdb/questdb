@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFacto
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDecimalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
@@ -299,10 +300,7 @@ final class SetOperationFactoryGenerator {
             case GEOSHORT:
             case GEOINT:
             case GEOLONG:
-                if (fromTag == toTag) {
-                    return geoHashColumn(fromTag, i, toTag == GEOSHORT ? toType : fromType);
-                }
-                if (fromTag > toTag) {
+                if (fromTag >= toTag) {
                     return CastGeoHashToGeoHashFunctionFactory.newInstance(0, geoHashColumn(fromTag, i, fromType), toType, fromType);
                 }
                 // fall through
@@ -395,6 +393,12 @@ final class SetOperationFactoryGenerator {
                     CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
             case GEOLONG ->
                     CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64 ->
+                    new CastDecimalToVarcharFunctionFactory.Func64(Decimal64LoaderFunctionFactory.getInstance(DecimalColumn.newInstance(i, fromType)));
+            case DECIMAL128 -> new CastDecimalToVarcharFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType));
+            case DECIMAL256 -> new CastDecimalToVarcharFunctionFactory.Func(DecimalColumn.newInstance(i, fromType));
+            // StrFunction has built-in cast to varchar
+            case INTERVAL -> new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType));
             case ARRAY -> {
                 if (decodeArrayElementType(fromType) != DOUBLE) {
                     throw unvalidatedCast();
@@ -494,9 +498,11 @@ final class SetOperationFactoryGenerator {
             if (castRequired) {
                 metadata = new GenericRecordMetadata();
                 for (int i = 0, n = leftMetadata.getColumnCount(); i < n; i++) {
+                    final int type = plan.getOutput().getColumnType(i);
+                    // the union casts a column it restores as SYMBOL to STRING first
                     metadata.add(new TableColumnMetadata(
                             Chars.toString(plan.getOutput().getColumnName(i)),
-                            SetOperationCasts.getUnionCastType(leftMetadata.getColumnType(i), rightMetadata.getColumnType(i))
+                            ColumnType.isSymbol(type) ? STRING : type
                     ));
                 }
                 leftCasts = generateCastFunctions(executionContext, metadata, leftMetadata, plan.getPosition());

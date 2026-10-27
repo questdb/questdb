@@ -26,9 +26,11 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Assert;
@@ -1207,6 +1209,37 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTextBindConvertsAsLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE d (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("""
+                    INSERT INTO d VALUES
+                        ('2022-01-03T12:00:00.000000Z', 1),
+                        ('2024-01-02T00:00:00.123456Z', 2),
+                        ('2024-01-02T00:00:00.123457Z', 3),
+                        ('2350-01-01T00:00:00.000000Z', 4)
+                    """);
+            execute("CREATE TABLE p (ts TIMESTAMP, k INT)");
+            execute("INSERT INTO p SELECT * FROM d");
+            for (String table : new String[]{"d", "p"}) {
+                final String from = "SELECT k FROM " + table + " WHERE ";
+                for (int textType : new int[]{ColumnType.STRING, ColumnType.VARCHAR}) {
+                    assertTextBind(from + "ts > $1", textType, "2300-01-01", "k\n4\n");
+                    assertTextBind(from + "ts BETWEEN '1970-01-01' AND $1", textType, "2300-01-01", "k\n1\n2\n3\n");
+                    assertTextBind(from + "dateadd('h', 1, ts) > $1", textType, "1600-01-01", "k\n1\n2\n3\n4\n");
+                    assertTextBind(from + "timestamp_floor('d', ts) < $1", textType, "2300-01-01", "k\n1\n2\n3\n");
+                    assertTextBind(from + "ts = $1", textType, "2024-01-02T00:00:00.123456789Z", "k\n");
+                    assertTextBind(from + "ts < $1", textType, "2024-01-02T00:00:00.123456789Z", "k\n1\n2\n");
+                    assertTextBind(from + "ts >= $1", textType, "2024-01-02T00:00:00.123456789Z", "k\n3\n4\n");
+                    assertTextBind(from + "ts BETWEEN $1 AND '2024-01-02T00:00:00.123456Z'", textType, "2024-01-02T00:00:00.123456789Z", "k\n2\n");
+                    assertTextBindFails(from + "ts > $1", 27, textType, "garbage");
+                    assertTextBindFails(from + "dateadd('h', 1, ts) > $1", 44, textType, "1641211200000000");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimestampConversion() throws Exception {
         assertMemoryLeak(() -> {
             TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY);
@@ -2157,6 +2190,15 @@ public class TimestampQueryTest extends AbstractCairoTest {
         });
     }
 
+    private static void bindText(int textType, String text) throws SqlException {
+        bindVariableService.clear();
+        if (textType == ColumnType.STRING) {
+            bindVariableService.setStr(0, text);
+        } else {
+            bindVariableService.setVarchar(0, new Utf8String(text));
+        }
+    }
+
     private void assertQueryWithConditions(String query, String expected, String columnName) throws Exception {
         assertQuery(query).noLeakCheck().returnsOnce(expected);
 
@@ -2168,6 +2210,16 @@ public class TimestampQueryTest extends AbstractCairoTest {
         assertQuery(query + joining + columnName + " > dateadd('y', -1000, now())").noLeakCheck().returnsOnce(expected);
         assertQuery(query + joining + columnName + " <= dateadd('y', 1000, now())").noLeakCheck().returnsOnce(expected);
         assertQuery(query + joining + columnName + " not in '1970-01-01'").noLeakCheck().returnsOnce(expected);
+    }
+
+    private void assertTextBind(String sql, int textType, String text, String expected) throws Exception {
+        bindText(textType, text);
+        assertQuery(sql).noLeakCheck().returns(expected);
+    }
+
+    private void assertTextBindFails(String sql, int position, int textType, String text) throws Exception {
+        bindText(textType, text);
+        assertQuery(sql).noLeakCheck().fails(position, "inconvertible value: `" + text + "` [" + ColumnType.nameOf(textType) + " -> TIMESTAMP]");
     }
 
     private void assertTimestampTtFailedQuery(String sql, int errorPos, String expectedError) throws Exception {

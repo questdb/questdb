@@ -67,7 +67,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -88,7 +89,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     slaveFactory.getMetadata().getTimestampType(),
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
                             SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                    configuration.getSqlAsOfJoinLookAhead()
+                    configuration.getSqlAsOfJoinLookAhead(),
+                    keyCheck
             );
             this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
                     ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
@@ -141,6 +143,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Fast");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", cursor.keyCheck);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -175,9 +178,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 int slaveTimestampIndex,
                 int slaveTimestampType,
                 SingleRecordSink slaveSinkTarget,
-                int lookahead
+                int lookahead,
+                @Nullable JoinKeyCheck keyCheck
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead, keyCheck);
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;
         }

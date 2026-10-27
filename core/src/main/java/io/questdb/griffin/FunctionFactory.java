@@ -195,7 +195,7 @@ public interface FunctionFactory {
      * live view, whose metadata the function reads, e.g. table_columns(). In a view, such a function
      * reads the object through the view only when the view's definition names it, which is why
      * CREATE VIEW and ALTER VIEW record a constant argument among the dependencies of the view, see
-     * {@link SqlExecutionContext.TableFunctionView#isDependency(io.questdb.cairo.TableToken)}.
+     * {@link SqlExecutionContext.TableFunctionView#isDependency(io.questdb.cairo.TableToken, io.questdb.cairo.CairoEngine)}.
      *
      * @return true if the first argument of the function names a table
      */

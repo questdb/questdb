@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.date.SampleByOffsetFunctionFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.window.LiveViewWindowDescription;
@@ -77,6 +78,7 @@ import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
@@ -350,6 +352,25 @@ final class SampleByBinder {
 
     private ExpressionNode sampleByNull() {
         return ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, 0);
+    }
+
+    /**
+     * The OFFSET node the SAMPLE BY binds: none without an OFFSET, the default for a NULL literal, a constant literal as
+     * written, and any other offset inside {@link SampleByOffsetFunctionFactory sample_by_offset()}, which reads a NULL
+     * offset as the default when the cursor opens. A NULL offset aligns the buckets as an omitted one does.
+     */
+    private ExpressionNode sampleByOffset(QueryModel source) {
+        final ExpressionNode offset = source.getSampleByOffset();
+        if (offset == null || offset == SqlParser.ZERO_OFFSET) {
+            return offset;
+        }
+        if (offset.type == ExpressionNode.CONSTANT) {
+            return SqlKeywords.isNullKeyword(offset.token) ? SqlParser.ZERO_OFFSET : offset;
+        }
+        final ExpressionNode checked = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, SampleByOffsetFunctionFactory.NAME, 0, offset.position);
+        checked.paramCount = 1;
+        checked.rhs = offset;
+        return checked;
     }
 
     /**
@@ -640,7 +661,7 @@ final class SampleByBinder {
         if (!isSubDay) {
             plan.setTimezone(bindSampleByParameter(timezone, ColumnType.STRING, executionContext));
         }
-        final ExpressionNode offset = source.getSampleByOffset();
+        final ExpressionNode offset = sampleByOffset(source);
         if ((timezone == null || isSubDay && from != null || !isSubDay) && offset != null && offset != SqlParser.ZERO_OFFSET) {
             plan.setOffset(bindSampleByParameter(offset, ColumnType.STRING, executionContext));
         }
@@ -746,7 +767,7 @@ final class SampleByBinder {
         plan.setJoinInput(source.getJoinModels().size() > 1);
         plan.setFillInput(isFillPlanned(source));
         plan.setTimezone(bindSampleByParameter(source.getSampleByTimezoneName(), ColumnType.STRING, executionContext));
-        plan.setOffset(bindSampleByParameter(source.getSampleByOffset(), ColumnType.STRING, executionContext));
+        plan.setOffset(bindSampleByParameter(sampleByOffset(source), ColumnType.STRING, executionContext));
         validateRuntimeConstant(plan.getTimezone(), ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
         validateRuntimeConstant(plan.getOffset(), ColumnType.STRING, "offset must be a constant expression of STRING or CHAR type");
         plan.setFrom(bindSampleByBound(source.getSampleByFrom(), timestampType, FROM_BOUND_ERROR, executionContext));
@@ -762,6 +783,12 @@ final class SampleByBinder {
             if (!(bound instanceof ConstantExpression period)
                     || bound.getDataType() != ColumnType.INT && bound.getDataType() != ColumnType.LONG) {
                 throw SqlException.$(sampleBy.position, "sample by period must be a constant expression of INT or LONG type");
+            }
+            final long stride = period.getLongValue();
+            if (stride < 1 || stride > Integer.MAX_VALUE) {
+                final SqlException e = SqlException.$(sampleBy.position, "sample by period must be a positive INT [value=");
+                final boolean isNull = stride == (period.getDataType() == ColumnType.INT ? Numbers.INT_NULL : Numbers.LONG_NULL);
+                throw (isNull ? e.put("null") : e.put(stride)).put(']');
             }
             plan.setPeriod(null, period, sampleBy.position, unit.token.charAt(0), unit.position);
             TimestampSamplerFactory.getInstance(driver, period.getLongValue(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
@@ -790,7 +817,7 @@ final class SampleByBinder {
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);
         floor.paramCount = 5;
         floor.args.add(timezone != null && !(isSubDay && from != null) ? timezone : sampleByNull());
-        floor.args.add(source.getSampleByOffset());
+        floor.args.add(sampleByOffset(source));
         floor.args.add(from == null ? sampleByNull() : isSubDay && timezone != null ? sampleByToUtc(from, timezone) : from);
         floor.args.add(sampleByTimestamp(input, sampleBy.position));
         final CharacterStoreEntry interval = ctx.characterStore.newEntry();

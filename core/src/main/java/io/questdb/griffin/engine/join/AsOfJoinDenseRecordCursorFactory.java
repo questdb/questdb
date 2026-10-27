@@ -65,7 +65,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
         this.masterKeyCopier = masterKeyCopier;
@@ -92,7 +93,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     slaveFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampType(),
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                            SingleRecordSink.CONFIG_KEYS_ASOF_JOIN)
+                            SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
+                    keyCheck
             );
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId, th);
@@ -147,7 +149,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                SingleRecordSink slaveSinkTarget
+                SingleRecordSink slaveSinkTarget,
+                @Nullable JoinKeyCheck keyCheck
         ) {
             super(
                     columnSplit,
@@ -157,7 +160,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     masterTimestampIndex,
                     masterTimestampType,
                     slaveTimestampIndex,
-                    slaveTimestampType
+                    slaveTimestampType,
+                    keyCheck
             );
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;

@@ -124,13 +124,13 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     // SecurityContext.isWalTableVisible(). Inside a view, the view's authority decides as usual, but only
     // for a table the view's definition names, see SqlExecutionContext.TableFunctionView.isDependency().
     private static boolean isVisible(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
-        return view != null && view.isDependency(tableToken)
+        return view != null && view.isDependency(tableToken, executionContext.getCairoEngine())
                 ? executionContext.isTableFunctionVisible(tableToken, view)
                 : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }
 
     private static boolean isVisibleAtCompile(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
-        return view != null && view.isDependency(tableToken)
+        return view != null && view.isDependency(tableToken, executionContext.getCairoEngine())
                 ? executionContext.isTableFunctionVisibleAtCompile(tableToken, view)
                 : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }

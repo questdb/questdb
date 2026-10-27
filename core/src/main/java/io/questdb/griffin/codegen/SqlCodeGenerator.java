@@ -516,6 +516,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case LT -> QueryModel.JOIN_LT;
             case SPLICE -> QueryModel.JOIN_SPLICE;
             case UNNEST -> QueryModel.JOIN_UNNEST;
+            case OUTER_CROSS -> throw new IllegalStateException("OUTER CROSS join has a join key");
         };
     }
 

@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -49,6 +50,7 @@ import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -303,6 +305,23 @@ final class OperatorPlanning implements Mutable {
             producer.setSharedConsumerCount(producer.getSharedConsumerCount() + 1);
         } else {
             read.setAlgorithm(DomainReadPlan.Algorithm.REGENERATED);
+        }
+    }
+
+    private static void planHorizonKeyLookups(HorizonJoinPlan horizon) {
+        final OutputSchema master = horizon.getMaster().getOutput();
+        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            planKeyLookups(slaves.getQuick(i).getKeys(), master);
+        }
+    }
+
+    /**
+     * Decides which keys of an ASOF, LT or HORIZON JOIN the join looks up, see {@link #lookupKeyIndex}.
+     */
+    private static void planKeyLookups(ObjList<JoinKey> keys, OutputSchema master) {
+        for (int k = 0, n = keys.size(); k < n; k++) {
+            keys.getQuick(k).setLookupKeyIndex(lookupKeyIndex(keys, k, master));
         }
     }
 
@@ -621,6 +640,7 @@ final class OperatorPlanning implements Mutable {
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
             final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getChild();
             validateHorizonInputs(horizon);
+            planHorizonKeyLookups(horizon);
             validateTimestampAggregates(aggregate.getAggregates(), horizon.getOutput(), timestampIndex(horizon.getMaster()), false);
             aggregate.setAlgorithm(switch (horizonAlgorithm(horizon, hasParallelFunctions(aggregate))) {
                 case SERIAL -> AggregatePlan.Algorithm.SERIAL;
@@ -713,6 +733,7 @@ final class OperatorPlanning implements Mutable {
             throw new IllegalStateException("fused horizon join is planned by its aggregate");
         }
         validateHorizonInputs(horizon);
+        planHorizonKeyLookups(horizon);
         horizon.setAlgorithm(horizonAlgorithm(horizon, true));
     }
 
@@ -762,6 +783,7 @@ final class OperatorPlanning implements Mutable {
                         validateFullFatTemporalSlave(step);
                     }
                     step.setAlgorithm(algorithm);
+                    planKeyLookups(step.getKeys(), ordered.getQuick(i - 1).getOutput());
                     step.setTimeFrameScan(algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && step.getJoinType() == JoinKind.ASOF
                             && isKeyedTemporalStep(join, i, step) ? timeFrameScan(join, i, step) : null);
                 }
@@ -1202,7 +1224,7 @@ final class OperatorPlanning implements Mutable {
      * which already reads the slave's symbol table. {@link SymbolKey#NONE} otherwise.
      */
     private SymbolKey singleSymbolKey(JoinPlan join, int inputIndex, JoinInput step) {
-        if (step.getKeys().size() != 1) {
+        if (JoinKey.lookupKeyCount(step.getKeys()) != 1) {
             return SymbolKey.NONE;
         }
         final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
@@ -1579,6 +1601,28 @@ final class OperatorPlanning implements Mutable {
         if (probeScan != null) {
             probeScan.keepRowCountWithin(minProbeRows, Long.MAX_VALUE);
         }
+    }
+
+    /**
+     * The index of the key an ASOF, LT or HORIZON JOIN looks up instead of the key at {@code keyIndex}, whose index it
+     * records as the key's {@link JoinKey#getLookupKeyIndex}, or -1 when it looks that key up: the first earlier key it
+     * looks up on the same slave column, when {@link JoinKeyCheck} compares the master columns of the two keys as the
+     * join keys do. A slave row equals both master columns only when they hold the same value, so the join looks up
+     * one key per slave column and answers a master row whose columns differ with no slave row, as the keys it no
+     * longer looks up would. {@code master} is the output the master columns of the keys come from; the earlier keys
+     * hold their decision.
+     */
+    static int lookupKeyIndex(ObjList<JoinKey> keys, int keyIndex, OutputSchema master) {
+        final JoinKey key = keys.getQuick(keyIndex);
+        final int masterType = master.getColumnType(master.getColumnIndexById(key.getMasterColumnId()));
+        for (int i = 0; i < keyIndex; i++) {
+            final JoinKey lookup = keys.getQuick(i);
+            if (lookup.getLookupKeyIndex() == -1 && lookup.getSlaveColumnId() == key.getSlaveColumnId()
+                    && JoinKeyCheck.isComparable(master.getColumnType(master.getColumnIndexById(lookup.getMasterColumnId())), masterType)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

@@ -33,6 +33,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.std.BitSet;
@@ -40,14 +41,20 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.*;
 
 /**
  * The equality keys of a join: the key columns of both sides, the map key types, and the per-column conversions the
- * key sinks apply so that both sides write every key with its map key type.
+ * key sinks apply so that both sides write every key with its map key type. The keys a join checks instead of looking
+ * them up, see {@link io.questdb.griffin.plan.logical.JoinKey#getLookupKeyIndex}, are pairs of master columns
+ * {@link #keyCheck} compares.
  */
 final class JoinKeyLayout implements Mutable {
+    // The master column index of each checked key, and of the looked-up key it is checked against.
+    final IntList checkedIndexes = new IntList();
+    final IntList checkedLookupIndexes = new IntList();
     final ArrayColumnTypes keyTypes;
     final ListColumnFilter masterColumns;
     final IntList masterIndexes;
@@ -62,6 +69,8 @@ final class JoinKeyLayout implements Mutable {
     private final IntList slaveSymbolColumns;
     private final BitSet slaveTimestampAsNanos = new BitSet();
     private final IntList symbolKeyFlags;
+    @Nullable
+    JoinKeyCheck keyCheck;
     RecordSink masterSink;
     int[] masterSymbolKeys;
     RecordSink slaveSink;
@@ -96,6 +105,9 @@ final class JoinKeyLayout implements Mutable {
 
     @Override
     public void clear() {
+        checkedIndexes.clear();
+        checkedLookupIndexes.clear();
+        keyCheck = null;
         keyTypes.clear();
         masterColumns.clear();
         slaveColumns.clear();
@@ -265,9 +277,11 @@ final class JoinKeyLayout implements Mutable {
     }
 
     /**
-     * Lays out the keys pairing each master column index with the slave column index at the same position.
+     * Lays out the keys pairing each master column index with the slave column index at the same position, and the
+     * check of the master column pairs in {@link #checkedIndexes} and {@link #checkedLookupIndexes}.
      */
     void of(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, IntList masterIndexes, IntList slaveIndexes, boolean isSelfJoin) {
+        keyCheck = checkedIndexes.size() == 0 ? null : new JoinKeyCheck(masterMetadata, checkedLookupIndexes, checkedIndexes);
         slaveColumns.clear();
         masterColumns.clear();
         for (int i = 0, n = slaveIndexes.size(); i < n; i++) {

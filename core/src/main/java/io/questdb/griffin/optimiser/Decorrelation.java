@@ -79,7 +79,8 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.*;
  * it, so a node the filter's WHERE equalities do not reach starts a block of its own, as in the equivalent join;
  * {@link CorrelatedChainRewriter} holds the rule of each kind of chain node. An outer column a block reads is
  * satisfied, in order of preference,
- * by a column a deeper block exposes for it, by an inner column its WHERE equates it to (when the block is
+ * by a column a deeper block exposes for it (that of the input the join orders first, when every step ordered before
+ * that input that reads the outer column can join after it), by an inner column its WHERE equates it to (when the block is
  * the body itself and reads no aggregate, or when every outer column of the block is equated), or by a
  * decorrelation domain: the distinct values of the outer columns, read from a copy of the master input or
  * prefix, joined to the block's source. The satisfying column flows up the body as a hidden column:
@@ -449,7 +450,7 @@ final class Decorrelation implements OptimiserPass {
                         if (lastMasterNulling > -1) {
                             keys.deferMapping(input, inputBase);
                         } else {
-                            keys.joinMappedInput(input, inputBase, base);
+                            keys.joinMappedInput(join, input, inputBase, base);
                             if (i > 0 && input.getJoinType().isSlaveNulling()) {
                                 keys.deferMapping(input, inputBase);
                             }
@@ -894,6 +895,7 @@ final class Decorrelation implements OptimiserPass {
             isLiftable &= isLiftableChainNode(node);
         }
         keys.clearDroppedEqualities();
+        final int equatedBase = mapping.mark();
         if (!isBranch) {
             final JoinPlan sourceJoin = source instanceof JoinPlan join ? join : null;
             if (filter != null) {
@@ -920,6 +922,9 @@ final class Decorrelation implements OptimiserPass {
         }
         if (isLiftable && (mapping.mark() > base || hasDecorrelatedMasterReference(chainOuterBase))) {
             liftOuterTerms(filter, source, chainBase, chainOuterBase, deferredBase, base);
+        }
+        if (source instanceof JoinPlan join && LogicalPlans.lastMasterNullingStep(join) < 0 && keys.deferUncarriedMappings(join, base, equatedBase)) {
+            collectChainOuterIds(source, chainBase, chainOuterBase, deferredBase);
         }
         domains.resetOuterIds();
         for (int i = chainOuterBase, n = chainOuterIds.size(); i < n; i++) {
@@ -956,11 +961,14 @@ final class Decorrelation implements OptimiserPass {
             domains.crossInto(join, join.getOrderedInputs().getQuick(0), domain, source.getPosition());
         } else {
             final int inputCount = join.getInputs().size();
+            final JoinInput first = join.getOrderedInputs().getQuick(0);
             final JoinInput step = domains.insertDomainStep(join, domain, join.getOrderedInputs().size(), source.getPosition());
-            for (int i = 1; i < inputCount; i++) {
+            for (int i = 0; i < inputCount; i++) {
                 final JoinInput input = join.getInputs().getQuick(i);
-                input.setPostJoinFilter(domains.moveDomainConjuncts(input.getPostJoinFilter(), step));
-                input.setOnResidual(domains.moveDomainConjuncts(input.getOnResidual(), step));
+                if (input != first) {
+                    input.setPostJoinFilter(domains.moveDomainConjuncts(input.getPostJoinFilter(), step));
+                    input.setOnResidual(domains.moveDomainConjuncts(input.getOnResidual(), step));
+                }
             }
         }
         return join;

@@ -25,10 +25,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.join.OuterCrossJoinRecordCursorFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -180,7 +186,192 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCrossBeforeKeyedJoinTrailsItInNonEquiNullingPrefix() throws Exception {
+    public void testCrossBeforeKeyedJoinFreesItsCursorWhenNullingJoinFailsToOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_ocf_a (k INT, x INT)");
+            execute("CREATE TABLE lp_ocf_b (k INT)");
+            execute("CREATE TABLE lp_ocf_c (y INT)");
+            execute("CREATE TABLE lp_ocf_d (k INT)");
+            execute("INSERT INTO lp_ocf_a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO lp_ocf_b VALUES (1), (2)");
+            execute("INSERT INTO lp_ocf_c VALUES (10), (20)");
+            execute("INSERT INTO lp_ocf_d VALUES (2), (5)");
+            try (RecordCursorFactory factory = select("SELECT a.k, c.y, d.k dk FROM lp_ocf_a a CROSS JOIN lp_ocf_c c "
+                    + "JOIN lp_ocf_b b ON a.k = b.k RIGHT JOIN lp_ocf_d d ON a.x = d.k")) {
+                RecordCursorFactory base = factory;
+                while (!(base instanceof OuterCrossJoinRecordCursorFactory)) {
+                    base = base.getBaseFactory();
+                }
+                final OuterCrossJoinRecordCursorFactory join = (OuterCrossJoinRecordCursorFactory) base;
+                final FailingOpenFactory master = (FailingOpenFactory) join.wrapMasterFactory(FailingOpenFactory::new);
+                final CairoException failure = Assert.assertThrows(CairoException.class, () -> factory.getCursor(sqlExecutionContext));
+                TestUtils.assertContains(failure.getFlyweightMessage(), "outer join failed to open");
+                master.isFailing = false;
+                assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns("""
+                        k	y	dk
+                        2	10	2
+                        2	20	2
+                        null	null	5
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testCrossBeforeKeyedJoinJoinsAfterEquiNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_ocj_a (k INT, x INT)");
+            execute("CREATE TABLE lp_ocj_b (k INT)");
+            execute("CREATE TABLE lp_ocj_c (y INT)");
+            execute("CREATE TABLE lp_ocj_e (y INT)");
+            execute("CREATE TABLE lp_ocj_d (k INT)");
+            execute("INSERT INTO lp_ocj_a VALUES (1, 1), (2, 2), (3, 3)");
+            execute("INSERT INTO lp_ocj_b VALUES (1), (1), (2), (3)");
+            execute("INSERT INTO lp_ocj_c VALUES (10), (20)");
+            execute("INSERT INTO lp_ocj_d VALUES (2), (5)");
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String cross : new String[]{"lp_ocj_c", "lp_ocj_e"}) {
+                    assertQuery("SELECT a.k ak, c.y, b.k bk, d.k dk FROM lp_ocj_a a CROSS JOIN " + cross + " c JOIN lp_ocj_b b ON a.k = b.k "
+                            + joinType + " JOIN lp_ocj_d d ON a.x = d.k ORDER BY dk, ak, y")
+                            .noLeakCheck()
+                            .withPlan("""
+                                    Encode sort
+                                      keys: [dk, ak, y]
+                                        SelectedRecord
+                                            Outer Cross Join
+                                                Hash %s Outer Join Light
+                                                  condition: d.k=a.x
+                                                    Filter filter: exists(c)
+                                                        Hash Join Light
+                                                          condition: b.k=a.k
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: lp_ocj_b
+                                                            Hash
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: lp_ocj_a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: lp_ocj_d
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: %s
+                                    """.formatted(joinType.equals("RIGHT") ? "Right" : "Full", cross))
+                            .returns(cross.equals("lp_ocj_e")
+                                    ? """
+                                    ak	y	bk	dk
+                                    null	null	null	2
+                                    null	null	null	5
+                                    """
+                                    : joinType.equals("RIGHT")
+                                      ? """
+                                    ak	y	bk	dk
+                                    2	10	2	2
+                                    2	20	2	2
+                                    null	null	null	5
+                                    """
+                                      : """
+                                    ak	y	bk	dk
+                                    1	10	1	null
+                                    1	10	1	null
+                                    1	20	1	null
+                                    1	20	1	null
+                                    3	10	3	null
+                                    3	20	3	null
+                                    2	10	2	2
+                                    2	20	2	2
+                                    null	null	null	5
+                                    """);
+                }
+                assertQuery("SELECT count(*), sum(c.y), sum(d.k) FROM lp_ocj_a a CROSS JOIN lp_ocj_c c JOIN lp_ocj_b b ON a.k = b.k "
+                        + joinType + " JOIN lp_ocj_d d ON a.x = d.k")
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(joinType.equals("RIGHT")
+                                ? """
+                                count	sum	sum1
+                                3	30	9
+                                """
+                                : """
+                                count	sum	sum1
+                                9	120	9
+                                """);
+            }
+            assertQuery("SELECT a.k ak, c.y, d.k dk FROM lp_ocj_a a CROSS JOIN lp_ocj_c c JOIN lp_ocj_b b ON a.k = b.k "
+                    + "RIGHT JOIN lp_ocj_d d ON a.x = d.k WHERE coalesce(a.x, 0) < d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Outer Cross Join
+                                    Filter filter: coalesce(a.x,0)<d.k
+                                        Hash Right Outer Join Light
+                                          condition: d.k=a.x
+                                            Filter filter: exists(c)
+                                                Hash Join Light
+                                                  condition: b.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocj_b
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: lp_ocj_a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_ocj_d
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_ocj_c
+                            """)
+                    .returns("""
+                            ak	y	dk
+                            null	null	5
+                            """);
+            assertQuery("SELECT a.k ak, c.y, d.k dk FROM lp_ocj_a a CROSS JOIN lp_ocj_c c JOIN lp_ocj_b b ON a.k = b.k "
+                    + "RIGHT JOIN lp_ocj_d d ON a.x = d.k WHERE d.k > 2 OR c.y > 10 ORDER BY dk")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [dk]
+                                SelectedRecord
+                                    Filter filter: (2<d.k or 10<c.y)
+                                        Outer Cross Join
+                                            Hash Right Outer Join Light
+                                              condition: d.k=a.x
+                                                Filter filter: exists(c)
+                                                    Hash Join Light
+                                                      condition: b.k=a.k
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: lp_ocj_b
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: lp_ocj_a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocj_d
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_ocj_c
+                            """)
+                    .returns("""
+                            ak	y	dk
+                            2	20	2
+                            null	null	5
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossBeforeKeyedJoinJoinsAfterNonEquiNullingJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_cross_a (k INT, x INT)");
             execute("CREATE TABLE lp_cross_b (k INT)");
@@ -198,24 +389,25 @@ public class JoinPlanningTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .withPlan("""
                                 SelectedRecord
-                                    Nested Loop %s Join
-                                      filter: a.x>=d.k
-                                        Cross Join
-                                            Hash Join Light
-                                              condition: b.k=a.k
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_a
-                                                Hash
+                                    Outer Cross Join
+                                        Nested Loop %s Join
+                                          filter: a.x>=d.k
+                                            Filter filter: exists(c)
+                                                Hash Join Light
+                                                  condition: b.k=a.k
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: lp_cross_b
+                                                        Frame forward scan on: lp_cross_a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: lp_cross_b
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: lp_cross_c
+                                                Frame forward scan on: lp_cross_d
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: lp_cross_d
+                                            Frame forward scan on: lp_cross_c
                                 """.formatted(nullingJoin))
                         .returns(joinType.equals("RIGHT")
                                 ? """
@@ -238,24 +430,25 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: b2.k=d.k
-                                        Nested Loop %s Join
-                                          filter: a.x>=d.k
-                                            Cross Join
-                                                Hash Join Light
-                                                  condition: b.k=a.k
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: lp_cross_a
-                                                    Hash
+                                        Outer Cross Join
+                                            Nested Loop %s Join
+                                              filter: a.x>=d.k
+                                                Filter filter: exists(c)
+                                                    Hash Join Light
+                                                      condition: b.k=a.k
                                                         PageFrame
                                                             Row forward scan
-                                                            Frame forward scan on: lp_cross_b
+                                                            Frame forward scan on: lp_cross_a
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: lp_cross_b
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: lp_cross_c
+                                                    Frame forward scan on: lp_cross_d
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: lp_cross_d
+                                                Frame forward scan on: lp_cross_c
                                         Hash
                                             PageFrame
                                                 Row forward scan
@@ -267,6 +460,161 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 2	20	2	2
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testCrossBeforeKeyedJoinReadByNullingJoinJoinsAfterIt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_ocy_x (k INT, v SYMBOL)");
+            execute("CREATE TABLE lp_ocy_y (k INT)");
+            execute("CREATE TABLE lp_ocy_c (s SYMBOL)");
+            execute("CREATE TABLE lp_ocy_d (k INT)");
+            execute("INSERT INTO lp_ocy_x VALUES (1, 'p'), (2, 'q'), (3, 'r')");
+            execute("INSERT INTO lp_ocy_y VALUES (1), (1), (2), (4)");
+            execute("INSERT INTO lp_ocy_c VALUES ('m'), ('n')");
+            execute("INSERT INTO lp_ocy_d VALUES (1), (3), (5)");
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                assertQuery("SELECT x.v, c.s, y.k yk, d.k dk FROM lp_ocy_x x CROSS JOIN lp_ocy_c c JOIN lp_ocy_y y ON x.k = y.k "
+                        + joinType + " JOIN lp_ocy_d d ON y.k = d.k ORDER BY dk, v, s")
+                        .noLeakCheck()
+                        .withPlan("""
+                                Encode sort
+                                  keys: [dk, v, s]
+                                    SelectedRecord
+                                        Outer Cross Join
+                                            Hash %s Outer Join Light
+                                              condition: d.k=y.k
+                                                Filter filter: exists(c)
+                                                    Hash Join Light
+                                                      condition: y.k=x.k
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: lp_ocy_y
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: lp_ocy_x
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocy_d
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_ocy_c
+                                """.formatted(joinType.equals("RIGHT") ? "Right" : "Full"))
+                        .returns(joinType.equals("RIGHT")
+                                ? """
+                                v	s	yk	dk
+                                p	m	1	1
+                                p	m	1	1
+                                p	n	1	1
+                                p	n	1	1
+                                		null	3
+                                		null	5
+                                """
+                                : """
+                                v	s	yk	dk
+                                q	m	2	null
+                                q	n	2	null
+                                p	m	1	1
+                                p	m	1	1
+                                p	n	1	1
+                                p	n	1	1
+                                		null	3
+                                		null	5
+                                """);
+            }
+            assertQuery("SELECT count(*) FROM lp_ocy_x x CROSS JOIN lp_ocy_c c JOIN lp_ocy_y y ON x.k = y.k RIGHT JOIN lp_ocy_d d ON y.k = d.k "
+                    + "CROSS JOIN long_sequence(3)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Count\n    Cross Join\n        Outer Cross Join\n")
+                    .returns("""
+                            count
+                            18
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossBeforeKeyedJoinStaysBeforeNullingJoinThatReadsIt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_ocr_a (k INT, x INT)");
+            execute("CREATE TABLE lp_ocr_b (k INT)");
+            execute("CREATE TABLE lp_ocr_c (y INT)");
+            execute("CREATE TABLE lp_ocr_d (k INT)");
+            execute("INSERT INTO lp_ocr_a VALUES (1, 1), (2, 2), (3, 3)");
+            execute("INSERT INTO lp_ocr_b VALUES (1), (1), (2), (3)");
+            execute("INSERT INTO lp_ocr_c VALUES (10), (20)");
+            execute("INSERT INTO lp_ocr_d VALUES (2), (5)");
+            assertQuery("SELECT a.k ak, c.y, d.k dk FROM lp_ocr_a a CROSS JOIN lp_ocr_c c JOIN lp_ocr_b b ON a.k = b.k AND b.k * 10 < c.y "
+                    + "RIGHT JOIN lp_ocr_d d ON a.x = d.k ORDER BY dk")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [dk]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: d.k=a.x
+                                        Filter filter: b.k*10<c.y
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                Cross Join
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocr_a
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocr_c
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocr_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_ocr_d
+                            """)
+                    .returns("""
+                            ak	y	dk
+                            null	null	2
+                            null	null	5
+                            """);
+            assertQuery("SELECT a.k ak, c.y, d.k dk FROM lp_ocr_a a CROSS JOIN lp_ocr_c c JOIN lp_ocr_b b ON a.k = b.k "
+                    + "RIGHT JOIN lp_ocr_d d ON a.x = d.k AND c.y > 10 ORDER BY dk")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [dk]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: d.k=a.x
+                                      filter: 10<c.y
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_ocr_b
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_ocr_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_ocr_c
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_ocr_d
+                            """)
+                    .returns("""
+                            ak	y	dk
+                            2	20	2
+                            null	null	5
+                            """);
         });
     }
 
@@ -1567,5 +1915,38 @@ public class JoinPlanningTest extends AbstractCairoTest {
                 (12,2,1,5,'b','1970-01-01T00:00:00.002000000Z'),
                 (13,null,2,31,null,null)
                 """);
+    }
+
+    private static class FailingOpenFactory extends AbstractRecordCursorFactory {
+        private final RecordCursorFactory base;
+        private boolean isFailing = true;
+
+        FailingOpenFactory(RecordCursorFactory base) {
+            super(base.getMetadata());
+            this.base = base;
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            if (isFailing) {
+                throw CairoException.nonCritical().put("outer join failed to open");
+            }
+            return base.getCursor(executionContext);
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return base.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            base.toPlan(sink);
+        }
+
+        @Override
+        protected void _close() {
+            base.close();
+        }
     }
 }

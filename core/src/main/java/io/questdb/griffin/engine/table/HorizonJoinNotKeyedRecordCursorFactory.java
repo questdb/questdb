@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -76,6 +77,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
     private HorizonJoinNotKeyedRecordCursor cursor;
     private ObjList<GroupByFunction> groupByFunctions;
     private JoinRecordMetadata horizonJoinMetadata;
+    private final @Nullable JoinKeyCheck keyCheck;
     private RecordCursorFactory masterFactory;
     private final long[] offsets;
     private RecordCursorFactory slaveFactory;
@@ -100,6 +102,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes
     ) {
@@ -109,6 +112,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.slaveFilter = slaveFilter;
+            this.keyCheck = keyCheck;
             this.offsets = offsets;
             this.groupByFunctions = groupByFunctions;
             this.value = new SimpleMapValue(valueCount);
@@ -183,6 +187,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
         sink.child(masterFactory);
+        sink.optAttr("keyCheck", keyCheck);
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
         }
@@ -299,7 +304,8 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
                     configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
                     slaveFilter,
-                    asOfJoinKeyTypes
+                    asOfJoinKeyTypes,
+                    keyCheck
             );
             this.isOpen = false;
         }

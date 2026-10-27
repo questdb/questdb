@@ -115,6 +115,10 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         @Override
         public ArrayView getArray(Record rec) {
             final ArrayView array = arg.getArray(rec);
+            if (array.isNull()) {
+                derivedArray.ofNull();
+                return derivedArray;
+            }
             derivedArray.of(array);
             derivedArray.prependDimensions(dimsToAdd);
             return derivedArray;
@@ -152,6 +156,10 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         @Override
         public ArrayView getArray(Record rec) {
             final ArrayView array = arg.getArray(rec);
+            if (array.isNull()) {
+                derivedArray.ofNull();
+                return derivedArray;
+            }
             derivedArray.of(array);
             derivedArray.prependDimensions(dimsToAdd);
             return derivedArray;

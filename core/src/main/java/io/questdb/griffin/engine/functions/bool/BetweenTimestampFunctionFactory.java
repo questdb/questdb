@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction.TimestampTextRuntimeConstFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
@@ -109,6 +110,9 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                     driver.betweenHi(fromTimestamp, fromType, toTimestamp, toType)
             );
         }
+        if (fromFn instanceof TimestampTextRuntimeConstFunction || toFn instanceof TimestampTextRuntimeConstFunction) {
+            return new TextBoundFunction(arg, fromFn, toFn, driver, fromType, toType);
+        }
         if (fromType == argType && toType == argType) {
             return new VarBetweenFunction(arg, fromFn, toFn, driver, fromType, toType);
         }
@@ -170,6 +174,40 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             }
             return Math.min(driver.ceilFrom(fromTs, fromType), driver.ceilFrom(toTs, toType)) <= value
                     && value <= Math.max(driver.floorFrom(fromTs, fromType), driver.floorFrom(toTs, toType));
+        }
+    }
+
+    /**
+     * Compares with text bounds at the argument's precision: each bound rounds inward, the text ones as
+     * {@link TimestampTextRuntimeConstFunction} converts them.
+     */
+    private static class TextBoundFunction extends VarBetweenFunction {
+        private final TimestampTextRuntimeConstFunction fromText;
+        private final TimestampTextRuntimeConstFunction toText;
+
+        public TextBoundFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
+            super(left, from, to, driver, fromType, toType);
+            this.fromText = from instanceof TimestampTextRuntimeConstFunction text ? text : null;
+            this.toText = to instanceof TimestampTextRuntimeConstFunction text ? text : null;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
+                return false;
+            }
+            final long fromCeil = fromText != null ? fromText.getCeil() : driver.ceilFrom(from.getTimestamp(rec), fromType);
+            if (fromCeil == Numbers.LONG_NULL) {
+                return false;
+            }
+            final long toCeil = toText != null ? toText.getCeil() : driver.ceilFrom(to.getTimestamp(rec), toType);
+            if (toCeil == Numbers.LONG_NULL) {
+                return false;
+            }
+            final long fromFloor = fromText != null ? fromText.getFloor() : driver.floorFrom(from.getTimestamp(rec), fromType);
+            final long toFloor = toText != null ? toText.getFloor() : driver.floorFrom(to.getTimestamp(rec), toType);
+            return Math.min(fromCeil, toCeil) <= value && value <= Math.max(fromFloor, toFloor);
         }
     }
 

@@ -69,6 +69,10 @@ final class JoinOrdering implements OptimiserPass {
     private final ObjList<BoundExpression> placed;
     private final IntHashSet readColumnIds = new IntHashSet();
     private final JoinOrderSolver solver;
+    /**
+     * The number of dependent join inputs, LATERAL bodies that decorrelation rewrites, around the plan being ordered.
+     */
+    private int dependentDepth;
     private int lastPosition;
     private JoinPlan readJoin;
     private final ExpressionVisitor orderedInputReads = expression -> {
@@ -107,6 +111,7 @@ final class JoinOrdering implements OptimiserPass {
         columnReads.clear();
         readColumnIds.clear();
         readJoin = null;
+        dependentDepth = 0;
     }
 
     @Override
@@ -266,14 +271,22 @@ final class JoinOrdering implements OptimiserPass {
         columnReads.collectInputReads(plan);
         if (plan instanceof JoinPlan join) {
             final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+            boolean hasDependentStep = false;
             for (int i = 0, n = steps.size(); i < n; i++) {
-                final LogicalPlan input = steps.getQuick(i).getInput();
+                final JoinInput step = steps.getQuick(i);
+                final LogicalPlan input = step.getInput();
                 if (input != null) {
+                    final int dependentDepth = this.dependentDepth;
+                    if (step.isDependent()) {
+                        hasDependentStep = true;
+                        this.dependentDepth++;
+                    }
                     orderInputJoins(join, i, input, isTimestampRequired);
+                    this.dependentDepth = dependentDepth;
                 }
             }
             if (join.getGraph() != null) {
-                solver.order(join, isTimestampRequired, readColumnIds);
+                solver.order(join, isTimestampRequired, readColumnIds, hasDependentStep || dependentDepth > 0);
                 place(join, join.getGraph());
                 join.setGraph(null);
             }

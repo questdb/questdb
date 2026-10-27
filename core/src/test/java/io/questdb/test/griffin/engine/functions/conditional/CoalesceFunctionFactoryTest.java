@@ -49,19 +49,39 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                     )""");
             assertQuery("SELECT coalesce(null::varchar, 'a', null::uuid)")
                     .noLeakCheck()
-                    .fails(31, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+                    .fails(40, "inconvertible types: UUID -> VARCHAR [from=UUID, to=VARCHAR]");
             assertQuery("SELECT coalesce(s, c, u) FROM t")
                     .noLeakCheck()
-                    .fails(19, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+                    .fails(22, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
             assertQuery("SELECT coalesce(s, sym, u) FROM t")
                     .noLeakCheck()
-                    .fails(19, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+                    .fails(24, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
             assertQuery("SELECT coalesce(s, c, ip) FROM t")
                     .noLeakCheck()
-                    .fails(19, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+                    .fails(22, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
             assertQuery("SELECT coalesce(s, sym, ip) FROM t")
                     .noLeakCheck()
-                    .fails(19, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+                    .fails(24, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+        });
+    }
+
+    @Test
+    public void testCoalesceCommonTypeErrorIndependentOfArgumentOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c CHAR, s SYMBOL, ip IPv4, u UUID)");
+            execute("INSERT INTO t VALUES ('x', 'sym', '1.2.3.4', '11111111-1111-1111-1111-111111111111')");
+            assertQuery("SELECT coalesce(c, s, ip) r FROM t")
+                    .noLeakCheck()
+                    .fails(22, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+            assertQuery("SELECT coalesce(s, c, ip) r FROM t")
+                    .noLeakCheck()
+                    .fails(22, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+            assertQuery("SELECT coalesce(c, s, u) r FROM t")
+                    .noLeakCheck()
+                    .fails(22, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
+            assertQuery("SELECT coalesce(s, c, u) r FROM t")
+                    .noLeakCheck()
+                    .fails(22, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
         });
     }
 

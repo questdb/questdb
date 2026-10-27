@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -83,6 +84,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // restarts a forward scan over a long gap, and whether a new position in backward-only mode
     // may keep key cache entries, see the constructor
     private final boolean isWindowSwitchEnabled;
+    private final @Nullable JoinKeyCheck keyCheck;
     // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
     private final @Nullable Map keyMissMap;
     private final long lookahead;
@@ -135,7 +137,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             long bwdScanMinGap,
             long bwdScanSwitchFactor,
             @Nullable Function filter,
-            @Nullable ColumnTypes asOfJoinKeyTypes
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         this(
                 configuration,
@@ -146,11 +149,14 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 bwdScanSwitchFactor,
                 filter,
                 asOfJoinKeyTypes,
+                keyCheck,
                 false
         );
     }
 
     /**
+     * @param keyCheck              compares the master columns of the keys the join checks instead of looking them
+     *                              up, or null when it looks up every key, see {@link #findKeyedAsOfMatch}
      * @param isWindowSwitchEnabled whether the switch to forward scan mode also checks runs of
      *                              gaps below the min gap, see {@link #shouldSwitchToForwardScanOverWindow}.
      *                              Without a filter, forward scan mode is sticky until
@@ -187,9 +193,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             long bwdScanSwitchFactor,
             @Nullable Function filter,
             @Nullable ColumnTypes asOfJoinKeyTypes,
+            @Nullable JoinKeyCheck keyCheck,
             boolean isWindowSwitchEnabled
     ) {
         this.filter = filter;
+        this.keyCheck = keyCheck;
         // Projection batches reset scan watermarks, but a key miss remains valid for the slave
         // cursor. Keep its bound so later batches scan only rows above it, as filtered joins do.
         this.keyMissMap = (filter != null || isWindowSwitchEnabled) && asOfJoinKeyTypes != null
@@ -263,7 +271,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         }
 
         // Fast path: skip backward scan for keys with non-existent slave symbols
-        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()) {
+        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()
+                || keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
             return Long.MIN_VALUE;
         }
 

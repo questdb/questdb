@@ -88,10 +88,10 @@ public class JoinOwnershipTest {
             // The configuration throws before either constructor uses its record sinks.
             if (factoryKind == 1) {
                 new HashOuterJoinFilteredLightRecordCursorFactory(configuration, metadata, master, slave,
-                        keyTypes, valueTypes, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null);
+                        keyTypes, valueTypes, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null, null, null);
             } else {
                 new HashOuterJoinFilteredRecordCursorFactory(configuration, metadata, master, slave,
-                        keyTypes, valueTypes, null, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null);
+                        keyTypes, valueTypes, null, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null, null, null);
             }
         });
         Assert.assertSame(failure, actual);

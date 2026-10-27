@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
@@ -34,6 +35,8 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -103,14 +106,29 @@ public final class FunctionInstantiator implements Mutable {
     private static final ExpressionVisitor UNRELOCATABLE_CALLS = expression -> expression instanceof FunctionExpression call
             && !call.getOverload().isRelocatableScalar() && !call.getOverload().isArrayColumnLayoutSensitive() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final String NULL_PROBE_COLUMN = "null_probe";
+    private static final int NULL_PROBE_REJECTED_FLAGS = BoundExpression.RUNTIME_CONSTANT | BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM;
+    // An empty static symbol table for every NULL probe column, whose only key is the NULL key.
+    private static final SymbolTableSource NULL_PROBE_SYMBOL_TABLES = new SymbolTableSource() {
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return EmptySymbolMapReader.INSTANCE;
+        }
+    };
     private final SqlCompilerImpl compiler;
     private final ObjectPool<InstantiationArguments> instantiations;
     private final ObjList<Function> nullProbeConstants = new ObjList<>(1);
+    private final ObjList<String> nullProbeNames = new ObjList<>();
     private final GenericRecordMetadata nullProbeMetadata = new GenericRecordMetadata();
     private final VirtualRecord nullProbeRecord;
     private final OutputSchema nullProbeSchema;
     private final ObjList<CursorExpression> parkedCursors = new ObjList<>();
     private final ObjList<Function> parkedSubqueries = new ObjList<>();
+    private final ExpressionVisitor nullProbeColumns = this::addNullProbeColumn;
     private final PreparedFunctions prepared;
     private final FunctionResolver resolver;
     private final ObjList<CursorExpression> sharedBoundCursors = new ObjList<>();
@@ -122,7 +140,7 @@ public final class FunctionInstantiator implements Mutable {
 
     /**
      * Instantiates for the compiler's binder, adopting from the statement's preparations; a query generates at the
-     * nesting depth the scope stack enters. The NULL probe schema is borrowed for single calls only.
+     * nesting depth the scope stack enters. The NULL probe schema is borrowed for single predicates only.
      */
     public FunctionInstantiator(SqlCompilerImpl compiler, FunctionResolver resolver, PreparedFunctions prepared, OutputSchema nullProbeSchema,
                                 int minRetainedInstantiations) {
@@ -131,7 +149,6 @@ public final class FunctionInstantiator implements Mutable {
         this.resolver = resolver;
         this.prepared = prepared;
         this.nullProbeSchema = nullProbeSchema;
-        nullProbeConstants.add(null);
         this.nullProbeRecord = new VirtualRecord(nullProbeConstants);
     }
 
@@ -464,25 +481,23 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     /**
-     * Evaluates a folded equality on the NULL its column takes when a join NULL-extends it.
+     * True when the predicate is false on the row whose every column it reads is NULL, as the row a join NULL-extends:
+     * it reads at least one column, and every part of it that reads no column folds to a compile-time constant, so the
+     * answer holds for every execution. A bind variable, a runtime constant, a random or non-deterministic call, a
+     * sub-query and an outer column reference fail it.
      */
-    public boolean isNullRejecting(FunctionExpression call, int columnArgument, SqlExecutionContext executionContext) {
-        if (!"=".equals(call.getName()) || !(call.argumentAt(1 - columnArgument) instanceof ConstantExpression)) {
-            return false;
-        }
-        final ColumnExpression column = (ColumnExpression) call.argumentAt(columnArgument);
-        final int type = column.getDataType();
+    public boolean isNullRejecting(BoundExpression predicate, SqlExecutionContext executionContext) {
         nullProbeSchema.clear();
-        nullProbeSchema.add(column.getColumnId(), NULL_PROBE_COLUMN, type, true);
-        if (nullProbeMetadata.getColumnCount() == 0 || nullProbeMetadata.getColumnType(0) != type) {
-            nullProbeMetadata.clear();
-            nullProbeMetadata.add(new TableColumnMetadata(NULL_PROBE_COLUMN, type, IndexType.NONE, 0, false, null));
+        nullProbeMetadata.clear();
+        nullProbeConstants.clear();
+        if (!predicate.walk(nullProbeColumns) || nullProbeSchema.getColumnCount() == 0) {
+            return false;
         }
         Function function = null;
         final int mark = instantiations.getPos();
         try {
-            nullProbeConstants.setQuick(0, Constants.getNullConstant(type));
-            function = instantiateNew(call, nullProbeSchema, nullProbeMetadata, executionContext, false, null);
+            function = instantiateNew(predicate, nullProbeSchema, nullProbeMetadata, executionContext, false, null);
+            function.init(NULL_PROBE_SYMBOL_TABLES, executionContext);
             return !function.getBool(nullProbeRecord);
         } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException e) {
             return false;
@@ -540,6 +555,38 @@ public final class FunctionInstantiator implements Mutable {
         } finally {
             bindingDepth--;
             instantiations.rewind(mark);
+        }
+    }
+
+    /**
+     * Gives each column the predicate reads its own NULL probe column, and stops at a part that may take another value
+     * in another execution, see {@link #isNullRejecting}.
+     */
+    private int addNullProbeColumn(BoundExpression expression) {
+        switch (expression) {
+            case ColumnExpression column -> {
+                if (nullProbeSchema.getColumnIndexById(column.getColumnId()) < 0) {
+                    final int index = nullProbeSchema.getColumnCount();
+                    final int type = column.getDataType();
+                    if (nullProbeNames.size() == index) {
+                        nullProbeNames.add(NULL_PROBE_COLUMN + index);
+                    }
+                    final String name = nullProbeNames.getQuick(index);
+                    nullProbeSchema.add(column.getColumnId(), name, type, true);
+                    nullProbeMetadata.add(new TableColumnMetadata(name, type, IndexType.NONE, 0, false, null));
+                    nullProbeConstants.add(Constants.getNullConstant(type));
+                }
+                return TreeWalk.CONTINUE;
+            }
+            case ConstantExpression _, TypeExpression _ -> {
+                return TreeWalk.SKIP_CHILDREN;
+            }
+            case FunctionExpression call -> {
+                return (call.getFunctionFlags() & NULL_PROBE_REJECTED_FLAGS) == 0 ? TreeWalk.CONTINUE : TreeWalk.STOP;
+            }
+            default -> {
+                return TreeWalk.STOP;
+            }
         }
     }
 

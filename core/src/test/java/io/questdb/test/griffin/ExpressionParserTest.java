@@ -27,6 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -606,6 +608,32 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseOperandEndsInBracketOrEnd() throws SqlException {
+        x("b true 'x' 'y' case", "case (b) when true then 'x' else 'y' end");
+        x("i 1 > false 'big' 'small' case", "case (i > 1) when false then 'big' else 'small' end");
+        x("i abs 1 'one' 'other' case", "case abs(i) when 1 then 'one' else 'other' end");
+        x("n 0 coalesce 0 'null' 'set' case", "case coalesce(n, 0) when 0 then 'null' else 'set' end");
+        x(" b true false case true 'x' 'y' case", "case case when b then true else false end when true then 'x' else 'y' end");
+        x("i 1 + 2 'two' case", "case (i) + 1 when 2 then 'two' end");
+    }
+
+    @Test
+    public void testCaseOperandInEmptyBrace() {
+        assertFail("case () when 1 then 2 end", 8, "missing arguments");
+        assertFail("1 + case (()) when 1 then 2 end", 14, "missing arguments");
+    }
+
+    @Test
+    public void testCaseOperandIsSubQuery() throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExpressionNode node = compiler.testParseExpression("case (select 1) when 1 then 'one' else 'other' end", QueryModel.FACTORY.newInstance());
+            sink.clear();
+            node.toSink(sink);
+            TestUtils.assertEquals("switch((select-virtual 1 1 from (long_sequence(1))), 1, 'one', 'other')", sink);
+        }
+    }
+
+    @Test
     public void testCaseUnbalanced() {
         assertFail(
                 "case when x then y",
@@ -647,7 +675,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithCast() throws SqlException {
-        x("1 int cast  1 'th1' 2 'th2' 0 case 5 * 1 +",
+        x("1 int cast 1 'th1' 2 'th2' 0 case 5 * 1 +",
                 "case (cast(1 as int))" +
                         " when 1" +
                         " then 'th1'" +

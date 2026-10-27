@@ -49,12 +49,14 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.nullSlaveTimestamp;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final IntList columnIndex;
+    private final @Nullable JoinKeyCheck keyCheck;
     private final int mapEvacuationThreshold;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
@@ -78,7 +80,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             Plannable joinContext,
             ColumnFilter masterTableKeyColumns,
             long toleranceInterval,
-            int slaveValueTimestampIndex
+            int slaveValueTimestampIndex,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         Map joinKeyMapA = null;
@@ -87,6 +90,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
+            this.keyCheck = keyCheck;
             joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
             // if toleranceInterval is not set, we do not need a second map for evacuation. since evacuations are only
             // executed when TOLERANCE_INTERVAL is set
@@ -159,6 +163,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", keyCheck);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -283,6 +288,10 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     this.slaveTimestamp = slaveTimestamp;
                 }
 
+                if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                    record.hasSlave(false);
+                    return true;
+                }
                 key = currentJoinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();

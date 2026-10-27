@@ -109,6 +109,7 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                         configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
                         workerIndex == -1 || perWorkerFilters == null ? state.getFilter() : perWorkerFilters.getQuick(workerIndex),
                         state.getAsOfJoinKeyTypes(),
+                        state.getKeyCheck(),
                         true
                 ));
                 if (state.isKeyed()) {

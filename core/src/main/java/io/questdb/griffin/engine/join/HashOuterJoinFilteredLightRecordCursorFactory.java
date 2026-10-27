@@ -64,8 +64,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
     private final RecordSink masterKeySink;
+    private final @Nullable NullJoinKey masterNullKey;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
+    private final @Nullable NullJoinKey slaveNullKey;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private AbstractHashOuterJoinLightRecordCursor cursor;
     private Function filter;
@@ -88,10 +90,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             Plannable joinContext,
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable NullJoinKey masterNullKey,
+            @Nullable NullJoinKey slaveNullKey
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.filter = filter;
+        this.masterNullKey = masterNullKey;
+        this.slaveNullKey = slaveNullKey;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         try {
@@ -133,7 +139,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                             joinKeyMap,
                             slaveChain
-
                     );
                     break;
                 case QueryModel.JOIN_RIGHT_OUTER:
@@ -169,7 +174,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             masterCursor = masterFactory.getCursor(executionContext);
             if (joinType == QueryModel.JOIN_FULL_OUTER) {
                 boolean swapped = false;
-                if (masterFactory.recordCursorSupportsRandomAccess()) {
+                if (masterNullKey == null && masterFactory.recordCursorSupportsRandomAccess()) {
                     long masterSize = masterCursor.size();
                     long slaveSize = slaveCursor.size();
 
@@ -257,6 +262,9 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     }
 
     private abstract class AbstractHashOuterJoinFilteredLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+        private boolean hasNullKeyChain;
+        private int nullKeyChainHead;
+        private long nullKeyRowsToMatch;
 
         AbstractHashOuterJoinFilteredLightRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
@@ -277,14 +285,91 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             filter.toTop();
         }
 
+        /**
+         * Looks up the chain of the slave rows whose keys are all NULL, the key of {@code masterNullRecord}, which a
+         * master row matches by the ON residual alone, see {@link #matchNullKeyRows}.
+         */
+        void findNullKeyChain(Record masterNullRecord) {
+            nullKeyRowsToMatch = 0;
+            hasNullKeyChain = false;
+            if (slaveNullKey != null) {
+                final MapKey key = joinKeyMap.withKey();
+                key.put(masterNullRecord, masterKeySink);
+                final MapValue value = key.findValue();
+                if (value != null) {
+                    hasNullKeyChain = true;
+                    nullKeyChainHead = value.getInt(0);
+                    nullKeyRowsToMatch = slaveChain.getCursor(nullKeyChainHead).remaining();
+                }
+            }
+        }
+
         void initFilter(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             filterSymbolTableSource.of(masterCursor, slaveCursor);
             filter.init(filterSymbolTableSource, sqlExecutionContext);
+        }
+
+        /**
+         * Whether the join drops the current master row, which no slave row on its key chain passes the ON residual
+         * with, instead of NULL-extending it: a key of the row is not NULL, or some slave row passes the ON residual
+         * with it on {@code joined}, which pairs the master row with the slave record.
+         */
+        boolean isMasterRowDropped(Record joined) {
+            if (masterNullKey == null) {
+                return false;
+            }
+            if (!masterNullKey.isNull(masterRecord)) {
+                return true;
+            }
+            final MapRecordCursor keys = joinKeyMap.getCursor();
+            try {
+                while (keys.hasNext()) {
+                    final LongChain.Cursor chain = slaveChain.getCursor(keys.getRecord().getValue().getInt(0));
+                    while (chain.hasNext()) {
+                        slaveCursor.recordAt(slaveRecord, chain.next());
+                        if (filter.getBool(joined)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            } finally {
+                keys.toTop();
+            }
+        }
+
+        /**
+         * Whether the join skips the chain of slave rows at {@code chainHead} when it NULL-extends the slave rows no
+         * master row matched: it NULL-extends only slave rows whose keys are all NULL, see {@link #findNullKeyChain}.
+         */
+        boolean isUnmatchedChainSkipped(int chainHead) {
+            return slaveNullKey != null && (!hasNullKeyChain || chainHead != nullKeyChainHead);
+        }
+
+        /**
+         * Records as matched each slave row of the NULL key chain, see {@link #findNullKeyChain}, that passes the ON
+         * residual with the current master row on {@code joined}, which pairs the master row with the slave record.
+         */
+        void matchNullKeyRows(Record joined, Map matchIdsMap) {
+            if (nullKeyRowsToMatch > 0) {
+                final LongChain.Cursor chain = slaveChain.getCursor(nullKeyChainHead);
+                while (chain.hasNext()) {
+                    slaveCursor.recordAt(slaveRecord, chain.next());
+                    if (filter.getBool(joined)) {
+                        final MapKey keys = matchIdsMap.withKey();
+                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                        if (keys.createValue().isNew()) {
+                            nullKeyRowsToMatch--;
+                        }
+                    }
+                }
+            }
         }
     }
 
     private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinFilteredLightRecordCursor {
         private final Map matchIdsMap;
+        private final Record masterNullRecord;
         private final FullOuterJoinRecord record;
         private MapRecordCursor mapCursor;
         private RecordSink masterCursorSink;
@@ -301,6 +386,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 LongChain slaveChain
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
+            this.masterNullRecord = masterNullRecord;
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.matchIdsMap = matchIdsMap;
             isOpen = false;
@@ -337,6 +423,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                findNullKeyChain(masterNullRecord);
                 hasMaster(true);
                 mapCursor = joinKeyMap.getCursor();
             }
@@ -355,8 +442,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 slaveChainCursor = null;
             }
 
-            if (masterCursor.hasNext()) {
+            while (masterCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                hasSlave(true);
+                matchNullKeyRows(record, matchIdsMap);
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -374,8 +463,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     }
                 }
                 slaveChainCursor = null;
-                hasSlave(false);
-                return true;
+                if (!isMasterRowDropped(record)) {
+                    hasSlave(false);
+                    return true;
+                }
             }
 
             hasMaster(false);
@@ -395,7 +486,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     return false;
                 }
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                unmatchedChainCursor = slaveChain.getCursor(mapCursor.getRecord().getValue().getInt(0));
+                final int chainHead = mapCursor.getRecord().getValue().getInt(0);
+                unmatchedChainCursor = isUnmatchedChainSkipped(chainHead) ? null : slaveChain.getCursor(chainHead);
             }
         }
 
@@ -523,14 +615,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 }
             }
 
-            if (masterCursor.hasNext()) {
+            while (masterCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
+                record.hasSlave(true);
                 if (value != null) {
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
-                    record.hasSlave(true);
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                         if (filter.getBool(record)) {
@@ -539,8 +631,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     }
                 }
                 slaveChainCursor = null;
-                record.hasSlave(false);
-                return true;
+                if (!isMasterRowDropped(record)) {
+                    record.hasSlave(false);
+                    return true;
+                }
             }
 
             return false;
@@ -563,6 +657,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     private class HashRightOuterJoinLightRecordCursor extends AbstractHashOuterJoinFilteredLightRecordCursor {
         private final Map matchIdsMap;
+        private final Record masterNullRecord;
         private final RightOuterJoinRecord record;
         private MapRecordCursor mapCursor;
 
@@ -574,6 +669,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 LongChain slaveChain
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
+            masterNullRecord = nullRecord;
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
             this.matchIdsMap = matchIdsMap;
             isOpen = false;
@@ -599,6 +695,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                findNullKeyChain(masterNullRecord);
                 record.hasMaster(true);
                 mapCursor = joinKeyMap.getCursor();
             }
@@ -626,6 +723,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
             while (masterCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                matchNullKeyRows(record, matchIdsMap);
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
@@ -647,7 +745,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapRecord mapRecord = mapCursor.getRecord();
-                slaveChainCursor = slaveChain.getCursor(mapRecord.getValue().getInt(0));
+                final int chainHead = mapRecord.getValue().getInt(0);
+                if (isUnmatchedChainSkipped(chainHead)) {
+                    continue;
+                }
+                slaveChainCursor = slaveChain.getCursor(chainHead);
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     MapKey keys = matchIdsMap.withKey();

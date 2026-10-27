@@ -2046,10 +2046,8 @@ public class ExpressionParser {
 
                                         // we need to track argument consumption so that operators and functions
                                         // do no steal parameters outside of local 'case' scope
-                                        int argCount = 0;
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
-                                            argCount++;
                                         }
 
                                         // Past the first keyword, the tokens before this one are the operand
@@ -2057,13 +2055,16 @@ public class ExpressionParser {
                                         // each. The check above refuses a keyword that directly follows
                                         // another. An empty bracket, as in 'case when () then 1 end',
                                         // delivers no value either. Ahead of the first keyword no value is
-                                        // valid: it is the searched form, 'case when'.
-                                        if (paramCount > 0 && argStackDepth == 0) {
+                                        // valid only with no token at all: it is the searched form, 'case
+                                        // when'. Any token there is the operand of the simple form, 'case
+                                        // x when', which an empty bracket, as in 'case () when', leaves
+                                        // without a value.
+                                        if (argStackDepth == 0 && (paramCount > 0 || prevBranch != BRANCH_CASE_START)) {
                                             throw missingArgs(lastPos);
                                         }
 
                                         if (paramCount == 0) {
-                                            if (argCount == 0) {
+                                            if (argStackDepth == 0) {
                                                 // this is 'case when', we will indicate that this is regular 'case'
                                                 // to the rewrite logic
                                                 onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL,

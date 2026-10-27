@@ -65,6 +65,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.mp.TestWorkerPool;
@@ -12734,6 +12735,74 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNullOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T08:00:00Z', 1),
+                        ('2024-02-10T12:00:00Z', 2),
+                        ('2024-04-20T06:00:00Z', 8)
+                    """);
+            final String[] sources = {"(SELECT * FROM t WHERE v > 0)", "t"};
+            final String[] clauses = {
+                    "SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET NULL",
+                    "SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET NULL",
+                    "SAMPLE BY 1M FILL(PREV) ALIGN TO CALENDAR WITH OFFSET NULL",
+                    "SAMPLE BY 1M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET NULL",
+                    "SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'UTC' WITH OFFSET NULL",
+                    "SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET NULL",
+                    "SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET NULL::STRING"
+            };
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (String source : sources) {
+                for (String clause : clauses) {
+                    // a NULL offset aligns the buckets as an omitted one does, on the cursor and GROUP BY paths alike
+                    final String query = "SELECT ts, sum(v) s FROM " + source + ' ' + clause;
+                    printSql(query.substring(0, query.indexOf(" WITH OFFSET")), expected);
+                    printSql(query, actual);
+                    TestUtils.assertEquals(query, expected, actual);
+                }
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok(
+                        "offset 00:00",
+                        """
+                                ts\ts
+                                2024-01-01T00:00:00.000000Z\t1.0
+                                2024-02-01T00:00:00.000000Z\t2.0
+                                2024-04-01T00:00:00.000000Z\t8.0
+                                """,
+                        bindVariableService -> bindVariableService.setStr(0, "00:00")
+                ));
+                final String query = "SELECT ts, sum(v) s FROM " + source + " SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET $1";
+                cases.add(BindVarTuple.ok(
+                        "null offset",
+                        """
+                                ts\ts
+                                2024-01-01T00:00:00.000000Z\t1.0
+                                2024-02-01T00:00:00.000000Z\t2.0
+                                2024-04-01T00:00:00.000000Z\t8.0
+                                """,
+                        bindVariableService -> bindVariableService.setStr(0, null)
+                ));
+                cases.add(BindVarTuple.ok(
+                        "offset 12:00",
+                        """
+                                ts\ts
+                                2024-01-01T12:00:00.000000Z\t1.0
+                                2024-02-01T12:00:00.000000Z\t2.0
+                                2024-04-01T12:00:00.000000Z\t8.0
+                                """,
+                        bindVariableService -> bindVariableService.setStr(0, "12:00")
+                ));
+                final QueryAssertion assertion = assertQuery(query).noLeakCheck().timestamp("ts");
+                (source.equals("t") ? assertion.expectSize() : assertion.noRandomAccess()).assertBinds(cases);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByNullTimestampRowsFromSubQuery() throws Exception {
         // A sub-query can declare a nullable expression as its designated timestamp. Ascending
         // order puts the NULL-timestamp rows first, and the SAMPLE BY cursors that do not rewrite
@@ -25220,6 +25289,44 @@ public class SampleByTest extends AbstractCairoTest {
                 "select sum(a), k from x sample by 300/10 L".length() - 1,
                 "one letter sample by period unit expected"
         );
+    }
+
+    @Test
+    public void testSamplePeriodNotPositiveIntInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-03-15T00:00:00.000000Z'), (2.0, '2024-12-15T00:00:00.000000Z')");
+            execute("CREATE TABLE e (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String[][] strides = {
+                    {"(0-2) d FILL(NULL)", "-", "-2"},
+                    {"(0-2) M FILL(NULL)", "-", "-2"},
+                    {"(0-3) M FILL(LINEAR)", "-", "-3"},
+                    {"(0-2) d FILL(PREV)", "-", "-2"},
+                    {"(0-2) M", "-", "-2"},
+                    {"(0-2) d", "-", "-2"},
+                    {"(1-1) h", "-", "0"},
+                    {"(1-1) M", "-", "0"},
+                    {"(1-1) d FILL(NULL) ALIGN TO FIRST OBSERVATION", "-", "0"},
+                    {"(null::int) d", "::", "null"},
+                    {"(3_000_000_000 + 0) M", "+", "3000000000"}
+            };
+            for (String[] stride : strides) {
+                final String query = "SELECT ts, sum(v) FROM x SAMPLE BY " + stride[0];
+                final int position = query.indexOf(stride[1], query.indexOf("SAMPLE BY"));
+                final String message = "sample by period must be a positive INT [value=" + stride[2] + ']';
+                assertException(query, position, message);
+                assertException("EXPLAIN " + query, position + "EXPLAIN ".length(), message);
+                assertException(query.replace(" FROM x ", " FROM e "), position, message);
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (2_147_483_646 + 1) M")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            1970-01-01T00:00:00.000000Z\t3.0
+                            """);
+        });
     }
 
     @Test

@@ -66,7 +66,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
             Plannable joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -83,7 +84,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     masterMeta.getTimestampType(),
                     slaveMeta.getTimestampIndex(),
                     slaveMeta.getTimestampType(),
-                    configuration.getSqlAsOfJoinLookAhead()
+                    configuration.getSqlAsOfJoinLookAhead(),
+                    keyCheck
             );
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -130,6 +132,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Indexed Scan");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", cursor.keyCheck);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -150,9 +153,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 int masterTimestampType,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                int lookahead
+                int lookahead,
+                @Nullable JoinKeyCheck keyCheck
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead, keyCheck);
         }
 
         @Override

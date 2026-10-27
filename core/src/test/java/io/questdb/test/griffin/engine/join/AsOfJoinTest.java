@@ -527,6 +527,161 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinSharedSlaveKeyChecksMasterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE q (s SYMBOL, k INT, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                        ('A', 1, 1.0, '2024-01-01T00:00:01Z'),
+                        ('B', 2, 2.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, 3.0, '2024-01-01T00:00:03Z'),
+                        ('A', 1, 4.0, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, v VARCHAR, i1 INT, i2 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', 'A', 'A', 1, 1, '2024-01-01T00:00:02Z'),
+                        ('A', 'B', 'A', 1, 2, '2024-01-01T00:00:03Z'),
+                        ('B', 'B', 'B', 2, 2, '2024-01-01T00:00:04Z'),
+                        ('A', 'A', 'A', 1, 1, '2024-01-01T00:00:04Z'),
+                        (NULL, NULL, NULL, NULL, NULL, '2024-01-01T00:00:05Z'),
+                        ('C', 'C', 'C', 3, 3, '2024-01-01T00:00:06Z'),
+                        ('A', 'A', NULL, 1, 1, '2024-01-01T00:00:07Z'),
+                        (NULL, 'A', '', NULL, 1, '2024-01-01T00:00:08Z')
+                    """);
+            final String asOfTwoSymbols = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\t4.0
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String ltTwoSymbols = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t1.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\t4.0
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String asOfSymbolVarchar = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\tnull
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String ltSymbolVarchar = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t1.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\tnull
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String[] slaves = {
+                    "q",
+                    "((SELECT * FROM q UNION ALL SELECT * FROM q WHERE 1 = 0) TIMESTAMP(ts))",
+                    "(SELECT * FROM q WHERE px > 0)"
+            };
+            final String[] asOfHints = {"", "/*+ asof_linear(t q) */ ", "/*+ asof_dense(t q) */ ", "/*+ asof_memoized(t q) */ "};
+            for (String slave : slaves) {
+                for (String hint : asOfHints) {
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.s1 = q.s AND t.s2 = q.s", "s1=s2", asOfTwoSymbols);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.i1 = q.k AND t.i2 = q.k", "i1=i2", asOfTwoSymbols);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.s1 = q.s AND t.v = q.s", "s1=v", asOfSymbolVarchar);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.v = q.s AND t.s1 = q.s", "v=s1", asOfSymbolVarchar);
+                }
+                assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.s1 = q.s AND t.s2 = q.s", "s1=s2", ltTwoSymbols);
+                assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.i1 = q.k AND t.i2 = q.k", "i1=i2", ltTwoSymbols);
+                assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.s1 = q.s AND t.v = q.s", "s1=v", ltSymbolVarchar);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSharedSlaveKeysKeepSymbolKeyJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'Y', 1.0, '2024-01-01T00:00:01Z'),
+                        ('Y', 'X', 2.0, '2024-01-01T00:00:02Z'),
+                        ('X', 'X', 3.0, '2024-01-01T00:00:03Z'),
+                        ('Y', 'Y', 4.0, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, my SYMBOL, mz SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 'X', 'X', '2024-01-01T00:00:03Z'),
+                        ('X', 'Y', 'X', '2024-01-01T00:00:04Z'),
+                        ('X', 'X', 'Y', '2024-01-01T00:00:04Z'),
+                        ('Y', 'Y', 'Y', '2024-01-01T00:00:05Z'),
+                        ('Z', 'Z', 'Z', '2024-01-01T00:00:05Z')
+                    """);
+            final String asOf = """
+                    ts\tv
+                    2024-01-01T00:00:03.000000Z\t3.0
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:05.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\tnull
+                    """;
+            final String lt = """
+                    ts\tv
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:05.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\tnull
+                    """;
+            final String on = "s.a = m.mx AND s.c = m.mz AND s.c = m.mx AND s.a = m.my";
+            assertQuery("SELECT m.ts, s.v FROM m ASOF JOIN s ON " + on)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "keyCheck: mz=mx and mx=my", "symbolKeyJoin: true")
+                    .returns(asOf);
+            assertQuery("SELECT m.ts, s.v FROM m LT JOIN s ON " + on)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Lt Join Light", "keyCheck: mz=mx and mx=my", "symbolKeyJoin: true")
+                    .returns(lt);
+            assertQuery("SELECT m.ts, s.v FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mz AND s.a = m.mx")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "keyCheck: mz=mx", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:03.000000Z\t3.0
+                            2024-01-01T00:00:04.000000Z\t3.0
+                            2024-01-01T00:00:04.000000Z\tnull
+                            2024-01-01T00:00:05.000000Z\t4.0
+                            2024-01-01T00:00:05.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testAsOfJoinFullFatStringToSymbolKey() throws Exception {
         // Regression: full-fat AsOf/Lt projection of a slave SYMBOL key tripped
         // SymbolColumn.init when master's matching key was STRING.
@@ -2408,7 +2563,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ('Y', 'Y', 'Y', '2024-01-01T00:00:05Z')
                     """);
 
-            printSql("EXPLAIN SELECT m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mz AND s.a = m.mx");
+            printSql("EXPLAIN SELECT m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mx");
             TestUtils.assertNotContains(sink, "symbolKeyJoin");
 
             final String asOfExpected = """
@@ -7146,6 +7301,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
     private void assertSymbolKeysSharedMasterColumn(String query, String expected, boolean isFiltered) throws Exception {
         assertQuery(query).noLeakCheck().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
         assertQuery(query).noLeakCheck().fullFatJoins().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
+    }
+
+    private void assertSharedSlaveKey(String query, String keyCheck, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("keyCheck: " + keyCheck)
+                .returns(expected);
     }
 
     private void assertSameAsUnordered(String query, String unorderedQuery, String expected) throws Exception {

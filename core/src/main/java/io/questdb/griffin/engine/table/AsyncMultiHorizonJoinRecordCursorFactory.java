@@ -211,8 +211,13 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null) {
+            sink.attr("filter").val(filter, masterFactory);
+        }
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            sink.optAttr("keyCheck", slaveStates.getQuick(i).getKeyCheck());
             final Function slaveFilter = slaveStates.getQuick(i).getFilter();
             if (slaveFilter != null) {
                 sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));

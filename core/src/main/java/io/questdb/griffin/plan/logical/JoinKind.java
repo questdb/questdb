@@ -36,7 +36,13 @@ public enum JoinKind {
     ASOF,
     LT,
     SPLICE,
-    UNNEST;
+    UNNEST,
+    /**
+     * A key-less CROSS input of the master side of the RIGHT or FULL step it follows, which join ordering moved past
+     * that step: each row the step NULL-extends on its master side joins once, with this input's columns NULL, and
+     * every other row joins each row of the input. The step's master side holds no row when the input holds none.
+     */
+    OUTER_CROSS;
 
     /**
      * True when the step does not commute with the steps around it: every kind but INNER and CROSS.
@@ -70,7 +76,7 @@ public enum JoinKind {
      * True when the step can emit rows whose own columns are NULL-extended.
      */
     public boolean isSlaveNulling() {
-        return this == LEFT_OUTER || this == FULL_OUTER || this == ASOF || this == LT || this == SPLICE;
+        return this == LEFT_OUTER || this == FULL_OUTER || this == ASOF || this == LT || this == SPLICE || this == OUTER_CROSS;
     }
 
     /**

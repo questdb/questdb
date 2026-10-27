@@ -44,19 +44,20 @@ public class MultiJoinTest extends AbstractCairoTest {
             createCommaGroupTables();
             final String rightJoinPlan = """
                     SelectedRecord
-                        Hash Right Outer Join Light
-                          condition: c.x=a.x
-                            Cross Join
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: b
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: c
+                        Outer Cross Join
+                            Hash Right Outer Join Light
+                              condition: c.x=a.x
+                                Filter filter: exists(b)
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
                     """;
             final String rightJoinRows = """
                     x	x1	x2
@@ -79,9 +80,10 @@ public class MultiJoinTest extends AbstractCairoTest {
             assertQuery("SELECT a.x ax, b.x bx, c.x cx FROM a, b FULL JOIN c ON c.x = a.x + 1 ORDER BY cx, ax, bx")
                     .noLeakCheck()
                     .withPlanContaining("""
-                                    Nested Loop Full Join
-                                      filter: c.x=a.x+1
-                                        Cross Join
+                                    Outer Cross Join
+                                        Nested Loop Full Join
+                                          filter: c.x=a.x+1
+                                            Filter filter: exists(b)
                             """)
                     .returns("""
                             ax	bx	cx
@@ -95,9 +97,10 @@ public class MultiJoinTest extends AbstractCairoTest {
             assertQuery("SELECT px, b.x bx, c.x cx FROM p, b RIGHT JOIN c ON c.x = px ORDER BY cx, px, bx")
                     .noLeakCheck()
                     .withPlanContaining("""
-                                    Hash Right Outer Join Light
-                                      condition: c.x=px
-                                        Cross Join
+                                    Outer Cross Join
+                                        Hash Right Outer Join Light
+                                          condition: c.x=px
+                                            Filter filter: exists(b)
                             """)
                     .returns("""
                             px	bx	cx
@@ -123,15 +126,16 @@ public class MultiJoinTest extends AbstractCairoTest {
                     + "ORDER BY ax, bx, cx, dx, qx")
                     .noLeakCheck()
                     .withPlanContaining("""
-                                    Hash Full Outer Join Light
-                                      condition: q.px=c.x
-                                        Cross Join
-                                            Cross Join
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: a
-                                                Hash Right Outer Join Light
-                                                  condition: c.x=b.x
+                                    Outer Cross Join
+                                        Hash Full Outer Join Light
+                                          condition: q.px=c.x
+                                            Filter filter: exists(d)
+                                                Cross Join
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash Right Outer Join Light
+                                                      condition: c.x=b.x
                             """)
                     .returns("""
                             ax	bx	cx	dx	qx

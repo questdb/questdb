@@ -199,6 +199,43 @@ public class PGTimestampUpdateTest extends BasePGTest {
         }, "2025-12-04T15:58:45.000004000");
     }
 
+    @Test
+    public void testUpdateWithInvalidTextBindFailsBeforeSequencing() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE t (ts TIMESTAMP, other TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.executeUpdate("INSERT INTO t VALUES ('2024-01-01', '2024-01-01', 0)");
+            }
+            drainWalQueue();
+            for (String predicate : new String[]{"ts = ?::varchar", "ts > ?::varchar", "other = ?::string", "other < ?::varchar"}) {
+                try (PreparedStatement update = connection.prepareStatement("UPDATE t SET x = 1 WHERE " + predicate)) {
+                    update.setString(1, "garbage");
+                    update.executeUpdate();
+                    Assert.fail("invalid text must fail the UPDATE before the WAL records it");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `garbage` [");
+                    TestUtils.assertContains(e.getMessage(), " -> TIMESTAMP]");
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            try (PreparedStatement update = connection.prepareStatement("UPDATE t SET x = 1 WHERE ts = ?::varchar")) {
+                update.setString(1, "2024-01-01T00:00:00.000000Z");
+                update.executeUpdate();
+            }
+            drainWalQueue();
+            try (
+                    Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery("SELECT ts, x FROM t")
+            ) {
+                assertResultSet("""
+                        ts[TIMESTAMP],x[INTEGER]
+                        2024-01-01 00:00:00.0,1
+                        """, new StringSink(), rs);
+            }
+        });
+    }
+
     private void testUpdateTimestampColumn(String tsType, Consumer<PreparedStatement> setTimestamp, String expectedTimestamp) throws Exception {
         final boolean isNanos = tsType.equals("TIMESTAMP_NS");
 

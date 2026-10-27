@@ -68,6 +68,7 @@ final class JoinBinder implements Mutable {
     private final BindContext ctx;
     private final IntList deferredJoinInputs;
     private final IntList forwardLeftJoinInputs;
+    private final ObjList<JoinEquality> impliedKeyPairs = new ObjList<>();
     private final IntList inputModels = new IntList();
     private final JoinGraphBuilder joinGraphBuilder;
     private final LateralBinder lateralBinder;
@@ -112,6 +113,7 @@ final class JoinBinder implements Mutable {
 
     @Override
     public void clear() {
+        impliedKeyPairs.clear();
         inputModels.clear();
         joinGraphBuilder.clear();
         lateralDependencyInputs.clear();
@@ -557,7 +559,10 @@ final class JoinBinder implements Mutable {
                 if (step.getJoinType().isTemporal()) {
                     validateTimeSeriesTimestamps(step.getPosition(), timestampId, step.getInput());
                 }
-                validateJoinKeys(join, dependency);
+                impliedKeyPairs.clear();
+                if (!LogicalPlans.isImpliedKeyStep(inputs, graph, i, impliedKeyPairs)) {
+                    validateJoinKeys(join, dependency);
+                }
                 validateTemporalKeys(step, dependency, timestampId);
                 if (step.getJoinType().isBarrier()) {
                     bindJoinOnResidual(scope.joinOnNodes.getQuick(i), join, step, source, i, executionContext);
@@ -591,6 +596,7 @@ final class JoinBinder implements Mutable {
             join.setGraph(graph);
         } finally {
             joinGraphBuilder.clear();
+            impliedKeyPairs.clear();
             scope.joinDerivedEqualities.clear();
             scope.joinOnNodes.clear();
             scope.joinResidualNodes.clear();

@@ -380,6 +380,208 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyFullJoinNullExtendsByOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            createImpliedKeyRows();
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a FULL JOIN ik_b b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .withPlanContaining("Hash Full Outer Join", "condition: b.k=a.w")
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            1\t13\t20
+                            2\t10\t21
+                            4\t13\t20
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a FULL JOIN ik_b2 b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            2\t10\t21
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a FULL JOIN ik_b b ON a.x = 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t11\t20
+                            1\t13\t20
+                            2\t10\t21
+                            4\tnull\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyLeftJoinNullExtendsByOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            createImpliedKeyRows();
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a LEFT JOIN ik_b b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .withPlanContaining("Hash Left Outer Join", "condition: b.k=a.w")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t13\t20
+                            2\t10\t21
+                            4\t13\t20
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a LEFT JOIN ik_b2 b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            2\t10\t21
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a LEFT JOIN ik_b b ON b.x > 100 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            1\tnull\t20
+                            4\tnull\t20
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a LEFT JOIN ik_b b ON a.x = 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t11\t20
+                            1\t13\t20
+                            2\t10\t21
+                            4\tnull\t20
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a LEFT JOIN ik_b b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k WHERE b.u > 2 ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            2\t10\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyReplacesMixedTypeOnKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s0 (id INT, k INT, x INT, j LONG)");
+            execute("CREATE TABLE s1 (id INT, k INT, x INT, j LONG)");
+            execute("CREATE TABLE s2 (id INT, k INT, x INT, j LONG)");
+            execute("INSERT INTO s0 VALUES (1, 1, 1, 1), (2, 2, 2, 1), (3, 2, 1, 2), (4, NULL, 1, NULL), (5, 1, NULL, 1), (6, NULL, 1, 5)");
+            execute("INSERT INTO s1 VALUES (10, 1, 1, 1), (11, 2, 1, 2), (12, NULL, 1, NULL), (13, 3, 1, 3)");
+            execute("INSERT INTO s2 VALUES (20, 1, 0, 1), (21, 2, 0, 2), (22, NULL, 0, NULL)");
+            final String query = "SELECT a0.id, a1.id, a2.id FROM s0 a0 %s JOIN s1 a1 ON a0.j = a1.k JOIN s2 a2 ON a2.k = a1.k AND a2.k = a0.k %s ORDER BY 1, 2, 3";
+            assertQuery(query.formatted("RIGHT", ""))
+                    .withPlanContaining("Hash Right Outer Join", "condition: a1.k=a0.k", "filter: a0.j=a1.k")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t10\t20
+                            3\t11\t21
+                            4\t12\t22
+                            5\t10\t20
+                            """);
+            assertQuery(query.formatted("LEFT", ""))
+                    .returns("""
+                            id\tid1\tid2
+                            1\t10\t20
+                            3\t11\t21
+                            4\t12\t22
+                            5\t10\t20
+                            6\tnull\t22
+                            """);
+            assertQuery(query.formatted("FULL", ""))
+                    .returns("""
+                            id\tid1\tid2
+                            1\t10\t20
+                            3\t11\t21
+                            4\t12\t22
+                            5\t10\t20
+                            6\tnull\t22
+                            """);
+            final String rejected = """
+                    id\tid1\tid2
+                    1\t10\t20
+                    3\t11\t21
+                    4\t12\t22
+                    """;
+            assertQuery(query.formatted("RIGHT", "WHERE a0.x + a0.id > 1")).returns(rejected);
+            assertQuery(query.formatted("RIGHT", "WHERE a0.x IN (1, 2)")).returns(rejected);
+            assertQuery("SELECT a0.id, a1.id FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k ORDER BY 1, 2")
+                    .fails(58, "join column type mismatch");
+        });
+    }
+
+    @Test
+    public void testImpliedKeyRightJoinNullExtendsByOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            createImpliedKeyRows();
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a RIGHT JOIN ik_b b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .withPlanContaining("Hash Right Outer Join", "condition: b.k=a.w")
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            1\t13\t20
+                            2\t10\t21
+                            4\t13\t20
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a2 a RIGHT JOIN ik_b b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            2\t10\t21
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a RIGHT JOIN ik_b b ON a.x = 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t11\t20
+                            1\t13\t20
+                            2\t10\t21
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id FROM ik_a a RIGHT JOIN ik_b b ON b.x > 1 JOIN ik_c c ON a.w = c.k AND b.k = c.k WHERE a.x > 0 ORDER BY 1, 2, 3")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t13\t20
+                            2\t10\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testImpliedSymbolKeyNullExtendsByOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sa (id INT, w SYMBOL)");
+            execute("CREATE TABLE sa2 (id INT, w SYMBOL)");
+            execute("CREATE TABLE sb (id INT, x INT, k SYMBOL)");
+            execute("CREATE TABLE sb2 (id INT, x INT, k SYMBOL)");
+            execute("CREATE TABLE sc (id INT, k SYMBOL)");
+            execute("INSERT INTO sa VALUES (1, NULL), (2, 'p'), (3, 'q')");
+            execute("INSERT INTO sa2 VALUES (2, 'p'), (3, 'q')");
+            execute("INSERT INTO sb VALUES (10, 2, 'p'), (11, 0, NULL), (12, 3, 'z'), (13, 3, NULL)");
+            execute("INSERT INTO sb2 VALUES (10, 2, 'p'), (11, 0, NULL), (12, 3, 'z')");
+            execute("INSERT INTO sc VALUES (20, NULL), (21, 'p'), (22, 'z')");
+            final String query = "SELECT a.id, b.id, c.id FROM %s a %s JOIN %s b ON b.x > 1 JOIN sc c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3";
+            assertQuery(query.formatted("sa", "LEFT", "sb"))
+                    .withPlanContaining("Hash Left Outer Join", "condition: b.k=a.w")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t13\t20
+                            2\t10\t21
+                            """);
+            assertQuery(query.formatted("sa", "LEFT", "sb2"))
+                    .returns("""
+                            id\tid1\tid2
+                            2\t10\t21
+                            """);
+            assertQuery(query.formatted("sa", "RIGHT", "sb"))
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            1\t13\t20
+                            2\t10\t21
+                            """);
+            assertQuery(query.formatted("sa2", "RIGHT", "sb"))
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            2\t10\t21
+                            """);
+            assertQuery(query.formatted("sa2", "FULL", "sb"))
+                    .returns("""
+                            id\tid1\tid2
+                            null\t11\t20
+                            2\t10\t21
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerOnReadingNoInputFiltersItsStepOnlyWithOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -1205,6 +1407,19 @@ public class OuterJoinTest extends AbstractCairoTest {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         }
         assertRows(sql, false, null, expected);
+    }
+
+    private void createImpliedKeyRows() throws Exception {
+        execute("CREATE TABLE ik_a (id INT, x INT, w INT)");
+        execute("CREATE TABLE ik_a2 (id INT, x INT, w INT)");
+        execute("CREATE TABLE ik_b (id INT, x INT, k INT, u INT)");
+        execute("CREATE TABLE ik_b2 (id INT, x INT, k INT, u INT)");
+        execute("CREATE TABLE ik_c (id INT, k INT)");
+        execute("INSERT INTO ik_a VALUES (1, 1, NULL), (2, 1, 5), (3, 1, 7), (4, NULL, NULL)");
+        execute("INSERT INTO ik_a2 VALUES (2, 1, 5), (3, 1, 7)");
+        execute("INSERT INTO ik_b VALUES (10, 2, 5, 3), (11, 0, NULL, 3), (12, 3, 9, NULL), (13, 3, NULL, 1)");
+        execute("INSERT INTO ik_b2 VALUES (10, 2, 5, 3), (11, 0, NULL, 3), (12, 3, 9, NULL)");
+        execute("INSERT INTO ik_c VALUES (20, NULL), (21, 5), (22, 9)");
     }
 
     private void createInnerOnRows() throws Exception {

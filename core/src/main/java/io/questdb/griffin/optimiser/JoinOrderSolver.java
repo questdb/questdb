@@ -27,12 +27,17 @@ package io.questdb.griffin.optimiser;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
@@ -54,6 +59,9 @@ final class JoinOrderSolver implements Mutable {
     private final ObjectPool<IntHashSet> childrenPool;
     private final OptimiserContext context;
     private final ObjectPool<JoinDependency> dependencyPool;
+    private final ObjList<JoinEquality> impliedKeyPairs = new ObjList<>();
+    private final ObjList<JoinEquality> impliedKeySources = new ObjList<>();
+    private final IntList impliedKeySteps = new IntList();
     private final IntList inCounts;
     private final ObjList<JoinKind> joinTypes;
     private final IntHashSet markedIndexes;
@@ -67,6 +75,10 @@ final class JoinOrderSolver implements Mutable {
     private ObjList<JoinDependency> dependencies;
     private JoinGraph graph;
     private boolean isFirstInputFixed;
+    private OutputSchema liftedOutput;
+    private final ExpressionVisitor liftedInputReads = expression ->
+            expression instanceof ColumnExpression column && liftedOutput.getColumnIndexById(column.getColumnId()) >= 0
+                    ? TreeWalk.STOP : TreeWalk.CONTINUE;
 
     /**
      * Borrows {@code markedIndexes}, {@code stagedIndexes}, {@code bestOrder}, {@code roots}, {@code inCounts},
@@ -109,10 +121,14 @@ final class JoinOrderSolver implements Mutable {
     @Override
     public void clear() {
         bestJoinTypes.clear();
+        impliedKeyPairs.clear();
+        impliedKeySources.clear();
+        impliedKeySteps.clear();
         movedKeys.clear();
         dependencies = null;
         graph = null;
         isFirstInputFixed = false;
+        liftedOutput = null;
     }
 
     /**
@@ -121,14 +137,16 @@ final class JoinOrderSolver implements Mutable {
      * step. The first input stays first when the join designates its timestamp and a part of the query requires it,
      * {@code isTimestampRequired}; when the order leads with another input, the join designates no timestamp. It also
      * stays first when an input may yield other rows on another evaluation, judged by the columns the query reads,
-     * {@code readColumnIds}.
+     * {@code readColumnIds}. Unless decorrelation rewrites the join, {@code isDecorrelated}, a key-less CROSS input of
+     * the master side of a RIGHT or FULL step joins after that step, see {@link #liftCrossInputs}.
      */
-    void order(JoinPlan join, boolean isTimestampRequired, IntHashSet readColumnIds) throws SqlException {
+    void order(JoinPlan join, boolean isTimestampRequired, IntHashSet readColumnIds, boolean isDecorrelated) throws SqlException {
         of(join, join.getGraph(), isTimestampRequired, readColumnIds);
         try {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
                 dependencies.add(null);
             }
+            collectImpliedKeys(join);
             join.setLeadingCrossJoinFixed(isFirstInputFixed && !hasLeadingJoinDependency(join));
             linkDependencies();
             for (int i = 0, n = dependencies.size(); i < n; i++) {
@@ -155,16 +173,22 @@ final class JoinOrderSolver implements Mutable {
             }
             reorder();
             validateOrder();
+            if (!isDecorrelated) {
+                liftCrossInputs(join, readColumnIds);
+            }
             final ObjList<JoinInput> inputs = join.getInputs();
             for (int i = 0, n = bestOrder.size(); i < n; i++) {
                 final int source = bestOrder.getQuick(i);
                 final JoinInput input = inputs.getQuick(source);
                 input.setJoinType(joinTypes.getQuick(source));
                 final JoinDependency dependency = dependencies.getQuick(source);
-                if (dependency != null) {
+                if (!addImpliedKeys(join, input, source, dependency) && dependency != null) {
                     final ObjList<JoinEquality> keys = dependency.getKeys();
                     for (int k = 0, count = keys.size(); k < count; k++) {
                         final JoinEquality key = keys.getQuick(k);
+                        if (impliedKeySources.indexOf(key) > -1) {
+                            continue;
+                        }
                         if (key.getLeftSource() == source) {
                             addKey(input, key.getRightColumnId(), key.getLeftColumnId(), key.getRightName(), key.getLeftName(), key.getLeftPosition());
                         } else {
@@ -178,6 +202,53 @@ final class JoinOrderSolver implements Mutable {
         } finally {
             clear();
         }
+    }
+
+    /**
+     * Keys the outer step, which {@link #collectImpliedKeys} found, on the equalities that a later INNER join implies
+     * between its input and an input the order joins before it, turns the equalities its ON clause states into ON
+     * residual conjuncts and records that the ON residual decides its NULL extension. Every row the step emits holds
+     * the keys, so the later join no longer keys on the column of the earlier input that a key of the step and the
+     * later join's key on the step's column imply. Returns false for any other step, and for a step without an ON
+     * equality that no implied equality keys. Throws the type mismatch of an ON equality that no implied equality
+     * replaces.
+     */
+    private boolean addImpliedKeys(JoinPlan join, JoinInput input, int source, JoinDependency dependency) throws SqlException {
+        final ObjList<JoinInput> inputs = join.getInputs();
+        boolean isImpliedKeyStep = false;
+        for (int i = 0, n = impliedKeySteps.size(); i < n; i++) {
+            if (impliedKeySteps.getQuick(i) == source) {
+                isImpliedKeyStep = true;
+                final JoinEquality stepKey = impliedKeyPairs.getQuick(2 * i);
+                final JoinEquality masterKey = impliedKeyPairs.getQuick(2 * i + 1);
+                final int master = masterKey.getOtherSource(stepKey.getOtherSource(source));
+                final int masterId = masterKey.getColumnId(master);
+                if (join.getOrderedInputs().indexOf(inputs.getQuick(master)) >= 0 && input.indexOfMasterKey(masterId) < 0) {
+                    input.addKey(masterId, stepKey.getColumnId(source), masterKey.getName(master), stepKey.getName(source), stepKey.getPosition(source));
+                    impliedKeySources.add(masterKey);
+                }
+            }
+        }
+        if (!isImpliedKeyStep) {
+            return false;
+        }
+        final ObjList<JoinEquality> keys = dependency == null ? null : dependency.getKeys();
+        if (input.getKeys().size() == 0) {
+            if (keys != null && keys.size() > 0) {
+                throw SqlException.$(keys.getQuick(0).getPosition(source), "join column type mismatch");
+            }
+            return false;
+        }
+        for (int i = 0, n = keys == null ? 0 : keys.size(); i < n; i++) {
+            final JoinEquality key = keys.getQuick(i);
+            final int position = key.getPosition(source);
+            final BoundExpression equality = context.bindEquality(key.getColumnId(key.getOtherSource(source)), key.getColumnId(source),
+                    join.getOutput(), position);
+            input.setOnResidual(input.getOnResidual() == null ? equality
+                    : context.getRewriter().combineConjunction(equality, input.getOnResidual(), position));
+        }
+        input.setNullExtension(JoinInput.NullExtension.BY_ON_RESIDUAL);
+        return true;
     }
 
     /**
@@ -222,6 +293,22 @@ final class JoinOrderSolver implements Mutable {
             }
         }
         return joinTypes.getQuick(source) == JoinKind.CROSS ? 10 : 5;
+    }
+
+    /**
+     * Collects, before the order search moves keys between inputs, the equalities that key the outer steps a later
+     * INNER join keys, see {@link LogicalPlans#isImpliedKeyStep}.
+     */
+    private void collectImpliedKeys(JoinPlan join) {
+        final ObjList<JoinInput> inputs = join.getInputs();
+        for (int i = 1, n = inputs.size(); i < n; i++) {
+            final int base = impliedKeyPairs.size();
+            if (LogicalPlans.isImpliedKeyStep(inputs, graph, i, impliedKeyPairs)) {
+                for (int k = base, count = impliedKeyPairs.size(); k < count; k += 2) {
+                    impliedKeySteps.add(i);
+                }
+            }
+        }
     }
 
     private boolean dependsOn(int source, int target) {
@@ -333,9 +420,100 @@ final class JoinOrderSolver implements Mutable {
         return isAwaited;
     }
 
+    /**
+     * True when the CROSS step at {@code position} of the order can join after the RIGHT or FULL step at {@code outer}:
+     * its rows do not vary across evaluations, judged by the columns the query reads, {@code readColumnIds}, no lateral
+     * input depends on it, no step before the outer one waits for it, its own ON clause states no conjunct, and neither
+     * a key nor an ON condition of a step up to the outer one, nor an ON conjunct of the graph reads it.
+     */
+    private boolean isLiftable(JoinPlan join, int source, int position, int outer, IntHashSet readColumnIds) {
+        final ObjList<JoinInput> inputs = join.getInputs();
+        final JoinInput input = inputs.getQuick(source);
+        if (input.isDependent() || input.getInput() == null || !LogicalPlans.isResultStable(input.getInput(), true, readColumnIds)) {
+            return false;
+        }
+        final IntList lateral = graph.getLateralDependencies();
+        for (int i = 0, n = lateral.size(); i < n; i++) {
+            if (lateral.getQuick(i) == source) {
+                return false;
+            }
+        }
+        final IntList constraints = graph.getOrderingConstraints();
+        for (int i = 0, n = constraints.size(); i < n; i += 2) {
+            if (constraints.getQuick(i) == source && bestOrder.indexOf(constraints.getQuick(i + 1), 0, bestOrder.size()) < outer) {
+                return false;
+            }
+        }
+        for (int i = 0, n = graph.getConstantFilters().size(); i < n; i++) {
+            if (graph.getConstantFilterOrigin(i) == source) {
+                return false;
+            }
+        }
+        liftedOutput = input.getSourceOutput();
+        for (int i = position + 1; i <= outer; i++) {
+            final int step = bestOrder.getQuick(i);
+            final JoinDependency dependency = dependencies.getQuick(step);
+            if (dependency != null) {
+                final ObjList<JoinEquality> keys = dependency.getKeys();
+                for (int k = 0, count = keys.size(); k < count; k++) {
+                    final JoinEquality key = keys.getQuick(k);
+                    if (key.getLeftSource() == source || key.getRightSource() == source) {
+                        return false;
+                    }
+                }
+            }
+            if (isLiftedInputRead(inputs.getQuick(step).getOnResidual())) {
+                return false;
+            }
+        }
+        final ObjList<BoundExpression> residuals = graph.getResiduals();
+        for (int i = 0, n = residuals.size(); i < n; i++) {
+            final boolean isRead = isLiftedInputRead(residuals.getQuick(i));
+            for (int k = 0, count = graph.getResidualOwnerCount(i); k < count; k++) {
+                final int owner = graph.getResidualOwner(i, k);
+                if (owner == source || isRead && owner >= 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean isLiftedInputRead(BoundExpression expression) {
+        return expression != null && !expression.walk(liftedInputReads);
+    }
+
     private boolean isParentless(int source) {
         final JoinDependency dependency = dependencies.getQuick(source);
         return dependency == null || dependency.getParents().size() == 0;
+    }
+
+    /**
+     * Joins each key-less CROSS input that the master side of a RIGHT or FULL step holds after that step instead, as
+     * an {@link JoinKind#OUTER_CROSS} step, so the outer step joins each master row once instead of once per row of
+     * the input. Only INNER and CROSS steps may lie between the input and the outer step, and the input must not be
+     * the first, see {@link #isLiftable}.
+     */
+    private void liftCrossInputs(JoinPlan join, IntHashSet readColumnIds) {
+        for (int outer = 2, n = bestOrder.size(); outer < n; outer++) {
+            final JoinKind outerType = joinTypes.getQuick(bestOrder.getQuick(outer));
+            if (outerType != JoinKind.RIGHT_OUTER && outerType != JoinKind.FULL_OUTER) {
+                continue;
+            }
+            for (int position = outer - 1; position > 0; position--) {
+                final int source = bestOrder.getQuick(position);
+                final JoinKind type = joinTypes.getQuick(source);
+                if (type.isBarrier()) {
+                    break;
+                }
+                if (type == JoinKind.CROSS && isLiftable(join, source, position, outer, readColumnIds)) {
+                    bestOrder.removeIndex(position);
+                    bestOrder.insert(outer, source);
+                    joinTypes.setQuick(source, JoinKind.OUTER_CROSS);
+                    break;
+                }
+            }
+        }
     }
 
     private void link(int parent, int child) {

@@ -1027,6 +1027,68 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrelatedSubQueriesJoinedInAnyOrder() throws Exception {
+        // #7803
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, k2 INT)");
+            execute("CREATE TABLE d (id INT, x INT)");
+            execute("CREATE TABLE c (id INT, x INT, y INT)");
+            execute("INSERT INTO o VALUES (1, 1, 5), (2, 1, 2), (3, 2, 5), (4, 2, 1)");
+            execute("INSERT INTO d VALUES (40, 1), (41, 2)");
+            execute("INSERT INTO c VALUES (30, 1, 1), (31, 1, 5), (32, 2, 2), (33, 2, 5)");
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id FROM d
+                    CROSS JOIN (SELECT * FROM c WHERE x = o.k) s1
+                    JOIN (SELECT * FROM c WHERE x = o.k) s2 ON s2.x = d.x
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id FROM d
+                    JOIN (SELECT * FROM c WHERE x = o.k) s1 ON s1.y < o.k2
+                    CROSS JOIN (SELECT * FROM c WHERE y = o.k2) s2
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id FROM d
+                    LEFT JOIN (SELECT * FROM c WHERE x = o.k) s1 ON s1.y < o.k2
+                    JOIN (SELECT * FROM c WHERE y = o.k2) s2 ON true
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id FROM d
+                    LEFT JOIN (SELECT * FROM c WHERE x = o.k) s1 ON true
+                    JOIN (SELECT * FROM c WHERE x = o.k AND y = o.k2) s2 ON s2.x = s1.x
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id FROM (SELECT * FROM c WHERE x = o.k) s1
+                    JOIN d ON d.x <= s1.x AND s1.y < o.k2
+                    JOIN (SELECT * FROM c WHERE x = o.k) s2 ON s2.x = d.x
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, t.id tid FROM d
+                    CROSS JOIN c t
+                    CROSS JOIN (SELECT * FROM c WHERE y = o.k2) s1
+                    WHERE t.y = o.k2
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, t.id tid FROM d
+                    LEFT JOIN (SELECT * FROM c WHERE y = o.k2) s1 ON s1.x = d.x
+                    LEFT JOIN c t ON t.x = s1.x
+                    WHERE t.y = o.k2
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id, s3.id s3id FROM d
+                    CROSS JOIN (SELECT * FROM c WHERE x = o.k) s1
+                    CROSS JOIN (SELECT * FROM c WHERE x = o.k) s2
+                    LEFT JOIN (SELECT * FROM c WHERE x = o.k) s3 ON s2.y < o.k2
+                    """);
+            assertPerOuterRow("""
+                    SELECT d.id did, s1.id s1id, s2.id s2id, s3.id s3id FROM (SELECT * FROM c WHERE x = o.k) s1
+                    JOIN d ON d.x <= s1.x
+                    JOIN (SELECT * FROM c WHERE x = o.k) s2 ON s2.x = d.x
+                    CROSS JOIN (SELECT * FROM c WHERE y = o.k2) s3
+                    """);
+        });
+    }
+
+    @Test
     public void testCorrelatedSubQueryAroundRightOrFullJoin() throws Exception {
         // #7724
         assertMemoryLeak(() -> {
@@ -1875,9 +1937,11 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                                             Master t
                                               Join
                                                 Master
-                                                  Scan
-                                                    table: trades
-                                                    columns: [id, x]
+                                                  Filter
+                                                    predicate: t.id > 0
+                                                    Scan
+                                                      table: trades
+                                                      columns: [id, x]
                                                 CROSS __qdb_outer_ref__0
                                                   Aggregate
                                                     keys: [k AS __qdb_outer_ref__0_k]
@@ -6442,6 +6506,56 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoCorrelatedSubQueriesJoinedInReverseOrder() throws Exception {
+        // #7803
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, k2 INT)");
+            execute("CREATE TABLE d (id INT, x INT)");
+            execute("CREATE TABLE c (id INT, x INT, y INT)");
+            execute("INSERT INTO o VALUES (1, 1, 5), (2, 1, 2)");
+            execute("INSERT INTO d VALUES (40, 1)");
+            execute("INSERT INTO c VALUES (30, 1, 1), (31, 1, 5)");
+            final String expected = """
+                    id\tdid\tcid\teid
+                    1\t40\t30\t30
+                    1\t40\t30\t31
+                    2\t40\t30\t30
+                    2\t40\t30\t31
+                    """;
+            for (String lateral : new String[]{"JOIN LATERAL (%s) l", "LEFT JOIN LATERAL (%s) l ON true"}) {
+                assertQuery("SELECT o.id, l.did, l.cid, l.eid FROM o " + lateral.formatted("""
+                        SELECT d.id did, c.id cid, e.id eid FROM d
+                        JOIN (SELECT * FROM c WHERE x = o.k) c ON c.y < o.k2
+                        JOIN (SELECT * FROM c WHERE x = o.k) e ON e.x = d.x
+                        """) + " ORDER BY 1, 2, 3, 4")
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT o.id, l.did, l.cid, l.eid FROM o " + lateral.formatted("""
+                        SELECT d.id did, c.id cid, e.id eid FROM d
+                        JOIN (SELECT * FROM c WHERE x = o.k) e ON e.x = d.x
+                        JOIN (SELECT * FROM c WHERE x = o.k) c ON c.y < o.k2
+                        """) + " ORDER BY 1, 2, 3, 4")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+            assertQuery("""
+                    SELECT o.id, l.did, l.cid, l.eid FROM o JOIN LATERAL (
+                        SELECT d.id did, c.id cid, e.id eid FROM d
+                        JOIN (SELECT * FROM c WHERE x = o.k) c ON true
+                        JOIN (SELECT * FROM c WHERE y = o.k2) e ON e.x = d.x
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tdid\tcid\teid
+                            1\t40\t30\t31
+                            1\t40\t31\t31
+                            """);
+        });
+    }
+
+    @Test
     public void testTwoInnerJoinedCorrelatedSubQueries() throws Exception {
         // #7803 section 4
         assertMemoryLeak(() -> {
@@ -6983,6 +7097,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         }
     }
 
+    private static String withOuterValues(String body, int k, int k2) {
+        return body.replace("o.k2", Integer.toString(k2)).replace("o.k", Integer.toString(k));
+    }
+
     private void assertCarrierWidths(SqlCompilerImpl compiler, String sql, String rows, int fullCount, boolean hasWrapper, boolean hasOutputs, boolean isFullFat) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             final ObjList<ProjectPlan> carriers = new ObjList<>();
@@ -7134,6 +7252,28 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                 """.formatted(body.formatted("ARRAY[1.0, 2.0]"), body.formatted("ARRAY[3.0]"), body.formatted("ARRAY[]::DOUBLE[]"),
                 body.formatted("NULL::DOUBLE[]"), body.formatted("ARRAY[9.0]")))
                 .noLeakCheck()
+                .returns(expected);
+    }
+
+    /**
+     * Asserts that the LATERAL body returns, for the rows {@code (1, 1, 5), (2, 1, 2), (3, 2, 5), (4, 2, 1)} of
+     * {@code o (id, k, k2)}, the rows of the body run once per outer row with the outer values substituted.
+     */
+    private void assertPerOuterRow(String body) throws Exception {
+        final String order = body.contains("s3id") ? "1, 2, 3, 4, 5" : "1, 2, 3, 4";
+        printSql("""
+                SELECT * FROM (
+                    SELECT 1 id, l.* FROM (%s) l
+                    UNION ALL SELECT 2, l.* FROM (%s) l
+                    UNION ALL SELECT 3, l.* FROM (%s) l
+                    UNION ALL SELECT 4, l.* FROM (%s) l
+                ) ORDER BY %s
+                """.formatted(withOuterValues(body, 1, 5), withOuterValues(body, 1, 2), withOuterValues(body, 2, 5),
+                withOuterValues(body, 2, 1), order));
+        final String expected = sink.toString();
+        assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + body + ") l ORDER BY " + order)
+                .noLeakCheck()
+                .expectSize()
                 .returns(expected);
     }
 

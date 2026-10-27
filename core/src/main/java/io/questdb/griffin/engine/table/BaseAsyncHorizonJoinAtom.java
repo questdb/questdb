@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -113,6 +114,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
     private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+    private final @Nullable JoinKeyCheck keyCheck;
     private boolean isSlaveFilterInitialized;
     private @Nullable Function ownerSlaveFilter;
     private @Nullable ObjList<Function> perWorkerSlaveFilters;
@@ -129,6 +131,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -139,6 +142,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     ) {
         assert slaveFactory.supportsTimeFrameCursor();
         assert resources.getPerWorkerFilters() == null || resources.getPerWorkerFilters().size() == workerCount;
+        this.keyCheck = keyCheck;
 
         // Adopt the worker function views before configuration or allocation can fail. The
         // factory's transfer holder retains everything that this constructor has not adopted yet.
@@ -203,7 +207,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                     bwdScanMinGap,
                     bwdScanSwitchFactor,
                     ownerSlaveFilter,
-                    asOfJoinKeyTypes
+                    asOfJoinKeyTypes,
+                    keyCheck
             );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
@@ -217,7 +222,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                         bwdScanMinGap,
                         bwdScanSwitchFactor,
                         perWorkerSlaveFilters == null ? ownerSlaveFilter : perWorkerSlaveFilters.getQuick(i),
-                        asOfJoinKeyTypes
+                        asOfJoinKeyTypes,
+                        keyCheck
                 ));
             }
 
@@ -437,6 +443,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             return ownerCombinedRecord;
         }
         return perWorkerCombinedRecords.getQuick(slotId);
+    }
+
+    public @Nullable JoinKeyCheck getKeyCheck() {
+        return keyCheck;
     }
 
     public RecordSink getMasterAsOfJoinSink(int slotId) {

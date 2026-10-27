@@ -1200,16 +1200,20 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotProtectedColumnNotReferenceableFromEnclosingQuery() throws Exception {
-        // Documented limitation: a compiler-protected output column - a dotted user alias, or an
-        // operator-token pivot value - is not referenceable by name from an enclosing query, because
-        // the protective quotes cannot survive to the outer reference. These must keep failing
-        // cleanly in the parser with a SqlException, never a "wtf?" AssertionError from an
-        // unresolved compile-time lookup (a future refactor of the resolution path could regress it).
+        // Documented limitation: a compiler-protected operator-token pivot value is not referenceable
+        // by name from an enclosing query, because the protective quotes cannot survive to the outer
+        // reference. It must keep failing cleanly in the parser with a SqlException, never a "wtf?"
+        // AssertionError from an unresolved compile-time lookup (a future refactor of the resolution
+        // path could regress it). A dotted user alias, by contrast, resolves by its quoted name.
         assertMemoryLeak(() -> {
             assertQuery("SELECT \"a.b\" FROM (SELECT 1 AS \"a.b\")")
-                    .fails(7, "Invalid table name or alias");
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\n1\n");
             assertQuery("SELECT * FROM (SELECT 1 AS \"a.b\") ORDER BY \"a.b\"")
-                    .fails(43, "Invalid table name or alias");
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a.b\n1\n");
 
             execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
             execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
@@ -1643,6 +1647,40 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryValuesSortedWithoutOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+            execute("INSERT INTO trades VALUES ('MSFT', 300.75), ('AAPL', 100.5), ('IBM', 150.0)");
+            execute("CREATE TABLE pub (symbol SYMBOL, price DOUBLE)");
+            execute("INSERT INTO pub VALUES ('AAPL', 1.0), ('MSFT', 2.0), ('IBM', 3.0)");
+            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            AAPL\tIBM\tMSFT
+                            1.0\t3.0\t2.0
+                            """);
+            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM trades LIMIT 2))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            AAPL\tMSFT
+                            1.0\t2.0
+                            """);
+            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades ORDER BY symbol DESC))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            MSFT\tIBM\tAAPL
+                            2.0\t3.0\t1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotSubqueryWithArrayType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat DOUBLE[], val INT);");
@@ -2018,9 +2056,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9	cat_0
-                            A	10	20	null	null	null	null	null	null	null	null
-                            B	30	40	null	null	null	null	null	null	null	null
+                            grp	cat_0	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9
+                            A	null	10	20	null	null	null	null	null	null	null
+                            B	null	30	40	null	null	null	null	null	null	null
                             """);
         });
     }
@@ -2306,9 +2344,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp\t1\tNULL
-                            A\t10\t20
-                            B\t30\t40
+                            grp\tNULL\t1
+                            A\t20\t10
+                            B\t40\t30
                             """);
         });
     }
@@ -2338,9 +2376,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp\tX\tNULL
-                            A\t10\t20
-                            B\t30\t40
+                            grp\tNULL\tX
+                            A\t20\t10
+                            B\t40\t30
                             """);
         });
     }

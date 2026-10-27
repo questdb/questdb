@@ -36,6 +36,7 @@ import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -105,22 +106,31 @@ final class CorrelationKeys implements Mutable {
     }
 
     /**
+     * The position of the step whose source output holds the column, or the step count when none does.
+     */
+    private static int stepIndex(ObjList<JoinInput> steps, int columnId) {
+        int position = 0;
+        while (position < steps.size() && steps.getQuick(position).getSourceOutput().getColumnIndexById(columnId) < 0) {
+            position++;
+        }
+        return position;
+    }
+
+    /**
      * True when the column of the source join can carry the outer column: no step that can emit the column as NULL
      * matches depending on the outer row, and the join orders the column's input no later than the first step that
      * reads the outer column, or, when a step of the join null-extends its master, the first deferred input
      * that maps it. A step matches depending on the outer row when its ON condition reads an outer column, it is a
      * deferred nullable input, or it null-extends its master after a step that reads an outer column. Without a step
-     * that null-extends its master, a deferred input joins after the input that provides its key instead.
+     * that null-extends its master, a deferred input joins after the input that provides its key instead, so it must
+     * be able to, see {@link #canInputCarry}.
      */
     private boolean canCarry(JoinPlan source, int columnId, int outerId) {
         if (source == null) {
             return true;
         }
         final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(source);
-        int position = 0;
-        while (position < steps.size() && steps.getQuick(position).getSourceOutput().getColumnIndexById(columnId) < 0) {
-            position++;
-        }
+        final int position = stepIndex(steps, columnId);
         if (position == steps.size()) {
             return true;
         }
@@ -137,7 +147,54 @@ final class CorrelationKeys implements Mutable {
         }
         readOuterIds.clear();
         readOuterIds.add(outerId);
-        return position <= firstOuterRead(source, readOuterIds, steps.size(), hasMasterNullingStep);
+        return position <= firstOuterRead(source, readOuterIds, steps.size(), hasMasterNullingStep)
+                && (hasMasterNullingStep || canInputCarry(steps, position, outerId));
+    }
+
+    /**
+     * True when the column of the input at {@code position} of the steps can carry the outer column: each step the
+     * join orders before that input reads the outer column neither as it joins, in its post-join filter nor as a
+     * deferred input that maps it, or is a deferred input that can join after the input, which
+     * {@link #keyDeferredInputs} then orders it after.
+     */
+    private boolean canInputCarry(ObjList<JoinInput> steps, int position, int outerId) {
+        readOuterIds.clear();
+        readOuterIds.add(outerId);
+        for (int i = 0; i < position; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if ((ctx.readsAnyOuter(step, readOuterIds) || ctx.readsAnyOuter(step.getPostJoinFilter(), readOuterIds) || isDeferredOn(step, outerId))
+                    && (deferredInputs.indexOf(step) < 0 || !canJoinAfter(steps, i, position))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the input at {@code position} of the steps can join after the step at {@code last} instead: no step
+     * up to that one reads a column of the input as it joins or in its post-join filter.
+     */
+    private boolean canJoinAfter(ObjList<JoinInput> steps, int position, int last) {
+        final OutputSchema output = steps.getQuick(position).getSourceOutput();
+        for (int i = position + 1; i <= last; i++) {
+            final JoinInput step = steps.getQuick(i);
+            for (int k = 0, m = step.getKeys().size(); k < m; k++) {
+                if (output.getColumnIndexById(step.getKeys().getQuick(k).getMasterColumnId()) > -1) {
+                    return false;
+                }
+            }
+            if (ctx.readsAnyColumn(step.getOnResidual(), output) || ctx.readsAnyColumn(step.getKeyFilter(), output)
+                    || ctx.readsAnyColumn(step.getPostJoinFilter(), output)) {
+                return false;
+            }
+            final UnnestSpec unnest = step.getUnnest();
+            for (int k = 0, m = unnest != null ? unnest.getExpressions().size() : 0; k < m; k++) {
+                if (ctx.readsAnyColumn(unnest.getExpressions().getQuick(k), output)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private void collectEquality(ColumnExpression column, OuterColumnExpression outer, OutputSchema input, JoinPlan source, int base) {
@@ -190,6 +247,15 @@ final class CorrelationKeys implements Mutable {
         input.addKey(master.getColumnId(), slave.getColumnId(), ctx.joinedName(output, master.getColumnId()),
                 ctx.joinedName(output, slave.getColumnId()), condition.getPosition());
         return true;
+    }
+
+    private boolean isDeferredOn(JoinInput input, int outerId) {
+        for (int i = 0, n = deferredInputs.size(); i < n; i++) {
+            if (deferredInputs.getQuick(i) == input && deferredOuterIds.getQuick(i) == outerId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isDroppedEquality(BoundExpression predicate) {
@@ -290,6 +356,29 @@ final class CorrelationKeys implements Mutable {
     }
 
     /**
+     * Moves each mapping from {@code lo} to {@code hi}, of a column an input of the join exposes, that cannot carry its
+     * outer column, see {@link #canInputCarry}, to the deferred list: the block satisfies that outer column otherwise
+     * and the input joins on it. Returns whether any moved.
+     */
+    boolean deferUncarriedMappings(JoinPlan join, int lo, int hi) {
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        boolean isDeferred = false;
+        for (int i = hi - 1; i >= lo; i--) {
+            final int columnId = mapping.columnIdAt(i);
+            final int outerId = mapping.outerIdAt(i);
+            final int position = stepIndex(steps, columnId);
+            if (!canInputCarry(steps, position, outerId)) {
+                deferredInputs.add(steps.getQuick(position));
+                deferredOuterIds.add(outerId);
+                deferredColumnIds.add(columnId);
+                mapping.removeAt(i);
+                isDeferred = true;
+            }
+        }
+        return isDeferred;
+    }
+
+    /**
      * The column of a deferred input above {@code base} that maps the outer column, or -1.
      */
     int deferredColumn(JoinInput input, int outerId, int base) {
@@ -379,31 +468,58 @@ final class CorrelationKeys implements Mutable {
         return true;
     }
 
-    void joinMappedInput(JoinInput input, int inputBase, int base) {
+    /**
+     * Keys the step the join orders later to the column the other maps, for each outer column the input maps that
+     * an input before it in the join already does; the mapping keeps the column of the step ordered first. An input
+     * that null-extends keeps its own mapping when the join orders it first, see {@link #deferMapping}.
+     */
+    void joinMappedInput(JoinPlan join, JoinInput input, int inputBase, int base) {
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        final int position = steps.indexOf(input);
         for (int i = inputBase; i < mapping.mark(); i++) {
             final int outerId = mapping.outerIdAt(i);
             final int earlier = mapping.mappedColumn(outerId, base, inputBase);
-            if (earlier > -1) {
-                final CharSequence name = ctx.outerRefName(outerId);
-                input.addKey(earlier, mapping.columnIdAt(i), name, name, input.getPosition());
-                mapping.removeAt(i);
-                i--;
+            if (earlier < 0) {
+                continue;
             }
+            final int columnId = mapping.columnIdAt(i);
+            final CharSequence name = ctx.outerRefName(outerId);
+            final int providerPosition = stepIndex(steps, earlier);
+            if (providerPosition < position) {
+                input.addKey(earlier, columnId, name, name, input.getPosition());
+            } else if (!input.getJoinType().isSlaveNulling()) {
+                final JoinInput provider = steps.getQuick(providerPosition);
+                provider.addKey(columnId, earlier, name, name, provider.getPosition());
+                mapping.setColumnIdAt(mapping.mappedIndex(earlier, base, inputBase), columnId);
+            } else {
+                continue;
+            }
+            mapping.removeAt(i);
+            i--;
         }
     }
 
     /**
-     * Keys each deferred nullable input to the mapped column of its outer column, joining it after the input
-     * that provides the column.
+     * Keys each deferred input to the mapped column of its outer column, joining it after the input that provides
+     * the column and after those that provide the mapped columns of the outer columns it reads as it joins or in its
+     * post-join filter.
      */
     void keyDeferredInputs(JoinPlan join, int deferredBase, int base) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
         for (int i = deferredBase, n = deferredInputs.size(); i < n; i++) {
             final JoinInput input = deferredInputs.getQuick(i);
             final int outerId = deferredOuterIds.getQuick(i);
             final int columnId = mapping.mappedColumn(outerId, base);
             final CharSequence name = ctx.outerRefName(outerId);
             input.addKey(columnId, deferredColumnIds.getQuick(i), name, name, input.getPosition());
-            orderAfterProvider(join.getOrderedInputs(), input, columnId);
+            orderAfterProvider(ordered, input, columnId);
+            for (int k = base, m = mapping.mark(); k < m; k++) {
+                readOuterIds.clear();
+                readOuterIds.add(mapping.outerIdAt(k));
+                if (ctx.readsAnyOuter(input, readOuterIds) || ctx.readsAnyOuter(input.getPostJoinFilter(), readOuterIds)) {
+                    orderAfterProvider(ordered, input, mapping.columnIdAt(k));
+                }
+            }
         }
     }
 

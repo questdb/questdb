@@ -53,7 +53,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping joinKeyMapping,
             Plannable joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
         this.joinKeyMapping = joinKeyMapping;
@@ -71,7 +72,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                     masterFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
                     slaveFactory.getMetadata().getTimestampIndex(),
-                    slaveFactory.getMetadata().getTimestampType()
+                    slaveFactory.getMetadata().getTimestampType(),
+                    keyCheck
             );
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId, th);
@@ -97,7 +99,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                 int masterTimestampIndex,
                 int masterTimestampType,
                 int slaveTimestampIndex,
-                int slaveTimestampType
+                int slaveTimestampType,
+                @Nullable JoinKeyCheck keyCheck
         ) {
             super(
                     columnSplit,
@@ -107,7 +110,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                     masterTimestampIndex,
                     masterTimestampType,
                     slaveTimestampIndex,
-                    slaveTimestampType
+                    slaveTimestampType,
+                    keyCheck
             );
         }
 

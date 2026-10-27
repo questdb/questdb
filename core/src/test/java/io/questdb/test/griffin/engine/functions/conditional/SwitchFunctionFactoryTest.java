@@ -386,10 +386,10 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     )""");
             assertQuery("SELECT CASE x WHEN 1 THEN c WHEN 2 THEN u ELSE s END FROM t")
                     .noLeakCheck()
-                    .fails(26, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+                    .fails(40, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
             assertQuery("SELECT CASE x WHEN 1 THEN sym WHEN 2 THEN ip ELSE s END FROM t")
                     .noLeakCheck()
-                    .fails(26, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+                    .fails(42, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
         });
     }
 
@@ -1560,6 +1560,48 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             b\tc\tcts\ti\tts\tsearched
                             \tone\tone\tone\tone\tone
+                            """);
+        });
+    }
+
+    @Test
+    public void testOperandEndsInBracketOrEnd() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x::INT i, x > 1 b, ('s' || x)::SYMBOL s, CASE WHEN x = 2 THEN NULL ELSE x END::INT n
+                        FROM long_sequence(3)
+                    )""");
+            assertQuery("""
+                    SELECT i,
+                        CASE (b) WHEN true THEN 'x' ELSE 'y' END bracketed,
+                        CASE CASE WHEN b THEN true ELSE false END WHEN true THEN 'x' ELSE 'y' END nested,
+                        CASE (i > 1) WHEN false THEN 'big' ELSE 'small' END compared,
+                        CASE abs(i) WHEN 1 THEN 'one' ELSE 'other' END called,
+                        CASE coalesce(n, 0) WHEN 0 THEN 'null' ELSE 'set' END coalesced,
+                        CASE cast(i AS LONG) WHEN 1 THEN 'one' ELSE 'other' END casted,
+                        CASE (i) WHEN 1 THEN 'one' ELSE 'other' END int_bracketed,
+                        CASE (s) WHEN 's1' THEN 'one' ELSE 'other' END symbol_bracketed
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tbracketed\tnested\tcompared\tcalled\tcoalesced\tcasted\tint_bracketed\tsymbol_bracketed
+                            1\ty\ty\tbig\tone\tset\tone\tone\tone
+                            2\tx\tx\tsmall\tother\tnull\tother\tother\tother
+                            3\tx\tx\tsmall\tother\tset\tother\tother\tother
+                            """);
+            assertQuery("SELECT i FROM t WHERE CASE (b) WHEN false THEN true ELSE false END")
+                    .noLeakCheck()
+                    .returns("i\n1\n");
+            assertQuery("SELECT CASE (b) WHEN false THEN 'x' ELSE 'y' END c FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [case([b,'y','x'])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
                             """);
         });
     }

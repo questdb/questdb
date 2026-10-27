@@ -33,6 +33,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction.TimestampTextRuntimeConstFunction;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
@@ -309,7 +311,7 @@ public final class IntervalExtractor implements Mutable {
 
     private Function boundFunction(BoundExpression bound, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
         return bound instanceof CursorExpression cursor ? bounds.instantiateTimestampCursor(cursor, executionContext)
-                : bounds.instantiate(bound, input, executionContext);
+                : runtimeBound(bound, input, executionContext);
     }
 
     private BoundExpression extract(BoundExpression predicate, int timestampColumnId, int timestampType, boolean isBoundSpeculationAllowed,
@@ -547,7 +549,7 @@ public final class IntervalExtractor implements Mutable {
             }
         } else if (isCursorBound || (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
             final Function function = isCursorBound ? bounds.instantiateTimestampCursor((CursorExpression) bound, executionContext)
-                    : bounds.instantiate(bound, input, executionContext);
+                    : runtimeBound(bound, input, executionContext);
             if (isExclusion) {
                 intervals.subtractEquals(function, bound.getPosition());
             } else if (isEquality) {
@@ -1071,6 +1073,17 @@ public final class IntervalExtractor implements Mutable {
         intervalText.clear();
         intervalText.put('\'').put(text).put('\'');
         return intervalText;
+    }
+
+    /**
+     * The function of a runtime bound; text, which the bound reads as a timestamp of the scan, converts as
+     * {@link TimestampTextRuntimeConstFunction} converts it in a filter.
+     */
+    private Function runtimeBound(BoundExpression bound, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final Function function = bounds.instantiate(bound, input, executionContext);
+        return ColumnType.isVarcharOrString(function.getType())
+                ? RuntimeConstFunction.wrapTimestampText(function, timestampType, bound.getPosition(), true)
+                : function;
     }
 
     private void setBetweenBoundary(BoundExpression bound, OutputSchema input, SqlExecutionContext executionContext)

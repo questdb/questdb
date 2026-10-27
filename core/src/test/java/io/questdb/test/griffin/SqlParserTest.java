@@ -1163,9 +1163,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: (tx.a=1 or tx.b=2)
                                     Hash Right Outer Join Light
                                       condition: yid=xid
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async JIT Filter workers: 1
+                                          filter: (a=1 or b=2)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                         Hash
                                             PageFrame
                                                 Row forward scan
@@ -1179,9 +1181,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: (tx.a=1 or tx.b=2)
                                     Hash Full Outer Join Light
                                       condition: yid=xid
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async JIT Filter workers: 1
+                                          filter: (a=1 or b=2)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                         Hash
                                             PageFrame
                                                 Row forward scan
@@ -6408,9 +6412,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: 100=c.customerId
                                     Hash Right Outer Join Light
                                       condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: 100=customerId
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: customerId=100
@@ -6427,9 +6433,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: 100=c.customerId
                                     Hash Full Outer Join Light
                                       condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: 100=customerId
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: customerId=100
@@ -6477,9 +6485,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.customerId=100
                                     Hash Right Outer Join Light
                                       condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: customerId=100
@@ -6496,9 +6506,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.customerId=100
                                     Hash Full Outer Join Light
                                       condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: customerId=100
@@ -6563,9 +6575,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.customerId=100
                                     Hash Right Outer Join Light
                                       condition: customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: (x=10 and customerId=100)
@@ -6582,9 +6596,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.customerId=100
                                     Hash Full Outer Join Light
                                       condition: customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: (x=10 and customerId=100)
@@ -6635,9 +6651,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.customerId=100
                                     Hash Right Outer Join
                                       condition: customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Filter filter: (x=10 and customerId=100)
                                                 Union
@@ -6657,9 +6675,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.customerId=100
                                     Hash Full Outer Join
                                       condition: customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: customerId=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Filter filter: (x=10 and customerId=100)
                                                 Union
@@ -6733,9 +6753,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: c.customerId=100
                                         Hash Right Outer Join Light
                                           condition: customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=100
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                             Hash
                                                 SelectedRecord
                                                     Async JIT Filter workers: 1
@@ -6747,9 +6769,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: c.customerId=100
                                         Hash Right Outer Join Light
                                           condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=100
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                             Hash
                                                 Async JIT Filter workers: 1
                                                   filter: customerId=100
@@ -6767,9 +6791,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: c.customerId=100
                                         Hash Full Outer Join Light
                                           condition: customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=100
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                             Hash
                                                 SelectedRecord
                                                     Async JIT Filter workers: 1
@@ -6781,9 +6807,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: c.customerId=100
                                         Hash Full Outer Join Light
                                           condition: o.customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=100
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                             Hash
                                                 Async JIT Filter workers: 1
                                                   filter: customerId=100
@@ -7348,13 +7376,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: (400<c.customerId and c.customerId<1200 and 1<c.count)
                                         Hash Right Outer Join Light
                                           condition: o.customerId=c.customerId
-                                            Async Group By workers: 1
-                                              keys: [customerId,customerName]
-                                              values: [count(*)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: customers
+                                            Filter filter: 1<count
+                                                Async JIT Group By workers: 1
+                                                  keys: [customerId,customerName]
+                                                  values: [count(*)]
+                                                  filter: (400<customerId and customerId<1200)
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: customers
                                             Hash
                                                 Async JIT Filter workers: 1
                                                   filter: orderId=null
@@ -7372,13 +7401,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: (o.orderId=null and 400<c.customerId and c.customerId<1200 and 1<c.count)
                                         Hash Full Outer Join Light
                                           condition: o.customerId=c.customerId
-                                            Async Group By workers: 1
-                                              keys: [customerId,customerName]
-                                              values: [count(*)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: customers
+                                            Filter filter: 1<count
+                                                Async JIT Group By workers: 1
+                                                  keys: [customerId,customerName]
+                                                  values: [count(*)]
+                                                  filter: (400<customerId and customerId<1200)
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: customers
                                             Hash
                                                 PageFrame
                                                     Row forward scan
@@ -9652,7 +9682,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                         Hash Right Outer Join Light
                                                           condition: d.objoid=c.oid
                                                           filter: d.objsubid=0
-                                                            pg_class
+                                                            Filter filter: (relname ~ quickstart-events2 and relkind=r)
+                                                                pg_class
                                                             Hash
                                                                 Empty table
                                                         Hash
@@ -9683,7 +9714,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                         Hash Full Outer Join Light
                                                           condition: d.objoid=c.oid
                                                           filter: d.objsubid=0
-                                                            pg_class
+                                                            Filter filter: (relname ~ quickstart-events2 and relkind=r)
+                                                                pg_class
                                                             Hash
                                                                 Empty table
                                                         Hash
@@ -11106,9 +11138,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Right Outer Join Light
                                       condition: o.customerId=c.cid
                                         SelectedRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: 100=customerId
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: customerId=100
@@ -11126,9 +11160,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Hash Full Outer Join Light
                                       condition: o.customerId=c.cid
                                         SelectedRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: 100=customerId
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: customerId=100
@@ -20618,9 +20654,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: c.customerId=100
                                         Hash Right Outer Join Light
                                           condition: customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=100
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                             Hash
                                                 Async JIT Filter workers: 1
                                                   filter: (x=10 and customerId=100)
@@ -20639,9 +20677,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     Filter filter: c.customerId=100
                                         Hash Full Outer Join Light
                                           condition: customerId=c.customerId
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: customers
+                                            Async JIT Filter workers: 1
+                                              filter: customerId=100
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: customers
                                             Hash
                                                 Async JIT Filter workers: 1
                                                   filter: (x=10 and customerId=100)
@@ -21204,9 +21244,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.weight=100
                                     Hash Right Outer Join Light
                                       condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: weight=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: x=10
@@ -21221,9 +21263,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Filter filter: c.weight=100
                                     Hash Full Outer Join Light
                                       condition: o.customerId=c.customerId
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: customers
+                                        Async JIT Filter workers: 1
+                                          filter: weight=100
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: customers
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: x=10

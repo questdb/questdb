@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -90,7 +89,7 @@ final class OptimiserContext implements Mutable {
         if (keySlaveId == slaveId) {
             return;
         }
-        final BoundExpression equality = bindCall("=", position, column(output, slaveId, position), column(output, keySlaveId, position), output);
+        final BoundExpression equality = bindEquality(slaveId, keySlaveId, output, position);
         step.setKeyFilter(step.getKeyFilter() == null ? equality : rewriter.combineConjunction(step.getKeyFilter(), equality, position));
     }
 
@@ -107,6 +106,13 @@ final class OptimiserContext implements Mutable {
      */
     BoundExpression bindCall(CharSequence name, int position, BoundExpression left, BoundExpression right, OutputSchema input) throws SqlException {
         return callBinder.bindCall(name, position, left, right, input, executionContext);
+    }
+
+    /**
+     * Binds the equality of the two columns of {@code output}.
+     */
+    BoundExpression bindEquality(int leftId, int rightId, OutputSchema output, int position) throws SqlException {
+        return bindCall("=", position, column(output, leftId, position), column(output, rightId, position), output);
     }
 
     /**
@@ -139,8 +145,12 @@ final class OptimiserContext implements Mutable {
         return planTables.of(scan);
     }
 
-    boolean isNullRejecting(FunctionExpression call, int columnArgument) {
-        return instantiator.isNullRejecting(call, columnArgument, executionContext);
+    /**
+     * Whether the predicate drops every row whose columns it reads are all NULL, see
+     * {@link FunctionInstantiator#isNullRejecting}.
+     */
+    boolean isNullRejecting(BoundExpression predicate) {
+        return instantiator.isNullRejecting(predicate, executionContext);
     }
 
     /**

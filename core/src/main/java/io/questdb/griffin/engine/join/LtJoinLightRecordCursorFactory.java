@@ -54,6 +54,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 
 // merge join of two cursors ordered by timestamp plus additional conditions
 public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final @Nullable JoinKeyCheck keyCheck;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final long toleranceInterval;
@@ -73,9 +74,11 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinKeyCheck keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.keyCheck = keyCheck;
         Map joinKeyMap = null;
         try {
             this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
@@ -138,6 +141,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join Light");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", keyCheck);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -264,6 +268,10 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     this.lastSlaveRowID = slaveRowID;
                 }
 
+                if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                    record.hasSlave(false);
+                    return true;
+                }
                 key = joinKeyMap.withKey();
                 // Use the translating record (if available) so that getInt() on symbol
                 // key columns returns slave symbol IDs for integer-based map lookup.

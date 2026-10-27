@@ -5896,7 +5896,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < 3; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
+                // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter; one that rejects
+                // NULL filters T1's scan as well.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 // The three-input queries below keep the ordinary plan; the two parent-model
                 // ones are two-input joins that the fused hash join GROUP BY takes, except for the
@@ -5908,7 +5909,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
                         .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                Async JIT Filter workers: 1\n" + "                  filter: value=1\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
                                 : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 // A RIGHT join preserves T2, so the predicate narrows T2's scan to an interval.

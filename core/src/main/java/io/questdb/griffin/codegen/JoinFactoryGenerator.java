@@ -87,6 +87,7 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFact
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
@@ -99,7 +100,9 @@ import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
+import io.questdb.griffin.engine.join.NullJoinKey;
 import io.questdb.griffin.engine.join.NullRecordFactory;
+import io.questdb.griffin.engine.join.OuterCrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
@@ -112,6 +115,7 @@ import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContextImpl;
@@ -270,6 +274,18 @@ final class JoinFactoryGenerator {
             throw new IllegalStateException("recorded ASOF time-frame scan reads a single symbol key the join keys do not map");
         }
         return (SymbolJoinKeyMapping) symbolShortCircuit;
+    }
+
+    /**
+     * The key columns of one input of an outer join whose ON residual decides its NULL extension, see
+     * {@link JoinInput.NullExtension#BY_ON_RESIDUAL}.
+     */
+    private static NullJoinKey nullJoinKey(IntList columnIndexes, RecordMetadata metadata) {
+        final IntList columnTypes = new IntList(columnIndexes.size());
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            columnTypes.add(metadata.getColumnType(columnIndexes.getQuick(i)));
+        }
+        return new NullJoinKey(columnIndexes, columnTypes);
     }
 
     /**
@@ -492,7 +508,8 @@ final class JoinFactoryGenerator {
                     joinContext,
                     masterTableKeyColumns,
                     toleranceInterval,
-                    slaveValueTimestampIndex
+                    slaveValueTimestampIndex,
+                    joinKeys.keyCheck
             );
 
         } catch (Throwable e) {
@@ -760,9 +777,16 @@ final class JoinFactoryGenerator {
         return columnIndex;
     }
 
+    /**
+     * Resolves the column indexes of the keys the join looks up into the layout's master and slave indexes, and the
+     * master column indexes of each key it checks instead, with those of the key it is checked against, into the
+     * layout's check pairs, see {@link JoinKey#getLookupKeyIndex}.
+     */
     static void resolveKeys(OutputSchema masterOutput, OutputSchema slaveOutput, ObjList<JoinKey> keys, JoinKeyLayout layout) {
         layout.masterIndexes.clear();
         layout.slaveIndexes.clear();
+        layout.checkedIndexes.clear();
+        layout.checkedLookupIndexes.clear();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final JoinKey key = keys.getQuick(i);
             final int masterIndex = masterOutput.getColumnIndexById(key.getMasterColumnId());
@@ -770,8 +794,17 @@ final class JoinFactoryGenerator {
             if (masterIndex < 0 || slaveIndex < 0) {
                 throw new IllegalStateException("bound join input has changed");
             }
-            layout.masterIndexes.add(masterIndex);
-            layout.slaveIndexes.add(slaveIndex);
+            final int lookupKeyIndex = key.getLookupKeyIndex();
+            if (lookupKeyIndex == -1) {
+                layout.masterIndexes.add(masterIndex);
+                layout.slaveIndexes.add(slaveIndex);
+            } else {
+                final int lookupMasterIndex = masterOutput.getColumnIndexById(keys.getQuick(lookupKeyIndex).getMasterColumnId());
+                if (lookupMasterIndex != masterIndex) {
+                    layout.checkedIndexes.add(masterIndex);
+                    layout.checkedLookupIndexes.add(lookupMasterIndex);
+                }
+            }
         }
     }
 
@@ -798,6 +831,14 @@ final class JoinFactoryGenerator {
             final ArrayColumnTypes valueTypes = frame.valueTypes;
             final int[] masterSymbolKeyCols = joinKeys.masterSymbolKeys;
             final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
+            final boolean isNullExtendedByOnResidual = step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL;
+            if (isNullExtendedByOnResidual && filter == null) {
+                throw new IllegalStateException("outer join NULL-extended by its ON residual has none");
+            }
+            final NullJoinKey masterNullKey = isNullExtendedByOnResidual && joinType != JoinKind.RIGHT_OUTER
+                    ? nullJoinKey(joinKeys.masterIndexes, masterMetadata) : null;
+            final NullJoinKey slaveNullKey = isNullExtendedByOnResidual && joinType != JoinKind.LEFT_OUTER
+                    ? nullJoinKey(joinKeys.slaveIndexes, slaveMetadata) : null;
 
             final int modelJoinType = SqlCodeGenerator.queryModelJoinType(joinType);
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
@@ -846,7 +887,9 @@ final class JoinFactoryGenerator {
                             context,
                             modelJoinType,
                             masterSymbolKeyCols,
-                            slaveSymbolKeyCols
+                            slaveSymbolKeyCols,
+                            masterNullKey,
+                            slaveNullKey
                     );
                 }
 
@@ -915,7 +958,9 @@ final class JoinFactoryGenerator {
                         context,
                         modelJoinType,
                         masterSymbolKeyCols,
-                        slaveSymbolKeyCols
+                        slaveSymbolKeyCols,
+                        masterNullKey,
+                        slaveNullKey
                 );
             }
 
@@ -1000,14 +1045,17 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes metadata, both inputs and the optional outer ON filter on entry, including failure.
+     * Consumes metadata, both inputs and the optional outer ON filter on entry, including failure. An OUTER CROSS join
+     * publishes whether its slave has rows through {@code slaveRows}, the filter of the gate over the master side of
+     * the RIGHT or FULL join under it.
      */
     RecordCursorFactory createNestedLoopJoin(
             JoinRecordMetadata metadata,
             RecordCursorFactory master,
             RecordCursorFactory slave,
             JoinKind joinType,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @Nullable OuterCrossJoinRecordCursorFactory.SlaveRows slaveRows
     ) {
         boolean isTransferred = false;
         try {
@@ -1040,6 +1088,13 @@ final class JoinFactoryGenerator {
                     isTransferred = true;
                     return new NestedLoopFullJoinRecordCursorFactory(metadata, master, slave, columnSplit, filter, masterNull, slaveNull);
                 }
+                case OUTER_CROSS -> {
+                    if (filter != null || slaveRows == null) {
+                        throw new IllegalArgumentException("outer cross join needs no ON filter and a gate");
+                    }
+                    isTransferred = true;
+                    return new OuterCrossJoinRecordCursorFactory(metadata, master, slave, columnSplit, slaveRows);
+                }
                 default -> throw new IllegalArgumentException("unsupported nested loop join type: " + joinType);
             }
         } catch (Throwable th) {
@@ -1059,7 +1114,8 @@ final class JoinFactoryGenerator {
      * Joins the step at {@code position} of the join's ordered inputs to its master. The master holds the
      * decorrelation domains the generator placed from {@code producerLo} to {@code slaveProducerLo}, see
      * {@link GenerationFrame#producerMark}, and the slave those it placed from {@code slaveProducerLo} on. Consumes both
-     * input factories on entry, including failure.
+     * input factories on entry, including failure. {@code slaveRows} is the gate filter of an OUTER CROSS step, see
+     * {@link #createNestedLoopJoin}.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
@@ -1071,6 +1127,7 @@ final class JoinFactoryGenerator {
             RecordCursorFactory slave,
             int producerLo,
             int slaveProducerLo,
+            @Nullable OuterCrossJoinRecordCursorFactory.SlaveRows slaveRows,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final JoinInput step = join.getOrderedInputs().getQuick(position);
@@ -1088,7 +1145,7 @@ final class JoinFactoryGenerator {
             final boolean isOuter = joinType == JoinKind.LEFT_OUTER || joinType == JoinKind.RIGHT_OUTER
                     || joinType == JoinKind.FULL_OUTER;
             final int keyCount = step.getKeys().size();
-            if (joinType == JoinKind.CROSS && (keyCount != 0 || step.getOnResidual() != null)) {
+            if ((joinType == JoinKind.CROSS || joinType == JoinKind.OUTER_CROSS) && (keyCount != 0 || step.getOnResidual() != null)) {
                 throw new IllegalStateException("CROSS join has a join condition");
             }
             final RecordMetadata masterMetadata = master.getMetadata();
@@ -1118,7 +1175,7 @@ final class JoinFactoryGenerator {
                         step.getInput().getOutput().getColumnIndexById(step.getMarkoutSequenceColumnId()));
             } else if (keyCount == 0) {
                 isTransferred = true;
-                joined = createNestedLoopJoin(metadata, master, slave, joinType, joinFilter);
+                joined = createNestedLoopJoin(metadata, master, slave, joinType, joinFilter, slaveRows);
             } else {
                 final JoinKeyLayout joinKeys = frame.joinKeys;
                 resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
@@ -1165,6 +1222,7 @@ final class JoinFactoryGenerator {
             Misc.free(master, th);
             throw th;
         }
+        OuterCrossJoinRecordCursorFactory.SlaveRows slaveRows = null;
         for (int i = 1, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
             if (step.getJoinType() == JoinKind.UNNEST) {
@@ -1206,6 +1264,12 @@ final class JoinFactoryGenerator {
                     throw th;
                 }
             }
+            final OuterCrossJoinRecordCursorFactory.SlaveRows stepSlaveRows = slaveRows;
+            slaveRows = null;
+            if (i + 1 < n && ordered.getQuick(i + 1).getJoinType() == JoinKind.OUTER_CROSS) {
+                slaveRows = new OuterCrossJoinRecordCursorFactory.SlaveRows(ordered.getQuick(i + 1).getBindingAlias());
+                master = new RuntimeConstGateRecordCursorFactory(master, slaveRows);
+            }
             master = switch (step.getJoinType()) {
                 case ASOF, LT ->
                         generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slave.getMetadata(), null, null,
@@ -1213,7 +1277,8 @@ final class JoinFactoryGenerator {
                 case SPLICE ->
                         generateSplice(frame, step, masterOutput, masterAlias, master, slave, producerLo, executionContext);
                 default ->
-                        generate(frame, join, i, masterOutput, masterAlias, master, slave, producerLo, slaveProducerLo, executionContext);
+                        generate(frame, join, i, masterOutput, masterAlias, master, slave, producerLo, slaveProducerLo, stepSlaveRows,
+                                executionContext);
             };
             masterOutput = step.getOutput();
             masterAlias = null;
@@ -1286,7 +1351,8 @@ final class JoinFactoryGenerator {
                             slaveMetadata.getTimestampIndex(),
                             toleranceInterval,
                             joinKeys.masterSymbolKeys,
-                            joinKeys.slaveSymbolKeys
+                            joinKeys.slaveSymbolKeys,
+                            joinKeys.keyCheck
                     );
                 }
                 if (algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME) {
@@ -1309,7 +1375,8 @@ final class JoinFactoryGenerator {
                                     slaveSymbolColumnIndex,
                                     symbolJoinKeyMapping,
                                     condition,
-                                    toleranceInterval
+                                    toleranceInterval,
+                                    joinKeys.keyCheck
                             );
                         }
                         case DENSE -> {
@@ -1327,7 +1394,8 @@ final class JoinFactoryGenerator {
                                     condition,
                                     toleranceInterval,
                                     joinKeys.masterSymbolKeys,
-                                    joinKeys.slaveSymbolKeys
+                                    joinKeys.slaveSymbolKeys,
+                                    joinKeys.keyCheck
                             );
                         }
                         case INDEXED -> {
@@ -1342,7 +1410,8 @@ final class JoinFactoryGenerator {
                                     slaveSymbolColumnIndex,
                                     symbolJoinKeyMapping,
                                     condition,
-                                    toleranceInterval
+                                    toleranceInterval,
+                                    joinKeys.keyCheck
                             );
                         }
                         case MEMOIZED, MEMOIZED_DRIVEBY -> {
@@ -1358,7 +1427,8 @@ final class JoinFactoryGenerator {
                                     symbolJoinKeyMapping,
                                     condition,
                                     toleranceInterval,
-                                    timeFrameScan == JoinInput.TimeFrameScan.MEMOIZED_DRIVEBY
+                                    timeFrameScan == JoinInput.TimeFrameScan.MEMOIZED_DRIVEBY,
+                                    joinKeys.keyCheck
                             );
                         }
                         case FAST -> {
@@ -1383,7 +1453,8 @@ final class JoinFactoryGenerator {
                                 condition,
                                 toleranceInterval,
                                 null,
-                                null
+                                null,
+                                joinKeys.keyCheck
                         );
                     } else {
                         joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
@@ -1400,7 +1471,8 @@ final class JoinFactoryGenerator {
                                 condition,
                                 toleranceInterval,
                                 joinKeys.masterSymbolKeys,
-                                joinKeys.slaveSymbolKeys
+                                joinKeys.slaveSymbolKeys,
+                                joinKeys.keyCheck
                         );
                     }
                 }
@@ -1426,7 +1498,8 @@ final class JoinFactoryGenerator {
                             condition,
                             toleranceInterval,
                             null,
-                            null
+                            null,
+                            joinKeys.keyCheck
                     );
                 } else {
                     joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
@@ -1444,7 +1517,8 @@ final class JoinFactoryGenerator {
                             condition,
                             toleranceInterval,
                             joinKeys.masterSymbolKeys,
-                            joinKeys.slaveSymbolKeys
+                            joinKeys.slaveSymbolKeys,
+                            joinKeys.keyCheck
                     );
                 }
             }
@@ -1553,7 +1627,8 @@ final class JoinFactoryGenerator {
                         condition,
                         toleranceInterval,
                         joinKeys.masterSymbolKeys,
-                        joinKeys.slaveSymbolKeys
+                        joinKeys.slaveSymbolKeys,
+                        joinKeys.keyCheck
                 );
             }
 
@@ -1772,6 +1847,8 @@ final class JoinFactoryGenerator {
             } else {
                 masterKeyIndexes.clear();
                 slaveKeyIndexes.clear();
+                frame.joinKeys.checkedIndexes.clear();
+                frame.joinKeys.checkedLookupIndexes.clear();
             }
             frame.joinKeys.of(masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
             final long toleranceInterval = step.getToleranceInterval();
@@ -2142,7 +2219,8 @@ final class JoinFactoryGenerator {
                 Plannable joinContext,
                 ColumnFilter masterTableKeyColumns,
                 long toleranceInterval,
-                int slaveValueTimestampIndex
+                int slaveValueTimestampIndex,
+                @Nullable JoinKeyCheck keyCheck
         );
     }
 

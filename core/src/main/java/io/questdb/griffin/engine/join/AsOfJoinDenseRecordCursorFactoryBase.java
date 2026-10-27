@@ -140,6 +140,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     public void toPlan(PlanSink sink) {
         putFactoryType(sink);
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", cursor.keyCheck);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -174,9 +175,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 int masterTimestampIndex,
                 int masterTimestampType,
                 int slaveTimestampIndex,
-                int slaveTimestampType
+                int slaveTimestampType,
+                @Nullable JoinKeyCheck keyCheck
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, 1);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, 1, keyCheck);
             this.fwdScanKeyToRowId = fwdScanKeyToRowId;
             this.bwdScanKeyToRowId = bwdScanKeyToRowId;
         }
@@ -199,6 +201,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL
                     ? Long.MIN_VALUE
                     : masterTimestamp - toleranceInterval;
+            if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                record.hasSlave(false);
+                return true;
+            }
             int slaveKeyToFind = setupSymbolKeyToFind();
             if (slaveKeyToFind == SymbolTable.VALUE_NOT_FOUND) {
                 record.hasSlave(false);

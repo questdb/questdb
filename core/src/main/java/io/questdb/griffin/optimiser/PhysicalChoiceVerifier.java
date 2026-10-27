@@ -33,6 +33,7 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -77,6 +78,19 @@ final class PhysicalChoiceVerifier {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
             if (!isTimestampDesignated(input, input.getOutput().getTimestampColumnId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the keys of an ASOF, LT or HORIZON JOIN that operator planning planned, {@code isPlanned}, record the
+     * lookups it decides, see {@link OperatorPlanning#lookupKeyIndex}, and every other key none.
+     */
+    private static boolean areKeyLookupsPlanned(ObjList<JoinKey> keys, OutputSchema master, boolean isPlanned) {
+        for (int k = 0, n = keys.size(); k < n; k++) {
+            if (keys.getQuick(k).getLookupKeyIndex() != (isPlanned ? OperatorPlanning.lookupKeyIndex(keys, k, master) : -1)) {
                 return false;
             }
         }
@@ -172,7 +186,7 @@ final class PhysicalChoiceVerifier {
     private static boolean isHintedTimeFrameScan(JoinInput.TimeFrameScan scan, JoinInput step) {
         final int hints = step.getHints();
         final boolean isDense = (hints & JoinInput.HINT_ASOF_DENSE) != 0;
-        final boolean isSingleKey = step.getKeys().size() == 1;
+        final boolean isSingleKey = JoinKey.lookupKeyCount(step.getKeys()) == 1;
         return switch (scan) {
             case DENSE -> isDense;
             case DENSE_SINGLE_SYMBOL -> isDense && isSingleKey;
@@ -446,6 +460,11 @@ final class PhysicalChoiceVerifier {
      * serves, see {@link OperatorPlanning}.
      */
     static String horizon(HorizonJoinPlan horizon, boolean isPlanned) {
+        for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
+            if (!areKeyLookupsPlanned(horizon.getSlaves().getQuick(i).getKeys(), horizon.getMaster().getOutput(), isPlanned)) {
+                return PlanVerifier.JOIN_KEY_LOOKUP;
+            }
+        }
         for (int i = 0, n = horizon.getSlaves().size(); isPlanned && i < n; i++) {
             if (isUnsatisfied(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(horizon.getSlaves().getQuick(i).getInput()), true)) {
                 return PlanVerifier.HORIZON_SLAVE_TIME_FRAME;
@@ -528,6 +547,10 @@ final class PhysicalChoiceVerifier {
         };
         if (!isValid) {
             return PlanVerifier.JOIN_ALGORITHM;
+        }
+        if (position > 0 && !areKeyLookupsPlanned(step.getKeys(), join.getOrderedInputs().getQuick(position - 1).getOutput(),
+                joinType == JoinKind.ASOF || joinType == JoinKind.LT)) {
+            return PlanVerifier.JOIN_KEY_LOOKUP;
         }
         if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
             return PlanVerifier.JOIN_SLAVE_VALUE_TYPE;
