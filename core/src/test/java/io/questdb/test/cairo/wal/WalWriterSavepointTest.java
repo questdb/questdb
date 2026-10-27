@@ -97,6 +97,44 @@ public class WalWriterSavepointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackToSavepointAfterCommitInSegmentKeepsRowsBeforeIt() throws Exception {
+        // The savepoint's row count is relative to the open txn, and the open txn
+        // starts past the segment's committed rows. A restore that treated it as
+        // a segment offset would cut below the kept rows -- here, to the end of
+        // the committed txn, dropping row 2 silently.
+        assertMemoryLeak(() -> {
+            TableToken token = createTable();
+            try (WalWriter w = engine.getWalWriter(token)) {
+                append(w, 1, "2024-01-01T00:00:01");
+                w.commit();
+                append(w, 2, "2024-01-01T00:00:02");
+                w.setSavepoint();
+                append(w, 3, "2024-01-01T00:00:03");
+                append(w, 4, "2024-01-01T00:00:04");
+                Assert.assertTrue(w.rollbackToSavepoint());
+                Assert.assertEquals(1, w.getUncommittedRowCount());
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("select v, ts from t").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("""
+                    v\tts
+                    1\t2024-01-01T00:00:01.000000Z
+                    2\t2024-01-01T00:00:02.000000Z
+                    """);
+            try (Path path = new Path(); WalEventReader reader = new WalEventReader(configuration)) {
+                path.of(configuration.getDbRoot()).concat(token).concat("wal1").slash().put(0);
+                WalEventCursor cursor = reader.of(path, 1);
+                Assert.assertEquals(WalTxnType.DATA, cursor.getType());
+                WalEventCursor.DataInfo info = cursor.getDataInfo();
+                Assert.assertEquals(1, info.getStartRowID());
+                Assert.assertEquals(2, info.getEndRowID());
+                Assert.assertEquals(ts("2024-01-01T00:00:02"), info.getMinTimestamp());
+                Assert.assertEquals(ts("2024-01-01T00:00:02"), info.getMaxTimestamp());
+            }
+        });
+    }
+
+    @Test
     public void testRollbackToSavepointWithoutOneIsRefused() throws Exception {
         assertMemoryLeak(() -> {
             TableToken token = createTable();

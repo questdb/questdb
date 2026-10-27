@@ -972,6 +972,87 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
+     * As {@link #testFailedFrameInCommitBatchKeepsEarlierFramesCommittedAndAcked},
+     * but with the two things that test cannot exercise: the batch's rows start
+     * past a commit in the same WAL segment, and the failed frame has already
+     * appended a block when its next block fails, so the savepoint restore has
+     * rows to discard. The savepoint's row count is relative to the open txn;
+     * a restore that took it as a segment offset would cut row 200 and ack it,
+     * and a restore that did nothing would commit row 300 under a NACK the
+     * client replays.
+     */
+    @Test
+    public void testFailedFrameAfterCommitInSegmentDropsOnlyItsOwnRows() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final byte[] varcharMessage = oneRowVarcharMessage("not-a-long", 4_000_000L);
+            final byte[] mismatchedBlock = Arrays.copyOfRange(varcharMessage, QwpConstants.HEADER_SIZE, varcharMessage.length);
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            // seq=0 arrives alone and commits: the segment's open txn now starts at
+            // row 1. seq=1 and seq=2 arrive together; seq=1 opens the batch, seq=2
+            // appends 300 and then fails on its second block.
+            ObjList<byte[]> sent = ingestInTwoPasses(
+                    processor,
+                    httpConfig,
+                    1,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, twoBlockMessage(
+                            tableBlock("tab".getBytes(java.nio.charset.StandardCharsets.UTF_8), new long[]{300L, 3_000_000L}),
+                            mismatchedBlock
+                    ))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            Assert.assertEquals("the batch must be acked through the frame before the failed one", 1, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the failed frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 2));
+            Assert.assertFalse("the batch's frame must not be NACKed", hasErrorResponseForSeq(sent, 1));
+        });
+    }
+
+    /**
+     * The multi-table shape of
+     * {@link #testFailedFrameAfterCommitInSegmentDropsOnlyItsOwnRows}: the
+     * pinned client's flush packs every table with rows into one message, so a
+     * frame can append a good block to the batch's table and then fail on
+     * another table's block. The restore must drop the good block from the
+     * batch's table and leave the batch's own rows to commit.
+     */
+    @Test
+    public void testFailedMultiTableFrameDropsItsBlockFromBatchTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table a (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final byte[] varcharMessage = oneRowVarcharMessage("not-a-long", 4_000_000L);
+            final byte[] mismatchedBlock = Arrays.copyOfRange(varcharMessage, QwpConstants.HEADER_SIZE, varcharMessage.length);
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInTwoPasses(
+                    processor,
+                    httpConfig,
+                    1,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, twoBlockMessage(
+                            tableBlock("a".getBytes(java.nio.charset.StandardCharsets.UTF_8), new long[]{300L, 3_000_000L}),
+                            mismatchedBlock
+                    ))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from a").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            assertQuery("select count() from tab").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            Assert.assertEquals("the batch must be acked through the frame before the failed one", 1, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the failed frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 2));
+            Assert.assertFalse("the batch's frame must not be NACKed", hasErrorResponseForSeq(sent, 1));
+        });
+    }
+
+    /**
      * A deferred frame starts a client transaction: the commit batch before it
      * must commit on its own, never inside the client's group.
      */
@@ -1812,6 +1893,47 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    /**
+     * Like {@link #ingestInOnePass} but the first {@code firstPassFrameCount}
+     * frames arrive in one receive pass and the rest in a second one on the same
+     * connection, so the first pass's commit batch is committed -- and its rows
+     * sit committed in the cached writers' segments -- before the second pass's
+     * batch forms.
+     */
+    private ObjList<byte[]> ingestInTwoPasses(
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            int firstPassFrameCount,
+            byte[]... frames
+    ) throws Exception {
+        byte[] wire = concat(frames);
+        assert wire.length <= RECV_BUFFER_SIZE;
+        int firstPassBytes = 0;
+        for (int i = 0; i < firstPassFrameCount; i++) {
+            firstPassBytes += frames[i].length;
+        }
+        PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+        long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+        try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+            QwpIngressProcessorState state = new QwpIngressProcessorState(
+                    RECV_BUFFER_SIZE,
+                    httpConfig.getSendBufferSize(),
+                    engine,
+                    httpConfig.getLineHttpProcessorConfiguration()
+            );
+            state.of(-1, AllowAllSecurityContext.INSTANCE);
+            getLV().set(context, state);
+            drive(processor, context, nf, firstPassBytes);
+            drive(processor, context, nf, wire.length - firstPassBytes);
+        } finally {
+            Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+        return rawSocket.sentFrames;
     }
 
     private ObjList<byte[]> ingestOnFreshConnection(
