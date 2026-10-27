@@ -174,10 +174,10 @@ public class CountTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Count
                                 Filter filter: 1<c
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,s]
                                       values: [count(*)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -189,9 +189,11 @@ public class CountTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("dups\n0\n");
-            // the materialized projection over the same subquery agrees: it is empty
+            // the projection over the same subquery agrees: it is empty
             assertQuery("SELECT ts, s, c FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1")
                     .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
                     .returns("ts\ts\tc\n");
             // without the predicate, count() over the subquery counts the 12 groups
             assertQuery("SELECT count() FROM (SELECT ts, s, count() c FROM tab)")

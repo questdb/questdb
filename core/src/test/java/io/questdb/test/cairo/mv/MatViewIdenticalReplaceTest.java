@@ -72,7 +72,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, '123'), ('2022-02-24T01', 2, null), ('2022-02-24T02', 3, '2345567')");
 
             drainWalAndMatViewQueues();
-            assertQuery("test_mv")
+            assertQuery("test_mv order by ts, x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
@@ -107,7 +107,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             }
 
             drainWalAndMatViewQueues();
-            assertQuery("test_mv")
+            assertQuery("test_mv order by ts, x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
@@ -194,7 +194,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
                             "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
                             "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"));
 
-            assertQuery("test_mv")
+            assertQuery("test_mv order by ts, x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
@@ -210,7 +210,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
             drainWalAndMatViewQueues();
 
-            assertQuery("test_mv")
+            assertQuery("test_mv order by ts, x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
@@ -224,7 +224,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, null)");
             drainWalAndMatViewQueues();
 
-            assertQuery("test_mv")
+            assertQuery("test_mv order by ts, x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
@@ -238,7 +238,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, " + nullValueUpdated + ")");
             drainWalAndMatViewQueues();
 
-            assertQuery("test_mv")
+            assertQuery("test_mv order by ts, x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")

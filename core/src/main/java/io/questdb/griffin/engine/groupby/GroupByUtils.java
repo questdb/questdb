@@ -109,13 +109,16 @@ public class GroupByUtils {
             ObjList<GroupByFunction> functions,
             FlyweightPackedMapValue value,
             long batchAddress,
+            long rowIdsAddress,
             long lo,
             long hi,
             long baseRowId
     ) {
         // Entry offsets must remain valid until every function has updated the batch.
         map.reserveCapacity(hi - lo);
-        final long baseAddress = map.probeBatch(record, sink, lo, hi, batchAddress);
+        final long baseAddress = rowIdsAddress == 0
+                ? map.probeBatch(record, sink, lo, hi, batchAddress)
+                : map.probeBatchFiltered(record, sink, rowIdsAddress, lo, hi, batchAddress);
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).computeKeyedBatch(record, value, baseAddress, batchAddress, hi - lo, baseRowId);
         }

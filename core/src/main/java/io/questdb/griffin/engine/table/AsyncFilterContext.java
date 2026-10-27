@@ -29,8 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -49,7 +52,7 @@ import java.io.Closeable;
 
 /**
  * Shared filter and memory-pool infrastructure used by {@link AsyncGroupByAtom},
- * {@link AsyncGroupByNotKeyedAtom}, and {@link AsyncTopKAtom}.
+ * {@link AsyncGroupByNotKeyedAtom}, {@link AsyncStreamGroupByAtom}, and {@link AsyncTopKAtom}.
  */
 public class AsyncFilterContext implements Closeable {
     private final ObjList<Function> bindVarFunctions;
@@ -196,6 +199,33 @@ public class AsyncFilterContext implements Closeable {
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
+    public PageFrameMemoryRecord filter(PageFrameMemoryRecord record, PageFrameAddressCache addressCache, int slotId, int frameIndex, long rowCount) {
+        final DirectLongList rows = getFilteredRows(slotId);
+        rows.clear();
+        final boolean isParquet = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+        final boolean isLateMaterialization = shouldUseLateMaterialization(slotId, isParquet);
+        final PageFrameMemoryPool pool = getMemoryPool(slotId);
+        final PageFrameMemory memory = isLateMaterialization
+                ? pool.navigateTo(frameIndex, filterUsedColumnIndexes) : pool.navigateTo(frameIndex);
+        record.init(memory);
+        if (compiledFilter == null || memory.hasColumnTops() || memory.hasColumnTypeCasts()) {
+            AsyncFilterUtils.applyFilter(getFilter(slotId), rows, record, rowCount);
+        } else {
+            AsyncFilterUtils.applyCompiledFilter(compiledFilter, bindVarMemory, bindVarFunctions, memory,
+                    addressCache, getDataAddresses(slotId), getAuxAddresses(slotId), rows, rowCount);
+        }
+        if (isParquet) {
+            getSelectivityStats(slotId).update(rows.size(), rowCount);
+        }
+        if (isLateMaterialization && rows.size() > 0
+                && memory.populateRemainingColumns(filterUsedColumnIndexes, rows, false)) {
+            final PageFrameFilteredMemoryRecord filteredRecord = getPageFrameFilteredMemoryRecord(slotId);
+            filteredRecord.of(memory, record, filterUsedColumnIndexes);
+            return filteredRecord;
+        }
+        return record;
+    }
+
     public DirectLongList getAuxAddresses(int slotId) {
         if (slotId == -1) {
             return ownerAuxAddresses;
@@ -314,6 +344,17 @@ public class AsyncFilterContext implements Closeable {
 
     public void toPlan(PlanSink sink) {
         sink.val(ownerFilter);
+    }
+
+    public void toTop() {
+        if (ownerFilter != null) {
+            ownerFilter.toTop();
+        }
+        if (perWorkerFilters != null) {
+            for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
+                perWorkerFilters.getQuick(i).toTop();
+            }
+        }
     }
 
     private static void resetCapacity(@Nullable DirectLongList list) {

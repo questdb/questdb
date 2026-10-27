@@ -151,7 +151,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         private long rowId;
 
         private StreamGroupByRecordCursor(BytecodeAssembler asm, CairoConfiguration configuration, ArrayColumnTypes keyTypes,
-                                         ArrayColumnTypes valueTypes, ListColumnFilter columnFilter, int streamKeyIndex) {
+                                          ArrayColumnTypes valueTypes, ListColumnFilter columnFilter, int streamKeyIndex) {
             keyIndex = valueTypes.getColumnCount();
             value = new FlyweightPackedMapValue(new ArrayColumnTypes().addAll(valueTypes).add(keyFunction.getType()));
             updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -159,7 +159,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             memory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
             segmentMap = keyTypes.getColumnCount() > 1
                     ? new StreamGroupByMap(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes,
-                            streamKeyIndex, keyFunctions, groupByFunctions, updater)
+                    streamKeyIndex, keyFunctions, groupByFunctions, updater)
                     : null;
             record.of(segmentMap != null ? segmentMap.getRecord() : value);
         }

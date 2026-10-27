@@ -1333,10 +1333,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     2024-01-01T00:20:00.000000Z\t600
                     2024-01-01T00:30:00.000000Z\t201
                     """;
-            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            // The cast round-trip keeps these GROUP BY cases on the unordered hash path.
+            assertDateaddOverUnorderedSubQuery("SELECT ts::string::timestamp ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts::string::timestamp ts, sym, avg(price) a FROM trades GROUP BY ts::string::timestamp, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery(
-                    "SELECT DISTINCT ts, price FROM trades",
+                    "SELECT DISTINCT ts::string::timestamp ts, price FROM trades",
                     expectedHead,
                     expectedBuckets,
                     0,
@@ -1401,20 +1402,19 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """
                             WITH t AS (
                                 SELECT dateadd('s', -30, ts) AS x, sym
-                                FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym)
+                                FROM (SELECT ts::string::timestamp ts, sym, count() c FROM trades GROUP BY ts::string::timestamp, sym)
                             )
                             SELECT t.sym, m.ts mts FROM t ASOF JOIN marks m ON (sym) LIMIT 3
                             """,
-                    153,
+                    194,
                     "left side of time series join has no timestamp"
             );
 
-            // An outer ORDER BY drops the ORDER BY that SAMPLE BY adds to its own sub-query, so the
-            // rows that reach the projection are no longer in timestamp order.
+            // Stream aggregation preserves timestamp order through the projection.
             assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) ORDER BY x LIMIT 3")
                     .noLeakCheck()
                     .timestamp("x")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             x
                             2024-01-01T00:00:01.000000Z
@@ -1423,10 +1423,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """);
 
             // Controls: a sub-query that keeps the row order still gives dateadd() a designated
-            // timestamp, and a bare timestamp over a GROUP BY still sorts.
+            // timestamp.
             assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) LIMIT 3")
                     .noLeakCheck()
                     .timestamp("x")
+                    .noRandomAccess()
                     .returns("""
                             x
                             2024-01-01T00:00:01.000000Z
@@ -1465,7 +1466,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT ts x FROM (SELECT ts, avg(price) a FROM trades) ORDER BY x LIMIT 1")
                     .noLeakCheck()
                     .timestamp("x")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             x
                             2024-01-01T00:00:00.000000Z
@@ -3951,8 +3952,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
 
-            // the GROUP BY output has no designated timestamp; generateFilter0() still rebuilds the
-            // optimiser's wrapper, over the column its predicate names
+            // LIMIT keeps the predicate above GROUP BY, where it must still be rebuilt.
             assertQuery("""
                     SELECT * FROM (
                         SELECT dateadd('s', 1, ts) x, sym
@@ -3964,19 +3964,18 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("x")
                     .withPlan("""
-                            Encode sort light
-                              keys: [x]
-                                VirtualRecord
-                                  functions: [dateadd('s',1,ts),sym]
-                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
-                                        Limit value: 100 skip-rows-max: 0 take-rows-max: 100
-                                            Async Group By workers: 1
-                                              keys: [ts,sym]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: trades
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
+                                    Limit value: 100 skip-rows-max: 0 take-rows-max: 100
+                                        Async Stream Group By workers: 1
+                                          segmentKey: ts
+                                          keys: [ts,sym]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
                             """)
+                    .noRandomAccess()
                     .returns("""
                             x\tsym
                             2024-01-01T00:00:01.000000Z\tS1
@@ -4339,18 +4338,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('s',1,ts),c]
-                                Encode sort light
-                                  keys: [ts]
-                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:30.000000Z
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts)]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                                Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:30.000000Z
+                                    Async Stream Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts)]
+                                      values: [count(*)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
                             """)
+                    .noRandomAccess()
                     .returns("""
                             x\tc
                             2024-01-01T00:00:01.000000Z\t6
@@ -4371,20 +4368,18 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ORDER BY x
                     """)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("x")
                     .withPlan("""
-                            Encode sort light
-                              keys: [x]
-                                VirtualRecord
-                                  functions: [dateadd('s',1,ts),sym]
-                                    Async Group By workers: 1
-                                      keys: [ts,sym]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: trades
-                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
+                                  keys: [ts,sym]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
                             """)
                     .returns("""
                             x\tsym

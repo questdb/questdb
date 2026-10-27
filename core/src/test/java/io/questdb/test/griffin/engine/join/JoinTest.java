@@ -5341,13 +5341,11 @@ public class JoinTest extends AbstractCairoTest {
                     .fullFatJoins()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
         });
     }
@@ -5793,13 +5791,11 @@ public class JoinTest extends AbstractCairoTest {
                     .fullFatJoins()
                     .timestamp("k")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("k")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
         });
     }

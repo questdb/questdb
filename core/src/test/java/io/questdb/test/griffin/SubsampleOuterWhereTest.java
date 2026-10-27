@@ -285,14 +285,14 @@ public class SubsampleOuterWhereTest extends AbstractCairoTest {
     public void testOuterWhereOverSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
-            assertFusedQuery("SELECT * FROM (SELECT ts, avg(v) AS value FROM t SAMPLE BY 1h SUBSAMPLE lttb(value, 2)) WHERE value > 10")
-                    .timestamp("ts").withPlanContaining("CachedWindowLightSelect", "Group By")
+            assertQuery("SELECT * FROM (SELECT ts, avg(v) AS value FROM t SAMPLE BY 1h SUBSAMPLE lttb(value, 2)) WHERE value > 10")
+                    .noLeakCheck().timestamp("ts").withPlanContaining("CachedWindow", "Group By")
                     .returns("""
                             ts\tvalue
                             2024-01-01T04:00:00.000000Z\t50.0
                             """);
-            assertFusedQuery("SELECT * FROM (SELECT DISTINCT ts, x, v FROM t SUBSAMPLE uniform(2)) WHERE x > 0")
-                    .returns(HEADER + LAST_ROW);
+            assertQuery("SELECT * FROM (SELECT DISTINCT ts, x, v FROM t SUBSAMPLE uniform(2)) WHERE x > 0")
+                    .noLeakCheck().timestamp("ts").withPlanContaining("CachedWindow", "Async Stream Group By").returns(HEADER + LAST_ROW);
         });
     }
 

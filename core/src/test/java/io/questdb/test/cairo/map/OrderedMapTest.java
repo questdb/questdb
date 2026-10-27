@@ -3129,7 +3129,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             model.wal();
             AbstractCairoTest.create(model);
 
-            sink.put("SELECT t, ");
+            sink.put("SELECT timestamp_floor('1h', t + 1) t, ");
             for (int i = 0; i < columnCount; i++) {
                 sink.put("max(f").put(i).put("),");
                 sink.put("min(f").put(i).put("),");
@@ -3138,7 +3138,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     sink.put(',');
                 }
             }
-            sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded SAMPLE BY 1h");
+            sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded");
 
             try {
                 assertException(sink, 0, "page size is too small to fit a single key, consider increasing `cairo.sql.small.map.page.size` [expected=38408, actual=32768]");

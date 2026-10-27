@@ -3662,7 +3662,7 @@ public class SampleByTest extends AbstractCairoTest {
                     where s = null or s = 'none'
                     sample by 1h""")
                     .timestamp("k")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(expected);
 
@@ -6385,8 +6385,23 @@ public class SampleByTest extends AbstractCairoTest {
                                 Frame forward scan on: #TABLE#
                 """;
 
-        testSampleByPushdown("", "align to calendar", plan);
-        testSampleByPushdown("none", "align to calendar", plan);
+        String streamPlan = """
+                Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)
+                    Async JIT Stream Group By workers: 1
+                      segmentKey: timestamp_floor_utc('1m',ts)
+                      keys: [tstmp,sym]
+                      keyFunctions: [timestamp_floor_utc('1m',ts)]
+                      values: [first(val),avg(val),last(val),max(val)]
+                      filter: sym='B'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: #TABLE#
+                """;
+
+        for (String fill : new String[]{"", "none"}) {
+            testSampleByPushdownWithDesignatedTs(fill, "align to calendar", streamPlan);
+            testSampleByPushdownWithoutDesignatedTs(fill, "align to calendar", plan);
+        }
     }
 
     @Test
@@ -6404,16 +6419,15 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts1]
-                                    Async Group By workers: 1
-                                      keys: [tstmp,sym,ts1]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: (ts2>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*ts2::long)
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [tstmp,sym,ts1]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                  filter: (ts2>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*ts2::long)
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -15380,7 +15394,7 @@ public class SampleByTest extends AbstractCairoTest {
                     SAMPLE BY 1w
                     ALIGN TO CALENDAR""")
                     .timestamp("timestamp")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             timestamp\tfirst

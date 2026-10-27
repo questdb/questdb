@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
@@ -46,7 +47,9 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -54,6 +57,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     private final int[] batchColumnIndexes;
     private final StreamGroupByMap collectorMap;
     private final CairoConfiguration configuration;
+    private final AsyncFilterContext filterContext;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final Function keyFunction;
     private final int keyFunctionIndex;
@@ -82,6 +86,12 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
             ObjList<ObjList<Function>> perWorkerKeys,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<ObjList<GroupByFunction>> perWorkerFunctions,
+            CompiledFilter compiledFilter,
+            MemoryCARW bindVarMemory,
+            ObjList<Function> bindVarFunctions,
+            Function filter,
+            IntHashSet filterUsedColumnIndexes,
+            ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
         this.configuration = configuration;
@@ -92,6 +102,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         this.groupByFunctions = groupByFunctions;
         this.perWorkerFunctions = perWorkerFunctions;
         try {
+            filterContext = filter == null ? null : new AsyncFilterContext(configuration, compiledFilter,
+                    bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters,
+                    workerCount, workerCount, 0, 0);
             stateTypes = new ArrayColumnTypes().addAll(valueTypes);
             stateTypes.add(keyFunction.getType());
             batchColumnIndexes = new int[groupByFunctions.size()];
@@ -133,6 +146,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     @Override
     public void clear() {
         CairoException.rethrowCleanupFailure(closeMaps(null));
+        if (filterContext != null) {
+            filterContext.clear();
+        }
         cursorClosed(groupByFunctions);
         cursorClosed(keyFunctions);
         Misc.clearObjList(groupByFunctions);
@@ -152,6 +168,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     @Override
     public void close() {
         Throwable th = Misc.freeObjListBestEffort(null, keyFunctions);
+        th = Misc.freeBestEffort(th, filterContext);
         th = closeMaps(th);
         th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerKeys);
         th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerFunctions);
@@ -164,6 +181,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
 
     public StreamGroupByMap getCollectorMap() {
         return collectorMap;
+    }
+
+    public AsyncFilterContext getFilterContext() {
+        return filterContext;
     }
 
     public ObjList<GroupByFunction> getFunctions(int slot) {
@@ -206,6 +227,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        if (filterContext != null) {
+            filterContext.initFilters(symbolTableSource, executionContext);
+        }
         Function.init(groupByFunctions, symbolTableSource, executionContext, null);
         Function.init(keyFunctions, symbolTableSource, executionContext, null);
         final boolean cloneSymbolTables = executionContext.getCloneSymbolTables();
@@ -247,6 +271,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     }
 
     public void toTop() {
+        if (filterContext != null) {
+            filterContext.toTop();
+        }
         GroupByUtils.toTop(groupByFunctions);
         GroupByUtils.toTop(keyFunctions);
         if (perWorkerFunctions != null) {

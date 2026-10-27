@@ -69,6 +69,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
+    private long groupByLastKey;
     private ColumnTypes groupByRecordTypes;
     private RecordChain groupByRecords;
     private DirectLongList groupByValues;
@@ -209,6 +210,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequenceId;
     }
 
+    public long getGroupByLastKey() {
+        return groupByLastKey;
+    }
+
     public RecordChain getGroupByRecords() {
         return groupByRecords;
     }
@@ -339,7 +344,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             errorMessagePosition = fmc.getPosition();
         } else {
             final String msg = th.getMessage();
-            errorMsg.put(msg != null ? msg : exceptionMessage);
+            errorMsg.put(msg != null ? msg : taskType == TYPE_GROUP_BY ? "unexpected reduce error" : exceptionMessage);
         }
 
         if (th instanceof CairoException ce) {
@@ -353,6 +358,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public void setFilteredRowCount(long filteredRowCount) {
         this.filteredRowCount = filteredRowCount;
+    }
+
+    public void setGroupByLastKey(long groupByLastKey) {
+        this.groupByLastKey = groupByLastKey;
     }
 
     public void setTaskType(byte taskType) {

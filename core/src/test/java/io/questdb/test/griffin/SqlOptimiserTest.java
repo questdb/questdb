@@ -4202,7 +4202,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns(result);
         });
@@ -4223,7 +4223,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns(result);
         });
@@ -4453,13 +4453,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Long Top K lo: 6
-                              keys: [ts asc]
-                                Async Group By workers: 1
+                            Limit value: 6 skip-rows-max: 0 take-rows-max: 6
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')
                                   keys: [ts,s]
                                   keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
                                   values: [count(*)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: fromto
@@ -4519,7 +4518,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     SAMPLE BY (1m);
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\textra_column\textra_column2\tfirst
@@ -4529,7 +4527,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select dateadd('d', 1, timestamp) timestamp, name, count() from t sample by 10m")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\tname\tcount
@@ -4539,7 +4537,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name, count() from t sample by 10m")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\ttimestamp2\tname\tcount
@@ -4550,7 +4548,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select timestamp + 60000000 as 'timestamp', timestamp, count() from t where name = 'a' sample by (1m)")
                     .noLeakCheck()
                     .timestamp("timestamp1")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             timestamp\ttimestamp1\tcount
                             2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1
@@ -4560,7 +4558,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select timestamp + 60000000 as 'timestamp1', timestamp, count() from t where name = 'a' sample by (1m)")
                     .noLeakCheck()
                     .timestamp("timestamp")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             timestamp1\ttimestamp\tcount
                             2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1
@@ -4570,7 +4568,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1', count() from t where name = 'a' sample by (1m)")
                     .noLeakCheck()
                     .timestamp("timestamp1")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             timestamp\ttimestamp1\tcount
                             2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1
@@ -5472,61 +5470,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
                             """);
             assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts)]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
                             """);
             assertQuery("select ts, avg(price) from tbl sample by 5m")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tbl
+                              keyFunctions: [timestamp_floor_utc('5m',ts)]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl
                             """);
         });
 
@@ -5637,17 +5623,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR""")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [timestamp]
-                                Async Group By workers: 1
-                                  keys: [symbol,timestamp]
-                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
-                                  values: [last(price)]
-                                  filter: symbol ~ BTC-USD [state-shared]
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trades
-                                          intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp_floor_utc('1m',timestamp)
+                              keys: [symbol,timestamp]
+                              keyFunctions: [timestamp_floor_utc('1m',timestamp)]
+                              values: [last(price)]
+                              filter: symbol ~ BTC-USD [state-shared]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
                             """);
         });
     }

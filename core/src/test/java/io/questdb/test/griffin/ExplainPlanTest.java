@@ -1268,7 +1268,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Async JIT Group By workers: 1
+                            Async JIT Stream Group By workers: 1
                               keys: [ts]
                               filter: y=5
                                 PageFrame
@@ -1283,7 +1283,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async JIT Group By workers: 1
+                            Async JIT Stream Group By workers: 1
                               keys: [ts]
                               filter: y=5
                                 PageFrame
@@ -1298,7 +1298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
                                 PageFrame
@@ -1313,7 +1313,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
                                 PageFrame
@@ -1328,7 +1328,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
                                 PageFrame
@@ -4189,15 +4189,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Long Top K lo: 10
-                          keys: [ts desc]
-                            Async JIT Group By workers: 1
-                              keys: [ts]
-                              values: [count(*)]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Encode sort
+                              keys: [ts desc]
+                                Async JIT Stream Group By workers: 1
+                                  keys: [ts]
+                                  values: [count(*)]
+                                  filter: y=5
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 
@@ -12360,7 +12361,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
                         Filter filter: 1<mil+mini
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [k]
                               values: [max(i*l),min(l),min(i)]
                               filter: l::short<i

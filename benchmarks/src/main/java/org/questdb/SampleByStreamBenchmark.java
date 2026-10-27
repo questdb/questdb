@@ -68,6 +68,8 @@ public class SampleByStreamBenchmark {
     public String dataFormat;
     @Param({"stream"})
     public String expectedStrategy;
+    @Param({"7"})
+    public int filterModulo;
     @Param({"100000"})
     public int frameRows;
     @Param({"0"})
@@ -80,7 +82,7 @@ public class SampleByStreamBenchmark {
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "expression", "filtered", "keyed", "keyed_string", "keyed_multi"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_filtered", "keyed_string", "keyed_multi"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -151,21 +153,24 @@ public class SampleByStreamBenchmark {
                 throw new IllegalArgumentException("unknown data format: " + dataFormat);
             }
             final String select = switch (workload) {
-                case "basic", "filtered" -> "count(*), sum(v), avg(d)";
+                case "basic", "filtered", "filtered_desc" -> "count(*), sum(v), avg(d)";
                 case "count" -> "count(*)";
                 case "double" -> "sum(d), avg(d), min(d), max(d)";
                 case "stats" -> "stddev_pop(d), corr(d, v), weighted_avg(d, v)";
                 case "decimal" -> "sum(price)::double, avg(price)::double, min(price)::double, max(price)::double";
                 case "first_last" -> "first(v), last(v), first_not_null(v), last_not_null(v), first(sym), last(sym)";
                 case "expression" -> "sum(v + 1), avg(d * 2), sum(sqrt(d))";
-                case "keyed" -> "sym, count(*), sum(v), avg(d)";
+                case "keyed", "keyed_filtered", "hash_filtered" -> "sym, count(*), sum(v), avg(d)";
                 case "keyed_string" -> "sym::varchar name, count(*), sum(v), avg(d)";
                 case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
                 default -> throw new IllegalArgumentException("unknown workload: " + workload);
             };
-            factory = compiler.compile("select ts, " + select + " from trades "
-                    + ("filtered".equals(workload) ? "where v % 7 = 0 " : "")
-                    + "sample by " + bucket + " align to calendar time zone '" + timeZone + "'", context).getRecordCursorFactory();
+            final boolean isHashControl = "hash_filtered".equals(workload);
+            final boolean isFiltered = workload.contains("filtered");
+            factory = compiler.compile("select " + (isHashControl ? "" : "ts, ") + select + " from trades "
+                    + (isFiltered ? "where v % " + filterModulo + " = 0 " : "")
+                    + (isHashControl ? "" : "sample by " + bucket + " align to calendar time zone '" + timeZone + "'")
+                    + ("filtered_desc".equals(workload) ? " order by ts desc limit 10" : ""), context).getRecordCursorFactory();
             columnTypes = new int[factory.getMetadata().getColumnCount()];
             for (int i = 0; i < columnTypes.length; i++) {
                 columnTypes[i] = ColumnType.tagOf(factory.getMetadata().getColumnType(i));
@@ -176,8 +181,7 @@ public class SampleByStreamBenchmark {
             for (int i = 1; i <= plan.getLineCount(); i++) {
                 stream |= plan.getLine(i).toString().contains("Stream Group By");
             }
-            final boolean expectStream = "stream".equals(expectedStrategy)
-                    && !("filtered".equals(workload) && workers > 0);
+            final boolean expectStream = "stream".equals(expectedStrategy) && !isHashControl;
             if (stream != expectStream) {
                 throw new IllegalStateException("unexpected aggregation strategy: " + expectedStrategy);
             }

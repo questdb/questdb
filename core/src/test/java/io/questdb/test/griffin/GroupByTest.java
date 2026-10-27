@@ -4559,21 +4559,19 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ref0]
-                                VirtualRecord
-                                  functions: [created]
-                                    Async JIT Group By workers: 1
-                                      keys: [created]
-                                      filter: null!=created
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                            VirtualRecord
+                              functions: [created]
+                                Async JIT Stream Group By workers: 1
+                                  keys: [created]
+                                  filter: null!=created
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
 
             assertQuery(query)
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ref0
@@ -4604,11 +4602,11 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [dateadd('h',1,created)]
-                                    Async JIT Group By workers: 1
+                                    Async JIT Stream Group By workers: 1
                                       keys: [created]
                                       filter: null!=created
                                         PageFrame
@@ -4618,7 +4616,6 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .timestamp("ref0")
-                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             ref0
@@ -4648,19 +4645,17 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async JIT Stream Group By workers: 1
                               keys: [created]
-                                Async JIT Group By workers: 1
-                                  keys: [created]
-                                  filter: null!=created
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                              filter: null!=created
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
                             """);
 
             assertQuery(query)
                     .timestamp("created")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             created

@@ -66,6 +66,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private int frameLimit = -1;
     private PageFrameSequence<AsyncStreamGroupByAtom> frameSequence;
     private boolean hasPartial;
+    private long lastKey;
     private MapRecordCursor mapCursor;
     private boolean prepared;
     private long resultOffset;
@@ -209,6 +210,13 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             return false;
         }
         final long key = segmentMap.getSegmentKey(resultRecords.getRecord());
+        if (key != lastKey) {
+            // Only the last segment can continue in the next frame.
+            segmentMap.getRecord().of(resultRecords.getRecord());
+            hasPartial = false;
+            mapCursor = null;
+            return true;
+        }
         segmentMap.clear(key);
         do {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
@@ -234,6 +242,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         collect(false);
         if (!prepared) {
             frameSequence.prepareForDispatch();
+            final AsyncFilterContext filterContext = frameSequence.getAtom().getFilterContext();
+            if (filterContext != null) {
+                filterContext.initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
+            }
             prepared = true;
             frameLimit = frameSequence.getFrameCount() - 1;
         }
@@ -245,12 +257,17 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 if (task.hasError()) {
                     throw task.buildError();
                 }
-                if (!frameSequence.isActive()) {
-                    throw frameSequence.buildInterruptionException();
-                }
                 frameIndex = task.getFrameIndex();
+                if (!frameSequence.isActive()) {
+                    if (frameSequence.getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+                        throw frameSequence.buildInterruptionException();
+                    }
+                    collect(false);
+                    continue;
+                }
                 if (segmentMap != null) {
                     resultRecords = task.getGroupByRecords();
+                    lastKey = task.getGroupByLastKey();
                     if (resultRecords.hasNext()) {
                         hasPartial = true;
                         return true;

@@ -37,12 +37,10 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -326,7 +324,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
-        final int functionCount = functions.size();
         final int batchSize = atom.getBatchSize();
         final long rowCount = rows.size();
         final long rowIdsAddr = rows.getAddress();
@@ -338,30 +335,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize) {
             final long batchEnd = Math.min(batchStart + batchSize, rowCount);
-            final long batchRows = batchEnd - batchStart;
-
-            map.reserveCapacity(batchRows);
-
-            // Probe phase — rowIdsAddr[batchStart..batchEnd) holds the filtered frame-relative row ids.
-            final long baseValueAddress = map.probeBatchFiltered(
-                    record,
-                    mapSink,
-                    rowIdsAddr,
-                    batchStart,
-                    batchEnd,
-                    batchAddr
-            );
-
-            for (int i = 0; i < functionCount; i++) {
-                functions.getQuick(i).computeKeyedBatch(
-                        record,
-                        mapValue,
-                        baseValueAddress,
-                        batchAddr,
-                        batchRows,
-                        baseRowId
-                );
-            }
+            GroupByUtils.aggregateKeyedBatch(record, map, mapSink, functions, mapValue, batchAddr,
+                    rowIdsAddr, batchStart, batchEnd, baseRowId);
         }
     }
 
@@ -424,7 +399,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         for (long batchStart = 0; batchStart < frameRowCount; batchStart += batchSize) {
             final long batchEnd = Math.min(batchStart + batchSize, frameRowCount);
-            GroupByUtils.aggregateKeyedBatch(record, map, mapSink, functions, mapValue, batchAddr, batchStart, batchEnd, baseRowId);
+            GroupByUtils.aggregateKeyedBatch(record, map, mapSink, functions, mapValue, batchAddr, 0, batchStart, batchEnd, baseRowId);
         }
     }
 
@@ -473,79 +448,22 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
         @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
-        assert frameRowCount > 0;
-
-        final boolean owner = stealingFrameSequence == frameSequence;
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final int slotId = atom.maybeAcquire(workerId, stealingFrameSequence == frameSequence, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
-        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
-        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-
-        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-
-        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
-
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
-        final RecordSink mapSink = atom.getMapSink(slotId);
-        // navigateTo() can throw; it must sit inside the try that releases the slot. See
-        // aggregate() for why a leaked slot is permanent.
         try {
-            final PageFrameMemory frameMemory;
-            if (useLateMaterialization) {
-                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-            } else {
-                frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            }
-            record.init(frameMemory);
-
+            record = filterCtx.filter(record, frameSequence.getPageFrameAddressCache(), slotId, frameIndex,
+                    frameSequence.getFrameRowCount(frameIndex));
             atom.resetLocalStats(slotId);
-
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                AsyncFilterUtils.applyCompiledFilter(
-                        compiledFilter,
-                        filterCtx.getBindVarMemory(),
-                        filterCtx.getBindVarFunctions(),
-                        frameMemory,
-                        addressCache,
-                        filterCtx.getDataAddresses(slotId),
-                        filterCtx.getAuxAddresses(slotId),
-                        rows,
-                        frameRowCount
-                );
-            }
-
-            if (isParquetFrame) {
-                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
-            // Late materialization installs a PageFrameFilteredMemoryRecord that requires both
-            // the absolute and the compacted row index via setFilteredRowIndex. The batched
-            // probe/update path bottoms out in Map.probeBatch* and computeKeyedBatch, which call
-            // setRowIndex(long) and have no way to supply a compacted index, so fall back to the
-            // per-row path in that case.
-            boolean lateMaterialized = false;
-            if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
-                PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
-                filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
-                record = filteredMemoryRecord;
-                lateMaterialized = true;
-            }
-
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final GroupByMapFragment fragment = atom.getFragment(slotId);
+            final RecordSink mapSink = atom.getMapSink(slotId);
             if (atom.isSharded()) {
                 fragment.shard();
             }
-
-            long baseRowId = Rows.toRowID(frameIndex, 0);
-
+            final long baseRowId = Rows.toRowID(frameIndex, 0);
             if (fragment.isNotSharded()) {
-                if (lateMaterialized) {
+                if (record instanceof PageFrameFilteredMemoryRecord) {
                     aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
                 } else {
                     aggregateFilteredNonShardedBatched(record, rows, baseRowId, atom, slotId, fragment, mapSink);
@@ -553,11 +471,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
             }
-
             atom.maybeEnableSharding(fragment);
         } finally {
             try {
-                frameMemoryPool.releaseParquetBuffers();
+                filterCtx.getMemoryPool(slotId).releaseParquetBuffers();
             } finally {
                 atom.release(slotId);
             }

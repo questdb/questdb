@@ -11231,6 +11231,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             id\tts\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t10.0
@@ -11715,6 +11716,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             id\tts\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t10.0

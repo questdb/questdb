@@ -11424,7 +11424,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerKeyFunctions = null;
                     sharedOuterProjectionFunctions = null;
 
-                    if (streamKey != null && filter == null) {
+                    if (streamKey != null) {
                         GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount() + streamKeyIndex);
                         return generateFill(
                                 model,
@@ -11432,7 +11432,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(),
                                         factory, outerProjectionMetadata, listColumnFilterCopy, keyTypesCopy, valueTypesCopy, streamKeyIndex, streamKey,
                                         groupByFunctions0, perWorkerGroupByFunctions0, keyFunctions, perWorkerKeyFunctions0,
-                                        outerProjectionFunctions0, reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
+                                        outerProjectionFunctions0, compiledFilter, bindVarMemory, bindVarFunctions,
+                                        filter, filterUsedColumnIndexes, perWorkerFilters0,
+                                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
                                 ),
                                 executionContext
                         );

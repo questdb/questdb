@@ -141,12 +141,13 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
     }
 
-    public void aggregate(PageFrameMemoryRecord record, long lo, long hi, long baseRowId, boolean isBatch, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void aggregate(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, boolean isBatch, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!isBatch) {
             for (long row = lo; row < hi; row++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                record.setRowIndex(row);
-                update(record, baseRowId + row);
+                final long rowIndex = rows == null ? row : rows.get(row);
+                record.setFilteredRowIndex(rowIndex, row);
+                update(record, baseRowId + rowIndex);
             }
             return;
         }
@@ -155,7 +156,8 @@ public final class StreamGroupByMap implements QuietCloseable {
         for (long start = lo; start < hi; start += batchSize) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final long end = Math.min(start + batchSize, hi);
-            GroupByUtils.aggregateKeyedBatch(record, map, inputSink, functions, value, batchAddress, start, end, baseRowId);
+            GroupByUtils.aggregateKeyedBatch(record, map, inputSink, functions, value, batchAddress,
+                    rows == null ? 0 : rows.getAddress(), start, end, baseRowId);
         }
     }
 
@@ -199,7 +201,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         return cursor;
     }
 
-    public Record getRecord() {
+    public SelectedRecord getRecord() {
         return record;
     }
 
