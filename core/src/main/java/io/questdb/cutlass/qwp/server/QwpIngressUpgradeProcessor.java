@@ -112,19 +112,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     public static final int GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 64;
-    // Commit batching: consecutive plain (non-deferred) frames already in the
-    // receive buffer share one WAL commit, made when the receive pass drains or
-    // the batch reaches these bounds. A commit is a sequencer txn, a txn-log
-    // record, an ack-watermark step and an apply-job unit of work; at one row per
-    // message it was ~45% of the ingress fiber. Frames above the size bound
-    // already amortize their commit and are committed alone.
-    // The byte bound keeps the rows a batch holds uncommitted, and the frames a
-    // failed batch commit sends back for replay, independent of the configured
-    // recv buffer. There is no frame-count bound: a server that falls behind
-    // catches up with one large commit, where a cap of 256 kept it committing
-    // 256 one-row frames at a time while the backlog stood.
-    private static final long COMMIT_BATCH_MAX_BYTES = 1024 * 1024;
-    private static final int COMMIT_BATCH_MAX_FRAME_BYTES = 16 * 1024;
     // Per-dispatch BYTE budget for the post-CLOSE drain in resumeRecv. The recv-
     // count guard also bounds syscalls, but its byte cost scales with the configured
     // HTTP recv buffer. Capping each recv to the remainder limits a worker turn to
@@ -1004,16 +991,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         context.switchProtocol();
     }
 
+    /**
+     * Commit batching: consecutive plain (non-deferred) frames already in the
+     * receive buffer share one WAL commit, made when the receive pass drains. A
+     * commit is a sequencer txn, a txn-log record, an ack-watermark step and an
+     * apply-job unit of work; at one row per message it was ~45% of the ingress
+     * fiber. The receive pass bounds a batch, and the appender's
+     * max-uncommitted-rows cap bounds the rows it holds uncommitted, so a batch
+     * takes no bounds of its own: a cap of 256 frames kept a server that fell
+     * behind committing 256 one-row frames at a time while the backlog stood.
+     */
     private static boolean isCommitBatchCandidate(long payload, int length) {
         return length >= QwpConstants.HEADER_SIZE
-                && length <= COMMIT_BATCH_MAX_FRAME_BYTES
                 && !QwpMessageHeader.isDeferCommit(payload, length)
                 && !QwpMessageHeader.isDurableAckPoll(payload, length);
-    }
-
-    private static boolean isJoinableToCommitBatch(QwpIngressProcessorState state, int length) {
-        return length <= COMMIT_BATCH_MAX_FRAME_BYTES
-                && state.getCommitBatchBytes() + length <= COMMIT_BATCH_MAX_BYTES;
     }
 
     private static byte[] precomputeBadRequestResponse(String reason) {
@@ -1560,8 +1551,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .$(", seq=").$(seq).I$();
 
         // A frame that cannot join the commit batch -- deferred (its rows must
-        // not share a commit with the batch), a durable-ack poll (it may move
-        // the watermark), or a large one -- commits the batch first.
+        // not share a commit with the batch) or a durable-ack poll (it may move
+        // the watermark) -- commits the batch first.
         if (state.isCommitBatchPending() && !isCommitBatchCandidate(payload, length) && !commitPendingBatch(context, state)) {
             state.markSequenceUnresolved(seq);
             return;
@@ -1719,9 +1710,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     if (state.isFrameJoinableToCommitBatch()
                             && !closesDeferredGroup
                             && !state.isRoleChangeClosePending()
-                            && !state.isFrameCommittedBehind()
-                            && isJoinableToCommitBatch(state, length)) {
-                        state.addToCommitBatch(seq, length);
+                            && !state.isFrameCommittedBehind()) {
+                        state.addToCommitBatch(seq);
                         isBatched = true;
                     } else {
                         // A batch still pending here holds this frame's table only.

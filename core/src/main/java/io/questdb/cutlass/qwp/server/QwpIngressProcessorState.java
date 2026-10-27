@@ -266,10 +266,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private boolean uncommittedDeferredRows;
     // Commit batch: consecutive plain (non-deferred) frames from one receive pass
     // whose rows are appended but committed together, as one WAL txn, when the
-    // pass drains or the batch fills. Their sequences are withheld from the
-    // cumulative-ack watermark until that commit. See the upgrade processor's
+    // pass drains. Their sequences are withheld from the cumulative-ack
+    // watermark until that commit. See the upgrade processor's
     // handleBinaryMessage. Reset by clear(), which rolls the rows back.
-    private long commitBatchBytes;
+    //
     // The one table the commit batch's rows are in, null while it holds only
     // rowless frames. A batch never spans tables: see isFrameJoinableToCommitBatch.
     private WalTableUpdateDetails commitBatchTud;
@@ -455,7 +455,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * Adds a frame whose rows are appended but not yet committed to the commit
      * batch; its sequence stays out of the ack watermark until the batch commits.
      */
-    public void addToCommitBatch(long seq, int frameBytes) {
+    public void addToCommitBatch(long seq) {
         if (commitBatchFrames == 0) {
             firstCommitBatchSequence = seq;
         }
@@ -466,11 +466,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             commitBatchDataTxns = frameRowWriter != null ? frameRowWriter.getDataTxnCount() : -1;
         }
         commitBatchFrames++;
-        commitBatchBytes += frameBytes;
-    }
-
-    public long getCommitBatchBytes() {
-        return commitBatchBytes;
     }
 
     public long getFirstCommitBatchSequence() {
@@ -491,7 +486,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public void resetCommitBatch() {
         commitBatchFrames = 0;
-        commitBatchBytes = 0;
         firstCommitBatchSequence = -1;
         lastCommitBatchSequence = -1;
         commitBatchTud = null;
