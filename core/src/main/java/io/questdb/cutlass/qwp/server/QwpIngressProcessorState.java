@@ -539,6 +539,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records the seqTxn of the commit {@link #isCommitBatchCommittedBehind()} saw,
+     * which the appender made without reporting it. Call before
+     * {@link #resetCommitBatch()} drops the batch's table.
+     */
+    public void reportCommitBatchCommittedBehind() {
+        tudCache.reportCommitted(commitBatchTud);
+    }
+
+    /**
      * True when the current frame's table was committed after the frame began
      * appending to it, so some or all of the frame's rows are already in the WAL.
      */

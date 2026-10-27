@@ -59,6 +59,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -562,6 +563,136 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Durable-ack connections batch commits too: the single ack after the batch
+     * commit names that commit's seqTxn, which a durable-ack client waits on for
+     * every frame the ack covers.
+     */
+    @Test
+    public void testDurableAckFramesShareOneCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tab"));
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestDurableInOnePass(
+                    processor,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(400L, 4_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(500L, 5_000_000L))
+            );
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals(5, reader.size());
+            }
+            Assert.assertEquals("five frames in one receive pass must commit as one WAL txn",
+                    txnBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tab")));
+            Assert.assertEquals(4, maxCumulativeOkAck(sent));
+            Assert.assertEquals("one ack after the batch commit", 1, countOkAcks(sent));
+            Assert.assertEquals("the ack must name the batch's seqTxn", txnBefore + 1, okAckSeqTxn(sent, 4, "tab"));
+        });
+    }
+
+    /**
+     * The appender commits the batch's table at the max-uncommitted-rows cap,
+     * then the frame that crossed the cap fails its own commit. Nothing but the
+     * batch ack reports the cap commit: without its seqTxn, a durable-ack client
+     * treats the batch's frames as uploaded at once.
+     */
+    @Test
+    public void testDurableAckCarriesAppenderCommitBeforeFailedFrameCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                private final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public long getQwpMaxUncommittedRows() {
+                        return 2;
+                    }
+                };
+
+                @Override
+                public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                    return lineConfig;
+                }
+            };
+            execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestDurableInOnePass(
+                    processor,
+                    httpConfig,
+                    denyCommitsAfterFirst("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, twoBlockMessage(
+                            "b",
+                            new long[]{200L, 2_000_000L, 300L, 3_000_000L},
+                            new long[]{400L, 4_000_000L}
+                    ))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from b").noLeakCheck().expectSize().returns("v\n100\n200\n300\n");
+            Assert.assertEquals("the force-committed batch must be acked", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the denied frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 1));
+            Assert.assertTrue("the batch ack must name the appender's commit",
+                    okAckSeqTxn(sent, 0, "b") > txnBefore);
+        });
+    }
+
+    /**
+     * As {@link #testDurableAckCarriesAppenderCommitBeforeFailedFrameCommit}, but
+     * the frame fails while it is processed: its second block does not match the
+     * table's schema.
+     */
+    @Test
+    public void testDurableAckCarriesAppenderCommitBeforeFailedFrameProcessing() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                private final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public long getQwpMaxUncommittedRows() {
+                        return 2;
+                    }
+                };
+
+                @Override
+                public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                    return lineConfig;
+                }
+            };
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tab"));
+            final byte[] varcharMessage = oneRowVarcharMessage("not-a-long", 4_000_000L);
+            final byte[] mismatchedBlock = Arrays.copyOfRange(varcharMessage, QwpConstants.HEADER_SIZE, varcharMessage.length);
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestDurableInOnePass(
+                    processor,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, twoBlockMessage(
+                            tableBlock("tab".getBytes(java.nio.charset.StandardCharsets.UTF_8), new long[]{200L, 2_000_000L, 300L, 3_000_000L}),
+                            mismatchedBlock
+                    ))
+            );
+
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n100\n200\n300\n");
+            Assert.assertEquals("the force-committed batch must be acked", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the mismatched frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 1));
+            Assert.assertTrue("the batch ack must name the appender's commit",
+                    okAckSeqTxn(sent, 0, "tab") > txnBefore);
+        });
+    }
+
     @Test
     public void testFailedBatchCommitIsNackedAtFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
@@ -618,8 +749,10 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     private static byte[] twoBlockMessage(String table, long[] firstBlock, long[] secondBlock) {
         byte[] name = table.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         assert name.length < 128;
-        byte[] first = tableBlock(name, firstBlock);
-        byte[] second = tableBlock(name, secondBlock);
+        return twoBlockMessage(tableBlock(name, firstBlock), tableBlock(name, secondBlock));
+    }
+
+    private static byte[] twoBlockMessage(byte[] first, byte[] second) {
         byte[] message = new byte[QwpConstants.HEADER_SIZE + first.length + second.length];
         message[0] = 'Q';
         message[1] = 'W';
@@ -728,6 +861,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                         processor,
                         httpConfig,
                         AllowAllSecurityContext.INSTANCE,
+                        false,
                         sent,
                         createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
                         createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
@@ -1563,6 +1697,38 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         return message;
     }
 
+    /**
+     * The seqTxn that the cumulative OK-ACK for {@code seq} names for
+     * {@code table}, or -1 when there is no such ack or it has no entry for the
+     * table. After [status][seq LE] an OK-ACK carries [count u16 LE], then per
+     * table [name length u16 LE][name UTF-8][seqTxn i64 LE].
+     */
+    private static long okAckSeqTxn(ObjList<byte[]> frames, long seq, String table) {
+        final byte[] name = table.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (!isBinaryFrame(f) || f[2] != QwpConstants.STATUS_OK || readLeLong(f, 3) != seq) {
+                continue;
+            }
+            int pos = 13;
+            for (int entry = 0, count = readLeShort(f, 11); entry < count; entry++) {
+                int nameLen = readLeShort(f, pos);
+                pos += 2;
+                boolean isMatch = Arrays.equals(f, pos, pos + nameLen, name, 0, name.length);
+                pos += nameLen;
+                if (isMatch) {
+                    return readLeLong(f, pos);
+                }
+                pos += 8;
+            }
+        }
+        return -1;
+    }
+
+    private static int readLeShort(byte[] buf, int offset) {
+        return (buf[offset] & 0xFF) | (buf[offset + 1] & 0xFF) << 8;
+    }
+
     private static long readLeLong(byte[] buf, int offset) {
         long v = 0;
         for (int i = 7; i >= 0; i--) {
@@ -1600,7 +1766,18 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             byte[]... frames
     ) throws Exception {
         final ObjList<byte[]> sent = new ObjList<>();
-        ingestInOnePass(processor, httpConfig, securityContext, sent, frames);
+        ingestInOnePass(processor, httpConfig, securityContext, false, sent, frames);
+        return sent;
+    }
+
+    private ObjList<byte[]> ingestDurableInOnePass(
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            SecurityContext securityContext,
+            byte[]... frames
+    ) throws Exception {
+        final ObjList<byte[]> sent = new ObjList<>();
+        ingestInOnePass(processor, httpConfig, securityContext, true, sent, frames);
         return sent;
     }
 
@@ -1608,6 +1785,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             QwpIngressUpgradeProcessor processor,
             HttpFullFatServerConfiguration httpConfig,
             SecurityContext securityContext,
+            boolean isDurableAckEnabled,
             ObjList<byte[]> sent,
             byte[]... frames
     ) throws Exception {
@@ -1625,6 +1803,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     httpConfig.getLineHttpProcessorConfiguration()
             );
             state.of(-1, securityContext);
+            state.setDurableAckEnabled(isDurableAckEnabled);
             getLV().set(context, state);
             // Every frame arrives in one receive pass, as from a client with many in flight.
             drive(processor, context, nf, wire.length);

@@ -1011,10 +1011,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private static boolean isJoinableToCommitBatch(QwpIngressProcessorState state, int length) {
-        // Durable-ack mode maps each message to the seqTxn that covers it; keep
-        // it on one commit per frame.
-        return !state.isDurableAckEnabled()
-                && length <= COMMIT_BATCH_MAX_FRAME_BYTES
+        return length <= COMMIT_BATCH_MAX_FRAME_BYTES
                 && state.getCommitBatchFrames() + 1 < COMMIT_BATCH_MAX_FRAMES
                 && state.getCommitBatchBytes() + length <= COMMIT_BATCH_MAX_BYTES;
     }
@@ -1685,6 +1682,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // them as one commit per frame would have; a later failure must not
                 // pin the watermark below durable rows, or the client's replay
                 // duplicates them. This frame then goes on as if no batch were open.
+                // The ack that moves the watermark past the batch must carry that
+                // commit's seqTxn: nothing else reports it, and a durable-ack client
+                // releases frames acked without one as already uploaded.
+                state.reportCommitBatchCommittedBehind();
                 state.resetCommitBatch();
                 state.setHighestProcessedSequence(batchLastSeq);
                 isBatchPending = false;

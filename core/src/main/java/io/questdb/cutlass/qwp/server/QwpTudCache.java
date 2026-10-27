@@ -90,8 +90,9 @@ public class QwpTudCache implements QuietCloseable {
     // salvaged txn; UDP receivers leave it null (no ack channel to update).
     // QwpWalAppender's internal threshold commit (appendToWalColumnar ->
     // tud.commitIfMaxUncommittedRowsCountReached()) also has no direct consumer
-    // hook; the commit entry points reconcile that advance through
-    // reportCommittedTxn() before acknowledging the frame.
+    // hook; the commit entry points, and reportCommitted() for a QWP commit
+    // batch, reconcile that advance through reportCommittedTxn() before
+    // acknowledging the frame.
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
@@ -300,6 +301,15 @@ public class QwpTudCache implements QuietCloseable {
                 throw discarded;
             }
         }
+    }
+
+    /**
+     * Reports a commit this cache did not make -- the appender's own commit at the
+     * max-uncommitted-rows cap -- to {@link #committedTxnConsumer}, as a commit
+     * through this cache would.
+     */
+    public void reportCommitted(WalTableUpdateDetails tud) {
+        reportCommittedTxn(tud, committedTxnConsumer);
     }
 
     /**
