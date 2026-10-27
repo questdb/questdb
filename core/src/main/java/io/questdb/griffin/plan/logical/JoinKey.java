@@ -65,9 +65,10 @@ public final class JoinKey implements Mutable {
 
     /**
      * The index of the earlier key on the same slave column that the join looks up instead of this key, which operator
-     * planning records for an ASOF, LT or HORIZON JOIN, or -1 when the join looks this key up. The join compares the
-     * master column of this key with the master column of that key and answers a master row whose two columns differ
-     * with no slave row, since no slave row equals both.
+     * planning records for an ASOF, LT or HORIZON JOIN, or -1 when the join looks this key up. The key check of the
+     * join compares the master column of this key with the master column of that key, see
+     * {@link JoinInput#getKeyCheck}, and the join answers a master row whose two columns differ with no slave row,
+     * since no slave row equals both.
      */
     public int getLookupKeyIndex() {
         return lookupKeyIndex;

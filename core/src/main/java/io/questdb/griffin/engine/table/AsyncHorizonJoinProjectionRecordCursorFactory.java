@@ -247,7 +247,10 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         }
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
-            sink.optAttr("keyCheck", slaveStates.getQuick(i).getKeyCheck());
+            final Function keyCheck = slaveStates.getQuick(i).getKeyCheck();
+            if (keyCheck != null) {
+                sink.attr("keyCheck").val(keyCheck, masterFactory);
+            }
             final Function slaveFilter = slaveStates.getQuick(i).getFilter();
             if (slaveFilter != null) {
                 sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));

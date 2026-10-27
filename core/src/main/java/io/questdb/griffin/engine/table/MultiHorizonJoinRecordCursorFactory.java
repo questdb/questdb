@@ -182,7 +182,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.child(masterFactory);
         for (int i = 0, n = slaveStates.size(); i < n; i++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(i);
-            sink.optAttr("keyCheck", state.getKeyCheck());
+            if (state.getKeyCheck() != null) {
+                sink.attr("keyCheck").val(state.getKeyCheck(), masterFactory);
+            }
             if (state.getFilter() != null) {
                 sink.attr("slave filter").val(state.getFilter(), state.getFactory());
             }
@@ -463,6 +465,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 if (slaveFilter != null) {
                     slaveFilter.toTop();
                 }
+                slaveStates.getQuick(s).toTopKeyCheck();
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
                     asOfJoinMaps.getQuick(s).clear();
@@ -562,6 +565,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 if (slaveFilter != null) {
                     slaveFilter.init(slaveCursors.getQuick(s), executionContext);
                 }
+                slaveStates.getQuick(s).initKeyCheck(masterCursor, executionContext);
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s), executionContext.getMemoryTracker());
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
                 final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);

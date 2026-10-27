@@ -64,8 +64,8 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * before each batch does not bound the forward scans that the switch starts, since one batch
  * already spans all offsets: the helpers bound them themselves, see the helper's constructor.
  * <p>
- * The helpers borrow the slave filters of the slave states: the owner's filter, or a worker
- * slot's clone of it. The caller initializes a filter before it binds the slave with {@link #of}.
+ * The helpers borrow the slave filters and the key checks of the slave states: the owner's, or a
+ * worker slot's clone of each. The caller initializes them before it binds the slave with {@link #of}.
  */
 public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     private final ObjList<Map> asOfJoinMaps;
@@ -78,8 +78,8 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     private final ObjList<SymbolTranslatingRecord> translatingRecords;
 
     /**
-     * @param workerIndex the worker slot whose clones of the slave filters the helpers use, or -1
-     *                    for the owner thread, whose helpers use the filters of the slave states
+     * @param workerIndex the worker slot whose clones of the slave filters and key checks the helpers
+     *                    use, or -1 for the owner thread, whose helpers use those of the slave states
      */
     public HorizonJoinMatcher(
             @NotNull CairoConfiguration configuration,
@@ -100,6 +100,7 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                 final HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 masterTsScales[s] = state.getMasterTsScale();
                 final ObjList<Function> perWorkerFilters = state.getPerWorkerFilters();
+                final ObjList<Function> perWorkerKeyChecks = state.getPerWorkerKeyChecks();
                 helpers.add(new HorizonJoinTimeFrameHelper(
                         configuration,
                         configuration.getSqlAsOfJoinLookAhead(),
@@ -109,7 +110,7 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                         configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
                         workerIndex == -1 || perWorkerFilters == null ? state.getFilter() : perWorkerFilters.getQuick(workerIndex),
                         state.getAsOfJoinKeyTypes(),
-                        state.getKeyCheck(),
+                        workerIndex == -1 || perWorkerKeyChecks == null ? state.getKeyCheck() : perWorkerKeyChecks.getQuick(workerIndex),
                         true
                 ));
                 if (state.isKeyed()) {

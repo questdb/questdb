@@ -307,23 +307,6 @@ final class OperatorPlanning implements Mutable {
         }
     }
 
-    private static void planHorizonKeyLookups(HorizonJoinPlan horizon) {
-        final OutputSchema master = horizon.getMaster().getOutput();
-        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
-        for (int i = 0, n = slaves.size(); i < n; i++) {
-            planKeyLookups(slaves.getQuick(i).getKeys(), master);
-        }
-    }
-
-    /**
-     * Decides which keys of an ASOF, LT or HORIZON JOIN the join looks up, see {@link #lookupKeyIndex}.
-     */
-    private static void planKeyLookups(ObjList<JoinKey> keys, OutputSchema master) {
-        for (int k = 0, n = keys.size(); k < n; k++) {
-            keys.getQuick(k).setLookupKeyIndex(lookupKeyIndex(keys, k, master));
-        }
-    }
-
     /**
      * The aggregate a decorrelation domain re-reads through its shared source, as the generator finds it: under the
      * column projections and the leading branches of the set operations of the source's input.
@@ -595,6 +578,23 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * The predicate over {@code master}, the output the master columns of the keys come from, that the master columns of
+     * the keys are all NULL, see {@link JoinInput#getNullKeyCheck}.
+     */
+    private BoundExpression nullKeyCheck(JoinInput step, OutputSchema master) throws SqlException {
+        final ObjList<JoinKey> keys = step.getKeys();
+        BoundExpression nullKeyCheck = null;
+        for (int k = 0, n = keys.size(); k < n; k++) {
+            final JoinKey key = keys.getQuick(k);
+            if (step.indexOfMasterKey(key.getMasterColumnId()) == k) {
+                nullKeyCheck = context.getRewriter().combineConjunction(nullKeyCheck,
+                        context.bindIsNull(key.getMasterColumnId(), master, key.getPosition()), key.getPosition());
+            }
+        }
+        return nullKeyCheck;
+    }
+
+    /**
      * Chooses the parallel top-K of a bounded sort, which reads the page frames under its input: it builds at most one
      * projection over itself, see {@link PlanToFactoryRules#parallelTopKProjection}, reads every sort key from the input of
      * that projection, and reads the page frames of that input, or steals its filter. When the projection's input is
@@ -758,6 +758,15 @@ final class OperatorPlanning implements Mutable {
         }
     }
 
+    private void planHorizonKeyLookups(HorizonJoinPlan horizon) throws SqlException {
+        final OutputSchema master = horizon.getMaster().getOutput();
+        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            final HorizonJoinSlave slave = slaves.getQuick(i);
+            slave.setKeyCheck(planKeyLookups(slave.getKeys(), master));
+        }
+    }
+
     private void planJoin(JoinPlan join) throws SqlException {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -782,7 +791,7 @@ final class OperatorPlanning implements Mutable {
                         validateFullFatTemporalSlave(step);
                     }
                     step.setAlgorithm(algorithm);
-                    planKeyLookups(step.getKeys(), ordered.getQuick(i - 1).getOutput());
+                    step.setKeyCheck(planKeyLookups(step.getKeys(), ordered.getQuick(i - 1).getOutput()));
                     step.setTimeFrameScan(algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && step.getJoinType() == JoinKind.ASOF
                             && isKeyedTemporalStep(join, i, step) ? timeFrameScan(join, i, step) : null);
                 }
@@ -792,6 +801,28 @@ final class OperatorPlanning implements Mutable {
                 }
             }
         }
+    }
+
+    /**
+     * Decides which keys of an ASOF, LT or HORIZON JOIN the join looks up, see {@link #lookupKeyIndex}, and returns its
+     * key check over {@code master}, the output the master columns of the keys come from, see
+     * {@link JoinInput#getKeyCheck}.
+     */
+    private BoundExpression planKeyLookups(ObjList<JoinKey> keys, OutputSchema master) throws SqlException {
+        BoundExpression keyCheck = null;
+        for (int k = 0, n = keys.size(); k < n; k++) {
+            final JoinKey key = keys.getQuick(k);
+            final int lookupKeyIndex = lookupKeyIndex(keys, k, master);
+            key.setLookupKeyIndex(lookupKeyIndex);
+            if (lookupKeyIndex > -1) {
+                final int lookupId = keys.getQuick(lookupKeyIndex).getMasterColumnId();
+                if (lookupId != key.getMasterColumnId()) {
+                    keyCheck = context.getRewriter().combineConjunction(keyCheck,
+                            context.bindEquality(lookupId, key.getMasterColumnId(), master, key.getPosition()), key.getPosition());
+                }
+            }
+        }
+        return keyCheck;
     }
 
     private void planLatestBy(LatestByPlan latest) {
@@ -861,9 +892,11 @@ final class OperatorPlanning implements Mutable {
         }
     }
 
-    private void planRelationalStep(JoinPlan join, int inputIndex, JoinInput step) {
+    private void planRelationalStep(JoinPlan join, int inputIndex, JoinInput step) throws SqlException {
         final LogicalPlan slave = step.getInput();
-        final int markoutIndex = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput().getColumnIndexById(step.getMarkoutTimestampColumnId());
+        final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
+        step.setNullKeyCheck(step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL ? nullKeyCheck(step, master) : null);
+        final int markoutIndex = master.getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
                 && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
                 && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES

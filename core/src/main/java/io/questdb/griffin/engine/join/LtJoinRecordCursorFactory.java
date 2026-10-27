@@ -36,6 +36,7 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.RecordValueSink;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -55,7 +56,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.nu
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final @Nullable JoinKeyCheck keyCheck;
+    private final @Nullable Function keyCheck;
     private final int mapEvacuationThreshold;
     private final RecordSink masterKeySink;
     private final IntList slaveColumnIndex; // maps columns after the split to columns in the slave cursor
@@ -81,7 +82,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             ColumnFilter masterTableKeyColumns,
             long toleranceInterval,
             int slaveValueTimestampIndex,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         Map joinKeyMapA = null;
@@ -164,7 +165,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join");
         sink.attr("condition").val(joinContext);
-        sink.optAttr("keyCheck", keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -175,6 +178,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         this.cursor = null;
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -234,6 +238,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             }
             if (isOpen) {
                 isOpen = false;
+                if (keyCheck != null) {
+                    keyCheck.cursorClosed();
+                }
                 super.close();
             }
         }
@@ -288,7 +295,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
                     this.slaveTimestamp = slaveTimestamp;
                 }
-                if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                if (keyCheck != null && !keyCheck.getBool(masterRecord)) {
                     record.hasSlave(false);
                     return true;
                 }
@@ -332,6 +339,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             danglingSlaveRecord = false;
             masterCursor.toTop();
             slaveCursor.toTop();
+            if (keyCheck != null) {
+                keyCheck.toTop();
+            }
         }
 
         /**
@@ -397,7 +407,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             return true;
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMapA.setMemoryTracker(executionContext.getMemoryTracker());
@@ -409,6 +419,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            if (keyCheck != null) {
+                keyCheck.init(masterCursor, executionContext);
+            }
             currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

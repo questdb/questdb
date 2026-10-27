@@ -57,11 +57,13 @@ public final class JoinInput implements Mutable {
     private boolean isDependent;
     private boolean isSubquery;
     private JoinKind joinType;
+    private BoundExpression keyCheck;
     private BoundExpression keyFilter;
     private int markoutSequenceColumnId = -1;
     private int markoutTimestampColumnId = -1;
     private MasterSide masterSide;
     private NullExtension nullExtension = NullExtension.BY_KEYS;
+    private BoundExpression nullKeyCheck;
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
@@ -98,12 +100,14 @@ public final class JoinInput implements Mutable {
         input = null;
         isDependent = false;
         isSubquery = false;
+        keyCheck = null;
         keyFilter = null;
         joinType = null;
         markoutSequenceColumnId = -1;
         markoutTimestampColumnId = -1;
         masterSide = null;
         nullExtension = NullExtension.BY_KEYS;
+        nullKeyCheck = null;
         onResidual = null;
         position = -1;
         postJoinFilter = null;
@@ -146,6 +150,16 @@ public final class JoinInput implements Mutable {
     }
 
     /**
+     * The predicate over the master row of an ASOF or LT step that a slave row can match it, which operator planning
+     * records: the conjunction of {@code =} between the master column of each key the step checks instead of looking
+     * it up and the master column of the key it looks up instead, see {@link JoinKey#getLookupKeyIndex}. Null when the
+     * step looks up every key, and for any other step.
+     */
+    public BoundExpression getKeyCheck() {
+        return keyCheck;
+    }
+
+    /**
      * Slave-only equality derived when two join keys share a master column.
      */
     public BoundExpression getKeyFilter() {
@@ -179,6 +193,14 @@ public final class JoinInput implements Mutable {
      */
     public NullExtension getNullExtension() {
         return nullExtension;
+    }
+
+    /**
+     * The predicate over the master row of a step its ON residual NULL-extends, see {@link NullExtension#BY_ON_RESIDUAL},
+     * that the master columns of its keys are all NULL, which operator planning records; null for any other step.
+     */
+    public BoundExpression getNullKeyCheck() {
+        return nullKeyCheck;
     }
 
     public BoundExpression getOnResidual() {
@@ -327,6 +349,10 @@ public final class JoinInput implements Mutable {
         this.joinType = Objects.requireNonNull(joinType);
     }
 
+    public void setKeyCheck(BoundExpression keyCheck) {
+        this.keyCheck = keyCheck;
+    }
+
     public void setKeyFilter(BoundExpression keyFilter) {
         this.keyFilter = keyFilter;
     }
@@ -342,6 +368,10 @@ public final class JoinInput implements Mutable {
 
     public void setNullExtension(NullExtension nullExtension) {
         this.nullExtension = Objects.requireNonNull(nullExtension);
+    }
+
+    public void setNullKeyCheck(BoundExpression nullKeyCheck) {
+        this.nullKeyCheck = nullKeyCheck;
     }
 
     public void setOnResidual(BoundExpression onResidual) {
@@ -371,7 +401,9 @@ public final class JoinInput implements Mutable {
         if (JoinKey.visitReads(keys, visitor)) {
             rebuildKeyPairCounts();
         }
+        keyCheck = PlanReads.expression(keyCheck, visitor);
         keyFilter = PlanReads.expression(keyFilter, visitor);
+        nullKeyCheck = PlanReads.expression(nullKeyCheck, visitor);
         onResidual = PlanReads.expression(onResidual, visitor);
         postJoinFilter = PlanReads.expression(postJoinFilter, visitor);
         markoutTimestampColumnId = PlanReads.columnId(markoutTimestampColumnId, -1, visitor);

@@ -87,7 +87,6 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFact
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
@@ -100,7 +99,6 @@ import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
-import io.questdb.griffin.engine.join.NullJoinKey;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.OuterCrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
@@ -277,18 +275,6 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * The key columns of one input of an outer join whose ON residual decides its NULL extension, see
-     * {@link JoinInput.NullExtension#BY_ON_RESIDUAL}.
-     */
-    private static NullJoinKey nullJoinKey(IntList columnIndexes, RecordMetadata metadata) {
-        final IntList columnTypes = new IntList(columnIndexes.size());
-        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-            columnTypes.add(metadata.getColumnType(columnIndexes.getQuick(i)));
-        }
-        return new NullJoinKey(columnIndexes, columnTypes);
-    }
-
-    /**
      * Fills the outer metadata of a column-only projection over the window join and returns the
      * projected column indexes, or null when the projection keeps every column in place.
      */
@@ -363,7 +349,7 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes both factories on entry; the selected full-fat constructor consumes metadata as well.
+     * Consumes both factories and the key check on entry; the selected full-fat constructor consumes metadata as well.
      */
     @NotNull
     private RecordCursorFactory createFullFatJoin(
@@ -376,7 +362,8 @@ final class JoinFactoryGenerator {
             CharSequence slaveAlias,
             FullFatJoinGenerator generator,
             Plannable joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            @Nullable Function keyCheck
     ) throws SqlException {
         final JoinKeyLayout joinKeys = frame.joinKeys;
         final ListColumnFilter listColumnFilterA = joinKeys.slaveColumns;
@@ -509,11 +496,12 @@ final class JoinFactoryGenerator {
                     masterTableKeyColumns,
                     toleranceInterval,
                     slaveValueTimestampIndex,
-                    joinKeys.keyCheck
+                    keyCheck
             );
 
         } catch (Throwable e) {
             if (!isTransferred) {
+                Misc.free(keyCheck, e);
                 Misc.free(metadata, e);
                 Misc.free(master, e);
                 Misc.free(slave, e);
@@ -778,15 +766,12 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Resolves the column indexes of the keys the join looks up into the layout's master and slave indexes, and the
-     * master column indexes of each key it checks instead, with those of the key it is checked against, into the
-     * layout's check pairs, see {@link JoinKey#getLookupKeyIndex}.
+     * Resolves the column indexes of the keys the join looks up into the layout's master and slave indexes, see
+     * {@link JoinKey#getLookupKeyIndex}.
      */
     static void resolveKeys(OutputSchema masterOutput, OutputSchema slaveOutput, ObjList<JoinKey> keys, JoinKeyLayout layout) {
         layout.masterIndexes.clear();
         layout.slaveIndexes.clear();
-        layout.checkedIndexes.clear();
-        layout.checkedLookupIndexes.clear();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final JoinKey key = keys.getQuick(i);
             final int masterIndex = masterOutput.getColumnIndexById(key.getMasterColumnId());
@@ -794,21 +779,14 @@ final class JoinFactoryGenerator {
             if (masterIndex < 0 || slaveIndex < 0) {
                 throw new IllegalStateException("bound join input has changed");
             }
-            final int lookupKeyIndex = key.getLookupKeyIndex();
-            if (lookupKeyIndex == -1) {
+            if (key.getLookupKeyIndex() == -1) {
                 layout.masterIndexes.add(masterIndex);
                 layout.slaveIndexes.add(slaveIndex);
-            } else {
-                final int lookupMasterIndex = masterOutput.getColumnIndexById(keys.getQuick(lookupKeyIndex).getMasterColumnId());
-                if (lookupMasterIndex != masterIndex) {
-                    layout.checkedIndexes.add(masterIndex);
-                    layout.checkedLookupIndexes.add(lookupMasterIndex);
-                }
             }
         }
     }
 
-    // Consumes metadata, both inputs and the optional filter on entry.
+    // Consumes metadata, both inputs, the optional filter and the optional NULL key check on entry.
     RecordCursorFactory createHashJoin(
             GenerationFrame frame,
             JoinRecordMetadata metadata,
@@ -816,6 +794,7 @@ final class JoinFactoryGenerator {
             RecordCursorFactory slave,
             JoinInput step,
             Function filter,
+            @Nullable Function nullKeyCheck,
             Plannable context
     ) {
         final JoinKind joinType = step.getJoinType();
@@ -831,12 +810,7 @@ final class JoinFactoryGenerator {
             final ArrayColumnTypes valueTypes = frame.valueTypes;
             final int[] masterSymbolKeyCols = joinKeys.masterSymbolKeys;
             final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
-            final boolean isNullExtendedByOnResidual = step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL;
-            assert !isNullExtendedByOnResidual || filter != null : "outer join NULL-extended by its ON residual has none";
-            final NullJoinKey masterNullKey = isNullExtendedByOnResidual && joinType != JoinKind.RIGHT_OUTER
-                    ? nullJoinKey(joinKeys.masterIndexes, masterMetadata) : null;
-            final NullJoinKey slaveNullKey = isNullExtendedByOnResidual && joinType != JoinKind.LEFT_OUTER
-                    ? nullJoinKey(joinKeys.slaveIndexes, slaveMetadata) : null;
+            assert nullKeyCheck == null || filter != null : "outer join NULL-extended by its ON residual has none";
 
             final int modelJoinType = SqlCodeGenerator.queryModelJoinType(joinType);
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
@@ -886,8 +860,7 @@ final class JoinFactoryGenerator {
                             modelJoinType,
                             masterSymbolKeyCols,
                             slaveSymbolKeyCols,
-                            masterNullKey,
-                            slaveNullKey
+                            nullKeyCheck
                     );
                 }
 
@@ -957,8 +930,7 @@ final class JoinFactoryGenerator {
                         modelJoinType,
                         masterSymbolKeyCols,
                         slaveSymbolKeyCols,
-                        masterNullKey,
-                        slaveNullKey
+                        nullKeyCheck
                 );
             }
 
@@ -982,6 +954,7 @@ final class JoinFactoryGenerator {
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.free(filter, th);
+                Misc.free(nullKeyCheck, th);
                 Misc.free(metadata, th);
                 Misc.free(master, th);
                 Misc.free(slave, th);
@@ -1131,6 +1104,7 @@ final class JoinFactoryGenerator {
         final JoinInput step = join.getOrderedInputs().getQuick(position);
         JoinRecordMetadata metadata = null;
         Function joinFilter = null;
+        Function nullKeyCheck = null;
         Function residualFilter = null;
         BoundExpression postJoinFilter = step.getPostJoinFilter();
         final RecordCursorFactory joined;
@@ -1177,8 +1151,10 @@ final class JoinFactoryGenerator {
             } else {
                 final JoinKeyLayout joinKeys = frame.joinKeys;
                 resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
-                joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, joinKeys.checkedIndexes,
-                        joinKeys.checkedLookupIndexes, isSelfJoin);
+                joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
+                if (step.getNullKeyCheck() != null) {
+                    nullKeyCheck = functionInstantiator.instantiate(step.getNullKeyCheck(), masterOutput, masterMetadata, executionContext);
+                }
                 if (PlanToFactoryRules.isSlaveEmptied(step)) {
                     final RecordCursorFactory emptied = slave;
                     slave = null;
@@ -1190,12 +1166,13 @@ final class JoinFactoryGenerator {
                 }
                 final Plannable condition = createCondition(step);
                 isTransferred = true;
-                joined = createHashJoin(frame, metadata, master, slave, step, joinFilter, condition);
+                joined = createHashJoin(frame, metadata, master, slave, step, joinFilter, nullKeyCheck, condition);
             }
         } catch (Throwable th) {
             Misc.free(residualFilter, th);
             if (!isTransferred) {
                 Misc.free(joinFilter, th);
+                Misc.free(nullKeyCheck, th);
                 Misc.free(metadata, th);
                 Misc.free(master, th);
                 Misc.free(slave, th);
@@ -1287,8 +1264,8 @@ final class JoinFactoryGenerator {
 
     /**
      * Builds the ASOF join by the recorded algorithm and, for a keyed join that navigates the time frames of its slave,
-     * the recorded time-frame scan. Prepared keys must be installed before entry. Consumes both factories, including
-     * failure.
+     * the recorded time-frame scan. Prepared keys must be installed before entry. Consumes both factories and the key
+     * check, including failure.
      */
     RecordCursorFactory generateJoinAsof(
             GenerationFrame frame,
@@ -1304,7 +1281,8 @@ final class JoinFactoryGenerator {
             @Nullable PreparedFilter stolenFilter,
             CharSequence slaveAlias,
             Plannable condition,
-            long toleranceInterval
+            long toleranceInterval,
+            @Nullable Function keyCheck
     ) throws SqlException {
         final JoinKeyLayout joinKeys = frame.joinKeys;
         final ListColumnFilter listColumnFilterA = joinKeys.slaveColumns;
@@ -1323,7 +1301,8 @@ final class JoinFactoryGenerator {
                         slaveAlias,
                         CREATE_FULL_FAT_AS_OF_JOIN,
                         condition,
-                        toleranceInterval
+                        toleranceInterval,
+                        keyCheck
                 );
             }
 
@@ -1351,7 +1330,7 @@ final class JoinFactoryGenerator {
                             toleranceInterval,
                             joinKeys.masterSymbolKeys,
                             joinKeys.slaveSymbolKeys,
-                            joinKeys.keyCheck
+                            keyCheck
                     );
                 }
                 if (algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME) {
@@ -1375,7 +1354,7 @@ final class JoinFactoryGenerator {
                                     symbolJoinKeyMapping,
                                     condition,
                                     toleranceInterval,
-                                    joinKeys.keyCheck
+                                    keyCheck
                             );
                         }
                         case DENSE -> {
@@ -1394,7 +1373,7 @@ final class JoinFactoryGenerator {
                                     toleranceInterval,
                                     joinKeys.masterSymbolKeys,
                                     joinKeys.slaveSymbolKeys,
-                                    joinKeys.keyCheck
+                                    keyCheck
                             );
                         }
                         case INDEXED -> {
@@ -1410,7 +1389,7 @@ final class JoinFactoryGenerator {
                                     symbolJoinKeyMapping,
                                     condition,
                                     toleranceInterval,
-                                    joinKeys.keyCheck
+                                    keyCheck
                             );
                         }
                         case MEMOIZED, MEMOIZED_DRIVEBY -> {
@@ -1427,7 +1406,7 @@ final class JoinFactoryGenerator {
                                     condition,
                                     toleranceInterval,
                                     timeFrameScan == JoinInput.TimeFrameScan.MEMOIZED_DRIVEBY,
-                                    joinKeys.keyCheck
+                                    keyCheck
                             );
                         }
                         case FAST -> {
@@ -1453,7 +1432,7 @@ final class JoinFactoryGenerator {
                                 toleranceInterval,
                                 null,
                                 null,
-                                joinKeys.keyCheck
+                                keyCheck
                         );
                     } else {
                         joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
@@ -1471,7 +1450,7 @@ final class JoinFactoryGenerator {
                                 toleranceInterval,
                                 joinKeys.masterSymbolKeys,
                                 joinKeys.slaveSymbolKeys,
-                                joinKeys.keyCheck
+                                keyCheck
                         );
                     }
                 }
@@ -1498,7 +1477,7 @@ final class JoinFactoryGenerator {
                             toleranceInterval,
                             null,
                             null,
-                            joinKeys.keyCheck
+                            keyCheck
                     );
                 } else {
                     joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
@@ -1517,7 +1496,7 @@ final class JoinFactoryGenerator {
                             toleranceInterval,
                             joinKeys.masterSymbolKeys,
                             joinKeys.slaveSymbolKeys,
-                            joinKeys.keyCheck
+                            keyCheck
                     );
                 }
             }
@@ -1562,6 +1541,7 @@ final class JoinFactoryGenerator {
             );
         } catch (Throwable t) {
             if (!isTransferred) {
+                Misc.free(keyCheck, t);
                 Misc.free(joinMetadata, t);
                 Misc.free(master, t);
                 Misc.free(slave, t);
@@ -1571,7 +1551,7 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Prepared keys must be installed before entry. Consumes both factories, including failure.
+     * Prepared keys must be installed before entry. Consumes both factories and the key check, including failure.
      */
     RecordCursorFactory generateJoinLt(
             GenerationFrame frame,
@@ -1583,7 +1563,8 @@ final class JoinFactoryGenerator {
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
             Plannable condition,
-            long toleranceInterval
+            long toleranceInterval,
+            @Nullable Function keyCheck
     ) throws SqlException {
         JoinRecordMetadata joinMetadata = null;
         boolean isTransferred = false;
@@ -1600,7 +1581,8 @@ final class JoinFactoryGenerator {
                         slaveAlias,
                         CREATE_FULL_FAT_LT_JOIN,
                         condition,
-                        toleranceInterval
+                        toleranceInterval,
+                        keyCheck
                 );
             }
 
@@ -1627,7 +1609,7 @@ final class JoinFactoryGenerator {
                         toleranceInterval,
                         joinKeys.masterSymbolKeys,
                         joinKeys.slaveSymbolKeys,
-                        joinKeys.keyCheck
+                        keyCheck
                 );
             }
 
@@ -1653,6 +1635,7 @@ final class JoinFactoryGenerator {
             );
         } catch (Throwable t) {
             if (!isTransferred) {
+                Misc.free(keyCheck, t);
                 Misc.free(joinMetadata, t);
                 Misc.free(master, t);
                 Misc.free(slave, t);
@@ -1741,8 +1724,7 @@ final class JoinFactoryGenerator {
             final boolean isSelfJoin = isSelfJoin(master, slave);
             final JoinKeyLayout joinKeys = frame.joinKeys;
             resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
-            joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, joinKeys.checkedIndexes,
-                    joinKeys.checkedLookupIndexes, isSelfJoin);
+            joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
             // Unlike ASOF/LT, designated-timestamp equality remains an actual SPLICE key.
             final Plannable condition = joinKeys.masterIndexes.size() == 0 ? null : createCondition(step);
             isTransferred = true;
@@ -1826,6 +1808,7 @@ final class JoinFactoryGenerator {
             int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        Function keyCheck = null;
         boolean isTransferred = false;
         try {
             final JoinKind joinType = step.getJoinType();
@@ -1835,8 +1818,6 @@ final class JoinFactoryGenerator {
             final RecordMetadata masterMetadata = master.getMetadata();
             final IntList masterKeyIndexes = frame.joinKeys.masterIndexes;
             final IntList slaveKeyIndexes = frame.joinKeys.slaveIndexes;
-            final IntList checkedKeyIndexes = frame.joinKeys.checkedIndexes;
-            final IntList checkedLookupKeyIndexes = frame.joinKeys.checkedLookupIndexes;
             assert masterMetadata.getTimestampIndex() >= 0 && slaveMetadata.getTimestampIndex() >= 0;
             if (step.getOnResidual() != null) {
                 throw new IllegalStateException("temporal join has an ON residual");
@@ -1849,19 +1830,20 @@ final class JoinFactoryGenerator {
             } else {
                 masterKeyIndexes.clear();
                 slaveKeyIndexes.clear();
-                checkedKeyIndexes.clear();
-                checkedLookupKeyIndexes.clear();
             }
-            frame.joinKeys.of(masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, checkedKeyIndexes, checkedLookupKeyIndexes, isSelfJoin);
+            frame.joinKeys.of(masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
             final long toleranceInterval = step.getToleranceInterval();
             final JoinInput.Algorithm algorithm = step.getAlgorithm();
             final Plannable condition = createCondition(step);
+            if (step.getKeyCheck() != null) {
+                keyCheck = functionInstantiator.instantiate(step.getKeyCheck(), masterOutput, masterMetadata, executionContext);
+            }
             isTransferred = true;
             final RecordCursorFactory joined = joinType == JoinKind.ASOF
                     ? generateJoinAsof(frame, algorithm, step.getTimeFrameScan(), isSelfJoin, master, masterMetadata, masterAlias,
-                    slave, slaveMetadata, slaveCrossIndex, stolenFilter, step.getBindingAlias(), condition, toleranceInterval)
+                    slave, slaveMetadata, slaveCrossIndex, stolenFilter, step.getBindingAlias(), condition, toleranceInterval, keyCheck)
                     : generateJoinLt(frame, algorithm, master, masterMetadata, masterAlias, slave, slaveMetadata,
-                    step.getBindingAlias(), condition, toleranceInterval);
+                    step.getBindingAlias(), condition, toleranceInterval, keyCheck);
             final RecordCursorFactory restored = algorithm != JoinInput.Algorithm.FULL_FAT_TEMPORAL ? joined
                     : restoreTemporalOutput(joined, masterMetadata.getColumnCount(), step.getInput().getOutput(), slaveMetadata.getTimestampIndex(),
                     slaveKeyIndexes, step.getOutput());
@@ -1869,6 +1851,7 @@ final class JoinFactoryGenerator {
                     : filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), restored, producerLo, executionContext);
         } catch (Throwable th) {
             if (!isTransferred) {
+                Misc.free(keyCheck, th);
                 Misc.free(master, th);
                 Misc.free(slave, th);
             }
@@ -2222,7 +2205,7 @@ final class JoinFactoryGenerator {
                 ColumnFilter masterTableKeyColumns,
                 long toleranceInterval,
                 int slaveValueTimestampIndex,
-                @Nullable JoinKeyCheck keyCheck
+                @Nullable Function keyCheck
         );
     }
 

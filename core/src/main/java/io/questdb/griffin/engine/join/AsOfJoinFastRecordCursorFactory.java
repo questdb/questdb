@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -49,6 +49,7 @@ import org.jetbrains.annotations.Nullable;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
+    private final @Nullable Function keyCheck;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SymbolShortCircuit symbolShortCircuit;
@@ -68,10 +69,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.keyCheck = keyCheck;
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         this.symbolShortCircuit = symbolShortCircuit;
@@ -117,7 +119,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             // under the bound tracker.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
             Misc.free(slaveCursor);
@@ -143,7 +145,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Fast");
         sink.attr("condition").val(joinContext);
-        sink.optAttr("keyCheck", cursor.keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -158,6 +162,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
         failure = Misc.freeBestEffort(failure, symbolShortCircuit);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -179,7 +184,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 int slaveTimestampType,
                 SingleRecordSink slaveSinkTarget,
                 int lookahead,
-                @Nullable JoinKeyCheck keyCheck
+                @Nullable Function keyCheck
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead, keyCheck);
             this.masterSinkTarget = masterSinkTarget;
@@ -196,7 +201,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen the sinks, the short circuit's cache and the translation caches before super.of()
             // adopts the cursors so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
@@ -205,7 +210,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
             masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(masterRecord);

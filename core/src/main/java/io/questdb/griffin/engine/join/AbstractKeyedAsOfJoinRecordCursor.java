@@ -24,11 +24,14 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,9 +39,12 @@ import org.jetbrains.annotations.Nullable;
  * Abstract base class for keyed ASOF JOIN fast record cursors.
  * Contains the common hasNext() implementation and state management logic
  * shared between different keyed ASOF JOIN implementations.
+ * <p>
+ * The cursor borrows the key check of its factory, see {@code JoinInput#getKeyCheck}, and initializes, rewinds and
+ * releases it with each master cursor.
  */
 public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-    protected final @Nullable JoinKeyCheck keyCheck;
+    protected final @Nullable Function keyCheck;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean origHasSlave;
     protected int origSlaveFrameIndex = -1;
@@ -52,7 +58,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             int slaveTimestampIndex,
             int slaveTimestampType,
             int lookahead,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
         super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
         this.keyCheck = keyCheck;
@@ -94,7 +100,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         long rowId = slaveRecB.getRowId();
         origSlaveFrameIndex = Rows.toPartitionIndex(rowId);
         origSlaveRowId = Rows.toLocalRowID(rowId);
-        if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+        if (keyCheck != null && !keyCheck.getBool(masterRecord)) {
             record.hasSlave(false);
             return true;
         }
@@ -110,9 +116,23 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         return true;
     }
 
-    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+    @Override
+    public void close() {
+        super.close();
+        if (keyCheck != null) {
+            keyCheck.cursorClosed();
+        }
+    }
+
+    /**
+     * Initializes the key check before it adopts the cursors, so that the caller still owns them when it fails.
+     */
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
+        if (keyCheck != null) {
+            keyCheck.init(masterCursor, executionContext);
+        }
         super.of(masterCursor, slaveCursor);
-        this.circuitBreaker = circuitBreaker;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
     }
 
     @Override
@@ -126,6 +146,9 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         origSlaveFrameIndex = -1;
         origSlaveRowId = -1;
         origHasSlave = false;
+        if (keyCheck != null) {
+            keyCheck.toTop();
+        }
     }
 
     /**

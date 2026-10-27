@@ -139,7 +139,9 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         sink.child(masterFactory);
         for (int s = 0, n = slaveStates.size(); s < n; s++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(s);
-            sink.optAttr("keyCheck", state.getKeyCheck());
+            if (state.getKeyCheck() != null) {
+                sink.attr("keyCheck").val(state.getKeyCheck(), masterFactory);
+            }
             if (state.getFilter() != null) {
                 sink.attr("slave filter").val(state.getFilter(), state.getFactory());
             }
@@ -205,7 +207,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         private final DirectLongList timestamps;
         private long batchRowCount;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        // Slaves whose filter of() has initialized, and close() has yet to close
+        // Slaves whose filter and key check of() has initialized, and close() has yet to close
         private int initializedSlaveFilterCount;
         private boolean isMasterExhausted;
         private RecordCursor masterCursor;
@@ -355,6 +357,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                 if (slaveFilter != null) {
                     slaveFilter.toTop();
                 }
+                slaveStates.getQuick(s).toTopKeyCheck();
             }
             batchRowCount = 0;
             rowPosition = 0;
@@ -427,6 +430,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                 if (slaveFilter != null) {
                     slaveFilter.init(slaveCursor, executionContext);
                 }
+                slaveStates.getQuick(s).initKeyCheck(masterCursor, executionContext);
                 matcher.of(s, slaveCursor, masterCursor, slaveCursor, executionContext.getMemoryTracker());
             }
             symbolTableSource.of(masterCursor, slaveSymbolTableSources);

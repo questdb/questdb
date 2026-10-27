@@ -589,7 +589,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             final IntList keys = new IntList();
             addRareKeyRun(positions, keys, 100, 150);
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null, null));
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null));
             try (
                     HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
                     Map map = newMap()
@@ -750,7 +750,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             Arrays.fill(frameRowCounts, 250_000);
             final SlaveCursor cursor = new SlaveCursor(frameRowCounts, row -> (int) (row % 30));
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null, null));
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null));
             try (
                     HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
                     Map map = newMap()
@@ -1163,7 +1163,6 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 newKeySinkTemplate(MasterRecord.KEY_COLUMN),
                 newKeySinkTemplate(SlaveRecord.KEY_COLUMN),
                 1,
-                null,
                 null,
                 null
         );

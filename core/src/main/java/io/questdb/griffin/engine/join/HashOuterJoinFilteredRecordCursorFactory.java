@@ -62,14 +62,13 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
-    private final @Nullable NullJoinKey masterNullKey;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
-    private final @Nullable NullJoinKey slaveNullKey;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Function filter;
     private Map joinKeyMap;
     private Map matchIdsMap;
+    private @Nullable Function nullKeyCheck;
     private RecordChain slaveChain;
     private SymbolTranslatingRecord symbolTranslatingRecord;
 
@@ -89,13 +88,11 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable NullJoinKey masterNullKey,
-            @Nullable NullJoinKey slaveNullKey
+            @Nullable Function nullKeyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.filter = filter;
-        this.masterNullKey = masterNullKey;
-        this.slaveNullKey = slaveNullKey;
+        this.nullKeyCheck = nullKeyCheck;
         try {
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
@@ -209,6 +206,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         this.cursor = null;
         final Function filter = this.filter;
         this.filter = null;
+        final Function nullKeyCheck = this.nullKeyCheck;
+        this.nullKeyCheck = null;
         final Map joinKeyMap = this.joinKeyMap;
         this.joinKeyMap = null;
         final Map matchIdsMap = this.matchIdsMap;
@@ -220,6 +219,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, nullKeyCheck);
         failure = Misc.freeBestEffort(failure, joinKeyMap);
         failure = Misc.freeBestEffort(failure, slaveChain);
         if (matchIdsMap != joinKeyMap) {
@@ -234,15 +234,18 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
         AbstractHashOuterJoinFilteredRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
-            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, masterNullKey, slaveNullKey);
+            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullKeyCheck);
         }
 
         @Override
         public void close() {
             super.close();
-            // _close() detaches the filter before it frees this cursor
+            // _close() detaches the filter and the NULL key check before it frees this cursor
             if (filter != null) {
                 filter.cursorClosed();
+            }
+            if (nullKeyCheck != null) {
+                nullKeyCheck.cursorClosed();
             }
         }
 
@@ -250,11 +253,17 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         public void toTop() {
             super.toTop();
             filter.toTop();
+            if (nullKeyCheck != null) {
+                nullKeyCheck.toTop();
+            }
         }
 
-        void initFilter(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        void initFunctions(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             filterSymbolTableSource.of(masterCursor, slaveCursor);
             filter.init(filterSymbolTableSource, sqlExecutionContext);
+            if (nullKeyCheck != null) {
+                nullKeyCheck.init(masterCursor, sqlExecutionContext);
+            }
         }
 
         private final class NullKeyChains implements HashOuterJoinNullKeys.SlaveChains {
@@ -415,8 +424,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            // Adopt the cursors last so an initFilter() throw leaves them unset for the getCursor() catch.
-            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+            // Adopt the cursors last so an initFunctions() throw leaves them unset for the getCursor() catch.
+            initFunctions(masterCursor, slaveCursor, sqlExecutionContext);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
@@ -490,7 +499,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+            initFunctions(masterCursor, slaveCursor, sqlExecutionContext);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
@@ -625,7 +634,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+            initFunctions(masterCursor, slaveCursor, sqlExecutionContext);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);

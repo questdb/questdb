@@ -41,7 +41,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
-import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -79,7 +78,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable JoinKeyCheck keyCheck,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
@@ -101,7 +99,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,
-                keyCheck,
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,

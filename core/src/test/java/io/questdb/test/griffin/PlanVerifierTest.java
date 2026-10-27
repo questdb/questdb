@@ -657,6 +657,38 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinKeyCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE kc_m (s1 SYMBOL, s2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE kc_s (s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The join looks up s1 and checks s2 on the master row, so it must hold the key check.
+            assertAlgorithmContradicts("SELECT m.ts, s.v FROM kc_m m ASOF JOIN kc_s s ON m.s1 = s.s AND m.s2 = s.s", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertNotNull(step.getKeyCheck());
+                step.setKeyCheck(null);
+            }, PlanVerifier.JOIN_KEY_LOOKUP);
+            // A join that looks up every key holds none.
+            assertAlgorithmContradicts("SELECT m.ts, s.v FROM kc_m m LT JOIN kc_s s ON m.s1 = s.s", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertNull(step.getKeyCheck());
+                step.setKeyCheck(column(1, ColumnType.BOOLEAN));
+            }, PlanVerifier.JOIN_KEY_LOOKUP);
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT count(s.v) FROM kc_m m HORIZON JOIN kc_s s ON (m.s1 = s.s AND m.s2 = s.s) LIST (0s) AS h",
+                            sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final HorizonJoinPlan horizon = find(plan, HorizonJoinPlan.class);
+                Assert.assertNotNull(horizon.getSlaves().getQuick(0).getKeyCheck());
+                verifier.verifyAccessPaths(plan);
+                horizon.getSlaves().getQuick(0).setKeyCheck(null);
+                assertAccessPathsFail(plan, PlanVerifier.JOIN_KEY_LOOKUP, "HorizonJoinPlan");
+            }
+        });
+    }
+
+    @Test
     public void testJoinNullExtensionByOnResidual() {
         final JoinPlan join = join(source(), source(5, 6));
         final JoinInput step = join.getInputs().getQuick(1);
@@ -668,6 +700,29 @@ public class PlanVerifierTest extends AbstractCairoTest {
         verifier.verify(join, PASS);
         step.setJoinType(JoinKind.INNER);
         assertFails(join, PlanVerifier.JOIN_NULL_EXTENSION, "JoinPlan");
+    }
+
+    @Test
+    public void testJoinNullKeyCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nk_a (id INT, w INT)");
+            execute("CREATE TABLE nk_b (id INT, x INT, k INT)");
+            execute("CREATE TABLE nk_c (id INT, k INT)");
+            final String query = "SELECT a.id, b.id, c.id FROM nk_a a LEFT JOIN nk_b b ON b.x > 1 JOIN nk_c c ON a.w = c.k AND b.k = c.k";
+            // The later INNER join implies the key of the LEFT step, whose ON residual NULL-extends it.
+            assertAlgorithmContradicts(query, JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertNotNull(step.getNullKeyCheck());
+                step.setNullKeyCheck(null);
+            }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+            assertAlgorithmContradicts(query, JoinPlan.class, join -> {
+                final BoundExpression nullKeyCheck = nullExtendedStep(join).getNullKeyCheck();
+                final JoinInput step = join.getOrderedInputs().getLast();
+                Assert.assertEquals(JoinInput.NullExtension.BY_KEYS, step.getNullExtension());
+                Assert.assertNull(step.getNullKeyCheck());
+                step.setNullKeyCheck(nullKeyCheck);
+            }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+        });
     }
 
     @Test
@@ -1319,6 +1374,16 @@ public class PlanVerifierTest extends AbstractCairoTest {
             }
         }
         return null;
+    }
+
+    private static JoinInput nullExtendedStep(JoinPlan join) {
+        final ObjList<JoinInput> steps = join.getOrderedInputs();
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            if (steps.getQuick(i).getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL) {
+                return steps.getQuick(i);
+            }
+        }
+        throw new AssertionError("no join step NULL-extended by its ON residual");
     }
 
     private static FunctionSourcePlan source(int... columnIds) {

@@ -55,7 +55,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -77,7 +76,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
     private HorizonJoinNotKeyedRecordCursor cursor;
     private ObjList<GroupByFunction> groupByFunctions;
     private JoinRecordMetadata horizonJoinMetadata;
-    private final @Nullable JoinKeyCheck keyCheck;
+    private @Nullable Function keyCheck;
     private RecordCursorFactory masterFactory;
     private final long[] offsets;
     private RecordCursorFactory slaveFactory;
@@ -102,7 +101,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable JoinKeyCheck keyCheck,
+            @Nullable Function keyCheck,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes
     ) {
@@ -187,7 +186,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
         sink.child(masterFactory);
-        sink.optAttr("keyCheck", keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
         }
@@ -208,6 +209,8 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         this.slaveFactory = null;
         final Function slaveFilter = this.slaveFilter;
         this.slaveFilter = null;
+        final Function keyCheck = this.keyCheck;
+        this.keyCheck = null;
         final SimpleMapValue value = this.value;
         this.value = null;
 
@@ -218,6 +221,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
         }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, keyCheck);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
         CairoException.rethrowCleanupFailure(cleanupFailure);
@@ -231,6 +235,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         private final HorizonTimestampIterator horizonIterator;
         private final HorizonJoinRecord horizonJoinRecord;
         private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+        private final @Nullable Function keyCheck;
         private final RecordSink masterAsOfJoinMapSink;
         private final int masterTimestampColumnIndex;
         private final long masterTsScale;
@@ -266,6 +271,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 long slaveTsScale
         ) {
             this.slaveFilter = HorizonJoinNotKeyedRecordCursorFactory.this.slaveFilter;
+            this.keyCheck = HorizonJoinNotKeyedRecordCursorFactory.this.keyCheck;
             this.groupByFunctions = groupByFunctions;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.offsets = offsets;
@@ -341,6 +347,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                     isSlaveFilterInitialized = false;
                     cleanupFailure = Function.cursorClosed(cleanupFailure, slaveFilter);
                 }
+                cleanupFailure = Function.cursorClosed(cleanupFailure, keyCheck);
                 cleanupFailure = Function.cursorClosed(cleanupFailure, groupByFunctions);
                 CairoException.rethrowCleanupFailure(cleanupFailure);
             }
@@ -395,6 +402,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             if (slaveFilter != null) {
                 slaveFilter.toTop();
+            }
+            if (keyCheck != null) {
+                keyCheck.toTop();
             }
             slaveTimeFrameHelper.toTop();
             if (keyedAsOfJoin) {
@@ -468,6 +478,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             if (slaveFilter != null) {
                 isSlaveFilterInitialized = true;
                 slaveFilter.init(slaveCursor, executionContext);
+            }
+            if (keyCheck != null) {
+                keyCheck.init(masterCursor, executionContext);
             }
             slaveTimeFrameHelper.of(slaveCursor, executionContext.getMemoryTracker());
 

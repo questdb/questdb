@@ -34,6 +34,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -56,7 +57,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
 
-    private final @Nullable JoinKeyCheck keyCheck;
+    private final @Nullable Function keyCheck;
     private final RecordSink masterKeyCopier;
     private final RecordSink slaveKeyCopier;
     private final @Nullable SymbolJoinKeyMapping symbolJoinKeyMapping;
@@ -78,7 +79,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.keyCheck = keyCheck;
@@ -147,7 +148,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Light");
         sink.attr("condition").val(joinContext);
-        sink.optAttr("keyCheck", keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -164,6 +167,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -216,6 +220,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 joinKeyToRowId.close();
                 Misc.free(symbolTranslatingRecord);
                 Misc.free(symbolJoinKeyMapping);
+                if (keyCheck != null) {
+                    keyCheck.cursorClosed();
+                }
                 super.close();
             }
         }
@@ -282,7 +289,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     this.lastSlaveRowID = slaveRowID;
                 }
 
-                if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                if (keyCheck != null && !keyCheck.getBool(masterRecord)) {
                     record.hasSlave(false);
                     return true;
                 }
@@ -332,6 +339,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
+            if (keyCheck != null) {
+                keyCheck.toTop();
+            }
         }
 
         /**
@@ -358,7 +368,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             return true;
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyToRowId.setMemoryTracker(executionContext.getMemoryTracker());
@@ -369,6 +379,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            if (keyCheck != null) {
+                keyCheck.init(masterCursor, executionContext);
+            }
             if (symbolJoinKeyMapping != null) {
                 symbolJoinKeyMapping.of(slaveCursor);
             }

@@ -33,6 +33,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -54,7 +55,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 
 // merge join of two cursors ordered by timestamp plus additional conditions
 public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final @Nullable JoinKeyCheck keyCheck;
+    private final @Nullable Function keyCheck;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final long toleranceInterval;
@@ -75,7 +76,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.keyCheck = keyCheck;
@@ -141,7 +142,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join Light");
         sink.attr("condition").val(joinContext);
-        sink.optAttr("keyCheck", keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -158,6 +161,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -208,6 +212,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             if (isOpen) {
                 joinKeyMap.close();
                 Misc.free(symbolTranslatingRecord);
+                if (keyCheck != null) {
+                    keyCheck.cursorClosed();
+                }
                 super.close();
                 isOpen = false;
             }
@@ -268,7 +275,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     this.lastSlaveRowID = slaveRowID;
                 }
 
-                if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+                if (keyCheck != null && !keyCheck.getBool(masterRecord)) {
                     record.hasSlave(false);
                     return true;
                 }
@@ -318,6 +325,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
+            if (keyCheck != null) {
+                keyCheck.toTop();
+            }
         }
 
         /**
@@ -342,13 +352,16 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             return true;
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            if (keyCheck != null) {
+                keyCheck.init(masterCursor, executionContext);
+            }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);

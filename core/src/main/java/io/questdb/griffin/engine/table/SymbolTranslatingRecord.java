@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecord;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -147,6 +148,13 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         Misc.freeIfCloseable(slaveSymbolTableCache);
         masterSource = null;
         slaveSource = null;
+    }
+
+    /**
+     * The record whose symbol keys this record translates, see {@link #of}.
+     */
+    public Record getBaseRecord() {
+        return base;
     }
 
     @Override

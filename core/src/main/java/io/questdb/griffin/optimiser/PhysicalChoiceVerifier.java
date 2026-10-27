@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -86,15 +87,21 @@ final class PhysicalChoiceVerifier {
 
     /**
      * Whether the keys of an ASOF, LT or HORIZON JOIN that operator planning planned, {@code isPlanned}, record the
-     * lookups it decides, see {@link OperatorPlanning#lookupKeyIndex}, and every other key none.
+     * lookups it decides, see {@link OperatorPlanning#lookupKeyIndex}, and every other key none, and whether the join
+     * has a key check, {@code keyCheck}, exactly when it checks a key whose master column differs from the master column
+     * of the key it looks up instead, see {@link JoinInput#getKeyCheck}.
      */
-    private static boolean areKeyLookupsPlanned(ObjList<JoinKey> keys, OutputSchema master, boolean isPlanned) {
+    private static boolean areKeyLookupsPlanned(ObjList<JoinKey> keys, OutputSchema master, boolean isPlanned, BoundExpression keyCheck) {
+        boolean hasKeyCheck = false;
         for (int k = 0, n = keys.size(); k < n; k++) {
-            if (keys.getQuick(k).getLookupKeyIndex() != (isPlanned ? OperatorPlanning.lookupKeyIndex(keys, k, master) : -1)) {
+            final JoinKey key = keys.getQuick(k);
+            final int lookupKeyIndex = key.getLookupKeyIndex();
+            if (lookupKeyIndex != (isPlanned ? OperatorPlanning.lookupKeyIndex(keys, k, master) : -1)) {
                 return false;
             }
+            hasKeyCheck |= lookupKeyIndex > -1 && keys.getQuick(lookupKeyIndex).getMasterColumnId() != key.getMasterColumnId();
         }
-        return true;
+        return hasKeyCheck == (keyCheck != null);
     }
 
     private static boolean areTemporalTimestampsDesignated(JoinPlan join) {
@@ -461,7 +468,8 @@ final class PhysicalChoiceVerifier {
      */
     static String horizon(HorizonJoinPlan horizon, boolean isPlanned) {
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-            if (!areKeyLookupsPlanned(horizon.getSlaves().getQuick(i).getKeys(), horizon.getMaster().getOutput(), isPlanned)) {
+            final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
+            if (!areKeyLookupsPlanned(slave.getKeys(), horizon.getMaster().getOutput(), isPlanned, slave.getKeyCheck())) {
                 return PlanVerifier.JOIN_KEY_LOOKUP;
             }
         }
@@ -549,8 +557,11 @@ final class PhysicalChoiceVerifier {
             return PlanVerifier.JOIN_ALGORITHM;
         }
         if (position > 0 && !areKeyLookupsPlanned(step.getKeys(), join.getOrderedInputs().getQuick(position - 1).getOutput(),
-                joinType == JoinKind.ASOF || joinType == JoinKind.LT)) {
+                joinType == JoinKind.ASOF || joinType == JoinKind.LT, step.getKeyCheck())) {
             return PlanVerifier.JOIN_KEY_LOOKUP;
+        }
+        if ((step.getNullKeyCheck() != null) != (step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL)) {
+            return PlanVerifier.JOIN_NULL_KEY_CHECK;
         }
         if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
             return PlanVerifier.JOIN_SLAVE_VALUE_TYPE;

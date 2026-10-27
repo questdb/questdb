@@ -116,6 +116,13 @@ final class OptimiserContext implements Mutable {
     }
 
     /**
+     * Binds {@code IS NULL} over the column of {@code output}, as the parser spells it: {@code = NULL}.
+     */
+    BoundExpression bindIsNull(int columnId, OutputSchema output, int position) throws SqlException {
+        return bindCall("=", position, column(output, columnId, position), planNodes.constants.next().ofNull(position), output);
+    }
+
+    /**
      * The arguments the next {@link #bindCall(CharSequence, int, OutputSchema)} binds.
      */
     ObjList<BoundExpression> getCallArguments() {

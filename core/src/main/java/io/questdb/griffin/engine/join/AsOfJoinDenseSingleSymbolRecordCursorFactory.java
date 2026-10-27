@@ -28,14 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
@@ -54,9 +56,9 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
             SymbolJoinKeyMapping joinKeyMapping,
             Plannable joinContext,
             long toleranceInterval,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
-        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
+        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval, keyCheck);
         this.joinKeyMapping = joinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         Map fwdScanKeyToRowId = null;
@@ -100,7 +102,7 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                 int masterTimestampType,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                @Nullable JoinKeyCheck keyCheck
+                @Nullable Function keyCheck
         ) {
             super(
                     columnSplit,
@@ -122,10 +124,10 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen the symbol key cache before super.of() adopts the cursors so an open-time breach frees it exactly once.
             joinKeyMapping.reopen();
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
             joinKeyMapping.of(slaveCursor);
         }
 

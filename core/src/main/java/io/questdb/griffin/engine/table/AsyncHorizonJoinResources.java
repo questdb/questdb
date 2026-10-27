@@ -10,31 +10,39 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Owns async horizon resources while construction transfers them from the SQL generator to an atom: the filter of
- * the master's page frames, the per-worker aggregate functions, the key functions and their per-worker clones, and
- * the filter of the slave.
+ * the master's page frames, the per-worker aggregate functions, the key functions and their per-worker clones, the
+ * filter of the slave, and the key check of the join and its per-worker clones.
  */
 public final class AsyncHorizonJoinResources extends AsyncFilterResources {
+    private @Nullable Function keyCheck;
     private @Nullable ObjList<Function> keyFunctions;
     private @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
+    private @Nullable ObjList<Function> perWorkerKeyChecks;
     private @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private @Nullable ObjList<Function> perWorkerSlaveFilters;
     private @Nullable Function slaveFilter;
 
     /**
      * Takes every resource of {@code filter}, the filter of the master's page frames, and the filter function and its
-     * per-worker clones of {@code slaveFilter}, the filter of the slave's rows, if any.
+     * per-worker clones of {@code slaveFilter}, the filter of the slave's rows, if any. {@code keyCheck} is the
+     * predicate over the master row that a slave row can match it, if any, and {@code perWorkerKeyChecks} its
+     * per-worker clones, null when it is thread-safe.
      */
     public AsyncHorizonJoinResources(
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @Nullable ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             AsyncFilterResources filter,
-            @Nullable AsyncFilterResources slaveFilter
+            @Nullable AsyncFilterResources slaveFilter,
+            @Nullable Function keyCheck,
+            @Nullable ObjList<Function> perWorkerKeyChecks
     ) {
         super(filter);
         this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
         this.keyFunctions = keyFunctions;
         this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+        this.keyCheck = keyCheck;
+        this.perWorkerKeyChecks = perWorkerKeyChecks;
         if (slaveFilter != null) {
             this.slaveFilter = slaveFilter.takeFilter();
             this.perWorkerSlaveFilters = slaveFilter.takePerWorkerFilters();
@@ -55,7 +63,17 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
         slaveFilter = null;
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveFilters);
         perWorkerSlaveFilters = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, keyCheck);
+        keyCheck = null;
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerKeyChecks);
+        perWorkerKeyChecks = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    @Nullable Function takeKeyCheck() {
+        final Function value = keyCheck;
+        keyCheck = null;
+        return value;
     }
 
     @Nullable ObjList<Function> takeKeyFunctions() {
@@ -67,6 +85,12 @@ public final class AsyncHorizonJoinResources extends AsyncFilterResources {
     @Nullable ObjList<ObjList<GroupByFunction>> takePerWorkerGroupByFunctions() {
         final ObjList<ObjList<GroupByFunction>> value = perWorkerGroupByFunctions;
         perWorkerGroupByFunctions = null;
+        return value;
+    }
+
+    @Nullable ObjList<Function> takePerWorkerKeyChecks() {
+        final ObjList<Function> value = perWorkerKeyChecks;
+        perWorkerKeyChecks = null;
         return value;
     }
 

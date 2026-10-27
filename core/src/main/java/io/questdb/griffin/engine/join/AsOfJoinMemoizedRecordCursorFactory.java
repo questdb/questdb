@@ -32,12 +32,12 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
@@ -86,6 +86,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
     private final boolean driveByCaching;
+    private final @Nullable Function keyCheck;
     private final int slaveSymbolColumnIndex;
     private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
@@ -102,10 +103,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             Plannable joinContext,
             long toleranceInterval,
             boolean driveByCaching,
-            @Nullable JoinKeyCheck keyCheck
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
@@ -141,7 +143,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             // Bind before of(), which reopens rememberedSymbols and the symbol key cache before adopting the cursors.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -167,7 +169,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Memoized Scan");
         sink.attr("condition").val(joinContext);
-        sink.optAttr("keyCheck", cursor.keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         sink.attr("driveByCache").val(driveByCaching);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -179,6 +183,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         this.cursor = null;
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -207,7 +212,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 int masterTimestampType,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                @Nullable JoinKeyCheck keyCheck
+                @Nullable Function keyCheck
         ) {
             super(
                     columnSplit,
@@ -230,13 +235,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen rememberedSymbols and the symbol key cache before super.of() adopts the cursors
             // so an open-time breach frees each exactly once.
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
             symbolJoinKeyMapping.reopen();
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
             symbolJoinKeyMapping.of(slaveCursor);
             earliestRowId = Long.MIN_VALUE;
         }

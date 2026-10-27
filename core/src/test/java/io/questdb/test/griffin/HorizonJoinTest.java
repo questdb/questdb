@@ -2159,6 +2159,76 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinMasterKeysShareSlaveColumnAcrossWorkers() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            executeWithPool(pool, (engine, compiler, context) -> {
+                // s2 differs from s1 on every third trade, and both are NULL on every seventh, which the key check pairs.
+                engine.execute("""
+                        CREATE TABLE trades AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:01Z'::TIMESTAMP, 1_000_000) ts,
+                                   CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 8)::SYMBOL END s1,
+                                   CASE WHEN x % 7 = 0 THEN NULL WHEN x % 3 = 0 THEN ((x + 1) % 8)::SYMBOL ELSE (x % 8)::SYMBOL END s2
+                            FROM long_sequence(512)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                engine.execute("""
+                        CREATE TABLE quotes AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:00.5Z'::TIMESTAMP, 100_000) ts,
+                                   CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 8)::SYMBOL END s,
+                                   x::DOUBLE price
+                            FROM long_sequence(5_120)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                // Each query against a join keyed on s1 that drops the quote of a trade whose s1 and s2 differ.
+                final String q = "CASE WHEN t.s1 = t.s2 THEN q.price END";
+                final String r = "CASE WHEN t.s1 = t.s2 THEN r.price END";
+                final String shared = "HORIZON JOIN quotes q ON (t.s1 = q.s AND t.s2 = q.s) ";
+                final String sharedR = "HORIZON JOIN quotes r ON (t.s2 = r.s AND t.s1 = r.s) ";
+                final String range = "RANGE FROM -2s TO 2s STEP 1s AS h";
+                final String[] queries = {
+                        "SELECT t.s1, count(q.price) c, sum(q.price) s FROM trades t " + shared + range + " ORDER BY 1",
+                        "SELECT t.s1, count(" + q + ") c, sum(" + q + ") s FROM trades t HORIZON JOIN quotes q ON (t.s1 = q.s) " + range + " ORDER BY 1",
+                        "SELECT count(q.price) c, sum(q.price) s FROM trades t " + shared + range,
+                        "SELECT count(" + q + ") c, sum(" + q + ") s FROM trades t HORIZON JOIN quotes q ON (t.s1 = q.s) " + range,
+                        "SELECT t.s1, sum(q.price) s, sum(r.price) s1 FROM trades t " + shared + sharedR + range + " ORDER BY 1",
+                        "SELECT t.s1, sum(" + q + ") s, sum(" + r + ") s1 FROM trades t HORIZON JOIN quotes q ON (t.s1 = q.s) "
+                                + "HORIZON JOIN quotes r ON (t.s2 = r.s) " + range + " ORDER BY 1",
+                        "SELECT t.ts, h.offset, q.price FROM trades t " + shared + "LIST (-1s, 0s, 1s) AS h ORDER BY 1, 2",
+                        "SELECT t.ts, h.offset, " + q + " price FROM trades t HORIZON JOIN quotes q ON (t.s1 = q.s) "
+                                + "LIST (-1s, 0s, 1s) AS h ORDER BY 1, 2"
+                };
+                final Class<?>[] parallelFactories = {
+                        AsyncHorizonJoinRecordCursorFactory.class,
+                        AsyncHorizonJoinNotKeyedRecordCursorFactory.class,
+                        AsyncMultiHorizonJoinRecordCursorFactory.class,
+                        AsyncHorizonJoinProjectionRecordCursorFactory.class
+                };
+                final StringSink expected = new StringSink();
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    for (int i = 0; i < queries.length; i += 2) {
+                        TestUtils.printSql(compiler, context, "EXPLAIN " + queries[i], expected);
+                        TestUtils.assertContains(expected, "keyCheck: s1=s2");
+                        TestUtils.printSql(compiler, context, queries[i + 1], expected);
+                        try (RecordCursorFactory factory = engine.select(queries[i], context)) {
+                            if (isParallel) {
+                                TestUtils.assertFactoryInTree(factory, parallelFactories[i / 2]);
+                            }
+                            new QueryAssertion(engine, factory).withContext(context).inferTimestamp().inferRandomAccess().expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
     public void testHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");

@@ -64,15 +64,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
     private final RecordSink masterKeySink;
-    private final @Nullable NullJoinKey masterNullKey;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
-    private final @Nullable NullJoinKey slaveNullKey;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private AbstractHashOuterJoinLightRecordCursor cursor;
     private Function filter;
     private Map joinKeyMap;
     private Map matchIdsMap;
+    private @Nullable Function nullKeyCheck;
     private LongChain slaveChain;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
@@ -91,13 +90,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable NullJoinKey masterNullKey,
-            @Nullable NullJoinKey slaveNullKey
+            @Nullable Function nullKeyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.filter = filter;
-        this.masterNullKey = masterNullKey;
-        this.slaveNullKey = slaveNullKey;
+        this.nullKeyCheck = nullKeyCheck;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         try {
@@ -174,7 +171,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             masterCursor = masterFactory.getCursor(executionContext);
             if (joinType == QueryModel.JOIN_FULL_OUTER) {
                 boolean swapped = false;
-                if (masterNullKey == null && masterFactory.recordCursorSupportsRandomAccess()) {
+                if (nullKeyCheck == null && masterFactory.recordCursorSupportsRandomAccess()) {
                     long masterSize = masterCursor.size();
                     long slaveSize = slaveCursor.size();
 
@@ -241,6 +238,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         this.cursor = null;
         final Function filter = this.filter;
         this.filter = null;
+        final Function nullKeyCheck = this.nullKeyCheck;
+        this.nullKeyCheck = null;
         final Map joinKeyMap = this.joinKeyMap;
         this.joinKeyMap = null;
         final Map matchIdsMap = this.matchIdsMap;
@@ -252,6 +251,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, nullKeyCheck);
         failure = Misc.freeBestEffort(failure, joinKeyMap);
         failure = Misc.freeBestEffort(failure, slaveChain);
         if (matchIdsMap != joinKeyMap) {
@@ -266,15 +266,18 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
         AbstractHashOuterJoinFilteredLightRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
-            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterKeySink, masterNullKey, slaveNullKey);
+            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterKeySink, nullKeyCheck);
         }
 
         @Override
         public void close() {
             super.close();
-            // _close() detaches the filter before it frees this cursor
+            // _close() detaches the filter and the NULL key check before it frees this cursor
             if (filter != null) {
                 filter.cursorClosed();
+            }
+            if (nullKeyCheck != null) {
+                nullKeyCheck.cursorClosed();
             }
         }
 
@@ -282,11 +285,17 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         public void toTop() {
             super.toTop();
             filter.toTop();
+            if (nullKeyCheck != null) {
+                nullKeyCheck.toTop();
+            }
         }
 
-        void initFilter(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        void initFunctions(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             filterSymbolTableSource.of(masterCursor, slaveCursor);
             filter.init(filterSymbolTableSource, sqlExecutionContext);
+            if (nullKeyCheck != null) {
+                nullKeyCheck.init(masterCursor, sqlExecutionContext);
+            }
         }
 
         private final class NullKeyChains implements HashOuterJoinNullKeys.SlaveChains {
@@ -510,11 +519,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             // The filter source mirrors this cursor's getSymbolTable(): when swapped, master/slave
             // columns resolve against the swapped-back cursors. Adopt master/slave last so an
-            // initFilter() throw leaves them unset for the getCursor() catch.
+            // initFunctions() throw leaves them unset for the getCursor() catch.
             if (swapped) {
-                initFilter(slaveCursor, masterCursor, sqlExecutionContext);
+                initFunctions(slaveCursor, masterCursor, sqlExecutionContext);
             } else {
-                initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+                initFunctions(masterCursor, slaveCursor, sqlExecutionContext);
             }
             this.mapCursor = Misc.free(mapCursor);
             this.unmatchedChainCursor = null;
@@ -595,7 +604,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+            initFunctions(masterCursor, slaveCursor, sqlExecutionContext);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
@@ -733,7 +742,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            initFilter(masterCursor, slaveCursor, sqlExecutionContext);
+            initFunctions(masterCursor, slaveCursor, sqlExecutionContext);
             mapCursor = Misc.free(mapCursor);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());

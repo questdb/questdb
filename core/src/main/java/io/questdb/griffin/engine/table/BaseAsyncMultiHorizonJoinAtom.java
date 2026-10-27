@@ -223,7 +223,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                             bwdScanSwitchFactor,
                             state.getPerWorkerFilters() == null ? state.getFilter() : state.getPerWorkerFilters().getQuick(w),
                             state.getAsOfJoinKeyTypes(),
-                            state.getKeyCheck()
+                            state.getPerWorkerKeyChecks() == null ? state.getKeyCheck() : state.getPerWorkerKeyChecks().getQuick(w)
                     ));
                 }
             }
@@ -633,6 +633,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 executionContext.setCloneSymbolTables(current);
             }
         }
+        state.initKeyCheck(masterSymbolTableSource, executionContext);
         // Initialize owner cursor for this slave. Each owner and per-worker pool is sized to the
         // configured budget, so a fan-out over a parquet slave would multiply peak RSS by the pool
         // count (here workerCount * slaveCount); MONOTONIC caps each effective budget to a quarter.
@@ -731,6 +732,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             if (state.getPerWorkerFilters() != null) {
                 GroupByUtils.toTop(state.getPerWorkerFilters());
             }
+            state.toTopKeyCheck();
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {

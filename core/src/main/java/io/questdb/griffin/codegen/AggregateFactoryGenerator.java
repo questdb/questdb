@@ -59,7 +59,6 @@ import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
-import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -519,7 +518,7 @@ public final class AggregateFactoryGenerator {
                 keys.slaveIndexes.setQuick(i, slaveCrossIndex.getQuick(keys.slaveIndexes.getQuick(i)));
             }
         }
-        keys.of(masterMetadata, slaveMetadata, keys.masterIndexes, keys.slaveIndexes, keys.checkedIndexes, keys.checkedLookupIndexes, false);
+        keys.of(masterMetadata, slaveMetadata, keys.masterIndexes, keys.slaveIndexes, false);
         keys.convertSymbolKeysToInt(masterMetadata, slaveMetadata);
         return keys;
     }
@@ -956,9 +955,12 @@ public final class AggregateFactoryGenerator {
     ) throws SqlException {
         ObjList<HorizonJoinSlaveState> slaveStates = null;
         AsyncFilterResources slaveFilterResources = null;
+        Function keyCheck = null;
+        ObjList<Function> workerKeyChecks = null;
         boolean isAdopted = false;
         try {
             final RecordMetadata masterMetadata = master.getMetadata();
+            final OutputSchema masterOutput = plan.getMaster().getOutput();
             final ObjList<HorizonJoinSlave> steps = plan.getSlaves();
             final int slaveCount = slaves.size();
             final boolean isProjection = plan.getConsumer() == HorizonJoinPlan.Consumer.PROJECTION;
@@ -998,7 +1000,7 @@ public final class AggregateFactoryGenerator {
                     columnSources[column] = MultiHorizonJoinRecord.SOURCE_SLAVE_BASE + s;
                     columnIndices[column] = crossIndex != null ? crossIndex.getQuick(i) : i;
                 }
-                keys.add(horizonJoinKeys(steps.getQuick(s), plan.getMaster().getOutput(), masterMetadata, slaves.getQuick(s).getMetadata(), crossIndex));
+                keys.add(horizonJoinKeys(steps.getQuick(s), masterOutput, masterMetadata, slaves.getQuick(s).getMetadata(), crossIndex));
             }
             final boolean isKeyed = keyTypes.getColumnCount() > 0;
             if (isParallel && !isProjection) {
@@ -1010,7 +1012,14 @@ public final class AggregateFactoryGenerator {
                 final ArrayColumnTypes joinKeyTypes = key == null ? null : key.keyTypes;
                 final int[] masterSymbols = key == null ? null : key.masterSymbolKeys;
                 final int[] slaveSymbols = key == null ? null : key.slaveSymbolKeys;
-                final JoinKeyCheck keyCheck = key == null ? null : key.keyCheck;
+                final BoundExpression keyCheckExpression = steps.getQuick(0).getKeyCheck();
+                if (keyCheckExpression != null) {
+                    keyCheck = functionInstantiator.instantiate(keyCheckExpression, masterOutput, masterMetadata, executionContext);
+                    if (isParallel) {
+                        workerKeyChecks = functionInstantiator.instantiateWorkers(keyCheckExpression, masterOutput, masterMetadata,
+                                keyCheck, workerCount, executionContext);
+                    }
+                }
                 final PreparedFilter slaveFilter = slaveFilters.getQuick(0);
                 if (!isParallel) {
                     final RecordSink masterSink = key == null ? null : key.createMasterSink(configuration, asm, masterMetadata);
@@ -1029,18 +1038,18 @@ public final class AggregateFactoryGenerator {
                 final RecordSinkTemplate slaveSinkTemplate = key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata());
                 slaveFilterResources = slaveFilter != null ? slaveFilter.adopt() : null;
                 final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, keyFunctions,
-                        workerKeyFunctions, filterResources, slaveFilterResources);
+                        workerKeyFunctions, filterResources, slaveFilterResources, keyCheck, workerKeyChecks);
                 isAdopted = true;
                 return isKeyed
                         ? new AsyncHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
                         groupByFunctions, recordFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkTemplate,
-                        slaveSinkTemplate, masterColumnCount, masterSymbols, slaveSymbols, keyCheck, columnFilter, columnSources, columnIndices,
+                        slaveSinkTemplate, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
                         resources, workerCount)
                         : new AsyncHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
                         groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSinkTemplate, slaveSinkTemplate,
-                        masterColumnCount, masterSymbols, slaveSymbols, keyCheck, columnSources, columnIndices, resources, workerCount);
+                        masterColumnCount, masterSymbols, slaveSymbols, columnSources, columnIndices, resources, workerCount);
             }
             final ColumnTypes[] joinKeyTypes = new ColumnTypes[slaveCount];
             final int masterTimestampType = masterMetadata.getTimestampType();
@@ -1060,8 +1069,7 @@ public final class AggregateFactoryGenerator {
                         key == null ? null : key.masterSinkTemplate(configuration, asm, masterMetadata),
                         key == null ? null : key.slaveSinkTemplate(configuration, asm, slave.getMetadata()),
                         masterColumnCount,
-                        key == null ? null : key.masterSymbolKeys, key == null ? null : key.slaveSymbolKeys,
-                        key == null ? null : key.keyCheck);
+                        key == null ? null : key.masterSymbolKeys, key == null ? null : key.slaveSymbolKeys);
                 slaveStates.add(state);
                 slaves.setQuick(s, null);
                 final PreparedFilter slaveFilter = slaveFilters.getQuick(s);
@@ -1070,6 +1078,14 @@ public final class AggregateFactoryGenerator {
                     state.setPerWorkerFilters(stateFilterResources.takePerWorkerFilters());
                     state.setFilter(stateFilterResources.takeFilter());
                 }
+                final BoundExpression keyCheckExpression = steps.getQuick(s).getKeyCheck();
+                if (keyCheckExpression != null) {
+                    state.setKeyCheck(functionInstantiator.instantiate(keyCheckExpression, masterOutput, masterMetadata, executionContext));
+                    if (isParallel) {
+                        state.setPerWorkerKeyChecks(functionInstantiator.instantiateWorkers(keyCheckExpression, masterOutput, masterMetadata,
+                                state.getKeyCheck(), workerCount, executionContext));
+                    }
+                }
             }
             if (isProjection) {
                 if (!isParallel) {
@@ -1077,7 +1093,7 @@ public final class AggregateFactoryGenerator {
                     return new HorizonJoinProjectionRecordCursorFactory(configuration, innerMetadata, master, slaveStates,
                             offsets, masterTimestampIndex, columnSources, columnIndices);
                 }
-                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, filterResources, null);
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, filterResources, null, null, null);
                 isAdopted = true;
                 return new AsyncHorizonJoinProjectionRecordCursorFactory(configuration, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), innerMetadata, master, slaveStates, offsets, masterTimestampIndex,
@@ -1093,7 +1109,7 @@ public final class AggregateFactoryGenerator {
                         offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources, columnIndices);
             }
             final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, keyFunctions,
-                    workerKeyFunctions, filterResources, null);
+                    workerKeyFunctions, filterResources, null, null, null);
             isAdopted = true;
             return isKeyed
                     ? new AsyncMultiHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
@@ -1113,6 +1129,8 @@ public final class AggregateFactoryGenerator {
                 Misc.freeObjList(keyFunctions, th);
                 Misc.free(filterResources, th);
                 Misc.free(slaveFilterResources, th);
+                Misc.free(keyCheck, th);
+                Misc.freeObjList(workerKeyChecks, th);
                 Misc.freeObjList(slaveStates, th);
                 Misc.freeObjList(slaves, th);
                 Misc.free(master, th);

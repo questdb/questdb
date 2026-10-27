@@ -30,12 +30,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
@@ -84,6 +84,7 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinRecordCursorFactory {
     protected static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     protected static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
+    private final @Nullable Function keyCheck;
     private final long toleranceInterval;
     protected AsOfJoinDenseRecordCursorBase cursor;
 
@@ -92,11 +93,12 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             Plannable joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.keyCheck = keyCheck;
         this.toleranceInterval = toleranceInterval;
-
     }
 
     @Override
@@ -115,7 +117,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             // first malloc lands under the bound tracker.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -140,7 +142,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     public void toPlan(PlanSink sink) {
         putFactoryType(sink);
         sink.attr("condition").val(joinContext);
-        sink.optAttr("keyCheck", cursor.keyCheck);
+        if (keyCheck != null) {
+            sink.attr("keyCheck").val(keyCheck, masterFactory);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -151,6 +155,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         this.cursor = null;
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -176,7 +181,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 int masterTimestampType,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                @Nullable JoinKeyCheck keyCheck
+                @Nullable Function keyCheck
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, 1, keyCheck);
             this.fwdScanKeyToRowId = fwdScanKeyToRowId;
@@ -201,7 +206,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL
                     ? Long.MIN_VALUE
                     : masterTimestamp - toleranceInterval;
-            if (keyCheck != null && !keyCheck.isMatchable(masterRecord)) {
+            if (keyCheck != null && !keyCheck.getBool(masterRecord)) {
                 record.hasSlave(false);
                 return true;
             }
@@ -298,14 +303,14 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen the scan maps before super.of() adopts the cursors so an open-time breach frees each exactly once.
             fwdScanKeyToRowId.reopen();
             fwdScanKeyToRowId.clear();
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
             resetScanState();
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
         }
 
         @Override

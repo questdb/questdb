@@ -38,15 +38,16 @@ import org.jetbrains.annotations.Nullable;
  * The NULL extension of a filtered hash outer join by its ON residual, see
  * {@code JoinInput.NullExtension#BY_ON_RESIDUAL}: the join NULL-extends a master row whose keys are all NULL when no
  * slave row passes the ON residual with it, and a slave row whose keys are all NULL when no master row does. The
- * {@link SlaveChains} of the join walk the chains of slave rows its join key map refers to.
+ * NULL key check of the join, see {@code JoinInput#getNullKeyCheck}, tells a master row whose keys are all NULL, and
+ * the join NULL-extends by its keys when it has none. The {@link SlaveChains} of the join walk the chains of slave
+ * rows its join key map refers to.
  */
 final class HashOuterJoinNullKeys {
     private final SlaveChains chains;
     private final Function filter;
     private final Map joinKeyMap;
-    private final @Nullable NullJoinKey masterNullKey;
     private final RecordSink masterSink;
-    private final @Nullable NullJoinKey slaveNullKey;
+    private final @Nullable Function nullKeyCheck;
     private boolean hasNullKeyChain;
     private long nullKeyChainHead;
     private long nullKeyRowsToMatch;
@@ -56,15 +57,13 @@ final class HashOuterJoinNullKeys {
             Function filter,
             Map joinKeyMap,
             RecordSink masterSink,
-            @Nullable NullJoinKey masterNullKey,
-            @Nullable NullJoinKey slaveNullKey
+            @Nullable Function nullKeyCheck
     ) {
         this.chains = chains;
         this.filter = filter;
         this.joinKeyMap = joinKeyMap;
         this.masterSink = masterSink;
-        this.masterNullKey = masterNullKey;
-        this.slaveNullKey = slaveNullKey;
+        this.nullKeyCheck = nullKeyCheck;
     }
 
     /**
@@ -74,7 +73,7 @@ final class HashOuterJoinNullKeys {
     void findNullKeyChain(Record masterNullRecord) {
         nullKeyRowsToMatch = 0;
         hasNullKeyChain = false;
-        if (slaveNullKey != null) {
+        if (nullKeyCheck != null) {
             final MapKey key = joinKeyMap.withKey();
             key.put(masterNullRecord, masterSink);
             final MapValue value = key.findValue();
@@ -93,10 +92,10 @@ final class HashOuterJoinNullKeys {
      * master row whose keys are all NULL costs one evaluation per row of the build side.
      */
     boolean isMasterRowDropped(Record masterRecord, Record joined) {
-        if (masterNullKey == null) {
+        if (nullKeyCheck == null) {
             return false;
         }
-        if (!masterNullKey.isNull(masterRecord)) {
+        if (!nullKeyCheck.getBool(masterRecord)) {
             return true;
         }
         final MapRecordCursor keys = joinKeyMap.getCursor();
@@ -120,7 +119,7 @@ final class HashOuterJoinNullKeys {
      * master row matched: it NULL-extends only slave rows whose keys are all NULL, see {@link #findNullKeyChain}.
      */
     boolean isUnmatchedChainSkipped(long chainHead) {
-        return slaveNullKey != null && (!hasNullKeyChain || chainHead != nullKeyChainHead);
+        return nullKeyCheck != null && (!hasNullKeyChain || chainHead != nullKeyChainHead);
     }
 
     /**

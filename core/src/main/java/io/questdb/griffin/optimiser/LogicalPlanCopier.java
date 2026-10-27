@@ -210,6 +210,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 slaveClone.addKey(key.getMasterColumnId(), key.getSlaveColumnId(), key.getPosition());
                 slaveClone.getKeys().getLast().setLookupKeyIndex(key.getLookupKeyIndex());
             }
+            slaveClone.setKeyCheck(slave.getKeyCheck());
             clone.getSlaves().add(slaveClone);
         }
         return clone;
@@ -245,8 +246,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         }
         clone.setHints(input.getHints());
         clone.setSubquery(input.isSubquery());
+        clone.setKeyCheck(input.getKeyCheck());
         clone.setKeyFilter(input.getKeyFilter());
         clone.setNullExtension(input.getNullExtension());
+        clone.setNullKeyCheck(input.getNullKeyCheck());
         clone.setOnResidual(input.getOnResidual());
         clone.setPostJoinFilter(input.getPostJoinFilter());
         clone.setToleranceInterval(input.getToleranceInterval());

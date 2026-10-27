@@ -60,7 +60,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * holds one more time frame cursor per slave: the owner thread positions the output records on
  * it, so reading a matched slave row never disturbs the scan state of a matcher.
  * <p>
- * The slave states own the slave filters and their worker clones. The atom initializes, rewinds
+ * The slave states own the slave filters, the key checks and their worker clones. The atom initializes, rewinds
  * and closes them for each query, and the matchers borrow them.
  */
 public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLockOwner {
@@ -89,7 +89,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     private final ObjList<HorizonJoinSlaveState> slaveStates;
     private final long slotsPerRow;
     private final int workerCount;
-    // Slaves whose filters initTimeFrameCursors() has initialized, and clear() has yet to close
+    // Slaves whose filters and key checks initTimeFrameCursors() has initialized, and clear() has yet to close
     private int initializedSlaveFilterCount;
     private MemoryTracker memoryTracker;
 
@@ -271,7 +271,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * Initializes the filter of one slave and binds every time frame cursor of the slave to the
+     * Initializes the filter and the key check of one slave and binds every time frame cursor of the slave to the
      * shared frame state of the current query. Must run after {@link ConcurrentTimeFrameState#of}
      * and before any task matches rows.
      */
@@ -298,6 +298,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
                 executionContext.setCloneSymbolTables(isCloneSymbolTables);
             }
         }
+        state.initKeyCheck(masterSymbolTableSource, executionContext);
         // The matchers walk horizon timestamps in order, so MONOTONIC caps the decode buffers of a
         // Parquet slave to a quarter of the budget per pool. The output cursor revisits frames in
         // master row order, which jumps back and forth between the offsets of a row.
@@ -403,6 +404,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
             if (state.getPerWorkerFilters() != null) {
                 GroupByUtils.toTop(state.getPerWorkerFilters());
             }
+            state.toTopKeyCheck();
         }
     }
 

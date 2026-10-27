@@ -37,6 +37,7 @@ public final class HorizonJoinSlave implements Mutable {
     private final ObjList<JoinKey> keys = new ObjList<>();
     private CharSequence alias;
     private LogicalPlan input;
+    private BoundExpression keyCheck;
     private int position;
 
     public void addKey(int masterId, int slaveId, int position) {
@@ -49,6 +50,7 @@ public final class HorizonJoinSlave implements Mutable {
         keyPool.clear();
         alias = null;
         input = null;
+        keyCheck = null;
         position = 0;
     }
 
@@ -58,6 +60,13 @@ public final class HorizonJoinSlave implements Mutable {
 
     public LogicalPlan getInput() {
         return input;
+    }
+
+    /**
+     * The predicate over the master row that a row of this slave can match it, see {@link JoinInput#getKeyCheck}.
+     */
+    public BoundExpression getKeyCheck() {
+        return keyCheck;
     }
 
     public ObjList<JoinKey> getKeys() {
@@ -75,11 +84,16 @@ public final class HorizonJoinSlave implements Mutable {
         return this;
     }
 
+    public void setKeyCheck(BoundExpression keyCheck) {
+        this.keyCheck = keyCheck;
+    }
+
     void setInput(LogicalPlan input) {
         this.input = Objects.requireNonNull(input);
     }
 
     void visitReads(PlanExpressionVisitor visitor) {
         JoinKey.visitReads(keys, visitor);
+        keyCheck = PlanReads.expression(keyCheck, visitor);
     }
 }

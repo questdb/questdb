@@ -207,6 +207,8 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
                     null,
                     workers,
                     new AsyncFilterResources(),
+                    null,
+                    null,
                     null
             );
 

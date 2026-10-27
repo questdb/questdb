@@ -604,7 +604,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.s1 = q.s AND t.s2 = q.s", "s1=s2", asOfTwoSymbols);
                     assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.i1 = q.k AND t.i2 = q.k", "i1=i2", asOfTwoSymbols);
                     assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.s1 = q.s AND t.v = q.s", "s1=v", asOfSymbolVarchar);
-                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.v = q.s AND t.s1 = q.s", "v=s1", asOfSymbolVarchar);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.v = q.s AND t.s1 = q.s", "s1=v", asOfSymbolVarchar);
                 }
                 assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.s1 = q.s AND t.s2 = q.s", "s1=s2", ltTwoSymbols);
                 assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.i1 = q.k AND t.i2 = q.k", "i1=i2", ltTwoSymbols);
@@ -655,14 +655,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
-                    .withPlanContaining("AsOf Join Fast", "keyCheck: mz=mx and mx=my", "symbolKeyJoin: true")
+                    .withPlanContaining("AsOf Join Fast", "keyCheck: (mz=mx and mx=my)", "symbolKeyJoin: true")
                     .returns(asOf);
             assertQuery("SELECT m.ts, s.v FROM m LT JOIN s ON " + on)
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
-                    .withPlanContaining("Lt Join Light", "keyCheck: mz=mx and mx=my", "symbolKeyJoin: true")
+                    .withPlanContaining("Lt Join Light", "keyCheck: (mz=mx and mx=my)", "symbolKeyJoin: true")
                     .returns(lt);
             assertQuery("SELECT m.ts, s.v FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mz AND s.a = m.mx")
                     .noLeakCheck()

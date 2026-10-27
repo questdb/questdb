@@ -120,6 +120,7 @@ public final class PlanVerifier {
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
     public static final String JOIN_KEY_LOOKUP = "join key lookups contradict the keys operator planning checks instead of looking them up";
     public static final String JOIN_NULL_EXTENSION = "join step NULL-extended by its ON residual is not a LEFT, RIGHT or FULL hash join with an ON residual";
+    public static final String JOIN_NULL_KEY_CHECK = "join step has a NULL key check unless operator planning NULL-extends it by its ON residual";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTER_CROSS = "OUTER CROSS step does not directly follow a RIGHT or FULL step, or has a key or an ON residual";
@@ -613,6 +614,8 @@ public final class PlanVerifier {
             final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
             final OutputSchema slaveOutput = slave.getInput().getOutput();
             masterKeys(master, slave.getKeys());
+            site = "key check";
+            predicate(master, slave.getKeyCheck());
             slaveKeys(slaveOutput, slave.getKeys());
             for (int j = 0, m = slaveOutput.getColumnCount(); j < m; j++, index++) {
                 if (index >= output.getColumnCount() || output.getColumnId(index) != slaveOutput.getColumnId(j)
@@ -738,6 +741,10 @@ public final class PlanVerifier {
             }
         }
         masterKeys(joinScope, step.getKeys());
+        site = "key check";
+        predicate(joinScope, step.getKeyCheck());
+        site = "NULL key check";
+        predicate(joinScope, step.getNullKeyCheck());
         if (step.getMarkoutTimestampColumnId() >= 0) {
             site = "markout timestamp";
             timestampColumn(joinScope, step.getMarkoutTimestampColumnId());
