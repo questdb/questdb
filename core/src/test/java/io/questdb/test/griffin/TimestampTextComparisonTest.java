@@ -359,12 +359,16 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
             for (String column : TEMPORAL_COLUMNS) {
                 for (String textType : TEXT_TYPES) {
                     for (String predicate : TEXT_PREDICATES) {
-                        final String targetType = column.equals("d") && !predicate.contains("BETWEEN") ? "DATE" : "TIMESTAMP_NS";
+                        // text compared with a TIMESTAMP column converts at the column's precision and fails at the text
+                        final boolean isDate = column.equals("d");
+                        final String targetType = isDate ? (predicate.contains("BETWEEN") ? "TIMESTAMP_NS" : "DATE")
+                                : column.equals("t2") ? "TIMESTAMP" : "TIMESTAMP_NS";
+                        final String query = "SELECT v FROM t WHERE " + predicate.replace("?", column);
                         final ObjList<BindVarTuple> cases = new ObjList<>();
                         cases.add(BindVarTuple.ok("valid text", "v\n", texts(textType, "2024-01-02", null)));
-                        cases.add(BindVarTuple.fails("invalid text", 0, "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
+                        cases.add(BindVarTuple.fails("invalid text", isDate ? 0 : query.indexOf(":s"), "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
                                 texts(textType, "abc", null)));
-                        assertQuery("SELECT v FROM t WHERE " + predicate.replace("?", column)).noLeakCheck().assertBinds(cases);
+                        assertQuery(query).noLeakCheck().assertBinds(cases);
                     }
                 }
             }
@@ -409,13 +413,14 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .returns(atBoundary);
-                final String targetType = column.equals("d") ? "DATE" : "TIMESTAMP_NS";
+                final boolean isDate = column.equals("d");
+                final String targetType = isDate ? "DATE" : column.equals("t2") ? "TIMESTAMP" : "TIMESTAMP_NS";
                 for (String textType : TEXT_TYPES) {
                     final ObjList<BindVarTuple> cases = new ObjList<>();
                     cases.add(BindVarTuple.ok("text at boundary", atBoundary, texts(textType, "2024-01-02", "2024-01-03")));
                     cases.add(BindVarTuple.ok("text rebound below all rows", belowAll, texts(textType, "2024-01-01", "2024-01-02")));
                     cases.add(BindVarTuple.ok("null text", nullText, texts(textType, null, "2024-01-03")));
-                    cases.add(BindVarTuple.fails("invalid text", 0, "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
+                    cases.add(BindVarTuple.fails("invalid text", isDate ? 0 : query.indexOf(":s"), "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
                             texts(textType, "abc", "2024-01-03")));
                     assertQuery(query).noLeakCheck().expectSize().assertBinds(cases);
                 }

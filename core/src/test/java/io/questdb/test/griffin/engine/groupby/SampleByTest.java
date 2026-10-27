@@ -25338,6 +25338,15 @@ public class SampleByTest extends AbstractCairoTest {
                 assertException("EXPLAIN " + query, position + "EXPLAIN ".length(), message);
                 assertException(query.replace(" FROM x ", " FROM e "), position, message);
             }
+            // a LONG stride beyond INT is valid for units whose samplers count in LONG
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (3_000_000_000 + 0) s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            1970-01-01T00:00:00.000000Z\t3.0
+                            """);
             assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (2_147_483_646 + 1) M")
                     .noLeakCheck()
                     .timestamp("ts")

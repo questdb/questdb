@@ -180,9 +180,10 @@ public final class TimestampSamplerFactory {
     }
 
     /**
-     * The sampler of a SAMPLE BY stride, which must be a positive INT, whether a literal or a constant expression
-     * spells it. A stride outside that range fails at {@code position} with the error a literal stride raises: a
-     * negative one, zero, or an invalid value for one beyond INT or NULL.
+     * The sampler of a SAMPLE BY stride, which must be positive, whether a literal or a constant expression spells it,
+     * and must fit an INT for weeks, months and years, whose samplers count in INT. A stride that does not fails at
+     * {@code position} with the error a literal stride raises: a negative one, zero, or an invalid value for NULL or
+     * one too large. A literal stride is an INT by its syntax, while a constant expression may be a LONG.
      *
      * @param stride   the stride; {@link Numbers#LONG_NULL} for NULL
      * @param position position in SQL text to report error against
@@ -194,9 +195,11 @@ public final class TimestampSamplerFactory {
         if (stride < 0 && stride != Numbers.LONG_NULL) {
             throw SqlException.$(position, "negative interval is not allowed");
         }
-        if (stride == Numbers.LONG_NULL || stride > Integer.MAX_VALUE) {
-            final SqlException e = SqlException.$(position, "invalid sample value [value=");
-            throw (stride == Numbers.LONG_NULL ? e.put("null") : e.put(stride)).put(']');
+        if (stride == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "invalid sample value [value=null]");
+        }
+        if (stride > Integer.MAX_VALUE && (timeUnit == 'w' || timeUnit == 'M' || timeUnit == 'y')) {
+            throw SqlException.$(position, "invalid sample value [value=").put(stride).put(']');
         }
         return getInstance(driver, stride, timeUnit, position);
     }
