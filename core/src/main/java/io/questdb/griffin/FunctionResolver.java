@@ -316,7 +316,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
-     * Whether the operator compares two values of one type: =, !=, <>, <, <=, > or >=.
+     * Whether the operator compares two values of one type: {@code =}, {@code !=}, {@code <>}, {@code <}, {@code <=},
+     * {@code >} or {@code >=}.
      */
     public static boolean isTemporalComparisonOperator(CharSequence operator) {
         return Chars.equals(operator, '=') || Chars.equals(operator, '<') || Chars.equals(operator, '>')
