@@ -227,45 +227,45 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             assertQuery("SELECT dateadd('w', big * one, ts) FROM t")
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             assertQuery("SELECT dateadd('y', big * one, ts) FROM t")
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             assertQuery("SELECT dateadd('d', -big, ts_ns) FROM t")
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             // variable period
             assertQuery("SELECT dateadd(p, big, ts) FROM t")
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             assertQuery("SELECT dateadd(p, big, ts_ns) FROM t")
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             // variable period with a time zone
             assertQuery("SELECT dateadd(p, big, ts, 'Europe/Berlin') FROM t")
                     .expectSize()
                     .returns("""
                             dateadd
-
+                            
                             """);
             // a non-overflowing add through the same functions
             assertQuery("SELECT dateadd(p, one, ts) FROM t")
