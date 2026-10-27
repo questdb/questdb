@@ -250,6 +250,8 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
     // Legacy location used by binaries that introduced composite geometry before body checksums. A merged writer
     // stores geometryVersion in the per-slot base-header padding and uses this range for checksum data instead.
+    // Releases before 10.1.0 never write [116,128), so a released record can hold stale bytes of an older record
+    // here; TxReader folds a negative value to 0 instead of reading it as tearing.
     public static final long TX_OFFSET_GEOMETRY_VERSION_32 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     public static final long TX_OFFSET_BODY_CHECKSUM_64 = TX_OFFSET_GEOMETRY_VERSION_32;
     public static final long TX_OFFSET_BODY_CHECKSUM_STAMP_32 = TX_OFFSET_BODY_CHECKSUM_64 + Long.BYTES;

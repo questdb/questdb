@@ -795,14 +795,23 @@ bytes.
 ## 13. Detecting torn files
 
 These run in every mode. Each uses space the released format already left unused, so a file written before this
-change reads as unverified, never as torn, and a released binary ignores the new bytes.
+change reads as unverified, never as torn. A released binary ignores the new bytes, except that 10.1.0 reads offset
+116 of a `_txn` record as its geometry version, a cache key.
 
 - **`_txn` body checksum.** An 8-byte checksum at offset 116 of each `_txn` record and a 4-byte stamp at offset 124
-  (the record's txn with the top bit flipped), in the 12 bytes before offset 128 that were unused. It covers the
-  record header (without the structure version, the seqTxn and the lag fields, which change in place) and the
-  partition table. `TxWriter` writes it before the version bump that publishes the record. `TxReader` checks it on
-  the first read: a stamp of 0, or one naming another txn, reads unverified; a mismatch falls back to the other A/B
-  area, and if both fail the read fails with `_txn body checksum mismatch in both A and B areas [...]`.
+  (the record's txn XORed with a constant), in the 12 bytes before offset 128. 10.1.0 keeps the geometry version at
+  offset 116; this version moves it into the base-header padding next to each area's offset and sizes, with its own
+  txn-derived stamp. The checksum covers the record header (without the structure version, the seqTxn and the lag
+  fields, which change in place) and the partition table. `TxWriter` writes the checksum, the geometry slot and both
+  stamps before the version bump that publishes the record. `TxReader` checks the checksum on the first read: a
+  stamp of 0, or one naming another txn, reads unverified; a mismatch, or a stamped record whose geometry slot names
+  another txn, falls back to the other A/B area, and if both fail the read fails with
+  `_txn body checksum mismatch in both A and B areas [...]`.
+  Releases before 10.1.0 never write bytes 116 to 127, and their allocator moves an area over the bytes of older
+  records, so a released record holds whatever an older record left there: often -1, the low word of an unset
+  lagMinTimestamp. 10.1.0 copies the value it loaded into every record it writes. A record without a stamp
+  therefore reads its geometry version from offset 116 with a negative value folded to 0, and those bytes never make
+  a record torn.
 - **`_cv` trailer.** 16 bytes after each `_cv` area: a 64-bit magic (`TableUtils.CV_CHECKSUM_MAGIC`), then a
   checksum of the whole area. `ColumnVersionWriter` writes it before the version bump, in every mode, and the
   checkpoint copy writes one too. A file too short for it, or one without the magic there (every file a released

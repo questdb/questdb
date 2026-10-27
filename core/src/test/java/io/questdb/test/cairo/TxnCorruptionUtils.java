@@ -36,12 +36,15 @@ import org.junit.Assert;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_A_32;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_B_32;
+import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_GEOMETRY_VERSION_A_32;
+import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_GEOMETRY_VERSION_B_32;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32;
 import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_VERSION_64;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_BODY_CHECKSUM_64;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32;
 import static io.questdb.cairo.TableUtils.TX_GEOMETRY_VERSION_STAMP_XOR;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_GEOMETRY_VERSION_32;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN_64;
 
 /**
@@ -60,10 +63,12 @@ public final class TxnCorruptionUtils {
 
     /**
      * Makes both areas look like records written before the body checksum existed: checksum slot and stamp
-     * zeroed, every other byte untouched.
+     * zeroed, base-header geometry slots and stamps zeroed, every other byte untouched.
      * <p>
      * Zeroing only the checksum would leave the stamp naming the record, which reads as a checksum that has
      * gone missing: a torn write, not a legacy record. {@link #tearChecksumSlots} is the helper for that case.
+     * A released binary never writes the base-header geometry slots either; a stamp left there would route the
+     * load through the merged-format branch, and the legacy one would never run.
      */
     public static void makeAreasLookLegacy(CairoEngine engine, String tableName) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -75,6 +80,38 @@ public final class TxnCorruptionUtils {
             RawFileAccess.pokeLong(ff, txnPath, offsetB + TX_OFFSET_BODY_CHECKSUM_64, 0L);
             RawFileAccess.pokeInt(ff, txnPath, offsetA + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
             RawFileAccess.pokeInt(ff, txnPath, offsetB + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
+            RawFileAccess.pokeInt(ff, txnPath, TX_BASE_OFFSET_GEOMETRY_VERSION_A_32, 0);
+            RawFileAccess.pokeInt(ff, txnPath, TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32, 0);
+            RawFileAccess.pokeInt(ff, txnPath, TX_BASE_OFFSET_GEOMETRY_VERSION_B_32, 0);
+            RawFileAccess.pokeInt(ff, txnPath, TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32, 0);
+        }
+    }
+
+    /**
+     * Shapes both areas as a released binary leaves them, see {@link #makeAreasLookLegacy}, with the given
+     * stale bytes in each area's {@code [116,124)}. Releases before 10.1.0 never write {@code [116,128)}, and
+     * their allocator moves an area over the bytes of older records, so a released record keeps whatever an
+     * older record left there. A 16-byte move lines up an older record's unset lagMinTimestamp
+     * ({@code Long.MAX_VALUE}) with offset 116, which then reads as -1. 10.1.0 stores geometryVersion at offset
+     * 116 and copies such a value into every record it writes, so both areas end up carrying it.
+     */
+    public static void makeAreasLookReleased(
+            CairoEngine engine,
+            String tableName,
+            long liveAreaGap,
+            long otherAreaGap
+    ) {
+        makeAreasLookLegacy(engine, tableName);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            LPSZ txnPath = txnPath(engine, path, tableName);
+            final boolean isLiveA = (RawFileAccess.peekLong(ff, txnPath, TX_BASE_OFFSET_VERSION_64) & 1L) == 0L;
+            final long gapA = isLiveA ? liveAreaGap : otherAreaGap;
+            final long gapB = isLiveA ? otherAreaGap : liveAreaGap;
+            long offsetA = RawFileAccess.peekInt(ff, txnPath, TX_BASE_OFFSET_A_32);
+            long offsetB = RawFileAccess.peekInt(ff, txnPath, TX_BASE_OFFSET_B_32);
+            RawFileAccess.pokeLong(ff, txnPath, offsetA + TX_OFFSET_BODY_CHECKSUM_64, gapA);
+            RawFileAccess.pokeLong(ff, txnPath, offsetB + TX_OFFSET_BODY_CHECKSUM_64, gapB);
         }
     }
 
@@ -112,6 +149,18 @@ public final class TxnCorruptionUtils {
         try (Path path = new Path()) {
             LPSZ txnPath = txnPath(engine, path, tableName);
             return RawFileAccess.peekInt(ff, txnPath, liveAreaOffset(ff, txnPath) + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        }
+    }
+
+    /**
+     * The int at the legacy geometry-version offset of the version-selected (live) area, where a record without a
+     * stamp keeps its geometry version.
+     */
+    public static int readLiveAreaLegacyGeometrySlot(CairoEngine engine, String tableName) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            LPSZ txnPath = txnPath(engine, path, tableName);
+            return RawFileAccess.peekInt(ff, txnPath, liveAreaOffset(ff, txnPath) + TX_OFFSET_GEOMETRY_VERSION_32);
         }
     }
 

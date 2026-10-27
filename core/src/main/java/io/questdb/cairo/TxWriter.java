@@ -674,7 +674,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             if ((geometryRef & PARTITION_COMPOSITE_FLAG) != 0
                     && ((oldOffset3 & PARTITION_COMPOSITE_FLAG) == 0
                     || TxReader.geometryGeneration(oldOffset3) != TxReader.geometryGeneration(geometryRef))) {
-                geometryVersion++;
+                // Wrap within [0, Integer.MAX_VALUE] instead of overflowing: a reader takes a negative geometry
+                // version for a torn record, and a version loaded from a released record can start anywhere in
+                // that range. The value must still change, or PartitionGeometry keeps a superseded resolution.
+                geometryVersion = (geometryVersion + 1) & Integer.MAX_VALUE;
             }
             attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, flags | geometryRef);
             recordStructureVersion++;

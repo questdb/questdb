@@ -1129,7 +1129,8 @@ public class TxReader implements Closeable, Mutable {
      * The geometry version of the record at {@code areaBaseOffset}, whose txn (equal to the version that
      * selects it, so also its A/B slot parity) is {@code areaTxn}. Returns -1 for a record that carries a
      * body-checksum stamp but whose base-header geometry slot does not name it: every publication of an
-     * area stamps both, so that is tearing. Touches no load state.
+     * area stamps both, so that is tearing. Every other record yields a value in [0, Integer.MAX_VALUE], so a
+     * negative result means tearing and nothing else. Touches no load state.
      */
     private int unsafeReadGeometryVersion(long areaBaseOffset, long areaTxn) {
         final boolean isA = (areaTxn & 1) == 0;
@@ -1152,8 +1153,12 @@ public class TxReader implements Closeable, Mutable {
         if (bodyStamp != 0 && bodyStamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR)) {
             return 0;
         }
-        // An upstream record has no body-checksum stamp and keeps geometryVersion in the legacy body slot.
-        return roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_GEOMETRY_VERSION_32);
+        // A record without a stamp keeps geometryVersion in the legacy body slot, which only 10.1.0 writes. Older
+        // releases never write [116,128), so their records hold stale bytes of an older, overlapping record there
+        // (often -1, the low word of an unset lagMinTimestamp), and 10.1.0 copies whatever it loaded into every
+        // later record. The value only keys the composite geometry cache, and the first commit moves it into the
+        // stamped base-header slot, so fold a negative value to 0 instead of reading it as tearing.
+        return Math.max(0, roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_GEOMETRY_VERSION_32));
     }
 
     public int unsafeReadSymbolColumnCount() {
