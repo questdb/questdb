@@ -197,7 +197,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     final int column = batchColumns[i];
                     if (batch && column != AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE) {
                         final long address = column < 0 ? 0 : frameMemory.getPageAddress(column)
-                                + row * ColumnType.sizeOf(function.getComputeBatchArgType());
+                                                              + row * ColumnType.sizeOf(function.getComputeBatchArgType());
                         function.computeBatch(value, address, (int) (end - row), baseRowId + row);
                     } else {
                         record.setRowIndex(row);
