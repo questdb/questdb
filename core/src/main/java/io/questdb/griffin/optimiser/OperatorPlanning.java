@@ -34,7 +34,6 @@ import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.join.JoinKeyCheck;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -1606,10 +1605,10 @@ final class OperatorPlanning implements Mutable {
     /**
      * The index of the key an ASOF, LT or HORIZON JOIN looks up instead of the key at {@code keyIndex}, whose index it
      * records as the key's {@link JoinKey#getLookupKeyIndex}, or -1 when it looks that key up: the first earlier key it
-     * looks up on the same slave column, when {@link JoinKeyCheck} compares the master columns of the two keys as the
-     * join keys do. A slave row equals both master columns only when they hold the same value, so the join looks up
-     * one key per slave column and answers a master row whose columns differ with no slave row, as the keys it no
-     * longer looks up would. {@code master} is the output the master columns of the keys come from; the earlier keys
+     * looks up on the same slave column, when the join keys compare the master columns of the two keys as {@code =}
+     * does, see {@link LogicalPlans#isKeyMatchType}. A slave row equals both master columns only when they hold the
+     * same value, so the join looks up one key per slave column and answers a master row whose columns differ with no
+     * slave row, as the keys it no longer looks up would. {@code master} is the output the master columns of the keys come from; the earlier keys
      * hold their decision.
      */
     static int lookupKeyIndex(ObjList<JoinKey> keys, int keyIndex, OutputSchema master) {
@@ -1618,7 +1617,7 @@ final class OperatorPlanning implements Mutable {
         for (int i = 0; i < keyIndex; i++) {
             final JoinKey lookup = keys.getQuick(i);
             if (lookup.getLookupKeyIndex() == -1 && lookup.getSlaveColumnId() == key.getSlaveColumnId()
-                    && JoinKeyCheck.isComparable(master.getColumnType(master.getColumnIndexById(lookup.getMasterColumnId())), masterType)) {
+                    && LogicalPlans.isKeyMatchType(master.getColumnType(master.getColumnIndexById(lookup.getMasterColumnId())), masterType)) {
                 return i;
             }
         }

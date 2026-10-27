@@ -41,7 +41,6 @@ import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -50,10 +49,9 @@ public class CaseCommon {
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
     private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
     private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
+    private static final FiberLocal<IntList> tlFoldedTypes = new FiberLocal<>(IntList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
-    // public for testing
-    @TestOnly
     public static Function getCastFunction(
             Function arg,
             int argPosition,
@@ -90,8 +88,6 @@ public class CaseCommon {
         return arg;
     }
 
-    // public for testing
-    @TestOnly
     public static int getCommonType(int commonType, int valueType, int valuePos, String undefinedErrorMsg) throws SqlException {
         if (isUndefined(valueType)) {
             throw SqlException.$(valuePos, undefinedErrorMsg);
@@ -101,6 +97,24 @@ public class CaseCommon {
             throw inconvertibleTypes(valuePos, valueType, commonType);
         }
         return type;
+    }
+
+    /**
+     * Adds the value type to {@code foldedTypes} and returns true, or returns false when {@code type}, the common
+     * type after the value, lifts {@code commonType} to one that a value before it does not convert to.
+     */
+    private static boolean foldType(int type, int commonType, int valueType, IntList foldedTypes) {
+        if (type != commonType) {
+            for (int i = 0, n = foldedTypes.size(); i < n; i++) {
+                if (!isConvertible(foldedTypes.getQuick(i), type)) {
+                    return false;
+                }
+            }
+        }
+        if (!foldedTypes.contains(valueType)) {
+            foldedTypes.add(valueType);
+        }
+        return true;
     }
 
     @NotNull
@@ -123,6 +137,16 @@ public class CaseCommon {
 
     private static boolean isConvertible(int valueType, int commonType) {
         return valueType == commonType || getCommonTypeOrUndefined(commonType, valueType) != UNDEFINED;
+    }
+
+    /**
+     * The fiber's empty scratch list of the value types a CASE-like fold has seen, see
+     * {@link #getCommonType(int, int, int, IntList, String)}.
+     */
+    static IntList foldedTypes() {
+        final IntList foldedTypes = tlFoldedTypes.get();
+        foldedTypes.clear();
+        return foldedTypes;
     }
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
@@ -160,17 +184,22 @@ public class CaseCommon {
      */
     static int getCommonType(int commonType, int valueType, int valuePos, IntList foldedTypes, String undefinedErrorMsg) throws SqlException {
         final int type = getCommonType(commonType, valueType, valuePos, undefinedErrorMsg);
-        if (type != commonType) {
-            for (int i = 0, n = foldedTypes.size(); i < n; i++) {
-                if (!isConvertible(foldedTypes.getQuick(i), type)) {
-                    throw inconvertibleTypes(valuePos, valueType, commonType);
-                }
-            }
-        }
-        if (!foldedTypes.contains(valueType)) {
-            foldedTypes.add(valueType);
+        if (!foldType(type, commonType, valueType, foldedTypes)) {
+            throw inconvertibleTypes(valuePos, valueType, commonType);
         }
         return type;
+    }
+
+    /**
+     * The common type of CASE-like value types after folding in one more value type, or {@link ColumnType#UNDEFINED}
+     * where {@link #getCommonType(int, int, int, IntList, String)} fails for the values.
+     *
+     * @param commonType  the common type of the value types before this one, -1 before the first one
+     * @param foldedTypes the distinct value types before this one; the value type is added to it
+     */
+    static int getCommonTypeOrUndefined(int commonType, int valueType, IntList foldedTypes) {
+        final int type = getCommonTypeOrUndefined(commonType, valueType);
+        return type != UNDEFINED && foldType(type, commonType, valueType, foldedTypes) ? type : UNDEFINED;
     }
 
     /**

@@ -295,6 +295,8 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case SetOperationPlan operation -> {
                 final SetOperationPlan operationClone = planNodes.setOperations.next().of(operation.getLeft(), operation.getRight(),
                         operation.getOperation(), operation.getPosition(), operation.getRightPosition(), operation.isSymbolRestorationRequired());
+                operationClone.getCastTypes().addAll(operation.getCastTypes());
+                operationClone.setCastRequired(operation.isCastRequired());
                 operationClone.getSymbolColumns().addAll(operation.getSymbolColumns());
                 operationClone.setRequestedOrder(operation.getRequestedOrderColumnId(), operation.getRequestedOrderDirection());
                 operationClone.setMerge(operation.isMerged(), operation.getRightBranchSort());

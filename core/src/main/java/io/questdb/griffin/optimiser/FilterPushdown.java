@@ -85,7 +85,6 @@ final class FilterPushdown implements OptimiserPass {
     private final ConjunctSplit conjunctSplit = new ConjunctSplit();
     private final OptimiserContext context;
     private final ObjectPool<FilterPlan> filters;
-    private final ExpressionVisitor identityColumns = this::mapColumnToItself;
     private final IntList joinConjunctTargets;
     private final ConjunctTest keyConjuncts;
     private final ObjectPool<ColumnExpression> narrowingColumns;
@@ -546,10 +545,8 @@ final class FilterPushdown implements OptimiserPass {
         final int source = joinSourceOrdinal(conjunct, join);
         if (source >= 0 && nullRejectingCopied.indexOf(conjunct) < 0 && LogicalPlans.isOrderIndependent(conjunct)
                 && LogicalPlans.canPushNullRejectingJoinFilter(join, source, lastInput) && context.isNullRejecting(conjunct)) {
-            columnMap.clear();
-            conjunct.walk(identityColumns);
             nullRejectingCopied.add(conjunct);
-            nullRejectingCopies.add(context.getRewriter().copyRemappedColumns(conjunct, columnMap));
+            nullRejectingCopies.add(context.getRewriter().copy(conjunct));
             nullRejectingCopySources.add(source);
         }
     }
@@ -623,10 +620,12 @@ final class FilterPushdown implements OptimiserPass {
         if (pushedPredicate == null) {
             collectTransitiveFacts(join, isInnerRegion);
         }
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
         // Only original facts are consulted; a derived slave filter cannot pin another key.
         for (int i = 0, n = join.getInputs().size(); i < n; i++) {
             final JoinInput slave = join.getInputs().getQuick(i);
-            if (slave.getJoinType() == JoinKind.SPLICE) {
+            if (slave.getJoinType() == JoinKind.SPLICE
+                    || !LogicalPlans.canPushJoinFilterPast(ordered, ordered.indexOf(slave), ordered.size() - 1, true)) {
                 continue;
             }
             for (int k = 0, count = slave.getKeys().size(); k < count; k++) {
@@ -642,7 +641,7 @@ final class FilterPushdown implements OptimiserPass {
                             final int origin = transitiveFactOrigins.getQuick(f);
                             if (isInnerRegion || (origin < 0
                                     ? isTransitiveSourceSafe(join, joinSourceOrdinal(column, join), fact)
-                                    : isOnFactSafe(join, masterId, slave, origin, (FunctionExpression) fact))) {
+                                    : isOnFactSafe(join, masterId, slave, origin, fact))) {
                                 deriveTransitiveFilter(fact, masterId, slave, k);
                             }
                             break;
@@ -743,27 +742,28 @@ final class FilterPushdown implements OptimiserPass {
      * An INNER ON fact holds for every output row only up to the first master-nulling join after its
      * column's source; rows that join NULL-extends satisfy it only when the fact rejects NULL.
      */
-    private boolean isOnFactSafe(JoinPlan join, int columnId, JoinInput target, int origin, FunctionExpression fact) {
-        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+    private boolean isOnFactSafe(JoinPlan join, int columnId, JoinInput target, int origin, BoundExpression fact) {
         final int source = LogicalPlans.findJoinColumnSource(join, columnId);
-        final int sourcePosition = source < 0 ? -1 : ordered.indexOf(join.getInputs().getQuick(source));
-        int boundaryPosition = -1;
-        for (int i = sourcePosition + 1, n = ordered.size(); i < n && boundaryPosition < 0; i++) {
-            if (ordered.getQuick(i).getJoinType().isMasterNulling()) {
-                boundaryPosition = i;
-            }
-        }
-        if (sourcePosition < 0 || boundaryPosition < 0) {
+        if (source < 0) {
             return true;
         }
-        return ordered.indexOf(target) < boundaryPosition && (!"=".equals(fact.getName()) || context.isNullRejecting(fact)
-                || ordered.indexOf(join.getInputs().getQuick(origin)) < boundaryPosition);
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        final int sourcePosition = ordered.indexOf(join.getInputs().getQuick(source));
+        return LogicalPlans.canPushJoinFilterPast(ordered, sourcePosition, ordered.indexOf(target), false)
+                && (LogicalPlans.canPushJoinFilterPast(ordered, sourcePosition, ordered.indexOf(join.getInputs().getQuick(origin)), false)
+                || context.isNullRejecting(fact));
     }
 
     private boolean isSelectedJoinConjunct(BoundExpression conjunct) {
         return joinConjunctTargets.getQuick(joinConjunctIndex++) == selectedJoinSource;
     }
 
+    /**
+     * Whether a WHERE fact on the columns of the join input {@code source} holds for every row a key's slave joins,
+     * so the filter it derives for the slave drops only rows the fact drops above the join: the input leads the join
+     * or joins by an INNER or CROSS step, and, when a step NULL-extends its master, the fact rejects NULL. The steps
+     * after the slave keep the derived filter's result, see {@link LogicalPlans#canPushJoinFilterPast}.
+     */
     private boolean isTransitiveSourceSafe(JoinPlan join, int source, BoundExpression fact) {
         final int last = join.getOrderedInputs().size() - 1;
         if (!LogicalPlans.hasBarrierInput(join)) {
@@ -773,22 +773,7 @@ final class FilterPushdown implements OptimiserPass {
         if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType().isBarrier()) {
             return false;
         }
-        if (LogicalPlans.lastMasterNullingStep(join) < 0) {
-            return LogicalPlans.canPushJoinFilter(join, source, last);
-        }
-        final FunctionExpression call = (FunctionExpression) fact;
-        if ("=".equals(call.getName())) {
-            return context.isNullRejecting(call);
-        }
-        return call.argumentAt(1) instanceof ConstantExpression constant && constant.isLiteral()
-                && ColumnType.tagOf(constant.getDataType()) != ColumnType.NULL;
-    }
-
-    private int mapColumnToItself(BoundExpression expression) {
-        if (expression instanceof ColumnExpression column) {
-            columnMap.put(column.getColumnId(), column.getColumnId());
-        }
-        return TreeWalk.CONTINUE;
+        return LogicalPlans.lastMasterNullingStep(join) < 0 ? LogicalPlans.canPushJoinFilter(join, source, last) : context.isNullRejecting(fact);
     }
 
     /**

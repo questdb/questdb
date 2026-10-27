@@ -174,7 +174,7 @@ final class WindowBinder {
 
     private void addWindowSelfReference(ProjectPlan project, ExpressionNode node) {
         final BindScope scope = ctx.scope();
-        if (Chars.indexOfLastUnquoted(node.token, '.') >= 0 || scope.windowSelfReferences.keyIndex(node.token) < 0) {
+        if (FunctionBinder.qualifierEnd(node, null) >= 0 || scope.windowSelfReferences.keyIndex(node.token) < 0) {
             return;
         }
         final OutputSchema output = project.getOutput();
@@ -620,7 +620,7 @@ final class WindowBinder {
             return false;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            if (Chars.indexOfLastUnquoted(node.token, '.') >= 0 || getColumnIndexQuiet(source, node.token) >= 0) {
+            if (FunctionBinder.qualifierEnd(node, null) >= 0 || getColumnIndexQuiet(source, node.token) >= 0) {
                 return false;
             }
             final int index = selectAliasIndex(columns, GenericLexer.unquote(node.token));
@@ -790,7 +790,7 @@ final class WindowBinder {
             return null;
         }
         final boolean isAlias = expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
-                && Chars.indexOfLastUnquoted(expression.token, '.') < 0 && getColumnIndexQuiet(scope.windowInput.getOutput(), expression.token) < 0;
+                && FunctionBinder.qualifierEnd(expression, null) < 0 && getColumnIndexQuiet(scope.windowInput.getOutput(), expression.token) < 0;
         if (!isWindowArgument && !isAlias && expression.type == ExpressionNode.LITERAL && !expression.isWildcard()) {
             ctx.bindColumnIndex(expression, scope.windowInput.getOutput(), source);
         }

@@ -12893,6 +12893,23 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOffsetIsNoSqlFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT count() FROM functions() WHERE name = 'sample_by_offset'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+            assertQuery("SELECT sample_by_offset('00:00')")
+                    .noLeakCheck()
+                    .fails(7, "unknown function name");
+        });
+    }
+
+    @Test
     public void testSampleByOnJoinResolvesMasterTimestamp() throws Exception {
         // SAMPLE BY over a join buckets on the master's designated timestamp. The optimiser
         // used to inject it under its bare name, which failed with "Ambiguous column" when
@@ -25297,23 +25314,26 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES (1.0, '2024-03-15T00:00:00.000000Z'), (2.0, '2024-12-15T00:00:00.000000Z')");
             execute("CREATE TABLE e (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String negative = "negative interval is not allowed";
+            final String zero = "zero is not a valid sample value";
             final String[][] strides = {
-                    {"(0-2) d FILL(NULL)", "-", "-2"},
-                    {"(0-2) M FILL(NULL)", "-", "-2"},
-                    {"(0-3) M FILL(LINEAR)", "-", "-3"},
-                    {"(0-2) d FILL(PREV)", "-", "-2"},
-                    {"(0-2) M", "-", "-2"},
-                    {"(0-2) d", "-", "-2"},
-                    {"(1-1) h", "-", "0"},
-                    {"(1-1) M", "-", "0"},
-                    {"(1-1) d FILL(NULL) ALIGN TO FIRST OBSERVATION", "-", "0"},
-                    {"(null::int) d", "::", "null"},
-                    {"(3_000_000_000 + 0) M", "+", "3000000000"}
+                    {"(0-2) d FILL(NULL)", "-", negative},
+                    {"(0-2) M FILL(NULL)", "-", negative},
+                    {"(0-3) M FILL(LINEAR)", "-", negative},
+                    {"(0-2) d FILL(PREV)", "-", negative},
+                    {"(0-2) M", "-", negative},
+                    {"(0-2) d", "-", negative},
+                    {"(1-1) h", "-", zero},
+                    {"(1-1) M", "-", zero},
+                    {"(1-1) d FILL(NULL) ALIGN TO FIRST OBSERVATION", "-", zero},
+                    {"(null::int) d", "::", "invalid sample value [value=null]"},
+                    {"(null::long) d", "::", "invalid sample value [value=null]"},
+                    {"(3_000_000_000 + 0) M", "+", "invalid sample value [value=3000000000]"}
             };
             for (String[] stride : strides) {
                 final String query = "SELECT ts, sum(v) FROM x SAMPLE BY " + stride[0];
                 final int position = query.indexOf(stride[1], query.indexOf("SAMPLE BY"));
-                final String message = "sample by period must be a positive INT [value=" + stride[2] + ']';
+                final String message = stride[2];
                 assertException(query, position, message);
                 assertException("EXPLAIN " + query, position + "EXPLAIN ".length(), message);
                 assertException(query.replace(" FROM x ", " FROM e "), position, message);

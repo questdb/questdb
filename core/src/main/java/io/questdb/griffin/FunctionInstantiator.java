@@ -91,8 +91,10 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -121,6 +123,7 @@ public final class FunctionInstantiator implements Mutable {
     };
     private final SqlCompilerImpl compiler;
     private final ObjectPool<InstantiationArguments> instantiations;
+    private final LongObjHashMap<TableColumnMetadata> nullProbeColumnMetadata = new LongObjHashMap<>();
     private final ObjList<Function> nullProbeConstants = new ObjList<>(1);
     private final ObjList<String> nullProbeNames = new ObjList<>();
     private final GenericRecordMetadata nullProbeMetadata = new GenericRecordMetadata();
@@ -572,8 +575,14 @@ public final class FunctionInstantiator implements Mutable {
                         nullProbeNames.add(NULL_PROBE_COLUMN + index);
                     }
                     final String name = nullProbeNames.getQuick(index);
+                    final long metadataKey = Numbers.encodeLowHighInts(type, index);
+                    TableColumnMetadata metadata = nullProbeColumnMetadata.get(metadataKey);
+                    if (metadata == null) {
+                        metadata = new TableColumnMetadata(name, type, IndexType.NONE, 0, false, null);
+                        nullProbeColumnMetadata.put(metadataKey, metadata);
+                    }
                     nullProbeSchema.add(column.getColumnId(), name, type, true);
-                    nullProbeMetadata.add(new TableColumnMetadata(name, type, IndexType.NONE, 0, false, null));
+                    nullProbeMetadata.add(metadata);
                     nullProbeConstants.add(Constants.getNullConstant(type));
                 }
                 return TreeWalk.CONTINUE;

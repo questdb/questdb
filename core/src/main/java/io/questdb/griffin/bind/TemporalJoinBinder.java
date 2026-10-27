@@ -126,20 +126,20 @@ final class TemporalJoinBinder {
         }
     }
 
-    private static ExpressionNode findSlaveReference(ExpressionNode node, CharSequence slaveAlias) {
+    private static ExpressionNode findSlaveReference(ExpressionNode node, CharSequence slaveAlias, OutputSchema master) {
         if (node == null || slaveAlias == null) {
             return null;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            final int dot = FunctionBinder.qualifierEnd(node, master);
             return dot > 0 && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias) ? node : null;
         }
-        ExpressionNode reference = findSlaveReference(node.lhs, slaveAlias);
+        ExpressionNode reference = findSlaveReference(node.lhs, slaveAlias, master);
         if (reference == null) {
-            reference = findSlaveReference(node.rhs, slaveAlias);
+            reference = findSlaveReference(node.rhs, slaveAlias, master);
         }
         for (int i = 0, n = node.args.size(); reference == null && i < n; i++) {
-            reference = findSlaveReference(node.args.getQuick(i), slaveAlias);
+            reference = findSlaveReference(node.args.getQuick(i), slaveAlias, master);
         }
         return reference;
     }
@@ -191,7 +191,7 @@ final class TemporalJoinBinder {
 
     private static boolean isHorizonGroupByMatch(ExpressionNode key, QueryColumn column) {
         return isSameIgnoringQualifier(key, column.getAst())
-                || Chars.indexOfLastUnquoted(key.token, '.') < 0 && Chars.equalsIgnoreCase(key.token, column.getAlias());
+                || FunctionBinder.qualifierEnd(key, null) < 0 && isAliasOf(column.getAlias(), key.token);
     }
 
     private static boolean isHorizonOffsetModel(QueryModel model) {
@@ -242,7 +242,7 @@ final class TemporalJoinBinder {
             if (FunctionBinder.findColumn(node, master, masterAlias) != -1) {
                 return false;
             }
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            final int dot = FunctionBinder.qualifierEnd(node, master);
             return dot < 0 || Chars.equalsIgnoreCaseNc(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias);
         }
         if (!isSlavePredicate(node.lhs, master, masterAlias, slaveAlias) || !isSlavePredicate(node.rhs, master, masterAlias, slaveAlias)) {
@@ -265,7 +265,7 @@ final class TemporalJoinBinder {
             return;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            final int dot = FunctionBinder.qualifierEnd(node, output);
             if (dot > 0 && !node.isWildcard() && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), horizonAlias)
                     && FunctionBinder.findColumn(node, output, null) < 0) {
                 throw SqlException.invalidColumn(node.position, node.token);
@@ -321,9 +321,9 @@ final class TemporalJoinBinder {
         }
     }
 
-    private static void validateWindowJoinWhere(ExpressionNode where, ObjList<QueryModel> sources, int first) throws SqlException {
+    private static void validateWindowJoinWhere(ExpressionNode where, ObjList<QueryModel> sources, int first, OutputSchema master) throws SqlException {
         for (int i = first, n = sources.size(); i < n; i++) {
-            final ExpressionNode reference = findSlaveReference(where, sourceAlias(sources.getQuick(i)));
+            final ExpressionNode reference = findSlaveReference(where, sourceAlias(sources.getQuick(i)), master);
             if (reference != null) {
                 throw SqlException.invalidColumn(reference.position, reference.token);
             }
@@ -513,7 +513,7 @@ final class TemporalJoinBinder {
 
     private BoundExpression windowJoinBoundExpression(ExpressionNode expression, OutputSchema master, CharSequence slaveAlias,
                                                       SqlExecutionContext executionContext) throws SqlException {
-        final ExpressionNode reference = findSlaveReference(expression, slaveAlias);
+        final ExpressionNode reference = findSlaveReference(expression, slaveAlias, master);
         if (reference != null) {
             throw SqlException.$(reference.position, "RANGE BETWEEN expression must not reference right table columns");
         }
@@ -830,7 +830,7 @@ final class TemporalJoinBinder {
         final CharSequence qualifier = output.getColumnQualifier(index);
         final CharSequence name = output.getColumnName(index);
         final CharSequence token = expression.token;
-        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        final int dot = FunctionBinder.qualifierEnd(expression, output);
         return qualifier == null ? Chars.equals(token, name)
                 : dot >= 0 && Chars.equals(qualifier, token, 0, dot) && Chars.equals(name, token, dot + 1, token.length());
     }
@@ -871,7 +871,7 @@ final class TemporalJoinBinder {
         } else {
             master = binder.bindSource(masterModel, executionContext);
             if (binder.isLatestOverLeadingInput(source)) {
-                validateWindowJoinWhere(where, sources, first);
+                validateWindowJoinWhere(where, sources, first, master.getOutput());
                 master = binder.bindLatestBy(master, where, source, executionContext);
                 where = null;
             }
@@ -892,7 +892,7 @@ final class TemporalJoinBinder {
         }
         boolean isEmpty = false;
         if (where != null) {
-            validateWindowJoinWhere(where, sources, first);
+            validateWindowJoinWhere(where, sources, first, master.getOutput());
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
             if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
                 isEmpty = true;

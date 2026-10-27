@@ -773,7 +773,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 parquetEncodingConfig = 0;
             }
 
-            if (ColumnType.isArray(columnType) && ColumnType.isUndefined(columnType)) {
+            if (ColumnType.isUndefinedArray(columnType)) {
                 final int nDims = Math.max(ColumnType.decodeWeakArrayDimensionality(columnType), 1);
                 throw SqlException
                         .$(0, "cannot create untyped array column, please use type cast, e.g. ")

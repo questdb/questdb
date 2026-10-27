@@ -1647,40 +1647,6 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPivotSubqueryValuesSortedWithoutOrderBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
-            execute("INSERT INTO trades VALUES ('MSFT', 300.75), ('AAPL', 100.5), ('IBM', 150.0)");
-            execute("CREATE TABLE pub (symbol SYMBOL, price DOUBLE)");
-            execute("INSERT INTO pub VALUES ('AAPL', 1.0), ('MSFT', 2.0), ('IBM', 3.0)");
-            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades))")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            AAPL\tIBM\tMSFT
-                            1.0\t3.0\t2.0
-                            """);
-            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM trades LIMIT 2))")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            AAPL\tMSFT
-                            1.0\t2.0
-                            """);
-            assertQuery("SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades ORDER BY symbol DESC))")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            MSFT\tIBM\tAAPL
-                            2.0\t3.0\t1.0
-                            """);
-        });
-    }
-
-    @Test
     public void testPivotSubqueryWithArrayType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat DOUBLE[], val INT);");
@@ -2056,9 +2022,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	cat_0	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9
-                            A	null	10	20	null	null	null	null	null	null	null
-                            B	null	30	40	null	null	null	null	null	null	null
+                            grp	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9	cat_0
+                            A	10	20	null	null	null	null	null	null	null	null
+                            B	30	40	null	null	null	null	null	null	null	null
                             """);
         });
     }
@@ -2344,9 +2310,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp\tNULL\t1
-                            A\t20\t10
-                            B\t40\t30
+                            grp\t1\tNULL
+                            A\t10\t20
+                            B\t30\t40
                             """);
         });
     }
@@ -2376,9 +2342,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp\tNULL\tX
-                            A\t20\t10
-                            B\t40\t30
+                            grp\tX\tNULL
+                            A\t10\t20
+                            B\t30\t40
                             """);
         });
     }

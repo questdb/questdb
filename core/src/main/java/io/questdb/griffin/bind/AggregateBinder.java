@@ -150,12 +150,12 @@ final class AggregateBinder implements Mutable {
     }
 
     private static boolean isSelectAlias(ExpressionNode literal, QueryModel model) {
-        if (Chars.indexOfLastUnquoted(literal.token, '.') >= 0) {
+        if (FunctionBinder.qualifierEnd(literal, null) >= 0) {
             return false;
         }
         final CharSequence name = GenericLexer.unquote(literal.token);
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            if (Chars.equalsIgnoreCase(model.getBottomUpColumns().getQuick(i).getName(), name)) {
+            if (isAliasOf(model.getBottomUpColumns().getQuick(i).getName(), name)) {
                 return true;
             }
         }
@@ -198,7 +198,7 @@ final class AggregateBinder implements Mutable {
                     name = input.getColumnName(index);
                 } else {
                     final CharacterStoreEntry entry = ctx.characterStore.newEntry();
-                    entry.put(spelling.token, Chars.indexOfLastUnquoted(spelling.token, '.') + 1, spelling.token.length());
+                    entry.put(spelling.token, FunctionBinder.qualifierEnd(spelling, input) + 1, spelling.token.length());
                     name = entry.toImmutable();
                 }
                 project.getExpressions().add(column);
@@ -269,15 +269,26 @@ final class AggregateBinder implements Mutable {
     }
 
     private CharSequence aggregateOrderName(ExpressionNode order, QueryModel source) {
+        final ExpressionNode original = aggregateOrderSpelling(order, source);
+        if (original == null) {
+            return order.token;
+        }
+        final BindScope scope = ctx.scope();
+        return original.type == ExpressionNode.LITERAL ? original.token
+                : SqlUtil.createColumnAlias(ctx.characterStore, original.token, FunctionBinder.qualifierEnd(original, null), scope.aliases, scope.aliasSequences, true);
+    }
+
+    /**
+     * The ORDER BY expression as written that a bound aggregate ORDER BY expression comes from, or null.
+     */
+    private ExpressionNode aggregateOrderSpelling(ExpressionNode order, QueryModel source) {
         final BindScope scope = ctx.scope();
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             if (scope.aggregateOrderExpressions.getQuick(i) == order) {
-                final ExpressionNode original = source.getOrderBy().getQuick(i);
-                return original.type == ExpressionNode.LITERAL ? original.token
-                        : SqlUtil.createColumnAlias(ctx.characterStore, original.token, Chars.indexOfLastUnquoted(original.token, '.'), scope.aliases, scope.aliasSequences, true);
+                return source.getOrderBy().getQuick(i);
             }
         }
-        return order.token;
+        return null;
     }
 
     private CharSequence aggregateOutputName(ExpressionNode expression, QueryModel model) {
@@ -499,9 +510,12 @@ final class AggregateBinder implements Mutable {
                         hasOrderWrapper = true;
                     }
                     if (index < 0) {
+                        final ExpressionNode written = aggregateOrderSpelling(order, source);
+                        final ExpressionNode spelling = written != null ? written : order;
                         final CharSequence orderName = aggregateOrderName(order, source);
                         final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, orderName,
-                                Chars.indexOfLastUnquoted(orderName, '.'), scope.aliases, scope.aliasSequences, true);
+                                spelling.type == ExpressionNode.LITERAL ? FunctionBinder.qualifierEnd(spelling, aggregate.getChild().getOutput())
+                                        : Chars.indexOfLastUnquoted(orderName, '.'), scope.aliases, scope.aliasSequences, true);
                         index = tuple.getExpressions().size();
                         ctx.addProjection(tuple, expression, null, name, false);
                     }
@@ -679,7 +693,7 @@ final class AggregateBinder implements Mutable {
             if (!isConstantGroupingExpression(expression) || !isNested && expression.type != ExpressionNode.BIND_VARIABLE
                     && aggregate.getChild() instanceof HorizonJoinPlan) {
                 addGroupingExpression(expression, null, !isNested && expression.type == ExpressionNode.LITERAL
-                        && Chars.indexOfLastUnquoted(expression.token, '.') > -1, model, source, aggregate, context);
+                        && FunctionBinder.qualifierEnd(expression, aggregate.getChild().getOutput()) > -1, model, source, aggregate, context);
             }
         } else if (expression.paramCount < 3) {
             collectGroupingExpressions(expression.lhs, model, source, aggregate, context, true);
@@ -1276,10 +1290,10 @@ final class AggregateBinder implements Mutable {
                 return group;
             }
         }
-        if (group.type == ExpressionNode.LITERAL && Chars.indexOfLastUnquoted(group.token, '.') < 0) {
+        if (group.type == ExpressionNode.LITERAL && FunctionBinder.qualifierEnd(group, null) < 0) {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-                if (Chars.equalsIgnoreCase(column.getAlias(), GenericLexer.unquote(group.token))) {
+                if (isAliasOf(column.getAlias(), GenericLexer.unquote(group.token))) {
                     return column.getAst();
                 }
             }
@@ -1330,7 +1344,7 @@ final class AggregateBinder implements Mutable {
         distinct.getGroupingExpressions().add(key);
         scope.resetAliases();
         final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, argument.token,
-                Chars.indexOfLastUnquoted(argument.token, '.'), scope.aliases, scope.aliasSequences, true);
+                FunctionBinder.qualifierEnd(argument, filter.getOutput()), scope.aliases, scope.aliasSequences, true);
         distinct.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(name), key.getDataType(), false);
         aggregate.replaceInput(0, distinct);
         scope.resetAliases();
@@ -1704,7 +1718,7 @@ final class AggregateBinder implements Mutable {
                         final BoundExpression bound = ctx.functionBinder.bind(order, original.getOutput(), null,
                                 scope.substitutionNodes, scope.substitutionColumns, executionContext);
                         final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, order.token,
-                                Chars.indexOfLastUnquoted(order.token, '.'), scope.aliases, scope.aliasSequences, true);
+                                FunctionBinder.qualifierEnd(order, original.getOutput()), scope.aliases, scope.aliasSequences, true);
                         index = project.getExpressions().size();
                         ctx.addProjection(project, bound, null, name, false);
                     }

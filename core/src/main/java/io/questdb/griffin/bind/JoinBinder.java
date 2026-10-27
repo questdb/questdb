@@ -68,7 +68,6 @@ final class JoinBinder implements Mutable {
     private final BindContext ctx;
     private final IntList deferredJoinInputs;
     private final IntList forwardLeftJoinInputs;
-    private final ObjList<JoinEquality> impliedKeyPairs = new ObjList<>();
     private final IntList inputModels = new IntList();
     private final JoinGraphBuilder joinGraphBuilder;
     private final LateralBinder lateralBinder;
@@ -113,7 +112,6 @@ final class JoinBinder implements Mutable {
 
     @Override
     public void clear() {
-        impliedKeyPairs.clear();
         inputModels.clear();
         joinGraphBuilder.clear();
         lateralDependencyInputs.clear();
@@ -346,10 +344,11 @@ final class JoinBinder implements Mutable {
     }
 
     /**
-     * Validates the types of the keys an input joins by.
+     * Validates the types of the keys an input joins by, unless equalities a later INNER input implies key it, see
+     * {@link JoinDependency#hasImpliedKeys}, and the equalities its ON clause states filter it instead.
      */
     private static void validateJoinKeys(JoinPlan join, JoinDependency dependency) throws SqlException {
-        if (dependency == null) {
+        if (dependency == null || dependency.hasImpliedKeys()) {
             return;
         }
         final int source = dependency.getSlave();
@@ -370,7 +369,7 @@ final class JoinBinder implements Mutable {
         }
         if (expression.type == ExpressionNode.LITERAL) {
             final CharSequence token = expression.token;
-            final int dot = Chars.indexOfLastUnquoted(token, '.');
+            final int dot = FunctionBinder.qualifierEnd(expression, output);
             if (dot > -1 && FunctionBinder.findColumn(expression, output, null) == -1
                     && !FunctionBinder.isUnknownQualifier(GenericLexer.unquote(token.subSequence(0, dot)), output, null)) {
                 throw SqlException.position(expression.position).put("Invalid column: ").put(token, dot + 1, token.length());
@@ -559,10 +558,7 @@ final class JoinBinder implements Mutable {
                 if (step.getJoinType().isTemporal()) {
                     validateTimeSeriesTimestamps(step.getPosition(), timestampId, step.getInput());
                 }
-                impliedKeyPairs.clear();
-                if (!LogicalPlans.isImpliedKeyStep(inputs, graph, i, impliedKeyPairs)) {
-                    validateJoinKeys(join, dependency);
-                }
+                validateJoinKeys(join, dependency);
                 validateTemporalKeys(step, dependency, timestampId);
                 if (step.getJoinType().isBarrier()) {
                     bindJoinOnResidual(scope.joinOnNodes.getQuick(i), join, step, source, i, executionContext);
@@ -596,7 +592,6 @@ final class JoinBinder implements Mutable {
             join.setGraph(graph);
         } finally {
             joinGraphBuilder.clear();
-            impliedKeyPairs.clear();
             scope.joinDerivedEqualities.clear();
             scope.joinOnNodes.clear();
             scope.joinResidualNodes.clear();
@@ -868,7 +863,7 @@ final class JoinBinder implements Mutable {
                 final ExpressionNode column = findUnnestColumn(expression, e.getPosition());
                 final CharSequence message = e.getFlyweightMessage();
                 if (column != null) {
-                    final int dot = Chars.indexOfLastUnquoted(column.token, '.');
+                    final int dot = FunctionBinder.qualifierEnd(column, prefix);
                     if (dot >= 0) {
                         if (prefix.hasColumnQualifier(GenericLexer.unquote(column.token.subSequence(0, dot)))) {
                             if (Chars.startsWith(message, "Invalid column: ")
@@ -1336,7 +1331,7 @@ final class JoinBinder implements Mutable {
 
     private CharSequence joinKeyName(ExpressionNode node, OutputSchema output, int index) {
         final CharSequence name = output.getColumnName(index);
-        final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+        final int dot = FunctionBinder.qualifierEnd(node, output);
         if (dot > 0 && output.hasColumnQualifiers() && output.getColumnQualifier(index) != null
                 && !output.hasColumnQualifier(GenericLexer.unquote(node.token.subSequence(0, dot)))) {
             return ctx.qualifiedJoinName(output.getColumnQualifier(index), name);
@@ -1518,7 +1513,7 @@ final class JoinBinder implements Mutable {
 
     private void validateSpliceOnSourceColumn(ExpressionNode expression, JoinInput source) throws SqlException {
         if (expression != null && expression.type == ExpressionNode.LITERAL) {
-            final int dot = Chars.indexOfLastUnquoted(expression.token, '.');
+            final int dot = FunctionBinder.qualifierEnd(expression, source.getSourceOutput());
             if (dot >= 0 && Chars.equalsIgnoreCaseNc(GenericLexer.unquote(expression.token.subSequence(0, dot)), source.getBindingAlias())) {
                 final CharSequence name = expression.token.subSequence(dot + 1, expression.token.length());
                 if (getColumnIndexQuiet(source.getSourceOutput(), name) < 0) {

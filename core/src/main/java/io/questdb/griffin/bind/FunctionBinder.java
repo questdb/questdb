@@ -92,6 +92,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -544,7 +545,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     private static boolean isTimestampText(TimestampDriver driver, CharSequence text) {
         try {
-            ColumnType.getTimestampDriver(IntervalUtils.literalTimestampType(driver, text)).parseFloorLiteral(text);
+            IntervalUtils.parseTimestampText(driver, text);
             return true;
         } catch (NumericException e) {
             return false;
@@ -852,8 +853,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 if (isOperandTyped(args, 1, operandType) && isOperandTyped(args, 2, operandType)) {
                     return null;
                 }
-                final long lo = temporalConstantValue(args, 1, loType);
-                final long hi = temporalConstantValue(args, 2, hiType);
+                final long lo = temporalConstantValue(args, 1, loType, driver);
+                final long hi = temporalConstantValue(args, 2, hiType, driver);
                 if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
                     return null;
                 }
@@ -889,7 +890,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         validateTemporalConstant(args, index, driver);
         try {
-            final long value = temporalConstantValue(args, index, type);
+            final long value = temporalConstantValue(args, index, type, driver);
             if (value == Numbers.LONG_NULL) {
                 return null;
             }
@@ -902,8 +903,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 }
                 replaceTemporalConstant(args, index, ceil, operandType, true);
             } else {
-                final boolean isCeil = (Chars.equals(operator, '<') || Chars.equals(operator, ">=")) == (operandIndex == 0);
-                replaceTemporalConstant(args, index, isCeil ? ceil : floor, operandType, isExact);
+                replaceTemporalConstant(args, index, FunctionResolver.isRoundedUp(operator, index) ? ceil : floor, operandType, isExact);
             }
         } catch (NumericException | ImplicitCastException e) {
             return null;
@@ -950,7 +950,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             }
             validateTemporalConstant(args, i, driver);
             try {
-                final long value = temporalConstantValue(args, i, type);
+                final long value = temporalConstantValue(args, i, type, driver);
                 if (value == Numbers.LONG_NULL || driver.isExactFrom(value, type)) {
                     replaceTemporalConstant(args, i, driver.ceilFrom(value, type), operandType, true);
                     isMatchable = true;
@@ -1581,7 +1581,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private void replaceExactTemporalConstant(ObjList<Function> args, int index, int type, int operandType, TimestampDriver driver) throws NumericException {
-        final long value = temporalConstantValue(args, index, type);
+        final long value = temporalConstantValue(args, index, type, driver);
         if (value != Numbers.LONG_NULL && driver.isExactFrom(value, type)) {
             replaceTemporalConstant(args, index, driver.ceilFrom(value, type), operandType, true);
         }
@@ -1774,18 +1774,21 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             return ColumnType.UNDEFINED;
         }
         final CharSequence text = literalText(arguments.getQuick(index));
-        return text != null ? IntervalUtils.literalTimestampType(driver, text) : type;
+        return text != null ? IntervalUtils.timestampTextType(driver, text) : type;
     }
 
-    private long temporalConstantValue(ObjList<Function> args, int index, int type) throws NumericException {
+    /**
+     * The value of a comparison constant at {@code type}, its {@link #temporalConstantType} or
+     * {@link #textConstantType}; {@code driver} is the temporal operand's.
+     */
+    private long temporalConstantValue(ObjList<Function> args, int index, int type, TimestampDriver driver) throws NumericException {
         final Function constant = args.getQuick(index);
         final CharSequence text = literalText(arguments.getQuick(index));
         if (text != null) {
-            final TimestampDriver driver = ColumnType.getTimestampDriver(type);
-            final long value = driver.parseFloorLiteral(text);
+            final long value = IntervalUtils.parseTimestampText(driver, text);
             if (ColumnType.isTimestampNano(type) && ColumnType.isTimestampMicro(constant.getType())
                     && Math.floorDiv(value, 1_000) != constant.getTimestamp(null)) {
-                return driver.from(constant.getTimestamp(null), constant.getType());
+                return ColumnType.getTimestampDriver(type).from(constant.getTimestamp(null), constant.getType());
             }
             return value;
         }
@@ -1800,7 +1803,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             return driver.getTimestampType();
         }
         final CharSequence text = args.getQuick(index).isConstant() ? literalText(arguments.getQuick(index)) : null;
-        return text != null ? IntervalUtils.literalTimestampType(driver, text) : ColumnType.UNDEFINED;
+        return text != null ? IntervalUtils.timestampTextType(driver, text) : ColumnType.UNDEFINED;
     }
 
     private TypeExpression type(Function function, int position) {
@@ -2103,7 +2106,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             throw SqlException.ambiguousColumn(node.position, node.token);
         }
         if (index < 0) {
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            final int dot = qualifierEnd(node, input);
             if (dot > -1 && isUnknownQualifier(GenericLexer.unquote(node.token.subSequence(0, dot)), input, inputAlias)) {
                 throw SqlException.$(node.position, "Invalid table name or alias");
             }
@@ -2119,22 +2122,15 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     static int findColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
         final CharSequence name = node.token;
-        final int dot = Chars.indexOfLastUnquoted(name, '.');
+        final int dot = qualifierEnd(node, input);
         if (dot < 0) {
             return getColumnIndexQuiet(input, null, name, 0, name.length());
         }
-        if (node.isQuoted) {
-            final int index = getColumnIndexQuiet(input, null, name, 0, name.length());
-            if (index != -1) {
-                return index;
-            }
-        }
         final CharSequence qualifier = GenericLexer.unquote(name.subSequence(0, dot));
-        if (input.hasColumnQualifiers() ? input.hasColumnQualifier(qualifier)
-                : Chars.equalsIgnoreCaseNc(qualifier, inputAlias)) {
-            return getColumnIndexQuiet(input, input.hasColumnQualifiers() ? qualifier : null, name, dot + 1, name.length());
+        if (input.hasColumnQualifiers()) {
+            return getColumnIndexQuiet(input, qualifier, name, dot + 1, name.length());
         }
-        return -1;
+        return Chars.equalsIgnoreCaseNc(qualifier, inputAlias) ? getColumnIndexQuiet(input, null, name, dot + 1, name.length()) : -1;
     }
 
     static boolean isUnknownQualifier(CharSequence qualifier, OutputSchema input, CharSequence inputAlias) {
@@ -2142,6 +2138,18 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             return !input.hasColumnQualifier(qualifier);
         }
         return !Chars.equalsIgnoreCaseNc(qualifier, inputAlias);
+    }
+
+    /**
+     * The index of the dot that separates a literal's table qualifier from its column name, or -1 when the literal has
+     * none. A quoted name has none, whatever dots it holds, where it names a column of {@code columns} in full, as
+     * {@link #findColumn} resolves it, or where {@code columns} is null, which a caller passes when it matches the name
+     * against output aliases. Otherwise the last dot outside quotes separates the qualifier.
+     */
+    static int qualifierEnd(ExpressionNode node, @Nullable OutputSchema columns) {
+        final CharSequence name = node.token;
+        final int dot = Chars.indexOfLastUnquoted(name, '.');
+        return dot >= 0 && node.isQuoted && (columns == null || getColumnIndexQuiet(columns, null, name, 0, name.length()) >= 0) ? -1 : dot;
     }
 
     static int resolveColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) throws SqlException {

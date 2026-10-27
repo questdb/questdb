@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -35,8 +34,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -612,10 +609,11 @@ public interface RuntimeConstFunction extends UnaryFunction {
     /**
      * Text a comparison reads as a TIMESTAMP of its operand's type. Each cursor converts the text once, as
      * {@code FunctionBinder} converts the same text written as a literal in that comparison: at the precision the
-     * text spells ({@link IntervalUtils#literalTimestampType}), which may be finer than the operand's, then to the
-     * operand's precision, rounded up ({@link #getCeil()}) or down ({@link #getFloor()}). A value of the operand's
-     * type therefore never fails for lying outside another precision's range. Text that spells no timestamp fails
-     * with {@code inconvertible value} at the text's position, naming the operand's type.
+     * text spells ({@link IntervalUtils#parseTimestampText(TimestampDriver, CharSequence, int, int)}), which may be
+     * finer than the operand's, then to the operand's precision, rounded up ({@link #getCeil()}) or down
+     * ({@link #getFloor()}). A value of the operand's type therefore never fails for lying outside another
+     * precision's range. Text that spells no timestamp fails with {@code inconvertible value} at the text's position,
+     * naming the operand's type.
      */
     final class TimestampTextRuntimeConstFunction extends TimestampFunction implements RuntimeConstFunction {
         private final Function arg;
@@ -674,17 +672,8 @@ public interface RuntimeConstFunction extends UnaryFunction {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             final CharSequence text = arg.getStrA(null);
-            if (text == null) {
-                value = Numbers.LONG_NULL;
-                valueType = driver.getTimestampType();
-            } else {
-                valueType = IntervalUtils.literalTimestampType(driver, text);
-                try {
-                    value = ColumnType.getTimestampDriver(valueType).parseFloorLiteral(text);
-                } catch (NumericException e) {
-                    throw ImplicitCastException.inconvertibleValue(text, arg.getType(), driver.getTimestampType()).position(position);
-                }
-            }
+            valueType = IntervalUtils.timestampTextType(driver, text);
+            value = IntervalUtils.parseTimestampText(driver, text, arg.getType(), position);
             ceil = driver.ceilFrom(value, valueType);
             floor = driver.floorFrom(value, valueType);
         }

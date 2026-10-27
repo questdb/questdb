@@ -39,6 +39,7 @@ import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
@@ -593,6 +594,30 @@ final class DecorrelationContext implements Mutable {
     boolean readsAnyColumn(BoundExpression expression, OutputSchema output) {
         readOutput = output;
         return reads(expression, outputColumnReads);
+    }
+
+    /**
+     * True when the step reads a column of the output as it joins: in its keys, ON condition, key filter or UNNEST
+     * arguments.
+     */
+    boolean readsAnyColumn(JoinInput step, OutputSchema output) {
+        final ObjList<JoinKey> keys = step.getKeys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinKey key = keys.getQuick(i);
+            if (output.getColumnIndexById(key.getMasterColumnId()) > -1 || output.getColumnIndexById(key.getSlaveColumnId()) > -1) {
+                return true;
+            }
+        }
+        if (readsAnyColumn(step.getOnResidual(), output) || readsAnyColumn(step.getKeyFilter(), output)) {
+            return true;
+        }
+        final UnnestSpec unnest = step.getUnnest();
+        for (int i = 0, n = unnest != null ? unnest.getExpressions().size() : 0; i < n; i++) {
+            if (readsAnyColumn(unnest.getExpressions().getQuick(i), output)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

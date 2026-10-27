@@ -40,15 +40,16 @@ public class CaseFunctionFactory implements FunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         final int n = argTypes.size();
+        final IntList foldedTypes = CaseCommon.foldedTypes();
         int returnType = -1;
         for (int i = 1; i < n; i += 2) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
             if (returnType == ColumnType.UNDEFINED) {
                 return ColumnType.UNDEFINED;
             }
         }
         if (n % 2 == 1) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(n - 1));
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(n - 1), foldedTypes);
         }
         return CaseCommon.getCaseFunctionType(returnType);
     }
@@ -70,7 +71,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
         final ObjList<Function> argsToPoke = new ObjList<>(n);
-        final IntList foldedTypes = new IntList();
+        final IntList foldedTypes = CaseCommon.foldedTypes();
 
         Function elseBranch;
         int elseBranchPosition;

@@ -30,7 +30,8 @@ import io.questdb.std.ObjectFactory;
 
 /**
  * An equality between columns of two join inputs, or of one input, that a join key or a filter implements: each side's
- * input, column id, name and SQL position, and the inputs whose ON clause states it, -1 for WHERE.
+ * input, column id, name and SQL position, and the inputs whose ON clause states it, -1 for WHERE. An implied
+ * equality, see {@link #getReplacedKey}, keys an outer input on a column of an input before it.
  */
 public final class JoinEquality implements Mutable {
     public static final ObjectFactory<JoinEquality> FACTORY = JoinEquality::new;
@@ -39,6 +40,7 @@ public final class JoinEquality implements Mutable {
     private CharSequence leftName;
     private int leftPosition;
     private int leftSource;
+    private JoinEquality replacedKey;
     private int rightColumnId;
     private CharSequence rightName;
     private int rightPosition;
@@ -60,6 +62,7 @@ public final class JoinEquality implements Mutable {
         leftName = rightName = null;
         leftPosition = rightPosition = -1;
         leftSource = rightSource = -1;
+        replacedKey = null;
     }
 
     /**
@@ -110,6 +113,15 @@ public final class JoinEquality implements Mutable {
         return leftSource == source ? leftPosition : rightPosition;
     }
 
+    /**
+     * The key of a later INNER input that this equality, which that input's keys imply between the outer input on its
+     * right and an input before it on its left, replaces; null for an equality a clause states or transitivity derives.
+     * Every row the outer input emits holds the equality, so the later input no longer keys on that column.
+     */
+    public JoinEquality getReplacedKey() {
+        return replacedKey;
+    }
+
     public int getRightColumnId() {
         return rightColumnId;
     }
@@ -136,6 +148,22 @@ public final class JoinEquality implements Mutable {
         this.rightColumnId = rightColumnId;
         this.rightName = rightName;
         this.rightPosition = rightPosition;
+        return this;
+    }
+
+    /**
+     * The equality between the columns {@code stepKey} and {@code masterKey}, two keys of the later INNER input
+     * {@code slave} on one of its columns, read on the outer input and on the input before it, see
+     * {@link #getReplacedKey}.
+     */
+    public JoinEquality ofImplied(JoinEquality stepKey, JoinEquality masterKey, int slave) {
+        final int step = stepKey.getOtherSource(slave);
+        final int master = masterKey.getOtherSource(slave);
+        of(master, masterKey.getColumnId(master), masterKey.getName(master), masterKey.getPosition(master),
+                step, stepKey.getColumnId(step), stepKey.getName(step), stepKey.getPosition(step));
+        addOwners(stepKey.owners);
+        addOwners(masterKey.owners);
+        replacedKey = masterKey;
         return this;
     }
 

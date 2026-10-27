@@ -45,15 +45,19 @@ final class SetOperationBinder {
     }
 
     static boolean isSymbolTableStatic(SetOperationPlan plan, int index) {
-        return !plan.getOperation().isUnion() && !SetOperationCasts.isCastRequired(plan)
+        return !plan.getOperation().isUnion() && !plan.isCastRequired()
                 && plan.getLeft().getOutput().isSymbolTableStatic(index);
     }
 
     static int resolveTimestampIndex(SetOperationPlan plan) {
-        return plan.getOperation().isUnion() || SetOperationCasts.isCastRequired(plan)
+        return plan.getOperation().isUnion() || plan.isCastRequired()
                 ? -1 : plan.getLeft().getOutput().getTimestampIndex();
     }
 
+    /**
+     * Resolves the output column types into {@code targetTypes} and records on the plan whether it casts its branches,
+     * their cast types and its SYMBOL columns.
+     */
     static void resolveTypes(SetOperationPlan plan, IntList targetTypes) throws SqlException {
         final OutputSchema left = plan.getLeft().getOutput();
         final OutputSchema right = plan.getRight().getOutput();
@@ -62,10 +66,13 @@ final class SetOperationBinder {
         }
         final boolean isUnion = plan.getOperation().isUnion();
         final boolean isCastRequired = SetOperationCasts.isCastRequired(plan);
+        plan.setCastRequired(isCastRequired);
         targetTypes.clear();
+        plan.getCastTypes().clear();
         plan.getSymbolColumns().clear();
         for (int i = 0, n = left.getColumnCount(); i < n; i++) {
             int type = SetOperationCasts.getCastType(plan, i, isCastRequired);
+            plan.getCastTypes().add(type);
             if (isUnion && SetOperationCasts.isSymbolColumn(plan.getLeft(), i) && SetOperationCasts.isSymbolColumn(plan.getRight(), i)) {
                 plan.getSymbolColumns().add(i);
                 if (plan.isSymbolRestorationRequired()) {

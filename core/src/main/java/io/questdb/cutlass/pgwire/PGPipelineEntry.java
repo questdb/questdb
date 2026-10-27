@@ -1848,6 +1848,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         final int index = pendingWriters.keyIndex(tableToken);
                         if (index < 0) {
                             updateOperation.withContext(sqlExecutionContext);
+                            // A statement that fails here leaves the parked writer and its rows to the
+                            // transaction, as any statement that fails before it writes does.
+                            updateOperation.validate();
                             // cached writers to remain in the list until transaction end
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);

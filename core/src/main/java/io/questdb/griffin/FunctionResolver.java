@@ -316,6 +316,15 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
+     * Whether an ordering comparison reads the constant at {@code constantIndex}, when it is finer than the TIMESTAMP
+     * operand on the other side, as the first operand value not before it rather than the last one not after it:
+     * true when the constant is the inclusive lower bound of {@code >=} or the exclusive upper bound of {@code <}.
+     */
+    public static boolean isRoundedUp(CharSequence operator, int constantIndex) {
+        return (Chars.equals(operator, '<') || Chars.equals(operator, ">=")) == (constantIndex == 1);
+    }
+
+    /**
      * Whether the operator compares two values of one type: {@code =}, {@code !=}, {@code <>}, {@code <}, {@code <=},
      * {@code >} or {@code >=}.
      */
@@ -1560,7 +1569,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                 final Function arg = args.getQuick(i);
                 if (operandIndex > -1 && i != operandIndex && sigArgTypeTag == ColumnType.TIMESTAMP
                         && ColumnType.isVarcharOrString(arg.getType()) && arg.isRuntimeConstant()) {
-                    final boolean isCeil = args.size() == 3 ? i == 1 : (Chars.equals(name, '<') || Chars.equals(name, ">=")) == (i == 1);
+                    final boolean isCeil = args.size() == 3 ? i == 1 : isRoundedUp(name, i);
                     args.setQuick(i, RuntimeConstFunction.wrapTimestampText(arg, args.getQuick(operandIndex).getType(),
                             argPositions.getQuick(i), isCeil));
                 } else {

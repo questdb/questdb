@@ -147,7 +147,7 @@ final class OrderBinder implements Mutable {
                     final ProjectPlan target = ordering == null ? project : ordering;
                     index = target.getExpressions().size();
                     ctx.addProjection(target, expression, nested, order.type == ExpressionNode.LITERAL ? hiddenName
-                            : SqlUtil.createColumnAlias(ctx.characterStore, order.token, Chars.indexOfLastUnquoted(order.token, '.'), scope.aliases, scope.aliasSequences, true), false);
+                            : SqlUtil.createColumnAlias(ctx.characterStore, order.token, FunctionBinder.qualifierEnd(order, sourceScope), scope.aliases, scope.aliasSequences, true), false);
                 }
             }
             scope.orderOutputIndexes.add(index);
@@ -287,7 +287,7 @@ final class OrderBinder implements Mutable {
     ) throws SqlException {
         // A bare ORDER BY name uses the output alias; names inside expressions prefer source columns,
         // except under SUBSAMPLE, whose ordering scope is the sampled output.
-        return Chars.indexOfLastUnquoted(expression.token, '.') < 0 && (isAliasPreferred || getColumnIndexQuiet(input, expression.token) < 0)
+        return FunctionBinder.qualifierEnd(expression, project.getOutput()) < 0 && (isAliasPreferred || getColumnIndexQuiet(input, expression.token) < 0)
                 ? orderProjectionIndex(expression, project.getOutput(), visibleCount) : -1;
     }
 
@@ -342,7 +342,7 @@ final class OrderBinder implements Mutable {
     static boolean hasProjectedOrder(ProjectPlan project, QueryModel source) throws SqlException {
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             final ExpressionNode order = source.getOrderBy().getQuick(i);
-            final int dot = order.type == ExpressionNode.LITERAL ? Chars.indexOfLastUnquoted(order.token, '.') : -1;
+            final int dot = order.type == ExpressionNode.LITERAL ? FunctionBinder.qualifierEnd(order, project.getOutput()) : -1;
             if (orderProjectionIndex(order, project.getOutput(), project.getExpressions().size()) >= 0) {
                 return true;
             }
@@ -358,8 +358,8 @@ final class OrderBinder implements Mutable {
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             final ExpressionNode order = source.getOrderBy().getQuick(i);
             if (order.type != ExpressionNode.CONSTANT && !isRowCount(order)
-                    && (order.type != ExpressionNode.LITERAL || Chars.indexOfLastUnquoted(order.token, '.') >= 0
-                    || !Chars.equalsIgnoreCase(order.token, column.getName()))) {
+                    && (order.type != ExpressionNode.LITERAL || FunctionBinder.qualifierEnd(order, null) >= 0
+                    || !isAliasOf(column.getName(), order.token))) {
                 return false;
             }
         }
@@ -411,7 +411,7 @@ final class OrderBinder implements Mutable {
                 return index;
             }
         }
-        if (order.type == ExpressionNode.LITERAL && Chars.indexOfLastUnquoted(order.token, '.') < 0) {
+        if (order.type == ExpressionNode.LITERAL && FunctionBinder.qualifierEnd(order, output) < 0) {
             final int index = getColumnIndexQuiet(output, order.token);
             return index < visibleCount ? index : -1;
         }

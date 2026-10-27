@@ -28,9 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.conditional.CaseCommon;
+import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.std.IntList;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -163,6 +167,32 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
             }
         }
         Assert.assertEquals(ColumnType.STRING, getCommonTypeOrNone(ColumnType.CHAR, ColumnType.SYMBOL));
+    }
+
+    @Test
+    public void testResultTypeMatchesInstantiation() {
+        // CHAR and STRING fold into STRING and STRING into IPv4, but CHAR does not convert to IPv4
+        final CoalesceFunctionFactory coalesce = new CoalesceFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, coalesce.getResultType(types(ColumnType.CHAR, ColumnType.STRING, ColumnType.IPv4)));
+        Assert.assertEquals(ColumnType.UNDEFINED, coalesce.getResultType(types(ColumnType.STRING, ColumnType.CHAR, ColumnType.IPv4)));
+        Assert.assertEquals(ColumnType.IPv4, coalesce.getResultType(types(ColumnType.STRING, ColumnType.IPv4)));
+
+        final CaseFunctionFactory caseFactory = new CaseFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, caseFactory.getResultType(
+                types(ColumnType.BOOLEAN, ColumnType.CHAR, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.IPv4)
+        ));
+        Assert.assertEquals(ColumnType.IPv4, caseFactory.getResultType(types(ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.IPv4)));
+
+        final SwitchFunctionFactory switchFactory = new SwitchFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.INT, ColumnType.IPv4, ColumnType.CHAR)
+        ));
+        Assert.assertEquals(ColumnType.UNDEFINED, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.UNDEFINED)
+        ));
+        Assert.assertEquals(ColumnType.IPv4, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.IPv4)
+        ));
     }
 
     private static void addGlobalExceptions(Map<Short, Set<Short>> map) {
@@ -529,6 +559,14 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     private static boolean isIgnoredType(short lType, short rType) {
         return IGNORED_TYPE.get(lType).contains(rType);
+    }
+
+    private static IntList types(int... types) {
+        final IntList list = new IntList();
+        for (int type : types) {
+            list.add(type);
+        }
+        return list;
     }
 
     private Function getRndFunction(short type) throws SqlException {

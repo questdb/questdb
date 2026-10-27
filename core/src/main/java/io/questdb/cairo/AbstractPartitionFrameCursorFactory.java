@@ -28,13 +28,13 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.view.ViewGraph;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -52,6 +52,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    private final LowerCaseCharSequenceHashSet viewReadColumns;
     private long maxRowCount = Long.MAX_VALUE;
     private long minRowCount;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
@@ -71,6 +72,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         this.viewName = viewName;
         this.viewPosition = viewPosition;
         this.updateQuery = updateQuery;
+        this.viewReadColumns = viewName != null ? new LowerCaseCharSequenceHashSet() : null;
     }
 
     @Override
@@ -161,13 +163,17 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             // Columns the view does not read, directly or through the views it reads, require explicit
             // permission. That includes every column of a table the dependency maps do not record, which
             // a dependency-collector gap or a rename of the table after the view was created can cause.
-            final ViewGraph viewGraph = engine.getViewGraph();
-            final String tableName = tableToken.getTableName();
             columnNames.clear();
-            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                final String columnName = table.getColumnName(columnIndexes.getQuick(i));
-                if (!viewGraph.readsColumn(engine, viewDefinition, tableName, columnName)) {
-                    columnNames.add(columnName);
+            if (columnIndexes.size() > 0) {
+                viewReadColumns.clear();
+                engine.getViewGraph().collectReadColumns(engine, viewDefinition, tableToken.getTableName(), viewReadColumns);
+                if (viewReadColumns.excludes("*")) {
+                    for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                        final String columnName = table.getColumnName(columnIndexes.getQuick(i));
+                        if (viewReadColumns.excludes(columnName)) {
+                            columnNames.add(columnName);
+                        }
+                    }
                 }
             }
             if (columnNames.size() > 0) {

@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.SetOperationCasts;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -1114,7 +1113,7 @@ public final class PhysicalProperties {
                 if (operation.getOperation() == SetOperationKind.UNION_ALL) {
                     yield forwarded(operation.isMerged() ? operation.getOutput().getColumnIndexById(operation.getRequestedOrderColumnId()) : -1, isSource);
                 }
-                yield operation.getOperation().isUnion() || SetOperationCasts.isCastRequired(operation) ? -1
+                yield operation.getOperation().isUnion() || operation.isCastRequired() ? -1
                         : forwarded(timestamp(operation.getLeft(), null, false), isSource);
             }
             case WindowPlan window -> forwarded(timestamp(window.getChild(), null, false), isSource);

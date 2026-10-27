@@ -202,7 +202,7 @@ final class PivotBinder implements Mutable {
         final ExpressionNode subquery = column.getSelectSubqueryExpr();
         final int position = subquery.position;
         // The values of the sub-query become output columns, so it is generated and run while binding.
-        try (RecordCursorFactory factory = compiler.compilePivotValuesFactory(subquery.queryModel, position, executionContext)) {
+        try (RecordCursorFactory factory = compiler.compileSubqueryFactory(subquery.queryModel, position, executionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
             if (metadata.getColumnCount() != 1) {
                 throw SqlException.$(position, "PIVOT IN subquery must return exactly one column, got ").put(metadata.getColumnCount());

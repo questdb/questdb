@@ -206,6 +206,15 @@ final class BindContext implements Mutable {
     /**
      * A call {@code count(k)} of a non-null constant {@code k}, which counts the rows as {@code count()} does.
      */
+    /**
+     * Whether a select alias spells {@code name}. SqlParser keeps the quotes of an alias that holds a dot, see
+     * {@link SqlUtil#isQuoteProtectedAlias(CharSequence)}.
+     */
+    static boolean isAliasOf(CharSequence alias, CharSequence name) {
+        return Chars.equalsIgnoreCase(alias, name)
+                || SqlUtil.isQuoteProtectedAlias(alias) && Chars.equalsIgnoreCase(name, alias, 1, alias.length() - 1);
+    }
+
     static boolean isConstantCount(ExpressionNode expression) {
         return expression.type == ExpressionNode.FUNCTION && SqlKeywords.isCountKeyword(expression.token) && expression.paramCount == 1
                 && expression.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(expression.rhs.token);

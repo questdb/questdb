@@ -309,7 +309,7 @@ final class OuterJoinCarriers implements Mutable {
         carrierIds.setAll(outerIds.size(), -1);
         markerId = -1;
         int last = LogicalPlans.lastMasterNullingStep(join);
-        final int first = outerIds.size() > 0 ? keys.firstOuterRead(join, outerIds, last, true) : Integer.MAX_VALUE;
+        final int first = outerIds.size() > 0 ? keys.firstOuterRead(join, outerIds, last) : Integer.MAX_VALUE;
         final boolean isTrailing = first > last && outerIds.size() > 0;
         int from = first;
         if (first <= last) {

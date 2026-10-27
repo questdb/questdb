@@ -411,9 +411,12 @@ final class Decorrelation implements OptimiserPass {
         final OutputSchema output = operation.getOutput();
         final OutputSchema leftOutput = operation.getLeft().getOutput();
         final boolean isCastRequired = SetOperationCasts.isCastRequired(operation);
+        operation.setCastRequired(isCastRequired);
         for (int i = output.getColumnCount(), k = 0, n = leftOutput.getColumnCount(); i < n; i++, k++) {
             final int columnId = context.newColumnId();
-            output.add(columnId, leftOutput.getColumnName(i), SetOperationCasts.getCastType(operation, i, isCastRequired), false);
+            final int type = SetOperationCasts.getCastType(operation, i, isCastRequired);
+            output.add(columnId, leftOutput.getColumnName(i), type, false);
+            operation.getCastTypes().add(type);
             mapping.push(domains.outerIds().getQuick(k), columnId);
         }
         return operation;

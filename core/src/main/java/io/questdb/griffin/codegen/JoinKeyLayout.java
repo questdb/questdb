@@ -278,9 +278,18 @@ final class JoinKeyLayout implements Mutable {
 
     /**
      * Lays out the keys pairing each master column index with the slave column index at the same position, and the
-     * check of the master column pairs in {@link #checkedIndexes} and {@link #checkedLookupIndexes}.
+     * check that compares each master column of {@code checkedIndexes} with the master column of
+     * {@code checkedLookupIndexes} at the same position.
      */
-    void of(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, IntList masterIndexes, IntList slaveIndexes, boolean isSelfJoin) {
+    void of(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            IntList masterIndexes,
+            IntList slaveIndexes,
+            IntList checkedIndexes,
+            IntList checkedLookupIndexes,
+            boolean isSelfJoin
+    ) {
         keyCheck = checkedIndexes.size() == 0 ? null : new JoinKeyCheck(masterMetadata, checkedLookupIndexes, checkedIndexes);
         slaveColumns.clear();
         masterColumns.clear();

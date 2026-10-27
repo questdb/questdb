@@ -89,15 +89,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (n < 2) {
             return ColumnType.UNDEFINED;
         }
+        final IntList foldedTypes = CaseCommon.foldedTypes();
         int returnType = -1;
         if (n % 2 == 0) {
-            returnType = argTypes.getQuick(--n);
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(--n), foldedTypes);
         }
-        for (int i = 2; i < n; i += 2) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
-            if (returnType == ColumnType.UNDEFINED) {
-                return ColumnType.UNDEFINED;
-            }
+        for (int i = 2; i < n && returnType != ColumnType.UNDEFINED; i += 2) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
         }
         return CaseCommon.getCaseFunctionType(returnType);
     }
@@ -145,7 +143,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         Function elseBranch;
         final int elseBranchPosition;
         int returnType = -1;
-        final IntList foldedTypes = new IntList();
+        final IntList foldedTypes = CaseCommon.foldedTypes();
         if (n % 2 == 0) {
             elseBranch = args.getLast();
             elseBranchPosition = argPositions.getLast();

@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -612,8 +613,9 @@ final class ColumnPruning implements OptimiserPass {
             projection.getOutput().setTimestampColumnId(inputSchema.getTimestampColumnId());
             plan.replaceInput(i, projection);
         }
-        plan.remapSymbolColumns(retainedColumnIndexes, remappedSymbolColumns);
+        plan.retainColumns(retainedColumnIndexes, remappedSymbolColumns);
         output.retain(retainedColumnIndexes);
+        plan.setCastRequired(SetOperationCasts.isCastRequired(plan));
     }
 
     /**

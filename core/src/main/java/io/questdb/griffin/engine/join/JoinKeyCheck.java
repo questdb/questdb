@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.std.Chars;
@@ -38,8 +39,8 @@ import io.questdb.std.str.Utf8s;
  * Compares the master columns of the join keys that share a slave column, for an ASOF, LT or HORIZON JOIN that looks up
  * one key per shared slave column, see {@link io.questdb.griffin.plan.logical.JoinKey#getLookupKeyIndex}. No slave row
  * matches a master row whose two columns of a pair differ, so the join answers such a row with no slave row and skips
- * the lookup. Two columns compare equal when both are NULL, as the join keys do. The check holds no state, so the
- * workers of a parallel join share one instance.
+ * the lookup. Two columns compare equal when both are NULL, as the join keys do; their types pass
+ * {@link LogicalPlans#isKeyMatchType}. The check holds no state, so the workers of a parallel join share one instance.
  */
 public final class JoinKeyCheck implements Plannable {
     private final int[] checkedColumns;
@@ -66,31 +67,13 @@ public final class JoinKeyCheck implements Plannable {
             this.checkedColumns[i] = checkedColumn;
             lookupTypes[i] = masterMetadata.getColumnType(lookupColumn);
             checkedTypes[i] = masterMetadata.getColumnType(checkedColumn);
-            assert isComparable(lookupTypes[i], checkedTypes[i]);
+            assert LogicalPlans.isKeyMatchType(lookupTypes[i], checkedTypes[i]);
             if (i > 0) {
                 sink.put(" and ");
             }
             sink.put(masterMetadata.getColumnName(lookupColumn)).put('=').put(masterMetadata.getColumnName(checkedColumn));
         }
         this.text = sink.toString();
-    }
-
-    /**
-     * True when the check compares a column of the first type with one of the second as the join keys do: two text
-     * columns, SYMBOL, STRING or VARCHAR, by their text, and two columns of one fixed-size type whose join key is its
-     * value, by value.
-     */
-    public static boolean isComparable(int typeA, int typeB) {
-        if (ColumnType.isSymbolOrStringOrVarchar(typeA)) {
-            return ColumnType.isSymbolOrStringOrVarchar(typeB);
-        }
-        return typeA == typeB && switch (ColumnType.tagOf(typeA)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
-                 ColumnType.IPv4,
-                 ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
-                 ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.UUID, ColumnType.LONG128 -> true;
-            default -> false;
-        };
     }
 
     /**

@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TickCalendarService;
@@ -48,6 +49,7 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -696,23 +698,11 @@ public final class IntervalUtils {
     }
 
     /**
-     * The precision a timestamp literal compared with values of the driver's precision is exact at:
-     * the driver's for nanoseconds, otherwise microseconds or, when the literal spells a finer
-     * fraction, nanoseconds.
-     */
-    public static int literalTimestampType(TimestampDriver timestampDriver, CharSequence literal) {
-        return ColumnType.isTimestampNano(timestampDriver.getTimestampType())
-                ? timestampDriver.getTimestampType()
-                : FunctionResolver.getAdaptiveTimestampType(literal, ColumnType.TIMESTAMP_MICRO);
-    }
-
-    /**
      * The first value at the driver's precision that is not before a timestamp literal, which may be
      * finer than the driver.
      */
     public static long parseCeilLiteral(TimestampDriver timestampDriver, CharSequence literal) throws NumericException {
-        final int type = literalTimestampType(timestampDriver, literal);
-        return timestampDriver.ceilFrom(ColumnType.getTimestampDriver(type).parseFloorLiteral(literal), type);
+        return timestampDriver.ceilFrom(parseTimestampText(timestampDriver, literal), timestampTextType(timestampDriver, literal));
     }
 
     /**
@@ -720,8 +710,7 @@ public final class IntervalUtils {
      * finer than the driver.
      */
     public static long parseFloorLiteral(TimestampDriver timestampDriver, CharSequence literal) throws NumericException {
-        final int type = literalTimestampType(timestampDriver, literal);
-        return timestampDriver.floorFrom(ColumnType.getTimestampDriver(type).parseFloorLiteral(literal), type);
+        return timestampDriver.floorFrom(parseTimestampText(timestampDriver, literal), timestampTextType(timestampDriver, literal));
     }
 
     /**
@@ -1355,6 +1344,43 @@ public final class IntervalUtils {
     }
 
     /**
+     * The value of text compared with values of the driver's precision, at the precision the text spells,
+     * {@link #timestampTextType}; NULL for NULL text.
+     *
+     * @throws NumericException when the text spells no timestamp
+     */
+    public static long parseTimestampText(TimestampDriver timestampDriver, @Nullable CharSequence text) throws NumericException {
+        return text == null ? Numbers.LONG_NULL : ColumnType.getTimestampDriver(timestampTextType(timestampDriver, text)).parseFloorLiteral(text);
+    }
+
+    /**
+     * {@link #parseTimestampText(TimestampDriver, CharSequence)} for text a comparison reads at runtime. Text that
+     * spells no timestamp fails with {@code inconvertible value}, from {@code textType} to the driver's type, at
+     * {@code position}.
+     */
+    public static long parseTimestampText(TimestampDriver timestampDriver, @Nullable CharSequence text, int textType, int position) {
+        try {
+            return parseTimestampText(timestampDriver, text);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(text, textType, timestampDriver.getTimestampType()).position(position);
+        }
+    }
+
+    /**
+     * {@link #parseTimestampText(TimestampDriver, CharSequence, int, int)} for VARCHAR text.
+     */
+    public static long parseTimestampText(TimestampDriver timestampDriver, @Nullable Utf8Sequence text, int position) {
+        if (text == null) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            return ColumnType.getTimestampDriver(timestampTextType(timestampDriver, text.asAsciiCharSequence())).parseFloorLiteral(text);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(text, ColumnType.VARCHAR, timestampDriver.getTimestampType()).position(position);
+        }
+    }
+
+    /**
      * Sorts the intervals at {@code [startIndex, size)} chronologically and unions them with
      * each other in place, leaving {@code [0, startIndex)} untouched. Coalescing follows the
      * same rule as {@link #unionInPlace(LongList, int)} - intervals merge only when they overlap
@@ -1395,6 +1421,18 @@ public final class IntervalUtils {
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInPlace(intervals, divider);
+    }
+
+    /**
+     * The precision text compared with values of the driver's precision spells, at which
+     * {@link #parseTimestampText} parses it: the driver's for NULL text and for a nanosecond driver, otherwise
+     * nanoseconds when the text spells a fraction finer than microseconds in the nanosecond range, else
+     * microseconds.
+     */
+    public static int timestampTextType(TimestampDriver timestampDriver, @Nullable CharSequence text) {
+        return text == null || ColumnType.isTimestampNano(timestampDriver.getTimestampType())
+                ? timestampDriver.getTimestampType()
+                : FunctionResolver.getAdaptiveTimestampType(text, ColumnType.TIMESTAMP_MICRO);
     }
 
     /**

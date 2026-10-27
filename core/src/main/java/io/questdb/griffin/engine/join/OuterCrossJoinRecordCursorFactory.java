@@ -241,9 +241,8 @@ public class OuterCrossJoinRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            if (!(masterCursor.getRecord() instanceof RightOuterJoinRecord masterRecord)) {
-                throw new IllegalStateException("outer cross join master is not a RIGHT or FULL join");
-            }
+            assert masterCursor.getRecord() instanceof RightOuterJoinRecord : "outer cross join master is not a RIGHT or FULL join";
+            final RightOuterJoinRecord masterRecord = (RightOuterJoinRecord) masterCursor.getRecord();
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterRecord;

@@ -657,6 +657,20 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinNullExtensionByOnResidual() {
+        final JoinPlan join = join(source(), source(5, 6));
+        final JoinInput step = join.getInputs().getQuick(1);
+        step.setJoinType(JoinKind.LEFT_OUTER);
+        step.addKey(1, 5, "m.a", "s.a", 0);
+        step.setNullExtension(JoinInput.NullExtension.BY_ON_RESIDUAL);
+        assertFails(join, PlanVerifier.JOIN_NULL_EXTENSION, "JoinPlan");
+        step.setOnResidual(column(6, ColumnType.BOOLEAN));
+        verifier.verify(join, PASS);
+        step.setJoinType(JoinKind.INNER);
+        assertFails(join, PlanVerifier.JOIN_NULL_EXTENSION, "JoinPlan");
+    }
+
+    @Test
     public void testJoinOnKept() {
         final JoinPlan join = join(source(), source(5, 6));
         final JoinInput step = join.getInputs().getQuick(1);
@@ -701,6 +715,29 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final JoinPlan join = join(source(), source(5, 6));
         join.getOrderedInputs().add(join.getInputs().getQuick(0));
         assertFails(join, PlanVerifier.JOIN_ORDER, "JoinPlan");
+    }
+
+    @Test
+    public void testJoinOuterCross() throws Exception {
+        final JoinPlan unordered = join(source(), source(5, 6));
+        unordered.getInputs().getQuick(1).setJoinType(JoinKind.OUTER_CROSS);
+        assertFails(unordered, PlanVerifier.JOIN_OUTER_CROSS, "JoinPlan");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE oc_a (k INT, x INT)");
+            execute("CREATE TABLE oc_m (k INT)");
+            execute("CREATE TABLE oc_b (k INT, x INT)");
+            assertAlgorithmContradicts("SELECT a.k, m.k, b.k FROM oc_a a CROSS JOIN oc_m m RIGHT JOIN oc_b b ON b.k = a.k AND b.x > a.x",
+                    JoinPlan.class, join -> {
+                        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+                        final JoinInput outer = ordered.getQuick(1);
+                        final JoinInput step = ordered.getQuick(2);
+                        Assert.assertEquals(JoinKind.RIGHT_OUTER, outer.getJoinType());
+                        Assert.assertEquals(JoinKind.OUTER_CROSS, step.getJoinType());
+                        Assert.assertNotNull(outer.getOnResidual());
+                        step.setOnResidual(outer.getOnResidual());
+                        outer.setOnResidual(null);
+                    }, PlanVerifier.JOIN_OUTER_CROSS);
+        });
     }
 
     @Test
@@ -979,6 +1016,14 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 sample.setAlgorithm(SampleByPlan.Algorithm.FILL_VALUE);
             }, PlanVerifier.SAMPLE_BY_ALGORITHM);
         });
+    }
+
+    @Test
+    public void testSetOperationCastFactStale() throws Exception {
+        assertMemoryLeak(() -> assertAlgorithmContradicts("SELECT 1::INT a UNION ALL SELECT 2::LONG a", SetOperationPlan.class, operation -> {
+            Assert.assertTrue(operation.isCastRequired());
+            operation.setCastRequired(false);
+        }, PlanVerifier.SET_OPERATION_CAST));
     }
 
     @Test

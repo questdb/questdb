@@ -493,17 +493,11 @@ final class SetOperationFactoryGenerator {
         try {
             final RecordMetadata leftMetadata = left.getMetadata();
             final RecordMetadata rightMetadata = right.getMetadata();
-            final boolean castRequired = SetOperationCasts.isCastRequired(plan);
             final GenericRecordMetadata metadata;
-            if (castRequired) {
+            if (plan.isCastRequired()) {
                 metadata = new GenericRecordMetadata();
                 for (int i = 0, n = leftMetadata.getColumnCount(); i < n; i++) {
-                    final int type = plan.getOutput().getColumnType(i);
-                    // the union casts a column it restores as SYMBOL to STRING first
-                    metadata.add(new TableColumnMetadata(
-                            Chars.toString(plan.getOutput().getColumnName(i)),
-                            ColumnType.isSymbol(type) ? STRING : type
-                    ));
+                    metadata.add(new TableColumnMetadata(Chars.toString(plan.getOutput().getColumnName(i)), plan.getCastTypes().getQuick(i)));
                 }
                 leftCasts = generateCastFunctions(executionContext, metadata, leftMetadata, plan.getPosition());
                 rightCasts = generateCastFunctions(executionContext, metadata, rightMetadata, plan.getRightPosition());

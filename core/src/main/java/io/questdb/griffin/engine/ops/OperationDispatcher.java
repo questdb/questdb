@@ -113,17 +113,20 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                 || (operation.isForceableWhenSuspended()
                 && engine.getConfiguration().isWalApplySuspendedWriteDenied()
                 && engine.isWalApplySuspended(tableToken));
-        try (TableWriterAPI writer = !forceWalBypass ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
-            // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
-            // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below
-            // fires only inside the fence, so a reverted/absent dispatcher fence would fire nothing and
-            // a demote-race witness would degrade to a timing-only sleep window. Firing the shared mint
-            // observer before the fence lets a witness arm one seam that trips whether or not the fence
-            // wraps the externalization. A strict no-op in production (the observer field is null) and on
-            // the existing fenced path (the post-fence preApplyObserver still fires).
-            engine.fireRoleSwitchMintObserver();
-            final long result = applyFenced(operation, writer, forceWalBypass);
-            return doneFuture.of(result);
+        try {
+            operation.validate();
+            try (TableWriterAPI writer = !forceWalBypass ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
+                // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
+                // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below
+                // fires only inside the fence, so a reverted/absent dispatcher fence would fire nothing and
+                // a demote-race witness would degrade to a timing-only sleep window. Firing the shared mint
+                // observer before the fence lets a witness arm one seam that trips whether or not the fence
+                // wraps the externalization. A strict no-op in production (the observer field is null) and on
+                // the existing fenced path (the post-fence preApplyObserver still fires).
+                engine.fireRoleSwitchMintObserver();
+                final long result = applyFenced(operation, writer, forceWalBypass);
+                return doneFuture.of(result);
+            }
         } catch (EntryUnavailableException busyException) {
             // For non-WAL tables, when another thread holds the writer, this code enqueues the operation
             // on the TableWriter's async queue. The writer processes enqueued operations when it becomes free.

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -32,7 +31,8 @@ import io.questdb.std.ObjectFactory;
 
 /**
  * What binding knows about a join of more than two inputs and leaves for the optimiser to order: per input, the inputs
- * it waits for and the equalities that key it ({@link JoinDependency}, null for none); the ordering constraints and
+ * it waits for and the equalities that key it ({@link JoinDependency}, null for none), among them those a later INNER
+ * input implies for an outer input, see {@link JoinEquality#getReplacedKey}; the ordering constraints and
  * lateral dependencies the join semantics impose, as parent and child input pairs; the inputs held until nothing
  * else is ready; whether the first input leads the order; and the bound filter conjuncts the order places, each with the inputs whose ON clause
  * states it, -1 for WHERE, and the constant conjuncts, each with the inner input whose ON clause states it, see
@@ -69,14 +69,6 @@ public final class JoinGraph implements Mutable {
     }
 
     /**
-     * The type of the column of the join input {@code source}.
-     */
-    public static int sourceColumnType(ObjList<JoinInput> inputs, int source, int columnId) {
-        final OutputSchema output = inputs.getQuick(source).getSourceOutput();
-        return output.getColumnType(output.getColumnIndexById(columnId));
-    }
-
-    /**
      * Adds a constant conjunct, which reads no input: one the ON clause of the INNER or CROSS input {@code origin}
      * states, or, for -1, the constant WHERE terms, or the constant terms of every clause of a join without an outer or
      * temporal input, which bind as one conjunction.
@@ -109,47 +101,6 @@ public final class JoinGraph implements Mutable {
         residualOwnerEnds.clear();
         residualOwners.clear();
         residuals.clear();
-    }
-
-    /**
-     * Collects the equalities that the keys of a later INNER or CROSS input imply between the outer input {@code step}
-     * and an input written before it, each as a pair of two keys of the later input on one of its columns: first the
-     * key on a column of {@code step}, then the key on a column of the earlier input. A later input counts up to the
-     * first input after {@code step} that NULL-extends its master, and a pair only when both columns have one type
-     * whose hash key matches exactly the values that the equality pairs, NULL with NULL, see {@link #isKeyMatchType}.
-     * Returns whether it collected any.
-     */
-    public boolean collectImpliedOuterKeys(ObjList<JoinInput> inputs, int step, ObjList<JoinEquality> pairs) {
-        final int base = pairs.size();
-        for (int i = step + 1, n = inputs.size(); i < n; i++) {
-            final JoinKind type = inputs.getQuick(i).getJoinType();
-            if (type.isMasterNulling()) {
-                break;
-            }
-            final JoinDependency dependency = dependencies.getQuick(i);
-            if (type.isBarrier() || dependency == null) {
-                continue;
-            }
-            final ObjList<JoinEquality> keys = dependency.getKeys();
-            for (int k = 0, count = keys.size(); k < count; k++) {
-                final JoinEquality stepKey = keys.getQuick(k);
-                if (stepKey.getOtherSource(i) != step) {
-                    continue;
-                }
-                final int columnId = stepKey.getColumnId(i);
-                final int stepType = sourceColumnType(inputs, step, stepKey.getColumnId(step));
-                for (int m = 0; m < count; m++) {
-                    final JoinEquality masterKey = keys.getQuick(m);
-                    final int master = masterKey.getOtherSource(i);
-                    if (master < step && masterKey.getColumnId(i) == columnId && isKeyMatchType(stepType)
-                            && sourceColumnType(inputs, master, masterKey.getColumnId(master)) == stepType) {
-                        pairs.add(stepKey);
-                        pairs.add(masterKey);
-                    }
-                }
-            }
-        }
-        return pairs.size() > base;
     }
 
     public int getConstantFilterOrigin(int constantFilter) {
@@ -204,20 +155,6 @@ public final class JoinGraph implements Mutable {
                 addUnnestEdges(inputs, function.argumentAt(i), step, edges);
             }
         }
-    }
-
-    /**
-     * True when the hash key of a column of the type matches exactly the values that {@code =} between two columns of
-     * the type pairs, NULL with NULL; FLOAT and DOUBLE fail it, as {@code 0.0 = -0.0} holds while their keys differ.
-     */
-    private static boolean isKeyMatchType(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
-                 ColumnType.LONG,
-                 ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR,
-                 ColumnType.UUID, ColumnType.IPv4 -> true;
-            default -> false;
-        };
     }
 
     private int residualOwnersLo(int residual) {

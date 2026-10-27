@@ -48,8 +48,8 @@ import io.questdb.std.ObjectPool;
 /**
  * Selects the order of a join of more than two inputs from the {@link JoinGraph} binding collected for it, with the
  * first input fixed when its order carries semantics, and publishes the keys, join types and ordered inputs
- * ({@link #order(JoinPlan, boolean)}). Dependencies come from the statement's plan-node pools; the lists it owns stay
- * until {@link #clear()}, and the borrowed ones are temporaries of one ordering.
+ * ({@link #order(JoinPlan, boolean, IntHashSet, boolean)}). Dependencies come from the statement's plan-node pools;
+ * the lists it owns stay until {@link #clear()}, and the borrowed ones are temporaries of one ordering.
  */
 final class JoinOrderSolver implements Mutable {
     private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
@@ -59,15 +59,13 @@ final class JoinOrderSolver implements Mutable {
     private final ObjectPool<IntHashSet> childrenPool;
     private final OptimiserContext context;
     private final ObjectPool<JoinDependency> dependencyPool;
-    private final ObjList<JoinEquality> impliedKeyPairs = new ObjList<>();
-    private final ObjList<JoinEquality> impliedKeySources = new ObjList<>();
-    private final IntList impliedKeySteps = new IntList();
     private final IntList inCounts;
     private final ObjList<JoinKind> joinTypes;
     private final IntHashSet markedIndexes;
     private final ObjList<JoinEquality> movedKeys = new ObjList<>();
     private final IntList pendingSources;
     private final IntSortedList ready;
+    private final ObjList<JoinEquality> replacedKeys = new ObjList<>();
     private final IntList roots;
     private final IntList semanticEdges;
     private final ObjList<JoinDependency> stagedDependencies;
@@ -75,6 +73,10 @@ final class JoinOrderSolver implements Mutable {
     private ObjList<JoinDependency> dependencies;
     private JoinGraph graph;
     private boolean isFirstInputFixed;
+    /**
+     * Whether the order search changed the dependencies, their links or the join types since it last ordered them.
+     */
+    private boolean isOrderStale;
     private OutputSchema liftedOutput;
     private final ExpressionVisitor liftedInputReads = expression ->
             expression instanceof ColumnExpression column && liftedOutput.getColumnIndexById(column.getColumnId()) >= 0
@@ -121,13 +123,12 @@ final class JoinOrderSolver implements Mutable {
     @Override
     public void clear() {
         bestJoinTypes.clear();
-        impliedKeyPairs.clear();
-        impliedKeySources.clear();
-        impliedKeySteps.clear();
         movedKeys.clear();
+        replacedKeys.clear();
         dependencies = null;
         graph = null;
         isFirstInputFixed = false;
+        isOrderStale = false;
         liftedOutput = null;
     }
 
@@ -138,7 +139,10 @@ final class JoinOrderSolver implements Mutable {
      * {@code isTimestampRequired}; when the order leads with another input, the join designates no timestamp. It also
      * stays first when an input may yield other rows on another evaluation, judged by the columns the query reads,
      * {@code readColumnIds}. Unless decorrelation rewrites the join, {@code isDecorrelated}, a key-less CROSS input of
-     * the master side of a RIGHT or FULL step joins after that step, see {@link #liftCrossInputs}.
+     * the master side of a RIGHT or FULL step joins after that step, see {@link #liftCrossInputs}: decorrelation, which
+     * runs after ordering, adds domain inputs to the join and keys its steps on correlation columns, see
+     * {@link CorrelationKeys}, while an {@link JoinKind#OUTER_CROSS} step must directly follow its outer step and hold
+     * no key.
      */
     void order(JoinPlan join, boolean isTimestampRequired, IntHashSet readColumnIds, boolean isDecorrelated) throws SqlException {
         of(join, join.getGraph(), isTimestampRequired, readColumnIds);
@@ -146,7 +150,6 @@ final class JoinOrderSolver implements Mutable {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
                 dependencies.add(null);
             }
-            collectImpliedKeys(join);
             join.setLeadingCrossJoinFixed(isFirstInputFixed && !hasLeadingJoinDependency(join));
             linkDependencies();
             for (int i = 0, n = dependencies.size(); i < n; i++) {
@@ -182,11 +185,13 @@ final class JoinOrderSolver implements Mutable {
                 final JoinInput input = inputs.getQuick(source);
                 input.setJoinType(joinTypes.getQuick(source));
                 final JoinDependency dependency = dependencies.getQuick(source);
-                if (!addImpliedKeys(join, input, source, dependency) && dependency != null) {
+                if (dependency != null && dependency.hasImpliedKeys()) {
+                    addImpliedKeys(join, input, source, dependency);
+                } else if (dependency != null) {
                     final ObjList<JoinEquality> keys = dependency.getKeys();
                     for (int k = 0, count = keys.size(); k < count; k++) {
                         final JoinEquality key = keys.getQuick(k);
-                        if (impliedKeySources.indexOf(key) > -1) {
+                        if (replacedKeys.indexOf(key) > -1) {
                             continue;
                         }
                         if (key.getLeftSource() == source) {
@@ -205,50 +210,29 @@ final class JoinOrderSolver implements Mutable {
     }
 
     /**
-     * Keys the outer step, which {@link #collectImpliedKeys} found, on the equalities that a later INNER join implies
-     * between its input and an input the order joins before it, turns the equalities its ON clause states into ON
+     * Keys the outer step on the equalities that a later INNER join implies between its input and an input the order
+     * joins before it, see {@link JoinEquality#getReplacedKey}, turns the equalities its ON clause states into ON
      * residual conjuncts and records that the ON residual decides its NULL extension. Every row the step emits holds
-     * the keys, so the later join no longer keys on the column of the earlier input that a key of the step and the
-     * later join's key on the step's column imply. Returns false for any other step, and for a step without an ON
-     * equality that no implied equality keys. Throws the type mismatch of an ON equality that no implied equality
-     * replaces.
+     * the keys, so the later join no longer keys on the key each implied equality replaces.
      */
-    private boolean addImpliedKeys(JoinPlan join, JoinInput input, int source, JoinDependency dependency) throws SqlException {
-        final ObjList<JoinInput> inputs = join.getInputs();
-        boolean isImpliedKeyStep = false;
-        for (int i = 0, n = impliedKeySteps.size(); i < n; i++) {
-            if (impliedKeySteps.getQuick(i) == source) {
-                isImpliedKeyStep = true;
-                final JoinEquality stepKey = impliedKeyPairs.getQuick(2 * i);
-                final JoinEquality masterKey = impliedKeyPairs.getQuick(2 * i + 1);
-                final int master = masterKey.getOtherSource(stepKey.getOtherSource(source));
-                final int masterId = masterKey.getColumnId(master);
-                if (join.getOrderedInputs().indexOf(inputs.getQuick(master)) >= 0 && input.indexOfMasterKey(masterId) < 0) {
-                    input.addKey(masterId, stepKey.getColumnId(source), masterKey.getName(master), stepKey.getName(source), stepKey.getPosition(source));
-                    impliedKeySources.add(masterKey);
-                }
-            }
-        }
-        if (!isImpliedKeyStep) {
-            return false;
-        }
-        final ObjList<JoinEquality> keys = dependency == null ? null : dependency.getKeys();
-        if (input.getKeys().size() == 0) {
-            if (keys != null && keys.size() > 0) {
-                throw SqlException.$(keys.getQuick(0).getPosition(source), "join column type mismatch");
-            }
-            return false;
-        }
-        for (int i = 0, n = keys == null ? 0 : keys.size(); i < n; i++) {
+    private void addImpliedKeys(JoinPlan join, JoinInput input, int source, JoinDependency dependency) throws SqlException {
+        final ObjList<JoinEquality> keys = dependency.getKeys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
             final JoinEquality key = keys.getQuick(i);
-            final int position = key.getPosition(source);
-            final BoundExpression equality = context.bindEquality(key.getColumnId(key.getOtherSource(source)), key.getColumnId(source),
-                    join.getOutput(), position);
-            input.setOnResidual(input.getOnResidual() == null ? equality
-                    : context.getRewriter().combineConjunction(equality, input.getOnResidual(), position));
+            final int master = key.getOtherSource(source);
+            if (key.getReplacedKey() != null) {
+                input.addKey(key.getColumnId(master), key.getColumnId(source), key.getName(master), key.getName(source),
+                        key.getPosition(source));
+                replacedKeys.add(key.getReplacedKey());
+            } else {
+                final int position = key.getPosition(source);
+                final BoundExpression equality = context.bindEquality(key.getColumnId(master), key.getColumnId(source),
+                        join.getOutput(), position);
+                input.setOnResidual(input.getOnResidual() == null ? equality
+                        : context.getRewriter().combineConjunction(equality, input.getOnResidual(), position));
+            }
         }
         input.setNullExtension(JoinInput.NullExtension.BY_ON_RESIDUAL);
-        return true;
     }
 
     /**
@@ -272,8 +256,8 @@ final class JoinOrderSolver implements Mutable {
             dependency = dependencyPool.next().of(child);
             dependencies.setQuick(child, dependency);
         }
-        dependency.getParents().add(parent);
-        link(parent, child);
+        isOrderStale |= dependency.getParents().add(parent);
+        isOrderStale |= link(parent, child);
     }
 
     /**
@@ -293,22 +277,6 @@ final class JoinOrderSolver implements Mutable {
             }
         }
         return joinTypes.getQuick(source) == JoinKind.CROSS ? 10 : 5;
-    }
-
-    /**
-     * Collects, before the order search moves keys between inputs, the equalities that key the outer steps a later
-     * INNER join keys, see {@link LogicalPlans#isImpliedKeyStep}.
-     */
-    private void collectImpliedKeys(JoinPlan join) {
-        final ObjList<JoinInput> inputs = join.getInputs();
-        for (int i = 1, n = inputs.size(); i < n; i++) {
-            final int base = impliedKeyPairs.size();
-            if (LogicalPlans.isImpliedKeyStep(inputs, graph, i, impliedKeyPairs)) {
-                for (int k = base, count = impliedKeyPairs.size(); k < count; k += 2) {
-                    impliedKeySteps.add(i);
-                }
-            }
-        }
     }
 
     private boolean dependsOn(int source, int target) {
@@ -489,10 +457,12 @@ final class JoinOrderSolver implements Mutable {
     }
 
     /**
-     * Joins each key-less CROSS input that the master side of a RIGHT or FULL step holds after that step instead, as
-     * an {@link JoinKind#OUTER_CROSS} step, so the outer step joins each master row once instead of once per row of
-     * the input. Only INNER and CROSS steps may lie between the input and the outer step, and the input must not be
-     * the first, see {@link #isLiftable}.
+     * Joins a key-less CROSS input that the master side of a RIGHT or FULL step holds after that step instead, as an
+     * {@link JoinKind#OUTER_CROSS} step, so the outer step joins each master row once instead of once per row of the
+     * input. Only INNER and CROSS steps may lie between the input and the outer step, and the input must not be the
+     * first, see {@link #isLiftable}. Per outer step it lifts the latest such input alone: the OUTER_CROSS step reads the
+     * outer step's record and gates the outer step's master, see {@code OuterCrossJoinRecordCursorFactory}, so it must
+     * directly follow the outer step.
      */
     private void liftCrossInputs(JoinPlan join, IntHashSet readColumnIds) {
         for (int outer = 2, n = bestOrder.size(); outer < n; outer++) {
@@ -516,8 +486,8 @@ final class JoinOrderSolver implements Mutable {
         }
     }
 
-    private void link(int parent, int child) {
-        children.getQuick(parent).add(child);
+    private boolean link(int parent, int child) {
+        return children.getQuick(parent).add(child);
     }
 
     private void linkDependencies() {
@@ -666,6 +636,7 @@ final class JoinOrderSolver implements Mutable {
         final IntList constraints = graph.getOrderingConstraints();
         int bestCost = Integer.MAX_VALUE;
         boolean hasCandidate = false;
+        isOrderStale = true;
         for (int candidate = 0, rootCount = roots.size(); candidate < rootCount; candidate++) {
             for (int i = 0; i < rootCount; i++) {
                 if (candidate != i) {
@@ -688,6 +659,11 @@ final class JoinOrderSolver implements Mutable {
             for (int i = 0, n = constraints.size(); i < n; i += 2) {
                 addParent(constraints.getQuick(i), constraints.getQuick(i + 1));
             }
+            // A candidate that changed nothing orders as the last one did, at a cost that is not lower.
+            if (!isOrderStale) {
+                continue;
+            }
+            isOrderStale = false;
             final int cost = topologicalOrder();
             if (cost != Integer.MAX_VALUE && (!hasCandidate || cost < bestCost)) {
                 bestCost = cost;
@@ -750,6 +726,7 @@ final class JoinOrderSolver implements Mutable {
             if (joinTypes.getQuick(target) == JoinKind.CROSS) {
                 joinTypes.setQuick(target, JoinKind.INNER);
             }
+            isOrderStale = true;
         }
     }
 

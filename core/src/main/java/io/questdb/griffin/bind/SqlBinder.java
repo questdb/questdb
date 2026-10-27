@@ -254,7 +254,7 @@ public final class SqlBinder implements Mutable {
     }
 
     private static boolean isProjectionReference(ExpressionNode expression, OutputSchema source, OutputSchema scope) {
-        return Chars.indexOfLastUnquoted(expression.token, '.') < 0 && getColumnIndexQuiet(source, expression.token) < 0
+        return FunctionBinder.qualifierEnd(expression, scope) < 0 && getColumnIndexQuiet(source, expression.token) < 0
                 && getColumnIndexQuiet(scope, expression.token) >= 0;
     }
 
@@ -844,7 +844,7 @@ public final class SqlBinder implements Mutable {
             for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
                 final ExpressionNode order = source.getOrderBy().getQuick(i);
                 if (order.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(order, input.getOutput(), sourceAlias(source)) == -1) {
-                    final int dot = Chars.indexOfLastUnquoted(order.token, '.');
+                    final int dot = FunctionBinder.qualifierEnd(order, input.getOutput());
                     if (dot > -1 && FunctionBinder.isUnknownQualifier(GenericLexer.unquote(order.token.subSequence(0, dot)), input.getOutput(), sourceAlias(source))) {
                         throw SqlException.$(order.position, "Invalid table name or alias");
                     }
@@ -1372,7 +1372,7 @@ public final class SqlBinder implements Mutable {
         }
         final int index = aliasIndex >= 0 ? aliasIndex : FunctionBinder.checkColumn(expression, foundIndex, bindingScope, alias);
         CharSequence name = requestedName != null ? requestedName : column.getAlias() != null ? column.getAlias() : output.getColumnName(index);
-        final int dot = Chars.indexOfLastUnquoted(expression.token, '.');
+        final int dot = FunctionBinder.qualifierEnd(expression, bindingScope);
         final boolean isSourceAliasReusable = dot < 0 || Chars.equalsIgnoreCase(name, expression.token, dot + 1, expression.token.length());
         if (translating != null) {
             name = translating.add(output.getColumnId(index), name, ctx.characterStore);

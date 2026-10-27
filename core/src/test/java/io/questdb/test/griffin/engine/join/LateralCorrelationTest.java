@@ -1283,6 +1283,54 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredInputReadingCarriedOuterColumnJoinsAfterCarrier() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, k2 INT)");
+            execute("CREATE TABLE d (id INT, x INT)");
+            execute("CREATE TABLE c (id INT, x INT, y INT)");
+            execute("INSERT INTO o VALUES (1, 1, 5), (2, 1, 2), (3, 2, 5), (4, 2, 1)");
+            execute("INSERT INTO d VALUES (40, 1), (41, 2)");
+            execute("INSERT INTO c VALUES (30, 1, 1), (31, 1, 5), (32, 2, 2), (33, 2, 5)");
+            final String body = """
+                    SELECT d.id did, s1.id s1id, t.id tid FROM d
+                    LEFT JOIN (SELECT * FROM c WHERE y = o.k2) s1 ON s1.x = d.x AND s1.id < o.k2 + 30
+                    JOIN c t ON t.x = d.x
+                    WHERE t.y = o.k2
+                    """;
+            assertPerOuterRow(body);
+            assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + body + ") l")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join
+                                  condition: l.__qdb_outer_ref__0_k2=o.k2
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: o
+                                    Hash
+                                        SelectedRecord
+                                            Hash Left Outer Join Light
+                                              condition: s1.x=d.x and __qdb_outer_ref__0_k2=__qdb_outer_ref__0_k2
+                                              filter: s1.id<t.y+30
+                                                Hash Join Light
+                                                  condition: t.x=d.x
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: c
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: d
+                                                Hash
+                                                    SelectedRecord
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: c
+                            """);
+        });
+    }
+
+    @Test
     public void testDistinctAboveOrBelowCorrelation() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelationPointTables();

@@ -115,15 +115,9 @@ import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.DistinctPlan;
-import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanVisitor;
-import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SortDirection;
-import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -575,42 +569,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Compiles the sub-query of a PIVOT IN list as {@link #compileSubqueryFactory} does, with its distinct rows in
-     * ascending order of its first column, as ORDER BY sorts it, unless the sub-query's plan ends in a sort of its own,
-     * as its ORDER BY binds: the rows become the output columns in the order they come. A first column of a type ORDER
-     * BY does not sort keeps the sub-query's rows and their order.
-     */
-    public RecordCursorFactory compilePivotValuesFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-        final int compiled = compiledSubqueryModels.indexOf(model);
-        if (compiled >= 0) {
-            return generateSelectOneShot(model, compiledSubqueries.getQuick(compiled), executionContext, false);
-        }
-        final int first = subqueries.size();
-        final Subquery subquery = bindSubquery(model, position, executionContext);
-        final LogicalPlan root = subquery.getRoot();
-        LogicalPlan ordering = root;
-        while (ordering instanceof ProjectPlan || ordering instanceof FilterPlan || ordering instanceof LimitPlan) {
-            ordering = ordering.inputAt(0);
-        }
-        final OutputSchema output = root.getOutput();
-        if (!(ordering instanceof SortPlan) && ColumnType.isComparable(output.getColumnType(0))) {
-            LogicalPlan values = root;
-            if (!(ordering instanceof DistinctPlan)) {
-                final DistinctPlan distinct = planNodePools.distincts.next().of(root, position);
-                distinct.deriveOutput();
-                values = distinct;
-            }
-            final SortPlan sort = planNodePools.sorts.next().of(values, position);
-            sort.getColumnIds().add(output.getColumnId(0));
-            sort.getDirections().add(SortDirection.ASCENDING);
-            sort.markUnlimited();
-            sort.deriveOutput();
-            subquery.setRoot(sort);
-        }
-        return compileBoundSubqueryFactory(model, subquery, first, executionContext);
-    }
-
-    /**
      * Binds a sub-query whose rows binding consumes, optimises and authorizes it after the sub-queries it contains,
      * and generates it; the caller owns the factory. For a sub-query the statement compiled already, it generates the
      * existing plan again, so a table-function source that code generation creates anew reads the sub-queries binding
@@ -622,7 +580,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return generateSelectOneShot(model, compiledSubqueries.getQuick(compiled), executionContext, false);
         }
         final int first = subqueries.size();
-        return compileBoundSubqueryFactory(model, bindSubquery(model, position, executionContext), first, executionContext);
+        final Subquery subquery = bindSubquery(model, position, executionContext);
+        for (int i = first, n = subqueries.size(); i < n; i++) {
+            optimiseSubquery(subqueries.getQuick(i), executionContext);
+        }
+        subqueries.setPos(first);
+        nonDeterministicCalls.reject(subquery.getRoot(), executionContext);
+        optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
+        compiledSubqueryModels.add(model);
+        compiledSubqueries.add(subquery);
+        return generateSelectOneShot(model, subquery, executionContext, false);
     }
 
     /**
@@ -3430,18 +3397,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             lexer.unparseLast();
         }
         compiledQuery.ofBegin();
-    }
-
-    private RecordCursorFactory compileBoundSubqueryFactory(QueryModel model, Subquery subquery, int first, SqlExecutionContext executionContext) throws SqlException {
-        for (int i = first, n = subqueries.size(); i < n; i++) {
-            optimiseSubquery(subqueries.getQuick(i), executionContext);
-        }
-        subqueries.setPos(first);
-        nonDeterministicCalls.reject(subquery.getRoot(), executionContext);
-        optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
-        compiledSubqueryModels.add(model);
-        compiledSubqueries.add(subquery);
-        return generateSelectOneShot(model, subquery, executionContext, false);
     }
 
     private void compileCancel(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {

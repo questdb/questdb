@@ -832,9 +832,7 @@ final class JoinFactoryGenerator {
             final int[] masterSymbolKeyCols = joinKeys.masterSymbolKeys;
             final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
             final boolean isNullExtendedByOnResidual = step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL;
-            if (isNullExtendedByOnResidual && filter == null) {
-                throw new IllegalStateException("outer join NULL-extended by its ON residual has none");
-            }
+            assert !isNullExtendedByOnResidual || filter != null : "outer join NULL-extended by its ON residual has none";
             final NullJoinKey masterNullKey = isNullExtendedByOnResidual && joinType != JoinKind.RIGHT_OUTER
                     ? nullJoinKey(joinKeys.masterIndexes, masterMetadata) : null;
             final NullJoinKey slaveNullKey = isNullExtendedByOnResidual && joinType != JoinKind.LEFT_OUTER
@@ -1179,7 +1177,8 @@ final class JoinFactoryGenerator {
             } else {
                 final JoinKeyLayout joinKeys = frame.joinKeys;
                 resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
-                joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
+                joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, joinKeys.checkedIndexes,
+                        joinKeys.checkedLookupIndexes, isSelfJoin);
                 if (PlanToFactoryRules.isSlaveEmptied(step)) {
                     final RecordCursorFactory emptied = slave;
                     slave = null;
@@ -1742,7 +1741,8 @@ final class JoinFactoryGenerator {
             final boolean isSelfJoin = isSelfJoin(master, slave);
             final JoinKeyLayout joinKeys = frame.joinKeys;
             resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
-            joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
+            joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, joinKeys.checkedIndexes,
+                    joinKeys.checkedLookupIndexes, isSelfJoin);
             // Unlike ASOF/LT, designated-timestamp equality remains an actual SPLICE key.
             final Plannable condition = joinKeys.masterIndexes.size() == 0 ? null : createCondition(step);
             isTransferred = true;
@@ -1835,6 +1835,8 @@ final class JoinFactoryGenerator {
             final RecordMetadata masterMetadata = master.getMetadata();
             final IntList masterKeyIndexes = frame.joinKeys.masterIndexes;
             final IntList slaveKeyIndexes = frame.joinKeys.slaveIndexes;
+            final IntList checkedKeyIndexes = frame.joinKeys.checkedIndexes;
+            final IntList checkedLookupKeyIndexes = frame.joinKeys.checkedLookupIndexes;
             assert masterMetadata.getTimestampIndex() >= 0 && slaveMetadata.getTimestampIndex() >= 0;
             if (step.getOnResidual() != null) {
                 throw new IllegalStateException("temporal join has an ON residual");
@@ -1847,10 +1849,10 @@ final class JoinFactoryGenerator {
             } else {
                 masterKeyIndexes.clear();
                 slaveKeyIndexes.clear();
-                frame.joinKeys.checkedIndexes.clear();
-                frame.joinKeys.checkedLookupIndexes.clear();
+                checkedKeyIndexes.clear();
+                checkedLookupKeyIndexes.clear();
             }
-            frame.joinKeys.of(masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
+            frame.joinKeys.of(masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, checkedKeyIndexes, checkedLookupKeyIndexes, isSelfJoin);
             final long toleranceInterval = step.getToleranceInterval();
             final JoinInput.Algorithm algorithm = step.getAlgorithm();
             final Plannable condition = createCondition(step);

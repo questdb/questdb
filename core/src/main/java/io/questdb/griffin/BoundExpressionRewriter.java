@@ -164,6 +164,31 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * Copies the expression into fresh descriptions that read the same columns, leaving its preparation with the
+     * original; a sub-query cursor stays shared.
+     */
+    public BoundExpression copy(BoundExpression expression) {
+        return switch (expression) {
+            case ColumnExpression column ->
+                    columns.next().of(column.getColumnId(), column.getDataType(), column.getPosition(),
+                            column.isDirectReference(), column.isCast());
+            case OuterColumnExpression outer ->
+                    outerColumns.next().of(outer.getColumnId(), outer.getDataType(), outer.getPosition());
+            case FunctionExpression call -> copy(call);
+            case ConstantExpression constant ->
+                    constants.next().of(constant, constant.getSource() == null ? null : copy(constant.getSource()));
+            case BindVariableExpression parameter -> {
+                final BindVariableExpression copy = parameters.next().of(parameter.getName(), parameter.getDataType(),
+                        parameter.getFunctionFlags(), parameter.getPosition(), parameter.isDirectReference());
+                yield parameter.isPredefined() ? copy.markPredefined() : copy;
+            }
+            case TypeExpression type -> types.next().of(type.getDataType(), type.getPosition());
+            // A cursor stays shared: the instantiator keys sub-query reuse across its positions on its identity.
+            case CursorExpression cursor -> cursor;
+        };
+    }
+
+    /**
      * Copies an expression through a projection of plain columns into fresh descriptions, leaving its preparation
      * with the original.
      */
@@ -514,27 +539,6 @@ public final class BoundExpressionRewriter implements Mutable {
             tmpArguments.clear();
             tmpPositions.clear();
         }
-    }
-
-    private BoundExpression copy(BoundExpression expression) {
-        return switch (expression) {
-            case ColumnExpression column ->
-                    columns.next().of(column.getColumnId(), column.getDataType(), column.getPosition(),
-                            column.isDirectReference(), column.isCast());
-            case OuterColumnExpression outer ->
-                    outerColumns.next().of(outer.getColumnId(), outer.getDataType(), outer.getPosition());
-            case FunctionExpression call -> copy(call);
-            case ConstantExpression constant ->
-                    constants.next().of(constant, constant.getSource() == null ? null : copy(constant.getSource()));
-            case BindVariableExpression parameter -> {
-                final BindVariableExpression copy = parameters.next().of(parameter.getName(), parameter.getDataType(),
-                        parameter.getFunctionFlags(), parameter.getPosition(), parameter.isDirectReference());
-                yield parameter.isPredefined() ? copy.markPredefined() : copy;
-            }
-            case TypeExpression type -> types.next().of(type.getDataType(), type.getPosition());
-            // A cursor stays shared: the instantiator keys sub-query reuse across its positions on its identity.
-            case CursorExpression cursor -> cursor;
-        };
     }
 
     private FunctionExpression copy(FunctionExpression call) {

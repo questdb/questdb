@@ -30,7 +30,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 /**
- * What one join input waits for: the inputs it must join after and the equalities that key it to them.
+ * What one join input waits for: the inputs it must join after and the equalities that key it to them. The keys of an
+ * outer input that a later INNER input implies, see {@link JoinEquality#getReplacedKey}, key it alone, and the
+ * equalities its ON clause states filter it.
  */
 public final class JoinDependency implements Mutable {
     public static final ObjectFactory<JoinDependency> FACTORY = JoinDependency::new;
@@ -55,6 +57,18 @@ public final class JoinDependency implements Mutable {
 
     public int getSlave() {
         return slave;
+    }
+
+    /**
+     * Whether a key is an equality a later INNER input implies, see {@link JoinEquality#getReplacedKey}.
+     */
+    public boolean hasImpliedKeys() {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i).getReplacedKey() != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public JoinDependency of(int slave) {

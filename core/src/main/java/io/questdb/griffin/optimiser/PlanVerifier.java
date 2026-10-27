@@ -26,6 +26,7 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -44,6 +45,7 @@ import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -117,8 +119,10 @@ public final class PlanVerifier {
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
     public static final String JOIN_KEY_LOOKUP = "join key lookups contradict the keys operator planning checks instead of looking them up";
+    public static final String JOIN_NULL_EXTENSION = "join step NULL-extended by its ON residual is not a LEFT, RIGHT or FULL hash join with an ON residual";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
+    public static final String JOIN_OUTER_CROSS = "OUTER CROSS step does not directly follow a RIGHT or FULL step, or has a key or an ON residual";
     public static final String JOIN_OUTPUT = "join output does not list every input column exactly once";
     public static final String JOIN_SCOPE = "join step scope differs from its ordered prefix";
     public static final String JOIN_SLAVE_VALUE_TYPE = "full-fat temporal join stores a slave column its map value cannot hold";
@@ -143,6 +147,7 @@ public final class PlanVerifier {
     public static final String SAMPLE_BY_ALGORITHM = "SAMPLE BY algorithm contradicts its fill";
     public static final String SCAN_LIMIT = "scan has a LIMIT hi without a lo";
     public static final String SCAN_SHAPE = "scan source column indexes differ in length from its output";
+    public static final String SET_OPERATION_CAST = "set operation cast facts differ from its branch types";
     public static final String SET_OPERATION_MERGE = "merge facts of a set operation other than UNION ALL";
     public static final String SET_OPERATION_SHAPE = "set operation branches and output differ in column count";
     public static final String SET_OPERATION_SYMBOLS = "set operation symbol columns are not ascending output indexes";
@@ -641,6 +646,7 @@ public final class PlanVerifier {
             final JoinInput step = steps.getQuick(i);
             failIfViolated(PhysicalChoiceVerifier.joinStep(join, ordered.size() > 0 ? i : -1, step, isAccessPathRequired));
             joinStep(step, isUnordered);
+            joinStepKind(steps, i);
         }
         if (isUnordered) {
             for (int i = 0, n = steps.size(); i < n; i++) {
@@ -747,6 +753,30 @@ public final class PlanVerifier {
         }
         if (step.getOutput().getColumnCount() > 0 && !sameColumns(step.getOutput(), joinScope)) {
             fail(JOIN_SCOPE);
+        }
+    }
+
+    /**
+     * An OUTER CROSS step directly follows a RIGHT or FULL step and has neither a key nor an ON residual; a step that
+     * its ON residual NULL-extends is a LEFT, RIGHT or FULL join with an ON residual, built as a hash join.
+     */
+    private void joinStepKind(ObjList<JoinInput> steps, int position) {
+        final JoinInput step = steps.getQuick(position);
+        final JoinKind type = step.getJoinType();
+        if (type == JoinKind.OUTER_CROSS) {
+            final JoinKind outerType = position > 0 ? steps.getQuick(position - 1).getJoinType() : null;
+            if (outerType != JoinKind.RIGHT_OUTER && outerType != JoinKind.FULL_OUTER || step.getKeys().size() > 0
+                    || step.getOnResidual() != null) {
+                fail(JOIN_OUTER_CROSS);
+            }
+        }
+        if (step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL) {
+            final JoinInput.Algorithm algorithm = step.getAlgorithm();
+            if (type != JoinKind.LEFT_OUTER && type != JoinKind.RIGHT_OUTER && type != JoinKind.FULL_OUTER
+                    || step.getOnResidual() == null
+                    || algorithm != null && algorithm != JoinInput.Algorithm.HASH && algorithm != JoinInput.Algorithm.LIGHT_HASH) {
+                fail(JOIN_NULL_EXTENSION);
+            }
         }
     }
 
@@ -1009,6 +1039,10 @@ public final class PlanVerifier {
             if (index < 0 || index >= count || i > 0 && index <= symbols.getQuick(i - 1)) {
                 fail(SET_OPERATION_SYMBOLS);
             }
+        }
+        final boolean isCastRequired = operation.isCastRequired();
+        if (isCastRequired != SetOperationCasts.isCastRequired(operation) || isCastRequired && operation.getCastTypes().size() != count) {
+            fail(SET_OPERATION_CAST);
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
         failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isAccessPathRequired));

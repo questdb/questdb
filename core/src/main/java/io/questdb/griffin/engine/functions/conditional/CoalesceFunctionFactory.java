@@ -76,9 +76,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
+        final IntList foldedTypes = CaseCommon.foldedTypes();
         int returnType = -1;
         for (int i = 0, n = argTypes.size(); i < n; i++) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
             if (returnType == ColumnType.UNDEFINED) {
                 return ColumnType.UNDEFINED;
             }
@@ -115,7 +116,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         // compute return type in this loop
         final int argsSize = args.size();
         int returnType = -1;
-        final IntList foldedTypes = new IntList();
+        final IntList foldedTypes = CaseCommon.foldedTypes();
         for (int i = 0; i < argsSize; i++) {
             returnType = CaseCommon.getCommonType(
                     returnType,

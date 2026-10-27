@@ -455,6 +455,21 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeTextElementFailsLikeComparison() throws Exception {
+        assertQuery("SELECT * FROM test WHERE ts = $1")
+                .ddl("CREATE TABLE test AS (SELECT timestamp_sequence(0, 1000) ts FROM long_sequence(3))")
+                .assertBinds(timestampTextCases(30, false));
+        assertQuery("SELECT * FROM test WHERE ts IN ($1, '1970-01-01T00:00:00.009000Z')")
+                .assertBinds(timestampTextCases(32, false));
+        assertQuery("SELECT * FROM test WHERE ts = $1")
+                .assertBinds(timestampTextCases(30, true));
+        assertQuery("SELECT * FROM test WHERE ts IN ($1, '1970-01-01T00:00:00.009000Z')")
+                .assertBinds(timestampTextCases(32, true));
+        assertQuery("SELECT * FROM test WHERE ts IN ('abc' || ts::string, 100::timestamp)")
+                .fails(38, "inconvertible value: `abc1970-01-01T00:00:00.000000Z` [STRING -> TIMESTAMP]");
+    }
+
+    @Test
     public void testStatefulTextElementEvaluatedOncePerRow() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -532,5 +547,36 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static ObjList<BindVarTuple> timestampTextCases(int errorPosition, boolean isVarchar) {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "timestamp text",
+                """
+                        ts
+                        1970-01-01T00:00:00.001000Z
+                        """,
+                bindVariableService -> {
+                    if (isVarchar) {
+                        bindVariableService.setVarchar(0, new Utf8String("1970-01-01T00:00:00.001000Z"));
+                    } else {
+                        bindVariableService.setStr(0, "1970-01-01T00:00:00.001000Z");
+                    }
+                }
+        ));
+        cases.add(BindVarTuple.fails(
+                "not a timestamp",
+                errorPosition,
+                isVarchar ? "inconvertible value: `abc` [VARCHAR -> TIMESTAMP]" : "inconvertible value: `abc` [STRING -> TIMESTAMP]",
+                bindVariableService -> {
+                    if (isVarchar) {
+                        bindVariableService.setVarchar(0, new Utf8String("abc"));
+                    } else {
+                        bindVariableService.setStr(0, "abc");
+                    }
+                }
+        ));
+        return cases;
     }
 }

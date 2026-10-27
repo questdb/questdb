@@ -902,6 +902,59 @@ public class TransitiveFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinKeepsMasterFilterAboveItAndPassesFactsOnToLaterKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_splice_m(s SYMBOL,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE lp_splice_s(d DOUBLE,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE lp_splice_k(s SYMBOL,v INT)");
+            execute("INSERT INTO lp_splice_m VALUES ('a','2024-01-01T00:00:01Z'),('b','2024-01-01T00:00:02Z')");
+            execute("INSERT INTO lp_splice_s VALUES (7,'2024-01-01T00:00:03Z')");
+            execute("INSERT INTO lp_splice_k VALUES ('a',1),('b',2)");
+            assertRowsAndPlan("SELECT m.ts,s.d FROM lp_splice_m m SPLICE JOIN lp_splice_s s WHERE m.s='a'",
+                    """
+                            ts\td
+                            2024-01-01T00:00:01.000000Z\tnull
+                            """,
+                    """
+                            SelectedRecord
+                                Filter filter: m.s='a'
+                                    Splice Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_splice_m
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_splice_s
+                            """);
+            assertRowsAndPlan("SELECT m.ts,s.d,k.v FROM lp_splice_m m SPLICE JOIN lp_splice_s s JOIN lp_splice_k k ON m.s=k.s WHERE m.s='a'",
+                    """
+                            ts\td\tv
+                            2024-01-01T00:00:01.000000Z\tnull\t1
+                            """,
+                    """
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: k.s=m.s
+                                  symbolKeyJoin: true
+                                    Filter filter: m.s='a'
+                                        Splice Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_splice_m
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_splice_s
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: s='a'
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_splice_k
+                            """);
+        });
+    }
+
+    @Test
     public void testTemporalJoinSlavesTakeMasterKeyFacts() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_trans_t(s SYMBOL,d DOUBLE,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

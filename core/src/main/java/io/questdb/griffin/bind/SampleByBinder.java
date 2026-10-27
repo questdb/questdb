@@ -48,7 +48,6 @@ import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
-import io.questdb.griffin.engine.functions.date.SampleByOffsetFunctionFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.window.LiveViewWindowDescription;
@@ -356,8 +355,8 @@ final class SampleByBinder {
 
     /**
      * The OFFSET node the SAMPLE BY binds: none without an OFFSET, the default for a NULL literal, a constant literal as
-     * written, and any other offset inside {@link SampleByOffsetFunctionFactory sample_by_offset()}, which reads a NULL
-     * offset as the default when the cursor opens. A NULL offset aligns the buckets as an omitted one does.
+     * written, and any other offset as {@code coalesce(offset::string, '00:00')}, which reads a NULL offset as the
+     * default when the cursor opens. A NULL offset aligns the buckets as an omitted one does.
      */
     private ExpressionNode sampleByOffset(QueryModel source) {
         final ExpressionNode offset = source.getSampleByOffset();
@@ -367,10 +366,10 @@ final class SampleByBinder {
         if (offset.type == ExpressionNode.CONSTANT) {
             return SqlKeywords.isNullKeyword(offset.token) ? SqlParser.ZERO_OFFSET : offset;
         }
-        final ExpressionNode checked = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, SampleByOffsetFunctionFactory.NAME, 0, offset.position);
-        checked.paramCount = 1;
-        checked.rhs = offset;
-        return checked;
+        final int position = offset.position;
+        final ExpressionNode text = ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, offset,
+                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "string", 0, position), position);
+        return ctx.binaryNode(ExpressionNode.FUNCTION, "coalesce", 0, text, SqlParser.ZERO_OFFSET, position);
     }
 
     /**
@@ -486,7 +485,7 @@ final class SampleByBinder {
         if (index >= 0) {
             return index;
         }
-        if (Chars.indexOfLastUnquoted(value.token, '.') >= 0) {
+        if (FunctionBinder.qualifierEnd(value, output) >= 0) {
             throw SqlException.$(value.position,
                     "qualified column names are not supported in SUBSAMPLE arguments; use the unqualified SELECT list name");
         }
@@ -784,14 +783,9 @@ final class SampleByBinder {
                     || bound.getDataType() != ColumnType.INT && bound.getDataType() != ColumnType.LONG) {
                 throw SqlException.$(sampleBy.position, "sample by period must be a constant expression of INT or LONG type");
             }
-            final long stride = period.getLongValue();
-            if (stride < 1 || stride > Integer.MAX_VALUE) {
-                final SqlException e = SqlException.$(sampleBy.position, "sample by period must be a positive INT [value=");
-                final boolean isNull = stride == (period.getDataType() == ColumnType.INT ? Numbers.INT_NULL : Numbers.LONG_NULL);
-                throw (isNull ? e.put("null") : e.put(stride)).put(']');
-            }
+            final long stride = period.getDataType() == ColumnType.INT ? Numbers.intToLong((int) period.getLongValue()) : period.getLongValue();
+            TimestampSamplerFactory.getSampleByInstance(driver, stride, unit.token.charAt(0), sampleBy.position);
             plan.setPeriod(null, period, sampleBy.position, unit.token.charAt(0), unit.position);
-            TimestampSamplerFactory.getInstance(driver, period.getLongValue(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
         }
         return plan;
     }

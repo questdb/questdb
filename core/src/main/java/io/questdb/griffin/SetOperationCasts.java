@@ -36,7 +36,8 @@ import static io.questdb.cairo.ColumnType.*;
 
 /**
  * The column types UNION, EXCEPT and INTERSECT combine their branches to, and the casts a branch takes to them; the
- * binder types set operations by these rules and the generator casts the branches by them.
+ * binder types set operations by these rules and records the casts on the plan, which the generator casts the
+ * branches by.
  */
 public final class SetOperationCasts {
     // @formatter:off
@@ -224,6 +225,11 @@ public final class SetOperationCasts {
         return result;
     }
 
+    /**
+     * True when the set operation casts its branches: they differ in a column's type, or a UNION reads a SYMBOL
+     * column. The binder records it on the plan, and so does each pass that changes the branch columns, see
+     * {@link SetOperationPlan#isCastRequired()}.
+     */
     public static boolean isCastRequired(SetOperationPlan plan) {
         final OutputSchema left = plan.getLeft().getOutput();
         final OutputSchema right = plan.getRight().getOutput();

@@ -673,6 +673,14 @@ public final class ColumnType {
         return columnType == UNDEFINED || isUndefinedArray(columnType);
     }
 
+    /**
+     * True for an array type whose element type is undefined or whose dimensionality is weak.
+     */
+    public static boolean isUndefinedArray(int columnType) {
+        return tagOf(columnType) == ARRAY
+                && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
+    }
+
     public static boolean isVarSize(int columnType) {
         return columnType == STRING
                 || columnType == BINARY
@@ -888,12 +896,6 @@ public final class ColumnType {
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING)
                 || (fromType == UUID && toType == STRING);
-    }
-
-    // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
-    private static boolean isUndefinedArray(int columnType) {
-        return tagOf(columnType) == ARRAY
-                && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {

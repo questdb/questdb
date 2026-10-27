@@ -289,7 +289,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
                             Project
                               columns: [b, sum, k1, k1 AS k, timestamp]
                               Aggregate
-                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, sample_by_offset($2), $1) AS timestamp]
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, coalesce($2, '00:00'), $1) AS timestamp]
                                 values: [sum(a) AS sum]
                                 Scan
                                   table: x

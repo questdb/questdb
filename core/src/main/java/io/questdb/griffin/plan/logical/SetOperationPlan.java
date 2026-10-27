@@ -31,7 +31,9 @@ import java.util.Objects;
 
 public final class SetOperationPlan extends LogicalPlan {
     public static final ObjectFactory<SetOperationPlan> FACTORY = SetOperationPlan::new;
+    private final IntList castTypes = new IntList();
     private final IntList symbolColumns = new IntList();
+    private boolean isCastRequired;
     private boolean isMerged;
     private boolean isSymbolRestorationRequired;
     private LogicalPlan left;
@@ -48,6 +50,8 @@ public final class SetOperationPlan extends LogicalPlan {
         left = null;
         right = null;
         operation = null;
+        castTypes.clear();
+        isCastRequired = false;
         isMerged = false;
         isSymbolRestorationRequired = false;
         requestedOrderColumnId = -1;
@@ -55,6 +59,14 @@ public final class SetOperationPlan extends LogicalPlan {
         rightBranchSort = null;
         rightPosition = -1;
         symbolColumns.clear();
+    }
+
+    /**
+     * The type of each output column after the branches are cast, see {@link #isCastRequired()}: the type a UNION
+     * restores as SYMBOL is the STRING it casts to, and without casts each type is the left branch's.
+     */
+    public IntList getCastTypes() {
+        return castTypes;
     }
 
     public LogicalPlan getLeft() {
@@ -114,6 +126,14 @@ public final class SetOperationPlan extends LogicalPlan {
     }
 
     /**
+     * True when the operation casts the columns of both branches to {@link #getCastTypes()}, see
+     * {@link io.questdb.griffin.SetOperationCasts#isCastRequired}.
+     */
+    public boolean isCastRequired() {
+        return isCastRequired;
+    }
+
+    /**
      * True when the UNION ALL merges its branches, each in the requested timestamp order, instead of concatenating
      * them; operator planning decides it.
      */
@@ -149,21 +169,6 @@ public final class SetOperationPlan extends LogicalPlan {
         return this;
     }
 
-    /**
-     * Reindexes symbol restoration after retaining original output ordinals in the given order; {@code remappedSymbolColumns}
-     * is a temporary list.
-     */
-    public void remapSymbolColumns(IntList retainedColumnIndexes, IntList remappedSymbolColumns) {
-        remappedSymbolColumns.clear();
-        for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
-            if (symbolColumns.binarySearchUniqueList(retainedColumnIndexes.getQuick(i)) >= 0) {
-                remappedSymbolColumns.add(i);
-            }
-        }
-        symbolColumns.clear();
-        symbolColumns.addAll(remappedSymbolColumns);
-    }
-
     @Override
     public void replaceInput(int index, LogicalPlan input) {
         switch (index) {
@@ -171,6 +176,28 @@ public final class SetOperationPlan extends LogicalPlan {
             case 1 -> right = Objects.requireNonNull(input);
             default -> throw new IndexOutOfBoundsException("input index: " + index);
         }
+    }
+
+    /**
+     * Reindexes symbol restoration and cast types after retaining original output ordinals, in ascending order;
+     * {@code remappedSymbolColumns} is a temporary list.
+     */
+    public void retainColumns(IntList retainedColumnIndexes, IntList remappedSymbolColumns) {
+        remappedSymbolColumns.clear();
+        for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
+            final int index = retainedColumnIndexes.getQuick(i);
+            if (symbolColumns.binarySearchUniqueList(index) >= 0) {
+                remappedSymbolColumns.add(i);
+            }
+            castTypes.setQuick(i, castTypes.getQuick(index));
+        }
+        castTypes.setPos(retainedColumnIndexes.size());
+        symbolColumns.clear();
+        symbolColumns.addAll(remappedSymbolColumns);
+    }
+
+    public void setCastRequired(boolean isCastRequired) {
+        this.isCastRequired = isCastRequired;
     }
 
     public void setMerge(boolean isMerged, SortPlan.Algorithm rightBranchSort) {

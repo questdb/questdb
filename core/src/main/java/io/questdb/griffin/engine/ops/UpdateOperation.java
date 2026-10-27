@@ -71,7 +71,7 @@ public class UpdateOperation extends AbstractOperation {
      * An UPDATE of a WAL table, which the WAL records as SQL text and its bind variables.
      *
      * @param clientPlan the plan the client compiled for the statement, over no rows, which the operation adopts;
-     *                   see {@link #initClientPlan()}
+     *                   see {@link #validate()}
      */
     public UpdateOperation(
             @NotNull TableToken tableToken,
@@ -156,26 +156,6 @@ public class UpdateOperation extends AbstractOperation {
         return factory;
     }
 
-    /**
-     * Initializes the functions of the client plan with the values of the caller's bind variables by opening and
-     * closing its cursor, which reads no rows, so a value the statement cannot take fails before the WAL records
-     * the statement for every node to apply. The open is a {@link SqlExecutionContext#isMetadataProbe() metadata
-     * probe}: it hands nobody rows. Does nothing without a client plan.
-     */
-    public void initClientPlan() {
-        if (clientPlan != null) {
-            final boolean wasMetadataProbe = sqlExecutionContext.isMetadataProbe();
-            sqlExecutionContext.setMetadataProbe(true);
-            try {
-                Misc.free(clientPlan.getCursor(sqlExecutionContext));
-            } catch (SqlException e) {
-                throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
-            } finally {
-                sqlExecutionContext.setMetadataProbe(wasMetadataProbe);
-            }
-        }
-    }
-
     @Override
     public boolean isStructural() {
         return false;
@@ -214,6 +194,29 @@ public class UpdateOperation extends AbstractOperation {
         }
 
         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+    }
+
+    /**
+     * Initializes the functions of the client plan with the values of the caller's bind variables by opening and
+     * closing its cursor, which reads no rows, so a value the statement cannot take fails before the WAL records
+     * the statement for every node to apply. The probe catches the errors functions raise while the cursor opens,
+     * such as text a TIMESTAMP comparison cannot convert; an error a row would raise surfaces only when the WAL
+     * applies the statement. The open is a {@link SqlExecutionContext#isMetadataProbe() metadata probe}: it hands
+     * nobody rows. Does nothing without a client plan.
+     */
+    @Override
+    public void validate() {
+        if (clientPlan != null) {
+            final boolean wasMetadataProbe = sqlExecutionContext.isMetadataProbe();
+            sqlExecutionContext.setMetadataProbe(true);
+            try {
+                Misc.free(clientPlan.getCursor(sqlExecutionContext));
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
+            } finally {
+                sqlExecutionContext.setMetadataProbe(wasMetadataProbe);
+            }
+        }
     }
 
     @Override

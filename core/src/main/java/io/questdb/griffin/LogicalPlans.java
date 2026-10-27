@@ -39,9 +39,6 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
-import io.questdb.griffin.plan.logical.JoinDependency;
-import io.questdb.griffin.plan.logical.JoinEquality;
-import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -100,14 +97,20 @@ public final class LogicalPlans {
      * step at {@code lastPosition}: neither its join nor a later join up to that position NULL-extends its columns.
      */
     public static boolean canPushJoinFilter(ObjList<JoinInput> steps, int position, int lastPosition) {
-        if (position < 0 || position > lastPosition || steps.getQuick(position).getInput() == null) {
-            return false;
-        }
-        if (position > 0 && steps.getQuick(position).getJoinType().isSlaveNulling()) {
-            return false;
-        }
+        return canPushJoinFilter(steps, position, lastPosition, false);
+    }
+
+    /**
+     * Whether a filter that drops rows at the join step at ordered position {@code position} drops only rows a filter
+     * after the step at {@code lastPosition} drops too, as far as the steps in between go: none of them NULL-extends
+     * its master, or, for a filter that drops the rows whose columns it reads are all NULL, each that does is a RIGHT
+     * or FULL join, which only turns the joined rows the filter drops into NULL-extended rows. A SPLICE join pairs
+     * each row of its other side with the master rows that remain instead, so no filter moves before it.
+     */
+    public static boolean canPushJoinFilterPast(ObjList<JoinInput> steps, int position, int lastPosition, boolean isNullRejecting) {
         for (int i = position + 1; i <= lastPosition; i++) {
-            if (steps.getQuick(i).getJoinType().isMasterNulling()) {
+            final JoinKind type = steps.getQuick(i).getJoinType();
+            if (type.isMasterNulling() && (!isNullRejecting || !type.isRelational())) {
                 return false;
             }
         }
@@ -118,23 +121,11 @@ public final class LogicalPlans {
      * Whether a filter of the columns of the join input {@code source} alone, which drops the rows whose columns it
      * reads are all NULL, can also filter the input before the step at ordered position {@code lastPosition}, where
      * a RIGHT or FULL step NULL-extends the input as part of its master: the input's own step does not NULL-extend it
-     * and the steps after it that NULL-extend their master up to that position are RIGHT or FULL joins, so the input's
-     * rows the filter drops only turn joined rows into NULL-extended rows, which the filter drops at that position too.
+     * and the steps after it up to that position keep the filter's result, see {@link #canPushJoinFilterPast}.
      */
     public static boolean canPushNullRejectingJoinFilter(JoinPlan join, int source, int lastPosition) {
         final ObjList<JoinInput> steps = join.getOrderedInputs();
-        final int position = steps.indexOf(join.getInputs().getQuick(source));
-        if (position < 0 || position > lastPosition || steps.getQuick(position).getInput() == null
-                || position > 0 && steps.getQuick(position).getJoinType().isSlaveNulling()) {
-            return false;
-        }
-        for (int i = position + 1; i <= lastPosition; i++) {
-            final JoinKind type = steps.getQuick(i).getJoinType();
-            if (type.isMasterNulling() && !type.isRelational()) {
-                return false;
-            }
-        }
-        return true;
+        return canPushJoinFilter(steps, steps.indexOf(join.getInputs().getQuick(source)), lastPosition, true);
     }
 
     /**
@@ -555,32 +546,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * Whether the outer join step at {@code step} of the join's graph keys on the equalities a later INNER join implies,
-     * see {@link JoinGraph#collectImpliedOuterKeys}, which it collects into {@code pairs}: a LEFT, RIGHT or FULL step
-     * whose ON clause states no equality the hash key can match, see {@link #isJoinKeyTypeCompatible}. Such a step
-     * NULL-extends by its whole ON clause, see {@link JoinInput.NullExtension#BY_ON_RESIDUAL}.
-     */
-    public static boolean isImpliedKeyStep(ObjList<JoinInput> inputs, JoinGraph graph, int step, ObjList<JoinEquality> pairs) {
-        final JoinKind type = inputs.getQuick(step).getJoinType();
-        if (type != JoinKind.LEFT_OUTER && type != JoinKind.RIGHT_OUTER && type != JoinKind.FULL_OUTER) {
-            return false;
-        }
-        final JoinDependency dependency = graph.getDependencies().getQuick(step);
-        if (dependency != null) {
-            final ObjList<JoinEquality> keys = dependency.getKeys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                final JoinEquality key = keys.getQuick(i);
-                final int master = key.getOtherSource(step);
-                if (isJoinKeyTypeCompatible(JoinGraph.sourceColumnType(inputs, master, key.getColumnId(master)),
-                        JoinGraph.sourceColumnType(inputs, step, key.getColumnId(step)))) {
-                    return false;
-                }
-            }
-        }
-        return graph.collectImpliedOuterKeys(inputs, step, pairs);
-    }
-
-    /**
      * An integer literal spelled in SQL, not folded from an expression.
      */
     public static boolean isIntegerLiteral(BoundExpression expression) {
@@ -595,6 +560,25 @@ public final class LogicalPlans {
         return masterType == slaveType
                 || ColumnType.isSymbolOrStringOrVarchar(masterType) && ColumnType.isSymbolOrStringOrVarchar(slaveType)
                 || ColumnType.isTimestamp(masterType) && ColumnType.isTimestamp(slaveType);
+    }
+
+    /**
+     * Whether join keys on a column of {@code typeA} and a column of {@code typeB} match exactly the values that
+     * {@code =} between the two columns pairs, NULL with NULL: two text columns, SYMBOL, STRING or VARCHAR, by their
+     * text, and two columns of one fixed-size type whose key is its value. FLOAT and DOUBLE fail it, as
+     * {@code 0.0 = -0.0} holds while their keys differ.
+     */
+    public static boolean isKeyMatchType(int typeA, int typeB) {
+        if (ColumnType.isSymbolOrStringOrVarchar(typeA)) {
+            return ColumnType.isSymbolOrStringOrVarchar(typeB);
+        }
+        return typeA == typeB && switch (ColumnType.tagOf(typeA)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
+                 ColumnType.IPv4, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.GEOBYTE,
+                 ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.UUID, ColumnType.LONG128 ->
+                    true;
+            default -> false;
+        };
     }
 
     /**
@@ -1201,6 +1185,12 @@ public final class LogicalPlans {
             }
         }
         return true;
+    }
+
+    private static boolean canPushJoinFilter(ObjList<JoinInput> steps, int position, int lastPosition, boolean isNullRejecting) {
+        return position >= 0 && position <= lastPosition && steps.getQuick(position).getInput() != null
+                && (position == 0 || !steps.getQuick(position).getJoinType().isSlaveNulling())
+                && canPushJoinFilterPast(steps, position, lastPosition, isNullRejecting);
     }
 
     /**

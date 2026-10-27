@@ -380,6 +380,38 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedGeoHashKeyNullExtendsByOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ga (id INT, w GEOHASH(4c))");
+            execute("CREATE TABLE gb (id INT, x INT, k GEOHASH(4c))");
+            execute("CREATE TABLE gc (id INT, k GEOHASH(4c))");
+            execute("INSERT INTO ga VALUES (1, NULL), (2, #u33d), (3, #u33e)");
+            execute("INSERT INTO gb VALUES (10, 2, #u33d), (11, 0, NULL), (12, 3, #zzzz), (13, 3, NULL)");
+            execute("INSERT INTO gc VALUES (20, NULL), (21, #u33d), (22, #zzzz)");
+            final String query = "SELECT a.id, b.id, c.id FROM ga a %s JOIN gb b ON b.x > 1 JOIN gc c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3";
+            assertQuery(query.formatted("LEFT"))
+                    .withPlanContaining("Hash Left Outer Join", "condition: b.k=a.w")
+                    .returns("""
+                            id\tid1\tid2
+                            1\t13\t20
+                            2\t10\t21
+                            """);
+            final String nullExtended = """
+                    id\tid1\tid2
+                    null\t11\t20
+                    1\t13\t20
+                    2\t10\t21
+                    """;
+            assertQuery(query.formatted("RIGHT"))
+                    .withPlanContaining("Hash Right Outer Join", "condition: b.k=a.w")
+                    .returns(nullExtended);
+            assertQuery(query.formatted("FULL"))
+                    .withPlanContaining("Hash Full Outer Join", "condition: b.k=a.w")
+                    .returns(nullExtended);
+        });
+    }
+
+    @Test
     public void testImpliedKeyFullJoinNullExtendsByOnClause() throws Exception {
         assertMemoryLeak(() -> {
             createImpliedKeyRows();
@@ -406,6 +438,55 @@ public class OuterJoinTest extends AbstractCairoTest {
                             2\t10\t21
                             4\tnull\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyKeepsCrossInputBeforeOuterStep() throws Exception {
+        assertMemoryLeak(() -> {
+            createImpliedCrossKeyRows();
+            final String query = "SELECT a.id, m.id, b.id, c.id FROM ia a CROSS JOIN im m %s JOIN ib b ON b.i = a.l "
+                    + "JOIN ic c ON c.x = m.k AND c.x = b.k ORDER BY 1, 2, 3, 4";
+            final String expected = """
+                    id\tid1\tid2\tid3
+                    1\t10\t20\t30
+                    1\t12\t23\t32
+                    2\t11\t21\t31
+                    3\t12\t24\t32
+                    """;
+            assertQuery(query.formatted("RIGHT"))
+                    .withPlanContaining("Hash Right Outer Join", "condition: b.k=m.k", "filter: a.l=b.i")
+                    .returns(expected);
+            assertQuery(query.formatted("FULL"))
+                    .withPlanContaining("Hash Full Outer Join", "condition: b.k=m.k", "filter: a.l=b.i")
+                    .returns(expected);
+            assertQuery(query.formatted("LEFT"))
+                    .withPlanContaining("Hash Left Outer Join", "condition: b.k=m.k", "filter: a.l=b.i")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyKeepsCrossInputBeforeUnkeyedOuterStep() throws Exception {
+        assertMemoryLeak(() -> {
+            createImpliedCrossKeyRows();
+            final String query = "SELECT a.id, m.id, b.id, c.id FROM ia a CROSS JOIN im m %s JOIN ib b ON b.i <= a.l "
+                    + "JOIN ic c ON c.x = m.k AND c.x = b.k ORDER BY 1, 2, 3, 4";
+            final String expected = """
+                    id\tid1\tid2\tid3
+                    1\t10\t20\t30
+                    1\t12\t23\t32
+                    2\t10\t20\t30
+                    2\t11\t21\t31
+                    2\t12\t23\t32
+                    3\t12\t24\t32
+                    """;
+            assertQuery(query.formatted("RIGHT"))
+                    .withPlanContaining("Hash Right Outer Join", "condition: b.k=m.k", "filter: a.l>=b.i")
+                    .returns(expected);
+            assertQuery(query.formatted("FULL"))
+                    .withPlanContaining("Hash Full Outer Join", "condition: b.k=m.k", "filter: a.l>=b.i")
+                    .returns(expected);
         });
     }
 
@@ -445,6 +526,56 @@ public class OuterJoinTest extends AbstractCairoTest {
                             id\tid1\tid2
                             2\t10\t21
                             """);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyNullExtensionInBothHashJoinFactories() throws Exception {
+        assertMemoryLeak(() -> {
+            createImpliedKeyRows();
+            final String query = "SELECT a.id, b.id, c.id FROM %s a %s JOIN %s b ON b.x > %d JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3";
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                assertRows(query.formatted("ik_a", "LEFT", "ik_b", 1), isFullFat, "Hash Left Outer Join" + light + "\n", """
+                        id\tid1\tid2
+                        1\t13\t20
+                        2\t10\t21
+                        4\t13\t20
+                        """);
+                assertRows(query.formatted("ik_a", "LEFT", "ik_b2", 1), isFullFat, null, """
+                        id\tid1\tid2
+                        2\t10\t21
+                        """);
+                assertRows(query.formatted("ik_a", "LEFT", "ik_b", 100), isFullFat, null, """
+                        id\tid1\tid2
+                        1\tnull\t20
+                        4\tnull\t20
+                        """);
+                assertRows(query.formatted("ik_a", "RIGHT", "ik_b", 1), isFullFat, "Hash Right Outer Join" + light + "\n", """
+                        id\tid1\tid2
+                        null\t11\t20
+                        1\t13\t20
+                        2\t10\t21
+                        4\t13\t20
+                        """);
+                assertRows(query.formatted("ik_a2", "RIGHT", "ik_b", 1), isFullFat, null, """
+                        id\tid1\tid2
+                        null\t11\t20
+                        2\t10\t21
+                        """);
+                assertRows(query.formatted("ik_a", "FULL", "ik_b", 1), isFullFat, "Hash Full Outer Join" + light + "\n", """
+                        id\tid1\tid2
+                        null\t11\t20
+                        1\t13\t20
+                        2\t10\t21
+                        4\t13\t20
+                        """);
+                assertRows(query.formatted("ik_a", "FULL", "ik_b2", 1), isFullFat, null, """
+                        id\tid1\tid2
+                        null\t11\t20
+                        2\t10\t21
+                        """);
+            }
         });
     }
 
@@ -1407,6 +1538,17 @@ public class OuterJoinTest extends AbstractCairoTest {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         }
         assertRows(sql, false, null, expected);
+    }
+
+    private void createImpliedCrossKeyRows() throws Exception {
+        execute("CREATE TABLE ia (id INT, l LONG)");
+        execute("CREATE TABLE im (id INT, k INT)");
+        execute("CREATE TABLE ib (id INT, i INT, k INT)");
+        execute("CREATE TABLE ic (id INT, x INT)");
+        execute("INSERT INTO ia VALUES (1, 1), (2, 2), (3, NULL)");
+        execute("INSERT INTO im VALUES (10, 5), (11, 6), (12, NULL)");
+        execute("INSERT INTO ib VALUES (20, 1, 5), (21, 2, 6), (22, 3, 5), (23, 1, NULL), (24, NULL, NULL)");
+        execute("INSERT INTO ic VALUES (30, 5), (31, 6), (32, NULL)");
     }
 
     private void createImpliedKeyRows() throws Exception {

@@ -176,7 +176,29 @@ public final class TimestampSamplerFactory {
         assert cs.length() > k;
 
         long n = parsePositiveInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
-        return getInstance(driver, n, cs.charAt(k), position + k);
+        return getSampleByInstance(driver, n, cs.charAt(k), position + k);
+    }
+
+    /**
+     * The sampler of a SAMPLE BY stride, which must be a positive INT, whether a literal or a constant expression
+     * spells it. A stride outside that range fails at {@code position} with the error a literal stride raises: a
+     * negative one, zero, or an invalid value for one beyond INT or NULL.
+     *
+     * @param stride   the stride; {@link Numbers#LONG_NULL} for NULL
+     * @param position position in SQL text to report error against
+     */
+    public static TimestampSampler getSampleByInstance(TimestampDriver driver, long stride, char timeUnit, int position) throws SqlException {
+        if (stride == 0) {
+            throw SqlException.$(position, "zero is not a valid sample value");
+        }
+        if (stride < 0 && stride != Numbers.LONG_NULL) {
+            throw SqlException.$(position, "negative interval is not allowed");
+        }
+        if (stride == Numbers.LONG_NULL || stride > Integer.MAX_VALUE) {
+            final SqlException e = SqlException.$(position, "invalid sample value [value=");
+            throw (stride == Numbers.LONG_NULL ? e.put("null") : e.put(stride)).put(']');
+        }
+        return getInstance(driver, stride, timeUnit, position);
     }
 
     /**

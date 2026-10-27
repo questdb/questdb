@@ -519,7 +519,7 @@ public final class AggregateFactoryGenerator {
                 keys.slaveIndexes.setQuick(i, slaveCrossIndex.getQuick(keys.slaveIndexes.getQuick(i)));
             }
         }
-        keys.of(masterMetadata, slaveMetadata, keys.masterIndexes, keys.slaveIndexes, false);
+        keys.of(masterMetadata, slaveMetadata, keys.masterIndexes, keys.slaveIndexes, keys.checkedIndexes, keys.checkedLookupIndexes, false);
         keys.convertSymbolKeysToInt(masterMetadata, slaveMetadata);
         return keys;
     }

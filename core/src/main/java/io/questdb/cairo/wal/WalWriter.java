@@ -292,7 +292,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(UpdateOperation operation) {
         operation.authorize();
-        operation.initClientPlan();
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
