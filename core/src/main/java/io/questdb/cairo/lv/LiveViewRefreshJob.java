@@ -17131,20 +17131,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return null;
         }
         if (t instanceof CairoException ce && ce.isAuthorizationError()) {
-            // A read-only gate refused this turn's live-view write. No current refresh path meets one: the
-            // OSS getWalWriter has no gate, the enterprise override exempts live-view tokens since every
-            // node refreshes its live views locally, and the commitLiveView*Fenced methods no longer refuse.
-            // This arm is a safety net for a gate on the live-view writer, like the one enterprise applied
-            // before symmetric local refresh. A refusal is NOT a refresh failure: never invalidate, never
-            // charge. Invalidation is durable and sticky, so counting a refusal toward the flush-retry
-            // budget could brick a healthy view. Return before the mid-drain recovery and the budget
-            // instead. A window-state debt already on the instance stays for the next turn's gate. The arm
-            // does not carry a debt that only this turn's field holds. The refresh context refuses every
-            // write but the view's own insert, and no refresh path asks it for one, so only a read-only
-            // gate (or the dev-mode simulate_crash('A') function) raises an authorization error here.
+            // A read-only gate refused this turn's live-view write. No current refresh path meets one:
+            // the OSS getWalWriter has no gate, the enterprise override exempts live-view tokens since
+            // every node refreshes its live views locally, and the commitLiveView*Fenced methods do not
+            // refuse. This arm is a safety net for a gate on the live-view writer. A refusal is NOT a
+            // refresh failure: never invalidate, never charge. Invalidation is durable and sticky, so
+            // counting a refusal toward the flush-retry budget could brick a healthy view. Return before
+            // the mid-drain recovery and the budget instead, and carry any window-state debt this turn's
+            // field holds onto the instance, so no ACTIVE turn drains before a gate has settled it. A
+            // refused emergency flush of the lead (finishLeadRefresh), for one, leaves the refresh cursor
+            // in front of rows the drain already fed. Only a read-only gate (or the dev-mode
+            // simulate_crash('A') function) raises an authorization error here: the refresh context
+            // refuses every write but the view's own insert, and no refresh path asks it for one.
             // Mirrors MatViewRefreshJob.rethrowReadOnlyRefusal + handleErrorRetryRefresh.
             LOG.info().$("live view refresh refused by read-only gate, retrying later [view=")
                     .$(instance.getDefinition().getViewName()).I$();
+            if (windowStateDirty) {
+                markWindowStateDirty(instance);
+            }
             return null;
         }
         if (t instanceof TableReferenceOutOfDateException) {
