@@ -123,6 +123,11 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

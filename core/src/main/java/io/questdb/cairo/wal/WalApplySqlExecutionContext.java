@@ -70,6 +70,7 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
             setParallelGroupByEnabled(false);
             setParallelTopKEnabled(false);
             setParallelWindowJoinEnabled(false);
+            setParallelWindowEnabled(false);
             setParallelReadParquetEnabled(false);
         }
     }

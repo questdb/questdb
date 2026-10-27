@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
@@ -100,22 +101,22 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
             createTables();
             // Casting the master symbols makes their symbol tables non-static, so the join can't
             // compare symbol keys and falls back to a ChainedSymbolShortCircuit over two mappings.
+            // Keyed ASOF defaults to Dense since #7423, so the Fast cursor needs its hint.
             final String query = """
-                    SELECT count(), count(s.price), sum(s.price)
+                    SELECT %s count(), count(s.price), sum(s.price)
                     FROM (SELECT (sym || '')::SYMBOL sym, (sym2 || '')::SYMBOL sym2, val, ts FROM master) m
                     ASOF JOIN slave s ON (sym, sym2)
                     """;
+            final String expected = """
+                    count\tcount1\tsum
+                    2000\t1000\t499500.0
+                    """;
+            final String fastQuery = query.formatted("/*+ asof_fast(m s) */");
             // The symbolKeyJoin attribute would mean SymbolTranslatingRecord, not the short circuit.
-            assertQuery(query).noLeakCheck().assertsPlanNotContaining("symbolKeyJoin");
-            assertCachesReleased(
-                    query,
-                    AsOfJoinFastRecordCursorFactory.class,
-                    """
-                            count\tcount1\tsum
-                            2000\t1000\t499500.0
-                            """,
-                    2
-            );
+            assertQuery(fastQuery).noLeakCheck().assertsPlanNotContaining("symbolKeyJoin");
+            assertCachesReleased(fastQuery, AsOfJoinFastRecordCursorFactory.class, expected, 2);
+            // The default two-symbol Dense cursor takes both mappings out of the chain and must release them too.
+            assertCachesReleased(query.formatted(""), AsOfJoinDenseDualSymbolRecordCursorFactory.class, expected, 2);
         });
     }
 
@@ -185,7 +186,7 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
                     """;
             final String query = "SELECT %s count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym)";
 
-            assertCachesReleased(query.formatted(""), AsOfJoinFastRecordCursorFactory.class, expected, 1);
+            assertCachesReleased(query.formatted("/*+ asof_fast(m s) */"), AsOfJoinFastRecordCursorFactory.class, expected, 1);
             assertCachesReleased(query.formatted("/*+ asof_linear(m s) */"), AsOfJoinLightRecordCursorFactory.class, expected, 1);
             assertCachesReleased(query.formatted("/*+ asof_dense(m s) */"), AsOfJoinDenseSingleSymbolRecordCursorFactory.class, expected, 1);
             assertCachesReleased(query.formatted("/*+ asof_index(m s) */"), AsOfJoinIndexedRecordCursorFactory.class, expected, 1);

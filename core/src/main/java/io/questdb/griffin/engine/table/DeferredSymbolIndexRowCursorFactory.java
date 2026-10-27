@@ -71,6 +71,14 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
                 .getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getIndexRowLo(), pageFrame.getIndexRowHi() - 1);
     }
 
+    /**
+     * The index key the symbol resolved to at the last {@link #prepareCursor}, or -1 when the
+     * table does not have the symbol, which leaves the cursor empty.
+     */
+    public int getIndexKey() {
+        return symbolKey == SymbolTable.VALUE_NOT_FOUND ? -1 : TableUtils.toIndexKey(symbolKey);
+    }
+
     @Override
     public Function getFunction() {
         return symbol;

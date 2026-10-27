@@ -184,6 +184,32 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    /**
+     * Aggregates whose answer depends on the order their base hands rows over in. Read by
+     * {@link #hasOrderedGroupByFunc(ExpressionNode)}, which raises the model's order-by mnemonic to
+     * ORDER_BY_REQUIRED so an ORDER BY below is preserved rather than elided.
+     * <p>
+     * This is the WEAKER of the two order-sensitivity registries in the engine, and the difference is
+     * deliberate. The stronger one is {@link FunctionFactory#requiresAscendingDesignatedTimestamp()},
+     * indexed by name in {@link FunctionFactoryCache#isAscendingTimestampOrdered(CharSequence)} and
+     * declared today by twap() and sparkline() only. A function that declares it will have the order
+     * OBTAINED for it - the requirement restated on the base so the planner picks an ordered plan, or
+     * failing that a sort - because those two integrate across adjacent rows and refuse a base that
+     * does not provide the order.
+     * <p>
+     * The four names below do not refuse. Over a base that concatenates rather than merges they return
+     * the first or last row of the concatenation, which is not the earliest or latest in time - master
+     * does the same, and so does this release. Declaring the stronger flag on them would repair that,
+     * and was measured: it turns first()/last() over a UNION ALL into a merge, costs a sort over the
+     * aggregate for a keyed GROUP BY or LATEST ON base, and retains the base's designated timestamp in
+     * the projection of EVERY first()/last() query in the product - an extra column read on the most
+     * common aggregate shape in a time-series database, for which SqlOptimiserTest carries eight
+     * assertions that exist to pin the narrow projection. That is a behaviour and performance change to
+     * a surface far wider than the ordering corrections this registry pair came out of, so it is a
+     * decision of its own rather than a detail of one. See
+     * ScanDirectionContractTest#testFirstAndLastOverUnionAllDisagreeWithTheOrderedForm, which pins what
+     * they do today so the gap stays measured rather than assumed.
+     */
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
@@ -230,6 +256,11 @@ public class SqlOptimiser implements Mutable {
     private final Path path;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+    // the PIVOT IN subqueries of the statement being compiled, until code generation wraps its plan
+    // in a PivotInListCheckFactory that takes them over
+    private final ObjList<PivotInListCheck> pivotInListChecks = new ObjList<>();
+    private final LowerCaseCharSequenceIntHashMap pivotFuseAliasMap = new LowerCaseCharSequenceIntHashMap();
+    private final IntList pivotFuseRefCounts = new IntList();
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -276,6 +307,9 @@ public class SqlOptimiser implements Mutable {
     // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
+    // set by propagateTopDownColumns0 for the nested model it recurses into: the rows of that model reach a
+    // consumer that only needs their distinct values (see isDistinctKeysConsumer)
+    private boolean distinctKeysOnlyForNested;
     private ObjList<JoinContext> emittedJoinClauses;
     // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
     private int subsampleNameScopeDepth;
@@ -293,6 +327,10 @@ public class SqlOptimiser implements Mutable {
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
+    private boolean pivotFuseFailed;
+    private IQueryModel pivotFuseProjection;
+    private CharSequence pivotFuseProjectionAlias;
+    private CharSequence pivotFuseSourceAlias;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -370,6 +408,63 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    /**
+     * True when any column of {@code model} calls an aggregate that needs its base in ascending
+     * designated-timestamp order - twap(), sparkline(). Asked before the functions are built, by both the
+     * optimiser (to restate the ordering requirement so an ordered plan is chosen) and the code generator
+     * (to sort when no ordered plan exists). See
+     * {@link FunctionFactory#requiresAscendingDesignatedTimestamp()}.
+     */
+    public static boolean hasAscendingTimestampGroupByFunc(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            FunctionFactoryCache functionFactoryCache,
+            ObjList<QueryColumn> columns
+    ) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (hasAscendingTimestampGroupByFunc(sqlNodeStack, functionFactoryCache, columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasAscendingTimestampGroupByFunc(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            FunctionFactoryCache functionFactoryCache,
+            ExpressionNode node
+    ) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal, as hasGroupByFunc below
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        node = null;
+                        continue;
+                    case FUNCTION:
+                        if (functionFactoryCache.isAscendingTimestampOrdered(node.token)) {
+                            return true;
+                        }
+                        // fall through to traverse rhs and args
+                    default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -411,6 +506,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
+        freePivotInListChecks();
         clearConstNameMaps();
         contextPool.clear();
         intHashSetPool.clear();
@@ -449,6 +545,13 @@ public class SqlOptimiser implements Mutable {
         tempCharSequenceHashSet.clear();
         pivotAliasMap.clear();
         pivotAliasSequenceMap.clear();
+        pivotFuseAliasMap.clear();
+        pivotFuseRefCounts.clear();
+        pivotFuseProjection = null;
+        pivotFuseProjectionAlias = null;
+        pivotFuseSourceAlias = null;
+        pivotFuseFailed = false;
+        distinctKeysOnlyForNested = false;
         subsampleNameScopeDepth = 0;
         for (int i = 0, n = subsampleNameScopes.size(); i < n; i++) {
             subsampleNameScopes.getQuick(i).clear();
@@ -575,6 +678,16 @@ public class SqlOptimiser implements Mutable {
         } else {
             terms.add(node);
         }
+    }
+
+    // whether a model orders its rows anywhere along its chain, see PivotInListCheck
+    private static boolean hasOrderBy(IQueryModel model) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getOrderBy().size() > 0 || (m.getUnionModel() != null && hasOrderBy(m.getUnionModel()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // A SHOW that names an object reads it through the view the context reads table-name functions
@@ -708,6 +821,23 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * True when {@code model} hands its base's rows on in the order it received them, so an ordering
+     * restated below it is still the order its parent sees. A projection does; anything that
+     * aggregates, de-duplicates, joins or windows decides the order itself.
+     */
+    private static boolean isRowOrderPreserving(IQueryModel model) {
+        if (model.getJoinModels().size() > 1) {
+            return false;
+        }
+        return switch (model.getSelectModelType()) {
+            case IQueryModel.SELECT_MODEL_NONE,
+                 IQueryModel.SELECT_MODEL_CHOOSE,
+                 IQueryModel.SELECT_MODEL_VIRTUAL -> true;
+            default -> false;
+        };
     }
 
     private static boolean hasNestedUnionAll(IQueryModel model) {
@@ -916,7 +1046,7 @@ public class SqlOptimiser implements Mutable {
         return 0;
     }
 
-    private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
+    static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
         switch (ColumnType.tagOf(columnType)) {
@@ -6040,6 +6170,46 @@ public class SqlOptimiser implements Mutable {
         return isTimestampLiteral(timestampArg, timestampColumn);
     }
 
+    /**
+     * True when this model's own ORDER BY is exactly {@code ORDER BY <timestamp>} ascending, on one
+     * unqualified column, with no LIMIT - an order-by that asks for nothing the model does not already
+     * produce, rather than one that claims the row order or the row set.
+     * <p>
+     * Used by {@link #restateTimestampOrderForOrderSensitiveBase(IQueryModel)}. Everything it excludes is
+     * excluded because restating a base order underneath it would be reasoning about an order or a row set
+     * the user wrote: a DESC term, a term on another column, a leading or trailing extra term, an
+     * expression rather than a plain column, and any LIMIT.
+     */
+    private boolean isAscendingTimestampOrderBy(IQueryModel model, CharSequence timestamp) {
+        return model.getLimitLo() == null
+                && isAscendingTimestampOrderTerm(model.getOrderBy(), model.getOrderByDirection(), timestamp);
+    }
+
+    /**
+     * The same test against the order-by advice this model received from its parent rather than against
+     * its own ORDER BY. Advice is the parent's requirement seen through a channel that does not record
+     * which spelling produced it, so only the one spelling that asks for exactly the order
+     * {@link #restateTimestampOrderForOrderSensitiveBase(IQueryModel)} restates is admitted; any other
+     * advice still bails. That one spelling is what
+     * {@code select * from (<sample by over a union> ) order by ts} produces, and it wants the merge for
+     * the same reason the unwrapped spelling does.
+     */
+    private boolean isAscendingTimestampOrderByAdvice(IQueryModel model, CharSequence timestamp) {
+        return model.getLimitLo() == null
+                && isAscendingTimestampOrderTerm(model.getOrderByAdvice(), model.getOrderByDirectionAdvice(), timestamp);
+    }
+
+    private static boolean isAscendingTimestampOrderTerm(ObjList<ExpressionNode> terms, IntList directions, CharSequence timestamp) {
+        if (terms.size() != 1 || directions.size() != 1) {
+            return false;
+        }
+        if (directions.getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING) {
+            return false;
+        }
+        final ExpressionNode term = terms.getQuick(0);
+        return term.type == LITERAL && Chars.equalsIgnoreCase(term.token, timestamp);
+    }
+
     // True when this model is a UNION ALL branch (has siblings via getUnionModel()) whose single-column
     // order-by advice resolves to the union's designated timestamp - the precondition for pushing that
     // timestamp order uniformly into every branch.
@@ -7797,6 +7967,8 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        restateTimestampOrderForOrderSensitiveBase(model);
+
         final boolean isTsOrderPushEligible = orderByDirectionAdvice.size() == 1
                 && isDesignatedTimestampUnionAllBranch(model, orderByAdvice);
         final int tsOrderDirection = isTsOrderPushEligible ? orderByDirectionAdvice.getQuick(0) : -1;
@@ -7981,11 +8153,25 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
                     assert compiler != null;
+                    // Each FOR column's subquery gets its own check, collected in this optimiser's
+                    // list in FOR order, and the statement's plan takes the whole list over in
+                    // generateSelectOneShot(). The subquery is generated by a separate pooled
+                    // compiler, whose optimiser has its own (empty) list, so this nested generate
+                    // cannot take over the checks of earlier FOR columns: only a PIVOT nested in the
+                    // subquery itself would give the subquery's plan checks, which are then its own.
+                    // No QueryProgress of its own: the subquery runs here, inside the statement's
+                    // compile, and again before each later execution of a cached plan, inside that
+                    // execution's QueryProgress. Its own would register, log and trace each run as
+                    // a separate query carrying the statement's text, and a trace matched by text
+                    // could then be taken for the statement's.
                     // The borrowed compiler did not parse this model, so it must not retry: a retry
                     // re-parses its lexer, which holds the statement it compiled last. When a table
                     // the sub-query reads goes out of date, the exception propagates to whatever
                     // compiles this statement, which holds the statement's text and can retry it.
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
+                    final RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, false);
+                    // the values are the plan's: a cached plan re-runs the subquery to check them
+                    final PivotInListCheck check = new PivotInListCheck(inListFactory, subQueryNode.position, hasOrderBy(subQueryNode.queryModel));
+                    try {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -8012,6 +8198,7 @@ public class SqlOptimiser implements Mutable {
                                 if (!tempCharSequenceHashSet.add(tmpStringSink)) {
                                     continue;
                                 }
+                                check.addExpected(tmpStringSink);
                                 CharacterStoreEntry quotedCse = characterStore.newEntry();
                                 if (quote && !isNull) {
                                     quotedCse.put('\'');
@@ -8045,10 +8232,13 @@ public class SqlOptimiser implements Mutable {
                         if (valueCount == 0) {
                             throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
                         }
+                        pivotInListChecks.add(check);
+                    } catch (Throwable th) {
+                        check.close();
+                        throw th;
                     }
                     pivotForColumn.setSelectSubqueryExpr(null);
                     pivotForColumn.setIsValueList(true);
-                    outerModel.setCacheable(false);
                 }
                 forValueCombinations *= pivotForColumn.getValueList().size();
                 if (forValueCombinations > maxPivotProducedColumns) {
@@ -8216,6 +8406,8 @@ public class SqlOptimiser implements Mutable {
      * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
      */
     private void propagateTopDownColumns0(IQueryModel model, boolean topLevel, @Nullable IQueryModel papaModel, boolean allowColumnsChange) {
+        final boolean distinctKeysOnly = distinctKeysOnlyForNested;
+        distinctKeysOnlyForNested = false;
         if (!model.isOptimisable()) {
             return;
         }
@@ -8330,11 +8522,27 @@ public class SqlOptimiser implements Mutable {
         // model's own WHERE/HAVING and ORDER BY literals have been emitted, to also cover a HAVING-style
         // filter that references only an aggregate alias (its literals are the sole top-down contributor,
         // so an empty list here would skip retention). For top level models the list is empty -> no-op.
-        retainGroupByKeysAsTopDownColumns(model);
+        retainGroupByKeysAsTopDownColumns(model, distinctKeysOnly);
 
         // latest on
         if (model.getLatestBy().size() > 0) {
             emitLiteralsTopDown(model.getLatestBy(), model);
+        }
+
+        // Retain the base's designated timestamp when this model calls an aggregate that needs the base
+        // ascending by it - twap(), sparkline(). sparkline()'s signature is sparkline(D): it reads the
+        // designated timestamp from the frame rather than naming it, so nothing in the query text
+        // references the timestamp column and top-down pruning drops it from the base's projection. The
+        // base then reaches the code generator with no timestamp column at all, which is neither
+        // orderable nor sortable, and the function has to refuse. twap(x, ts) names its timestamp and so
+        // never had the problem, which is the whole difference between the two.
+        if (nestedIsFlex
+                && nestedAllowsColumnChange
+                && hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
+            final CharSequence timestamp = findTimestamp(nested);
+            if (timestamp != null) {
+                addTopDownColumn(timestamp, nested);
+            }
         }
 
         if (model.getWhereClause() != null) {
@@ -8361,7 +8569,7 @@ public class SqlOptimiser implements Mutable {
         // early pass above would have observed an empty list and skipped, letting pruning collapse the
         // keyed group by into a scalar aggregate. addTopDownColumn() dedupes by alias, so re-running is
         // idempotent and leaves the key ordering from the early pass untouched in the common case.
-        retainGroupByKeysAsTopDownColumns(model);
+        retainGroupByKeysAsTopDownColumns(model, distinctKeysOnly);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -8434,7 +8642,10 @@ public class SqlOptimiser implements Mutable {
 
         // go down the nested path
         if (nested != null) {
+            distinctKeysOnlyForNested = configuration.isSqlDistinctGroupByKeyPruningEnabled()
+                    && (isDistinctKeysConsumer(model) || (distinctKeysOnly && isDistinctPreservingPassThrough(model)));
             propagateTopDownColumns0(nested, false, null, nestedAllowsColumnChange);
+            distinctKeysOnlyForNested = false;
         }
 
         final IQueryModel unionModel = model.getUnionModel();
@@ -9246,6 +9457,112 @@ public class SqlOptimiser implements Mutable {
         return n;
     }
 
+    /**
+     * Writes onto the model directly below an order-sensitive consumer the
+     * {@code ORDER BY <designated timestamp>} the upgrade notes already tell users to write, when that
+     * consumer sits over a UNION ALL. The consumers are a SAMPLE BY and an aggregate that declares
+     * {@link FunctionFactory#requiresAscendingDesignatedTimestamp()} - twap(), sparkline().
+     * <p>
+     * A SAMPLE BY that walks buckets forward in a single pass - FILL other than NONE, ALIGN TO FIRST
+     * OBSERVATION, FROM ... TO - needs its base in ascending designated-timestamp order, and a UNION ALL
+     * concatenates rather than merges, so it does not provide one. The ordered plan for that base already
+     * exists: an ORDER BY on the union's timestamp routes to MergeUnionAllRecordCursorFactory, which k-way
+     * merges the branches and reports FORWARD honestly. The SAMPLE BY simply had no way to ask for it -
+     * order-by advice is deliberately not propagated through an aggregating model
+     * (see pushDownOrderByAdviceToJoinModels), because an outer ORDER BY on a SAMPLE BY result says nothing
+     * about the base's order. Restating the requirement as an actual ORDER BY on the base does ask for it,
+     * and every existing mechanism then fires, including the merge.
+     * <p>
+     * It is free when the base is already ascending: generateOrderBy elides an ORDER BY whose single column
+     * is the designated timestamp in the direction the base already scans.
+     * <p>
+     * The walk is load-bearing. An ORDER BY or a LIMIT that the user wrote between the SAMPLE BY and the
+     * UNION ALL makes the row order - or the row set - theirs, not ours to restate: an
+     * {@code ORDER BY <non-timestamp column>} there legitimately drops the designated timestamp, and
+     * restating a timestamp order across it resurrects a query that must keep refusing with "base query does
+     * not provide designated TIMESTAMP column" (SampleByTest#testTimestampIsRequiredBeforeSubqueryWithExplicitTs2).
+     * A model with shared references is skipped for the same reason: its rows are consumed by more than one
+     * parent, only one of which asked for this order.
+     * <p>
+     * An ORDER BY on the consumer itself is the same question asked one level up, and the answer is the same
+     * except in one case: {@code ORDER BY <designated timestamp>} ascending asks for the order this method
+     * restates, so bailing on it buys nothing and costs the merge. That one spelling is admitted - see
+     * {@link #isAscendingTimestampOrderBy(IQueryModel, CharSequence)} for what "that one spelling" excludes.
+     * Order-by advice reaching this model is the same question asked through a channel that does not record
+     * which spelling produced it, so the one spelling that asks for exactly this order is admitted and every
+     * other advice bails - that spelling is what
+     * {@code select * from (<sample by over a union>) order by ts} produces.
+     */
+    private void restateTimestampOrderForOrderSensitiveBase(IQueryModel model) {
+        if (!hasNestedUnionAll(model)) {
+            return;
+        }
+        if (model.getSampleBy() == null
+                && !hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
+            return;
+        }
+        if (model.getOrderBy().size() > 0 || model.getOrderByAdvice().size() > 0) {
+            // An ORDER BY the consumer wrote, or one its parent asked for through the advice channel, is
+            // only admitted when it asks for the order this method restates - which it can only do
+            // through a timestamp the consumer projects.
+            final CharSequence consumerTimestamp = findTimestamp(model);
+            if (consumerTimestamp == null) {
+                return;
+            }
+            if (model.getOrderBy().size() > 0 && !isAscendingTimestampOrderBy(model, consumerTimestamp)) {
+                return;
+            }
+            if (model.getOrderByAdvice().size() > 0 && !isAscendingTimestampOrderByAdvice(model, consumerTimestamp)) {
+                return;
+            }
+        }
+        final IQueryModel base = model.getNestedModel();
+        if (base == null) {
+            return;
+        }
+        // Find the model to write the ORDER BY onto. It is the one directly above the union head, and
+        // only that one: an ORDER BY there reaches the union branches through the advice channel and
+        // selects MergeUnionAllRecordCursorFactory, while the same ORDER BY written one projection
+        // higher sorts instead - on this branch and on master alike, so this is a property of the
+        // planner rather than of the restatement. Injecting at the immediate base therefore repaired
+        // only the spelling where the two coincide, which is the UNION ALL as the consumer's immediate
+        // nested model. Every model passed through on the way down has to hand its base's rows on in
+        // the order it received them, or the restated order is not the order the consumer sees.
+        IQueryModel target = null;
+        boolean hasUnion = false;
+        for (IQueryModel m = base; m != null; m = m.getNestedModel()) {
+            if (m.getOrderBy().size() > 0 || m.getLimitLo() != null || m.hasSharedRefs()) {
+                return;
+            }
+            if (m.getUnionModel() != null && m.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
+                hasUnion = true;
+                break;
+            }
+            if (!isRowOrderPreserving(m)) {
+                return;
+            }
+            target = m;
+        }
+        if (!hasUnion) {
+            return;
+        }
+        if (target == null) {
+            // base is the union head itself, so there is no model between it and the consumer to carry
+            // the ORDER BY. Keep writing it onto base, as before.
+            target = base;
+        }
+        // Resolve the timestamp against the target, not against the consumer: the ORDER BY has to name a
+        // column the model it lands on projects. Resolving it against the consumer made this method
+        // inert for the whole flagged-aggregate arm, because a group by calling twap(x, ts) or
+        // sparkline(x) projects the aggregate and not the timestamp, so the consumer's
+        // columnNameToAliasMap has no entry for it and every such query fell through to the sort.
+        final CharSequence timestamp = findTimestamp(target);
+        if (timestamp == null) {
+            return;
+        }
+        target.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
+    }
+
     private void resolveJoinColumns(IQueryModel model) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return;
@@ -9636,6 +9953,103 @@ public class SqlOptimiser implements Mutable {
             }
             node = sqlNodeStack.poll();
         }
+    }
+
+    /**
+     * True when the model's output depends only on the set of distinct rows it reads: a GROUP BY or
+     * DISTINCT whose columns are all keys (no aggregates), with no LIMIT. Duplicates and row order in its
+     * input change nothing in its output.
+     */
+    private boolean isDistinctKeysConsumer(IQueryModel model) {
+        final int type = model.getSelectModelType();
+        if ((type != IQueryModel.SELECT_MODEL_GROUP_BY && type != IQueryModel.SELECT_MODEL_DISTINCT)
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getSampleBy() != null
+                || model.getSampleByFill().size() > 0
+                || model.getUnionModel() != null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        if (columns.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression() || hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), qc.getAst())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the set of distinct rows the model returns depends only on the set of distinct rows it
+     * reads: a row-wise projection or filter over one model, no window function, LIMIT, join, union,
+     * LATEST ON or SAMPLE BY.
+     */
+    private boolean isDistinctPreservingPassThrough(IQueryModel model) {
+        final int type = model.getSelectModelType();
+        if ((type != IQueryModel.SELECT_MODEL_NONE && type != IQueryModel.SELECT_MODEL_CHOOSE && type != IQueryModel.SELECT_MODEL_VIRTUAL)
+                || model.getJoinModels().size() > 1
+                || model.getUnionModel() != null
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getLatestBy().size() > 0
+                || model.getSampleBy() != null
+                || model.getTableNameExpr() != null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).isWindowExpression()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Keeps every grouping key of a group by sub-query in its projection, so pruning cannot collapse the
+     * keyed group by into a scalar aggregate or merge groups an aggregate or a duplicate-sensitive consumer
+     * would tell apart. The exception: the rows reach a consumer that only needs their distinct values
+     * (a DISTINCT, or a GROUP BY without aggregates, through row-wise models), and the parent selects
+     * only keys of this group by. Then the distinct values of the selected keys over the groups are the
+     * distinct values of the selected keys over the rows, so the keys nothing reads are dropped and the
+     * group by runs on the selected keys alone (e.g. {@code SELECT DISTINCT sym FROM a} over a
+     * {@code GROUP BY minute, sym} groups by sym only).
+     */
+    private void retainGroupByKeysAsTopDownColumns(IQueryModel model, boolean distinctKeysOnly) {
+        if (distinctKeysOnly && canDropUnreadGroupByKeys(model)) {
+            return;
+        }
+        retainGroupByKeysAsTopDownColumns(model);
+    }
+
+    private boolean canDropUnreadGroupByKeys(IQueryModel model) {
+        if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY
+                // another reader (the outer side of a JOIN LATERAL) may read the keys this consumer does not
+                || model.hasSharedRefs()
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getSampleBy() != null
+                || model.getSampleByFill().size() > 0
+                || model.getUnionModel() != null
+                || model.getWhereClause() != null
+                || model.getGroupBy().size() > 0) {
+            return false;
+        }
+        final ObjList<QueryColumn> topDown = model.getTopDownColumns();
+        if (topDown.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = topDown.size(); i < n; i++) {
+            final QueryColumn qc = topDown.getQuick(i);
+            if (qc.isWindowExpression() || hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), qc.getAst())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
@@ -10692,6 +11106,258 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Substitutes the projection subquery a PIVOT reads into the PIVOT's inner GROUP BY, the plan a hand
+     * rewrite gets by moving the GROUP BY into the subquery. The inner model reads
+     * {@code source -> projection -> from}, where source is the {@code SELECT * FROM (subquery) [WHERE ...]}
+     * model the PIVOT clause follows and projection is the subquery's select list. The returned model
+     * has the inner model's columns and the source's WHERE (which holds the pushed-down pivot IN filter),
+     * each with the projection's expressions in place of the references to them, and reads the
+     * projection's FROM directly. Rows, groups and aggregate arguments are the same, so every pivot cell
+     * aggregates the same values; only the plan changes (the GROUP BY can now run in parallel).
+     * <p>
+     * Returns null, leaving the PIVOT as it is, unless the source only filters, the projection only
+     * computes row-wise expressions over a FROM without joins (no aggregates, window or cursor functions,
+     * sub-queries, wildcards, table-qualified columns, DISTINCT, joins, LIMIT, ORDER BY, LATEST ON, SAMPLE BY, unions or designated timestamp
+     * clauses), every reference resolves to a projected column, every projected column is referenced, and
+     * no non-trivial projected expression is referenced more than once (so nothing is evaluated more
+     * often than before).
+     */
+    private IQueryModel fusePivotSource(IQueryModel innerModel) throws SqlException {
+        final IQueryModel source = innerModel.getNestedModel();
+        if (!isPlainPivotPassThrough(source) || source.getBottomUpColumns().size() > 0 || source.isCteModel()) {
+            return null;
+        }
+        final IQueryModel projection = source.getNestedModel();
+        if (!isPlainPivotPassThrough(projection) || projection.getBottomUpColumns().size() == 0 || projection.getWhereClause() != null) {
+            return null;
+        }
+        final IQueryModel from = projection.getNestedModel();
+        if (!isPlainPivotFuseFrom(from)) {
+            // the filter pushed below the projection must mean what it meant above it: only a table,
+            // with nothing (SAMPLE BY, FILL, LIMIT, ...) a later rewrite could put between the filter and
+            // the rows
+            return null;
+        }
+
+        final ObjList<QueryColumn> projected = projection.getBottomUpColumns();
+        pivotFuseAliasMap.clear();
+        pivotFuseRefCounts.clear();
+        for (int i = 0, n = projected.size(); i < n; i++) {
+            final QueryColumn qc = projected.getQuick(i);
+            final CharSequence alias = qc.getAlias();
+            if (alias == null || qc.isWindowExpression() || !isRowWiseExpression(qc.getAst())) {
+                return null;
+            }
+            final CharSequence name = unquote(alias);
+            if (pivotFuseAliasMap.keyIndex(name) < 0) {
+                // two projected columns with the same name: the reference would be ambiguous
+                return null;
+            }
+            pivotFuseAliasMap.put(name, i);
+            pivotFuseRefCounts.add(0);
+        }
+        for (int i = 0, n = projected.size(); i < n; i++) {
+            if (referencesOtherProjectedAlias(projected.getQuick(i).getAst(), i, projected)) {
+                // bid * 2 AS b2x, b2x + 1 AS b3: b2x resolves to the projected alias, which the FROM the
+                // substituted expression moves to does not have
+                return null;
+            }
+        }
+
+        pivotFuseSourceAlias = source.getAlias() != null ? unquote(source.getAlias().token) : null;
+        pivotFuseProjectionAlias = projection.getAlias() != null ? unquote(projection.getAlias().token) : null;
+        pivotFuseProjection = projection;
+        pivotFuseFailed = false;
+
+        final IQueryModel fused = queryModelPool.next();
+        final ObjList<QueryColumn> columns = innerModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            final ExpressionNode ast = substitutePivotSourceRefs(ExpressionNode.deepClone(expressionNodePool, qc.getAst()));
+            if (pivotFuseFailed) {
+                return null;
+            }
+            fused.addBottomUpColumn(queryColumnPool.next().of(qc.getAlias(), ast));
+        }
+        ExpressionNode where = null;
+        if (source.getWhereClause() != null) {
+            where = substitutePivotSourceRefs(ExpressionNode.deepClone(expressionNodePool, source.getWhereClause()));
+            if (pivotFuseFailed) {
+                return null;
+            }
+        }
+        for (int i = 0, n = pivotFuseRefCounts.size(); i < n; i++) {
+            final int refCount = pivotFuseRefCounts.getQuick(i);
+            if (refCount == 0) {
+                // an unreferenced projected column would no longer be validated (an invalid column in it
+                // is an error today)
+                return null;
+            }
+            if (refCount > 1) {
+                final int type = projected.getQuick(i).getAst().type;
+                if (type != LITERAL && type != CONSTANT) {
+                    // evaluating the expression once per reference could change what a non-deterministic
+                    // expression returns; keep it in the projection
+                    return null;
+                }
+            }
+        }
+
+        // Hints reach the projection's FROM the same way they did through the bypassed models: from the
+        // source and the projection, unless the projection is a CTE, which keeps its own hints only.
+        if (projection.isCteModel()) {
+            fused.setIsCteModel(true);
+        } else {
+            fused.copyHints(source.getHints());
+        }
+        fused.copyHints(projection.getHints());
+        if (where != null) {
+            // the filter sits on a pass-through model over the FROM, as it sat on the source model, and
+            // is pushed down into the FROM from there
+            final IQueryModel filter = queryModelPool.next();
+            filter.setWhereClause(where);
+            filter.setNestedModel(from);
+            fused.setNestedModel(filter);
+        } else {
+            fused.setNestedModel(from);
+        }
+        return fused;
+    }
+
+    // True for a plain table: no clause that a filter pushed onto its rows could end up above, or that a
+    // later rewrite (SAMPLE BY, FILL) could put between the filter and the rows.
+    private static boolean isPlainPivotFuseFrom(IQueryModel model) {
+        return model != null
+                && model.getTableNameExpr() != null
+                && model.getNestedModel() == null
+                && model.getBottomUpColumns().size() == 0
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && model.getGroupBy().size() == 0
+                && model.getOrderBy().size() == 0
+                && model.getLatestBy().size() == 0
+                && model.getSampleBy() == null
+                && model.getSampleByFill().size() == 0
+                && model.getSubsample() == null
+                && model.getLimitLo() == null
+                && model.getLimitHi() == null
+                && !model.isDistinct();
+    }
+
+    private boolean isPlainPivotPassThrough(IQueryModel model) {
+        return model != null
+                && model.isOptimisable()
+                && model.getTableNameExpr() == null
+                && model.getNestedModel() != null
+                && model.getJoinModels().size() == 1
+                && model.getUnionModel() == null
+                && model.getGroupBy().size() == 0
+                && model.getOrderBy().size() == 0
+                && model.getLatestBy().size() == 0
+                && model.getSampleBy() == null
+                && model.getSubsample() == null
+                && model.getLimitLo() == null
+                && model.getLimitHi() == null
+                && model.getTimestamp() == null
+                && !model.isDistinct()
+                && !model.isPivot()
+                && model.getPivotForColumns().size() == 0;
+    }
+
+    // True when the expression computes one value per row from its row: no aggregate, window or cursor
+    // function, no sub-query and no wildcard.
+    private boolean isRowWiseExpression(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.QUERY || node.queryModel != null || node.windowExpression != null) {
+            return false;
+        }
+        if (node.type == LITERAL && (Chars.endsWith(node.token, '*') || Chars.indexOfLastUnquoted(node.token, '.') > -1)) {
+            // a wildcard, or a column qualified by a table alias of the FROM: the alias does not resolve
+            // from the model the expression moves to
+            return false;
+        }
+        if (node.type == FUNCTION) {
+            final FunctionFactoryCache cache = functionParser.getFunctionFactoryCache();
+            if (cache.isGroupBy(node.token) || cache.isWindow(node.token) || cache.isCursor(node.token)) {
+                return false;
+            }
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isRowWiseExpression(node.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return isRowWiseExpression(node.lhs) && isRowWiseExpression(node.rhs);
+    }
+
+    // True when the expression of projected column self reads another projected column's alias, other
+    // than a column projected as itself (bid AS bid names the same value either way).
+    private boolean referencesOtherProjectedAlias(ExpressionNode node, int self, ObjList<QueryColumn> projected) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final int index = pivotFuseAliasMap.get(unquote(node.token));
+            if (index < 0 || index == self) {
+                return false;
+            }
+            final ExpressionNode other = projected.getQuick(index).getAst();
+            return other.type != LITERAL || !Chars.equalsIgnoreCase(unquote(other.token), unquote(node.token));
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (referencesOtherProjectedAlias(node.args.getQuick(i), self, projected)) {
+                return true;
+            }
+        }
+        return referencesOtherProjectedAlias(node.lhs, self, projected) || referencesOtherProjectedAlias(node.rhs, self, projected);
+    }
+
+    // Replaces, in place in a cloned tree, each reference to a projected column with a clone of the
+    // projected expression. Sets pivotFuseFailed on a reference it cannot resolve or a node it does
+    // not know how to move.
+    private ExpressionNode substitutePivotSourceRefs(ExpressionNode node) {
+        if (node == null || pivotFuseFailed) {
+            return node;
+        }
+        if (node.type == ExpressionNode.QUERY || node.queryModel != null || node.windowExpression != null) {
+            pivotFuseFailed = true;
+            return node;
+        }
+        if (node.type == LITERAL) {
+            if (Chars.equals(node.token, '*')) {
+                // count(*)
+                return node;
+            }
+            CharSequence name = node.token;
+            final int dot = Chars.indexOfLastUnquoted(name, '.');
+            if (dot > -1) {
+                final CharSequence prefix = unquote(name.subSequence(0, dot));
+                if (!Chars.equalsIgnoreCaseNc(prefix, pivotFuseSourceAlias) && !Chars.equalsIgnoreCaseNc(prefix, pivotFuseProjectionAlias)) {
+                    pivotFuseFailed = true;
+                    return node;
+                }
+                name = name.subSequence(dot + 1, name.length());
+            }
+            final int index = pivotFuseAliasMap.get(unquote(name));
+            if (index < 0) {
+                pivotFuseFailed = true;
+                return node;
+            }
+            pivotFuseRefCounts.increment(index);
+            // the clone keeps the projected expression's positions, so an error in it is reported where it was
+            return ExpressionNode.deepClone(expressionNodePool, pivotFuseProjection.getBottomUpColumns().getQuick(index).getAst());
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, substitutePivotSourceRefs(node.args.getQuick(i)));
+        }
+        node.lhs = substitutePivotSourceRefs(node.lhs);
+        node.rhs = substitutePivotSourceRefs(node.rhs);
+        return node;
+    }
+
     private IQueryModel rewritePivot(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return model;
@@ -10734,6 +11400,17 @@ public class SqlOptimiser implements Mutable {
             // Creates one column per combination of (FOR values × aggregates).
             // Uses first_not_null() to pick the matching aggregate value, or sum() for count aggregates.
             addPivotColumnsToOuterModel(totalCombinations, model, outerModel);
+
+            // Step 6: when the source is a plain projection subquery, aggregate its rows directly. The
+            // projection's expressions replace the references to them in the inner GROUP BY, so the
+            // GROUP BY sits on the source's FROM and runs as a parallel GROUP BY, instead of serially
+            // over the projection. Each pivot cell still aggregates exactly the same rows.
+            if (configuration.isSqlPivotFuseSourceEnabled()) {
+                final IQueryModel fused = fusePivotSource(innerModel);
+                if (fused != null) {
+                    emptyModel.setNestedModel(fused);
+                }
+            }
 
             emptyModel2.moveLimitFrom(model);
             emptyModel2.moveOrderByFrom(model);
@@ -13938,6 +14615,9 @@ public class SqlOptimiser implements Mutable {
                     newNested.setTimestamp(nested.getTimestamp());
                     newNested.setWhereClause(nested.getWhereClause());
                     newNested.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+                    // the table's scan is now this model's, and its hints (no_covering, no_index...) go with it
+                    newNested.copyHints(nested.getHints());
+                    newNested.copyHints(model.getHints());
                 }
                 model.setNestedModel(newNested);
             }
@@ -15609,9 +16289,18 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Closes the PIVOT IN sub-query checks a compile collected and no plan took over, see
+     * {@link #getPivotInListChecks()}.
+     */
+    void freePivotInListChecks() {
+        Misc.freeObjListAndClear(pivotInListChecks);
+    }
+
+    /**
      * Closes the cursor-function factories {@link #parseFunctionAndEnumerateColumns} instantiated for
      * FROM/JOIN table functions and SHOW statements and that nothing else owns yet, folding close
-     * failures into {@code failure} as suppressed exceptions.
+     * failures into {@code failure} as suppressed exceptions, and the PIVOT IN sub-query checks of the
+     * failed compile.
      * <p>
      * Compile paths that fail before they generate the statement's plan call this. A factory can
      * change hands before that point too: {@link #preparePivotForSelectSubquery} has a borrowed
@@ -15622,6 +16311,8 @@ public class SqlOptimiser implements Mutable {
      */
     void freeTableFactoriesInFlight(@NotNull Throwable failure) {
         freeUnclaimedTableFactories(failure);
+        Misc.freeObjList(pivotInListChecks, failure);
+        pivotInListChecks.clear();
     }
 
     /**
@@ -15658,6 +16349,14 @@ public class SqlOptimiser implements Mutable {
         tableFactoriesInFlight.clear();
         tableFactoryModelsInFlight.clear();
         return failure;
+    }
+
+    /**
+     * The PIVOT IN subqueries the statement's plan depends on, see {@link PivotInListCheck}. The
+     * caller takes them over and empties the list.
+     */
+    ObjList<PivotInListCheck> getPivotInListChecks() {
+        return pivotInListChecks;
     }
 
     IQueryModel optimise(

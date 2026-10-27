@@ -30,6 +30,7 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -51,6 +52,9 @@ public class Worker extends Thread {
     private final FiberRuntime fiberRuntime;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
+    // indexes in jobs of the ones this Worker may park in instead of sleeping, see IdleParkJob;
+    // null when there are none
+    private final @Nullable IntList idleParkJobIndexes;
     // job.toString() per job, parallel to jobs; see logUnhandledJobError()
     private final ObjList<String> jobNames;
     private final AtomicLong jobStartNanos = new AtomicLong(System.nanoTime());
@@ -153,8 +157,15 @@ public class Worker extends Thread {
         this.affinity = affinity;
         this.jobs = jobs;
         this.jobNames = new ObjList<>(jobs.size());
+        IntList idleParkJobIndexes = null;
         for (int i = 0, n = jobs.size(); i < n; i++) {
             final Job job = jobs.get(i);
+            if (job instanceof IdleParkJob) {
+                if (idleParkJobIndexes == null) {
+                    idleParkJobIndexes = new IntList();
+                }
+                idleParkJobIndexes.add(i);
+            }
             String jobName;
             try {
                 jobName = job.toString();
@@ -163,6 +174,7 @@ public class Worker extends Thread {
             }
             jobNames.add(jobName);
         }
+        this.idleParkJobIndexes = idleParkJobIndexes;
         this.haltLatch = haltLatch;
         this.onHaltAction = onHaltAction;
         this.haltOnError = haltOnError;
@@ -370,9 +382,19 @@ public class Worker extends Thread {
             }
             ticker++;
             if (ticker > sleepThreshold) {
-                Os.sleep(sleepMs);
+                final int jobIndex = tryBeginIdlePark();
+                if (jobIndex < 0) {
+                    Os.sleep(sleepMs);
+                } else if (idlePark(jobIndex, sleepNanos)) {
+                    ticker = 0;
+                }
             } else if (ticker > napThreshold) {
-                Os.sleep(1);
+                final int jobIndex = tryBeginIdlePark();
+                if (jobIndex < 0) {
+                    Os.sleep(1);
+                } else if (idlePark(jobIndex, 1_000_000L)) {
+                    ticker = 0;
+                }
             } else if (ticker > yieldThreshold) {
                 Os.pause();
             }
@@ -395,18 +417,7 @@ public class Worker extends Thread {
                 try {
                     isRunAsap |= job.run(workerContext);
                 } catch (Throwable e) {
-                    if (!haltOnError && metrics.isEnabled()) {
-                        try {
-                            metrics.healthMetrics().incrementUnhandledErrors();
-                        } catch (Throwable t) {
-                            stdErrCritical(t);
-                        }
-                    }
-                    if (log != null) {
-                        logUnhandledJobError(jobIndex, e);
-                    } else {
-                        stdErrCritical(e);
-                    }
+                    onJobError(jobIndex, e);
                     if (haltOnError) {
                         throw e;
                     }
@@ -514,11 +525,77 @@ public class Worker extends Thread {
             if (!isFiberParkAllowed() || !wakeController.isReady(workerId)) {
                 return false;
             }
+            // Park in a job's poll instead (see IdleParkJob), when a sibling can take the wake-ups
+            // this Worker cannot while it waits there.
+            if (idleParkJobIndexes != null && wakeController.isOtherReady(workerId)) {
+                final int jobIndex = tryBeginIdlePark();
+                if (jobIndex >= 0) {
+                    if (wakeController.tryUnregisterReady(workerId)) {
+                        return idlePark(jobIndex, nanos);
+                    }
+                    // a publisher claimed this Worker: its unpark is on the way, the park below
+                    // returns at once
+                    ((IdleParkJob) jobs.get(jobIndex)).cancelIdlePark();
+                }
+            }
             LockSupport.parkNanos(this, nanos);
             return false;
         } finally {
             wakeController.unregisterReady(workerId);
         }
+    }
+
+    // Parks in the job tryBeginIdlePark() began, see IdleParkJob. An error is the job's, handled
+    // as runJobs() handles it.
+    private boolean idlePark(int jobIndex, long nanos) {
+        try {
+            return ((IdleParkJob) jobs.get(jobIndex)).idlePark(nanos);
+        } catch (Throwable e) {
+            onJobError(jobIndex, e);
+            if (haltOnError) {
+                throw e;
+            }
+            return false;
+        }
+    }
+
+    private void onJobError(int jobIndex, Throwable e) {
+        if (!haltOnError && metrics.isEnabled()) {
+            try {
+                metrics.healthMetrics().incrementUnhandledErrors();
+            } catch (Throwable t) {
+                stdErrCritical(t);
+            }
+        }
+        if (log != null) {
+            logUnhandledJobError(jobIndex, e);
+        } else {
+            stdErrCritical(e);
+        }
+    }
+
+    // Begins a park in a job, in place of sleeping (see IdleParkJob), and returns the job's index;
+    // -1 when none may take the park. Only a running Worker parks in a job: a halting one drains
+    // fibers and must see the halt.
+    private int tryBeginIdlePark() {
+        if (idleParkJobIndexes == null || lifecycle.get() != WorkerLifecycle.RUNNING) {
+            return -1;
+        }
+        for (int i = 0, n = idleParkJobIndexes.size(); i < n; i++) {
+            final int jobIndex = idleParkJobIndexes.getQuick(i);
+            final IdleParkJob job = (IdleParkJob) jobs.get(jobIndex);
+            try {
+                if (job.tryBeginIdlePark()) {
+                    return jobIndex;
+                }
+            } catch (Throwable e) {
+                onJobError(jobIndex, e);
+                if (haltOnError) {
+                    throw e;
+                }
+            }
+        }
+        return -1;
     }
 
     private boolean isFiberParkAllowed() {

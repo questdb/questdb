@@ -34,6 +34,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameAddressFiller;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -55,7 +57,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
+public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor, PageFrameAddressFiller {
     private final int columnCount;
     private final IntList columnIndexes;
     private final ColumnMapping columnMapping = new ColumnMapping();
@@ -70,9 +72,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
     private long filterBufEnd = -1;
+    // frames for a serial scan whose rows come from an index: see CairoConfiguration.getSqlIndexScanPageFrameMaxRows()
+    private boolean indexScan;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
+    // native frames come without column addresses, see deferFrameAddresses()
+    private boolean deferAddresses;
     private int pageFrameMaxRows;
+    // when > 0, the frame size this cursor uses instead of the execution context's, see setPageFrameRows()
+    private int pageFrameMaxRowsOverride;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
@@ -123,6 +131,28 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         partitionFrameCursor = Misc.free(partitionFrameCursor);
         Misc.free(filterList);
         Misc.free(filterValues);
+    }
+
+    @Override
+    public boolean deferFrameAddresses() {
+        deferAddresses = true;
+        return true;
+    }
+
+    @Override
+    public void fillFrameAddresses(int partitionIndex, long partitionLo, long partitionHi, PageFrameAddressCache cache, int frameIndex) {
+        TableReaderFrameAddresses.fill(reader, columnIndexes, columnSizeShifts, partitionIndex, partitionLo, partitionHi, cache, frameIndex);
+    }
+
+    // one frame per partition the scan reads, which a partition split at its column tops or row
+    // cap exceeds and an interval may undercut
+    @Override
+    public long getFrameCountHint() {
+        if (partitionFrameCursor == null) {
+            return -1;
+        }
+        final long bound = partitionFrameCursor.getFrameCountUpperBound();
+        return bound > -1 ? bound : reader.getPartitionCount();
     }
 
     @Override
@@ -193,6 +223,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.pieceShift = 0;
                     frame.skipSkeleton = true;
                     frame.format = partitionFrame.getPartitionFormat();
+                    frame.deferred = false;
                     frame.rowGroupIndex = -1;
                     frame.rowGroupLo = -1;
                     frame.rowGroupHi = -1;
@@ -218,9 +249,17 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
+        this.deferAddresses = false;
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
-        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
-        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        if (pageFrameMaxRowsOverride > 0) {
+            this.pageFrameMinRows = pageFrameMaxRowsOverride;
+            this.pageFrameMaxRows = pageFrameMaxRowsOverride;
+        } else {
+            this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+            this.pageFrameMaxRows = indexScan
+                    ? Math.max(executionContext.getPageFrameMaxRows(), executionContext.getCairoEngine().getConfiguration().getSqlIndexScanPageFrameMaxRows())
+                    : executionContext.getPageFrameMaxRows();
+        }
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -241,6 +280,26 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         lowestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    /**
+     * Marks this cursor as the frame source of a serial scan whose rows come from an index. Its native
+     * frames then hold up to {@link io.questdb.cairo.CairoConfiguration#getSqlIndexScanPageFrameMaxRows()}
+     * rows, from the next {@link #of(SqlExecutionContext, PartitionFrameCursor)} on, unless
+     * {@link #setPageFrameRows(int)} fixes their size.
+     */
+    public void setIndexScan(boolean indexScan) {
+        this.indexScan = indexScan;
+    }
+
+    /**
+     * Makes the native frames of the next {@link #of} up to {@code rows} rows each, whatever the
+     * execution context's page frame sizes and the worker count; frames still split at column
+     * tops. Zero restores the context's sizes.
+     */
+    public void setPageFrameRows(int rows) {
+        assert rows >= 0;
+        this.pageFrameMaxRowsOverride = rows;
     }
 
     @Override
@@ -314,54 +373,60 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             }
         }
 
-        for (int i = 0; i < columnCount; i++) {
-            final int columnIndex = columnIndexes.getQuick(i);
-            final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR colMem = reader.getColumn(readerColIndex);
-            // When the entire column is NULL we make it skip the whole of the partition frame, by handing the
-            // arithmetic below a top that cancels the frame's own high row exactly.
-            final long top = colMem instanceof NullMemoryCMR
-                    ? adjustedHi + pieceShift
-                    : reader.getColumnTop(base, columnIndex);
-            final long partitionLoAdjusted = partitionLo + pieceShift - top;
-            final long partitionHiAdjusted = adjustedHi + pieceShift - top;
-            final int sh = columnSizeShifts.getQuick(i);
+        // A deferred frame's addresses are filled later from its partition rows alone, see fillFrameAddresses(),
+        // which knows no piece shift: a frame of a COMPOSITE piece that sits away from its partition rows
+        // carries its addresses now.
+        final boolean deferred = deferAddresses && pieceShift == 0;
+        if (!deferred) {
+            for (int i = 0; i < columnCount; i++) {
+                final int columnIndex = columnIndexes.getQuick(i);
+                final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
+                final MemoryR colMem = reader.getColumn(readerColIndex);
+                // When the entire column is NULL we make it skip the whole of the partition frame, by handing the
+                // arithmetic below a top that cancels the frame's own high row exactly.
+                final long top = colMem instanceof NullMemoryCMR
+                        ? adjustedHi + pieceShift
+                        : reader.getColumnTop(base, columnIndex);
+                final long partitionLoAdjusted = partitionLo + pieceShift - top;
+                final long partitionHiAdjusted = adjustedHi + pieceShift - top;
+                final int sh = columnSizeShifts.getQuick(i);
 
-            if (partitionHiAdjusted > 0) {
-                if (sh > -1) {
-                    // this assumes reader uses single page to map the whole column
-                    // non-negative sh means fixed length column
-                    final long address = colMem.getPageAddress(0);
-                    final long addressSize = partitionHiAdjusted << sh;
-                    final long offset = partitionLoAdjusted << sh;
-                    columnPageAddresses.setQuick(2 * i, address + offset);
-                    pageSizes.setQuick(2 * i, addressSize - offset);
-                } else {
-                    final int columnType = reader.getMetadata().getColumnType(columnIndex);
-                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                    final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
-                    final long auxAddress = auxCol.getPageAddress(0);
-                    final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
-                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
+                if (partitionHiAdjusted > 0) {
+                    if (sh > -1) {
+                        // this assumes reader uses single page to map the whole column
+                        // non-negative sh means fixed length column
+                        final long address = colMem.getPageAddress(0);
+                        final long addressSize = partitionHiAdjusted << sh;
+                        final long offset = partitionLoAdjusted << sh;
+                        columnPageAddresses.setQuick(2 * i, address + offset);
+                        pageSizes.setQuick(2 * i, addressSize - offset);
+                    } else {
+                        final int columnType = reader.getMetadata().getColumnType(columnIndex);
+                        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                        final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
+                        final long auxAddress = auxCol.getPageAddress(0);
+                        final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
+                        final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
 
-                    final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
-                    // some var-size columns may not have data memory (fully inlined)
-                    final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
+                        final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
+                        // some var-size columns may not have data memory (fully inlined)
+                        final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
-                    columnPageAddresses.setQuick(2 * i, dataAddress);
-                    columnPageAddresses.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
-                    pageSizes.setQuick(2 * i, dataSize);
-                    pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
+                        columnPageAddresses.setQuick(2 * i, dataAddress);
+                        columnPageAddresses.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
+                        pageSizes.setQuick(2 * i, dataSize);
+                        pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
+                    }
+                } else { // column top
+                    columnPageAddresses.setQuick(2 * i, 0);
+                    columnPageAddresses.setQuick(2 * i + 1, 0);
+                    // data page size is used by VectorAggregateFunction as the size hint
+                    // in the following way:
+                    //   size = page_size >>> column_size_hint
+                    // (for var-sized types column_size_hint is 0)
+                    pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
+                    pageSizes.setQuick(2 * i + 1, 0);
                 }
-            } else { // column top
-                columnPageAddresses.setQuick(2 * i, 0);
-                columnPageAddresses.setQuick(2 * i + 1, 0);
-                // data page size is used by VectorAggregateFunction as the size hint
-                // in the following way:
-                //   size = page_size >>> column_size_hint
-                // (for var-sized types column_size_hint is 0)
-                pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
-                pageSizes.setQuick(2 * i + 1, 0);
             }
         }
 
@@ -383,6 +448,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.pieceShift = pieceShift;
         frame.skipSkeleton = false;
         frame.format = PartitionFormat.NATIVE;
+        frame.deferred = deferred;
         frame.parquetMetaDecoder = null;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
@@ -429,6 +495,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.pieceShift = 0;
         frame.skipSkeleton = true;
         frame.format = PartitionFormat.NATIVE;
+        frame.deferred = false;
         frame.parquetMetaDecoder = null;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
@@ -491,6 +558,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.pieceShift = 0;
                 frame.skipSkeleton = false;
                 frame.format = PartitionFormat.PARQUET;
+                frame.deferred = false;
                 frame.rowGroupIndex = i;
                 frame.rowGroupLo = (int) (partitionLo - rowGroupStartRow);
                 frame.rowGroupHi = (int) (adjustedHi - rowGroupStartRow);
@@ -531,7 +599,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = pageFrameMaxRowsOverride > 0
+                ? pageFrameMaxRowsOverride
+                : NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi, skipTarget);
     }
 
@@ -542,15 +612,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             long pageFrameMaxRows,
             int sharedQueryWorkerCount
     ) {
-        final int workerCount = Math.max(sharedQueryWorkerCount, 1);
-        long rowsPerFrame = Math.min(pageFrameMaxRows, Math.max(pageFrameMinRows, (partitionHi - partitionLo) / workerCount));
-        final long lastFrameSize = (partitionHi - partitionLo) % rowsPerFrame;
-        if (lastFrameSize > 0 && lastFrameSize < pageFrameMinRows) {
-            // Adjust the limit, so that we don't have tiny trailing frames.
-            final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
-            rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
-        }
-        return rowsPerFrame;
+        return NativeFrameBoundaries.calculatePageFrameRowLimit(partitionLo, partitionHi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
     }
 
     /**
@@ -596,6 +658,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     private class TableReaderPageFrame implements PageFrame {
+        // the frame's column addresses are left to fillFrameAddresses(), see deferFrameAddresses()
+        private boolean deferred;
         private byte format;
         private ParquetPartitionDecoder parquetMetaDecoder;
         private long partitionHi;
@@ -609,17 +673,33 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
+            checkNotDeferred();
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
 
         @Override
         public long getAuxPageSize(int columnIndex) {
+            checkNotDeferred();
             return pageSizes.getQuick(2 * columnIndex + 1);
         }
 
         @Override
         public int getColumnCount() {
             return columnCount;
+        }
+
+        @Override
+        public @Nullable PageFrameAddressFiller getDeferredAddressFiller() {
+            return deferred ? FwdTableReaderPageFrameCursor.this : null;
+        }
+
+        // A deferred frame's address getters would return another frame's values: its addresses are
+        // read through the address cache, which fills them, see PageFrameAddressCache.ensureFrameReady().
+        private void checkNotDeferred() {
+            if (deferred) {
+                throw CairoException.critical(0).put("column address read from a deferred page frame [partitionIndex=")
+                        .put(partitionIndex).put(", partitionLo=").put(partitionLo).put(']');
+            }
         }
 
         @Override
@@ -633,12 +713,19 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
+        public IndexReader getIndexReaderWithoutReload(int columnIndex, int direction) {
+            return reader.getOpenIndexReaderWithoutReload(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
+            checkNotDeferred();
             return columnPageAddresses.getQuick(2 * columnIndex);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
+            checkNotDeferred();
             return pageSizes.getQuick(2 * columnIndex);
         }
 

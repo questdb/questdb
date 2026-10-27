@@ -27,6 +27,8 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 
+import java.nio.ByteOrder;
+
 /**
  * Server-side Gorilla delta-of-delta encoder for timestamp columns in QWP
  * egress {@code RESULT_BATCH} frames. Mirrors the client-side ingress encoder;
@@ -58,7 +60,6 @@ public class QwpGorillaEncoder {
     private static final int BUCKET_7BIT_MIN = -64;
     private static final int BUCKET_9BIT_MAX = 255;
     private static final int BUCKET_9BIT_MIN = -256;
-    private final QwpBitWriter bitWriter = new QwpBitWriter();
 
     public QwpGorillaEncoder() {
     }
@@ -150,34 +151,6 @@ public class QwpGorillaEncoder {
     }
 
     /**
-     * Encodes a single delta-of-delta value using bucket selection.
-     */
-    public void encodeDoD(long deltaOfDelta) {
-        int bucket = getBucket(deltaOfDelta);
-        switch (bucket) {
-            case 0:
-                bitWriter.writeBit(0);
-                break;
-            case 1:
-                bitWriter.writeBits(0b01, 2);
-                bitWriter.writeSigned(deltaOfDelta, 7);
-                break;
-            case 2:
-                bitWriter.writeBits(0b011, 3);
-                bitWriter.writeSigned(deltaOfDelta, 9);
-                break;
-            case 3:
-                bitWriter.writeBits(0b0111, 4);
-                bitWriter.writeSigned(deltaOfDelta, 12);
-                break;
-            default:
-                bitWriter.writeBits(0b1111, 4);
-                bitWriter.writeSigned(deltaOfDelta, 32);
-                break;
-        }
-    }
-
-    /**
      * Encodes {@code count} contiguous int64 timestamps from {@code srcAddress}
      * into {@code destAddress} using Gorilla compression. First two timestamps
      * are uncompressed (8 bytes each); remainder is bit-packed delta-of-delta.
@@ -223,19 +196,75 @@ public class QwpGorillaEncoder {
             return pos;
         }
 
-        bitWriter.reset(destAddress + pos, capacity - pos);
+        // The bits a QwpBitWriter would write, packed LSB-first into a 64-bit accumulator: a
+        // value's prefix and payload in one step, and 32 bits at a time to memory. putWord()'s
+        // Unsafe.putInt() stores them little-endian, the byte order of the bit writer's bytes,
+        // on the little-endian platforms QuestDB runs on.
+        assert ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
+        long p = destAddress + pos;
+        final long limit = destAddress + capacity;
+        long bits = 0;
+        int bitCount = 0;
         long prevTs = ts1;
         long prevDelta = ts1 - ts0;
-
         for (int i = 2; i < count; i++) {
-            long ts = Unsafe.getLong(srcAddress + (long) i * 8);
-            long delta = ts - prevTs;
-            long dod = delta - prevDelta;
-            encodeDoD(dod);
+            final long ts = Unsafe.getLong(srcAddress + (long) i * 8);
+            final long delta = ts - prevTs;
+            final long dod = delta - prevDelta;
             prevDelta = delta;
             prevTs = ts;
+            if (dod == 0) {
+                // '0'
+                bitCount++;
+            } else if (dod >= BUCKET_7BIT_MIN && dod <= BUCKET_7BIT_MAX) {
+                // '10', then 7 bits
+                bits |= (0b01L | ((dod & 0x7FL) << 2)) << bitCount;
+                bitCount += 9;
+            } else if (dod >= BUCKET_9BIT_MIN && dod <= BUCKET_9BIT_MAX) {
+                // '110', then 9 bits
+                bits |= (0b011L | ((dod & 0x1FFL) << 3)) << bitCount;
+                bitCount += 12;
+            } else if (dod >= BUCKET_12BIT_MIN && dod <= BUCKET_12BIT_MAX) {
+                // '1110', then 12 bits
+                bits |= (0b0111L | ((dod & 0xFFFL) << 4)) << bitCount;
+                bitCount += 16;
+            } else {
+                // '1111', then 32 bits: the prefix first, so that the 36 bits never overflow
+                // the accumulator
+                bits |= 0b1111L << bitCount;
+                bitCount += 4;
+                if (bitCount >= 32) {
+                    p = putWord(p, limit, bits);
+                    bits >>>= 32;
+                    bitCount -= 32;
+                }
+                bits |= (dod & 0xFFFF_FFFFL) << bitCount;
+                bitCount += 32;
+            }
+            if (bitCount >= 32) {
+                p = putWord(p, limit, bits);
+                bits >>>= 32;
+                bitCount -= 32;
+            }
         }
+        // the trailing bits, a byte at a time, the last one zero-padded
+        while (bitCount > 0) {
+            if (p >= limit) {
+                throw CairoException.critical(0).put("QWP egress: Gorilla encoder buffer overflow on flush");
+            }
+            Unsafe.putByte(p++, (byte) bits);
+            bits >>>= 8;
+            bitCount -= 8;
+        }
+        return (int) (p - destAddress);
+    }
 
-        return pos + bitWriter.finish();
+    // the low 32 bits of the accumulator, as 4 bytes, LSB first
+    private static long putWord(long p, long limit, long bits) {
+        if (p + 4 > limit) {
+            throw CairoException.critical(0).put("QWP egress: Gorilla encoder buffer overflow on write");
+        }
+        Unsafe.putInt(p, (int) bits);
+        return p + 4;
     }
 }

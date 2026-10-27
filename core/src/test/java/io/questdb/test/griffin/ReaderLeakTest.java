@@ -248,6 +248,11 @@ public class ReaderLeakTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
@@ -275,6 +280,11 @@ public class ReaderLeakTest extends AbstractCairoTest {
         @Override
         public RecordMetadata getMetadata() {
             return baseFactory.getMetadata();
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override

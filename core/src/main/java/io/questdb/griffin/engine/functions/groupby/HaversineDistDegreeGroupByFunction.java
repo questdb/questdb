@@ -180,6 +180,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

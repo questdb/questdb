@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.join.AsOfLookup;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -253,7 +254,7 @@ public class GroupByUtils {
                         }
                     }
                 } else {
-                    if (node.type == LITERAL) {
+                    if (node.type == LITERAL && !(func instanceof AsOfLookup.Column)) {
                         // looks like we failed to find the column by the literal
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
@@ -635,6 +636,19 @@ public class GroupByUtils {
         }
     }
 
+    /**
+     * Whether any of the functions depends on the order of the rows it aggregates.
+     */
+    public static boolean hasOrderSensitiveFunctions(ObjList<GroupByFunction> groupByFunctions) {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction f = groupByFunctions.getQuick(i);
+            if (f != null && f.isOrderSensitive()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -830,7 +844,8 @@ public class GroupByUtils {
      */
     private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
         if (node.type == LITERAL) {
-            return SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
+            // a column a lookup reads is keyed on as a function, see AsOfLookup
+            return func instanceof AsOfLookup.Column ? -1 : SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
         }
         if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
             return ((ColumnFunction) func).getColumnIndex();

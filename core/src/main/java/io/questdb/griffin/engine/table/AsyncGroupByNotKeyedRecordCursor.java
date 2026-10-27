@@ -24,12 +24,16 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -38,19 +42,37 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
+    private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
+    // the base of an index gather, which a serial retry reopens, see buildValue()
+    private final RecordCursorFactory base;
+    // the reducer of an index gather's tasks, null for a GROUP BY over page frames
+    private final UnorderedPageFrameReducer gatherReducer;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
+    private SqlExecutionContext executionContext;
+    private boolean isSerialRetry;
+    private long serialRetries;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private boolean isExhausted;
     private boolean isOpen;
     private boolean isValueBuilt;
 
-    public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
+    public AsyncGroupByNotKeyedRecordCursor(
+            ObjList<GroupByFunction> groupByFunctions,
+            @Nullable UnorderedPageFrameReducer gatherReducer,
+            RecordCursorFactory base
+    ) {
+        this.gatherReducer = gatherReducer;
+        this.base = base;
         this.groupByFunctions = groupByFunctions;
         this.recordA = new VirtualRecord(groupByFunctions);
         // Start closed so the first of() runs atom.reopen(), which opens the lazy
@@ -79,6 +101,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             } finally {
                 Misc.clearObjList(groupByFunctions);
                 isOpen = false;
+                isSerialRetry = false;
+                executionContext = null;
             }
         }
     }
@@ -138,7 +162,11 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
-        frameSequence.dispatchAndAwait();
+        if (gatherReducer == null) {
+            frameSequence.dispatchAndAwait();
+        } else {
+            gather();
+        }
 
         // Merge the values.
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
@@ -161,6 +189,47 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         isValueBuilt = true;
     }
 
+    /**
+     * Runs the tasks of an index gather on the workers, and, when that hits the query's memory
+     * limit, again on the query's thread alone, as the serial GROUP BY would.
+     */
+    private void gather() {
+        final IndexGatherPageFrameCursor gatherCursor = (IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor();
+        if (isSerialRetry) {
+            frameSequence.runRoundLocally(gatherReducer, gatherCursor.getTaskRowCounts());
+            return;
+        }
+        try {
+            frameSequence.dispatchRoundAndAwait(gatherReducer, gatherCursor.getTaskRowCounts());
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+            LOG.info().$("index gather GROUP BY hit the memory limit, retrying on the query thread [error=").$safe(e.getFlyweightMessage()).I$();
+            serialRetries++;
+            // free what the parallel pass built, as close() would, and open the base again
+            frameSequence.await();
+            frameSequence.reset();
+            Misc.clearObjList(groupByFunctions);
+            isOpen = false;
+            try {
+                frameSequence.of(base, executionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                isSerialRetry = true;
+                of(frameSequence, executionContext);
+            } catch (SqlException se) {
+                throw CairoException.nonCritical().put(se.getFlyweightMessage());
+            }
+            frameSequence.prepareForDispatch();
+            frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
+            gather();
+        }
+    }
+
+    @TestOnly
+    long getSerialRetries() {
+        return serialRetries;
+    }
+
     void of(UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         // Assign before reopen() so close() can drain a partially reopened atom on a breach.
@@ -170,6 +239,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             atom.reopen();
         }
         this.circuitBreaker = executionContext.getCircuitBreaker();
+        this.executionContext = executionContext;
         this.isValueBuilt = false;
         recordA.of(atom.getOwnerMapValue());
         // The atom's init() has already initialized the owner group by functions (this cursor's

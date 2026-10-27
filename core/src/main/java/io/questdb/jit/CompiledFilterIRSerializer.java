@@ -32,6 +32,7 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -40,13 +41,18 @@ import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolInBitSet;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bool.SymbolKeyBitSet;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
@@ -54,6 +60,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -63,6 +70,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -115,6 +123,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int STRING_HEADER_TYPE = 7;
     public static final int SUB = 15; // a - b
     public static final int SX_I64 = 22; // sign-extend top of stack to i64
+    // Symbol IN-list membership: pops the key (lhs) and a VAR placeholder (rhs), pushes a mask. The
+    // payload names the VAR slot holding the bitset - see CompiledFilterSymbolInBitSet.
+    public static final int SYM_IN_SET = 23;
     // Bind variables and deferred symbols
     public static final int VAR = 3;
     public static final int VARCHAR_HEADER_TYPE = 9;
@@ -197,6 +208,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // that truncates bindVarFunctions, and it clears this map alongside: a memoized slot above the
     // watermark would otherwise point past the end of the vars block the backend reads.
     private final ObjIntHashMap<ExpressionNode> bindVarIndexes = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // the scalar sub-queries the filter reads as bind variables, by the synthetic token of their
+    // BIND_VARIABLE node, see addScalarSubQuery()
+    private final CharSequenceObjHashMap<AbstractScalarCursorFunction> scalarSubQueries = new CharSequenceObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
@@ -315,10 +329,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private ExpressionNode unwidenableIntCmpFloatNode;
     private MemoryCARW memory;
     private RecordMetadata metadata;
+    // Whether the loaded native library compiles SYM_IN_SET. Survives clear(): it is a property of
+    // the library, not of the filter. See JitUtil.isSymbolInSetSupported().
+    private boolean symbolInSetSupported = JitUtil.isSymbolInSetSupported();
+
+    /**
+     * Overrides the native capability probe, so a serializer test can pin the SYM_IN_SET stream
+     * against any library, and the fast decline without one.
+     */
+    @TestOnly
+    public void setSymbolInSetSupported(boolean symbolInSetSupported) {
+        this.symbolInSetSupported = symbolInSetSupported;
+    }
+
+    /**
+     * Makes a BIND_VARIABLE node with {@code token} read the value of a scalar sub-query: the value
+     * {@code source} computes once per execution (see {@link CompiledFilterScalarSubQuery}). The
+     * token is one no SQL text can produce, so it never names a real bind variable.
+     */
+    public void addScalarSubQuery(CharSequence token, AbstractScalarCursorFunction source) {
+        scalarSubQueries.put(token, source);
+    }
     private SymbolTableSource symbolTableSource;
 
     @Override
     public void clear() {
+        scalarSubQueries.clear();
         memory = null;
         metadata = null;
         symbolTableSource = null;
@@ -1904,6 +1940,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case LE:
                 case GT:
                 case GE:
+                case SYM_IN_SET:
                 case ADD:
                 case SUB:
                 case MUL:
@@ -1914,7 +1951,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         return true;
                     }
                     final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
-                            || opCode == LE || opCode == GT || opCode == GE;
+                            || opCode == LE || opCode == GT || opCode == GE || opCode == SYM_IN_SET;
                     // A comparison yields a lane mask, not a value of either operand's width. An
                     // arithmetic result keeps a width but drops the immediate marker: whatever the
                     // frontend chose for the operands, what the operator leaves behind is a value
@@ -2416,6 +2453,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
+        final AbstractScalarCursorFunction scalarSubQuery = scalarSubQueries.get(token);
+        if (scalarSubQuery != null) {
+            return CompiledFilterScalarSubQuery.newLink(scalarSubQuery);
+        }
         Function varFunction;
 
         if (token.charAt(0) == ':') {
@@ -3244,6 +3285,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private Function lookupBindVariable(CharSequence token) {
+        final AbstractScalarCursorFunction scalarSubQuery = token != null ? scalarSubQueries.get(token) : null;
+        if (scalarSubQuery != null) {
+            // read for its type only
+            return CompiledFilterScalarSubQuery.newLink(scalarSubQuery);
+        }
         BindVariableService svc = executionContext.getBindVariableService();
         if (svc == null || token == null || token.isEmpty()) {
             return null;
@@ -4727,6 +4773,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final ExpressionNode inKey = args.size() > 0 ? args.getLast() : predicateContext.inOperationNode.lhs;
         final boolean isWidthSensitiveKey = isWidthSensitiveInKey(inKey);
 
+        if (args.size() > 0 && trySerializeSymbolInBitSet(args, inKey)) {
+            return;
+        }
+
         if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
             throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
                     .put(executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold())
@@ -4808,6 +4858,133 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         for (int i = 0; i < orCount; i++) {
             putOperator(OR);
         }
+    }
+
+    /**
+     * The value a quoted, NULL or NaN symbol IN list element stands for, spelled the way
+     * {@code FunctionParser#createConstant} types the same token and
+     * {@code InSymbolFunctionFactory} reads it. A null result is the NULL element.
+     */
+    private String symbolInConstantValue(CharSequence token) {
+        if (SqlKeywords.isNullKeyword(token) || SqlKeywords.isNanKeyword(token)) {
+            return null;
+        }
+        final int len = token.length();
+        return switch (len) {
+            // 'x' is a CHAR constant; InSymbolFunctionFactory reads a zero CHAR as NULL
+            case 3 -> token.charAt(1) != 0 ? String.valueOf(token.charAt(1)) : null;
+            case 2 -> "";
+            default -> Chars.toString(token, 1, len - 1, '\'');
+        };
+    }
+
+    /**
+     * Serializes a SYMBOL column's IN list as one membership test against a bitset over the
+     * symbol keys, when the list is too long for the equality chain - the lists that declined the
+     * whole filter to the Java one before. The bitset is
+     * resolved per execution by {@link CompiledFilterSymbolInBitSet}, whose VAR slot the
+     * {@link #SYM_IN_SET} instruction names. Returns false, having emitted nothing, for any shape
+     * this path does not cover; the caller then serializes the list as before.
+     * <p>
+     * The VAR is pushed at I4 beside the I4 key, so every width rule - the execution hint, the
+     * harmonisation walk - sees the pairing a symbol equality makes. The opcode is emitted only to
+     * a native library that reports it compiles it (see {@link JitUtil#isSymbolInSetSupported()}):
+     * without one - aarch64, or a library older than the opcode - this returns false before any
+     * work, and the caller's threshold check declines the filter at once, as it did before the
+     * opcode existed.
+     * <p>
+     * The {@code cairo.sql.symbol.in.bitset.max.keys} cap is checked here against the largest key
+     * the list's literals resolve to now, and again per execution by
+     * {@link CompiledFilterSymbolInBitSet}, which also covers bind variables and symbols the table
+     * gains later. See {@link SymbolKeyBitSet#fitsCap(int, int)}.
+     */
+    private boolean trySerializeSymbolInBitSet(ObjList<ExpressionNode> args, ExpressionNode inKey) throws SqlException {
+        if (!symbolInSetSupported) {
+            return false;
+        }
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        final int elementCount = args.size() - 1;
+        if (!configuration.isSqlJitSymbolInBitsetEnabled()
+                // Exactly the lists the equality chain declines below: its check counts the key too.
+                || args.size() <= configuration.getSqlJitMaxInListSizeThreshold()
+                // A live view's incremental refresh runs the filter over WAL segment data, whose
+                // symbol keys are segment-local. See serializeSymbolConstant.
+                || executionContext.isLiveViewCompile()
+                || symbolTableSource == null
+                || inKey.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(inKey.token);
+        if (columnIndex < 0 || ColumnType.tagOf(metadata.getColumnType(columnIndex)) != ColumnType.SYMBOL) {
+            return false;
+        }
+        final SymbolTable symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+        if (!(symbolTable instanceof StaticSymbolTable staticSymbolTable)) {
+            return false;
+        }
+        for (int i = 0; i < elementCount; i++) {
+            final ExpressionNode element = args.getQuick(i);
+            switch (element.type) {
+                case ExpressionNode.CONSTANT:
+                    if (!Chars.isQuoted(element.token)
+                            && !SqlKeywords.isNullKeyword(element.token)
+                            && !SqlKeywords.isNanKeyword(element.token)) {
+                        return false;
+                    }
+                    break;
+                case ExpressionNode.BIND_VARIABLE:
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        final int maxKeys = configuration.getSqlSymbolInBitsetMaxKeys();
+        final ObjList<String> constants = new ObjList<>();
+        int maxKey = -1;
+        for (int i = 0; i < elementCount; i++) {
+            final ExpressionNode element = args.getQuick(i);
+            if (element.type == ExpressionNode.CONSTANT) {
+                final String value = symbolInConstantValue(element.token);
+                constants.add(value);
+                maxKey = Math.max(maxKey, staticSymbolTable.keyOf(value));
+            }
+        }
+        if (!SymbolKeyBitSet.fitsCap(maxKey, maxKeys)) {
+            // Every execution would exceed the cap: keep the threshold's decline.
+            return false;
+        }
+
+        final ObjList<Function> variables = new ObjList<>();
+        try {
+            for (int i = 0; i < elementCount; i++) {
+                final ExpressionNode element = args.getQuick(i);
+                if (element.type == ExpressionNode.BIND_VARIABLE) {
+                    final Function variable = getBindVariableFunction(element.position, element.token);
+                    variables.add(variable);
+                    if (!CompiledFilterSymbolInBitSet.isSupportedVariableType(variable.getType())) {
+                        Misc.freeObjList(variables);
+                        return false;
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            // An undefined or malformed variable past the first: the link functions made so far
+            // belong to no one yet.
+            Misc.freeObjList(variables);
+            throw th;
+        }
+
+        bindVarFunctions.add(new CompiledFilterSymbolInBitSet(columnIndex, constants, variables, maxKeys));
+        final int index = bindVarFunctions.size() - 1;
+        // The elements side first and the key last, the order an EQ pairing pushes them in.
+        putOperand(VAR, I4_TYPE, index);
+        traverseAlgo.traverse(inKey, this);
+        memory.putInt(SYM_IN_SET);
+        memory.putInt(0);
+        memory.putLong(index);
+        memory.putLong(0L);
+        return true;
     }
 
     private void serializeInTimestampRange(int position) throws SqlException {
@@ -5473,7 +5650,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int len = token.length();
         final CharSequence symbol;
         if (Chars.isQuoted(token)) {
-            if (len < 3) {
+            // '' is the empty string, which a SYMBOL column may hold as a value of its own (NULL is
+            // not ''): keyOf("") resolves it like any other value, and to no key when the table has
+            // no '', exactly as EqSymStrFunctionFactory's ConstCheckColumnFunc resolves it
+            if (len < 3 && (len != 2 || negated || !executionContext.getCairoEngine().getConfiguration().isSqlJitSymbolEmptyConstantEnabled())) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
             sink.clear();

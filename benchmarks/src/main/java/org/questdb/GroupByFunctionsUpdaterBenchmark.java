@@ -163,6 +163,11 @@ public class GroupByFunctionsUpdaterBenchmark {
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
         }
 

@@ -23,6 +23,7 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;

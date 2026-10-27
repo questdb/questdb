@@ -107,6 +107,11 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
     }

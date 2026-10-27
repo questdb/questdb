@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
@@ -68,13 +69,18 @@ public class MulIntFunctionFactory implements FunctionFactory {
         return new Func(left, right);
     }
 
-    private static final class Func extends IntFunction implements ArithmeticBinaryFunction {
+    private static final class Func extends IntFunction implements ArithmeticBinaryFunction, ColumnwiseFunction {
         private final Function left;
         private final Function right;
 
         public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getColumnwiseOp() {
+            return ColumnwiseFunction.OP_MUL;
         }
 
         @Override

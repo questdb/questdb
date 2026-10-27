@@ -34,6 +34,26 @@ import java.util.HashSet;
 public class CharSequenceHashSetTest {
 
     @Test
+    public void testNullBeforeGrowth() {
+        // NULL added while the set is small must survive every later rehash, which used to hash it
+        // and throw NullPointerException - "sym IN (NULL, <16 or more values>)" failed to compile.
+        CharSequenceHashSet set = new CharSequenceHashSet();
+        Assert.assertTrue(set.add((CharSequence) null));
+        int n = 1000;
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.add("v" + i));
+        }
+        Assert.assertEquals(n + 1, set.size());
+        Assert.assertTrue(set.contains(null));
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.contains("v" + i));
+            Assert.assertFalse(set.add("v" + i));
+        }
+        Assert.assertFalse(set.add((CharSequence) null));
+        Assert.assertFalse(set.contains("v" + n));
+    }
+
+    @Test
     public void testNullHandling() {
         Rnd rnd = new Rnd();
         CharSequenceHashSet set = new CharSequenceHashSet();

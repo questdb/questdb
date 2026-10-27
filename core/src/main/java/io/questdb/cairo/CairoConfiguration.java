@@ -34,6 +34,7 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -838,6 +839,50 @@ public interface CairoConfiguration {
      */
     long getQueryMemoryLimitBytes();
 
+    /**
+     * @return cumulative slave-row back-scan budget for the adaptive keyed ASOF join. The default
+     * (forward-scan Dense) cursor starts with a targeted Fast-style back-scan and switches to the
+     * resilient forward scan once cumulative back-scan exceeds this budget. {@code -1} disables the
+     * adaptive prelude (pure Dense).
+     */
+    long getSqlAsOfAdaptiveBackScanBudget();
+
+    /**
+     * When true, the optimiser may auto-select asof_index / asof_memoized for single-symbol ASOF.
+     */
+    boolean isSqlAsOfAutoAlgoEnabled();
+
+    /**
+     * Max master/slave row ratio (in basis points, /10000) below which asof_index is auto-selected.
+     */
+    int getSqlAsOfIndexMaxMasterBp();
+
+    /**
+     * Like {@link #getSqlAsOfIndexMaxMasterBp()}, for a slave symbol with a POSTING index. A posting
+     * lookup decodes a block per master row, so it repays only a smaller master than a bitmap lookup.
+     */
+    int getSqlAsOfIndexPostingMaxMasterBp();
+
+    /**
+     * Back-scan budget of the Fast prelude on a multi-key Dense ASOF, in percent of the slave's rows.
+     * The prelude serves master rows by Fast's per-row back-scan and hands over to the Dense scan once
+     * the back-scans have walked this many slave rows in total.
+     */
+    int getSqlAsOfMultiKeyFastMaxBackScanPct();
+
+    /**
+     * Master-row budget of the Fast prelude on a multi-key Dense ASOF, in basis points of the slave's
+     * rows (/10000). Past it the master is not small and the join hands over to the Dense scan; at 0
+     * the prelude is off.
+     */
+    int getSqlAsOfMultiKeyFastMaxMasterBp();
+
+    /**
+     * Equal-timestamp run length past which the memoized ASOF cursor abandons memoization for a
+     * resilient Dense forward scan (guards the dense-timestamp cliff).
+     */
+    int getSqlAsOfMemoizedDenseRunThreshold();
+
     int getQueryRegistryPoolSize();
 
     /**
@@ -863,6 +908,16 @@ public interface CairoConfiguration {
      */
     default int getQwpEgressForcedZstdLevel() {
         return 0;
+    }
+
+    /**
+     * QWP egress maps a SYMBOL column's native symbol keys below this to connection dictionary ids
+     * with an array (4 bytes per key, sized to the largest key the query sends, kept from one query
+     * to the next only up to 16 KiB), and the other keys with a hash map. 0 uses the hash map for
+     * every key. The wire bytes are the same either way.
+     */
+    default int getQwpEgressSymbolDenseMaxKeys() {
+        return QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS;
     }
 
     /**
@@ -990,6 +1045,37 @@ public interface CairoConfiguration {
     int getSqlHorizonJoinMaxOffsets();
 
     /**
+     * Largest number of keys for which {@code ORDER BY <indexed symbol>} over an index key scan
+     * ({@code IN}, {@code !=}, {@code NOT IN}, or the sorted symbol index scan) walks each key
+     * across all page frames instead of sorting. The key-major scan comes back to every page frame
+     * once per key, so a table larger than the page cache can be read up to that many times. This
+     * caps re-visits within a partition and applies when a scanned partition spans more than one
+     * page frame; re-visits across partitions are capped by
+     * {@link #getSqlIndexKeyMajorMaxPartitionPasses()}. 0 disables the key-major scan, and every such
+     * query sorts.
+     */
+    int getSqlIndexKeyMajorMaxKeys();
+
+    /**
+     * Caps re-visits across the scan for a key-major index scan (see
+     * {@link #getSqlIndexKeyMajorMaxKeys()}): keys x scanned partitions, or keys x page frames when a
+     * single partition is scanned, so a large {@code PARTITION BY NONE} table is bounded like a
+     * partitioned one. All scanned partitions are also opened before the first row. 0 limits the
+     * key-major scan to a single partition of a single page frame.
+     */
+    long getSqlIndexKeyMajorMaxPartitionPasses();
+
+    /**
+     * Most rows in a page frame of a serial scan whose rows come from an index (a symbol index
+     * key, with or without a filter). Such a scan walks the index key once per frame, so its cost
+     * follows the frames a partition is cut into, not just the rows it returns: it takes frames of
+     * up to this many rows, or of {@link #getSqlPageFrameMaxRows()} rows when that is larger.
+     */
+    default int getSqlIndexScanPageFrameMaxRows() {
+        return io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+    }
+
+    /**
      * When the number of intervals exceeds this threshold during bracket expansion,
      * intervals are merged to prevent unbounded memory growth.
      */
@@ -1015,6 +1101,19 @@ public interface CairoConfiguration {
     int getSqlJitIRMemoryPageSize();
 
     int getSqlJitMaxInListSizeThreshold();
+
+    /**
+     * The cap on a {@code symbol IN (...)} membership bitset. A bitset holds one bit per symbol key
+     * up to the largest key the list resolves to, plus one for NULL; it is used only while every
+     * key the list resolves to is below this cap, which bounds it at {@code maxKeys + 1} bits,
+     * about {@code maxKeys / 8} bytes. The JIT and the Java filter apply the same test, to the
+     * largest key the list resolves to - not to how many symbols the column holds - on every
+     * execution, so a cached query meets it again after a rebind or after the table gains
+     * symbols. Over the cap, the Java filter tests a hash set, and a JIT-compiled filter runs that
+     * Java filter for the execution; at compile time, a list whose literals already exceed it is
+     * not JIT-compiled at all. See {@code SymbolKeyBitSet.fitsCap()}.
+     */
+    int getSqlSymbolInBitsetMaxKeys();
 
     int getSqlJitMode();
 
@@ -1131,6 +1230,47 @@ public interface CairoConfiguration {
     long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
+
+    /**
+     * Rows of one key beyond which the parallel window computes that key on the query's own
+     * thread, in chunks, instead of buffering the whole key's output for a worker task. Bounds the
+     * memory a single task holds.
+     */
+    long getSqlParallelWindowMaxKeyRows();
+
+    /**
+     * Rounds of tasks the parallel window keeps alive at a time: the one whose rows are being
+     * returned and those the workers compute ahead of it. Each holds at most
+     * {@link #getSqlParallelWindowRoundRows()} rows, so this bounds the buffered output. At least 2.
+     */
+    int getSqlParallelWindowMaxRounds();
+
+    /**
+     * Rows below which a window stays serial: a table smaller than this plans the serial window,
+     * and the parallel window computes this many rows of its scan on the query's own thread before
+     * it dispatches anything, so a LIMIT or a small result never waits for a round of tasks.
+     */
+    long getSqlParallelWindowMinRows();
+
+    /**
+     * Rows of its scan the parallel window computes on the query's own thread before it dispatches
+     * anything, at most {@link #getSqlParallelWindowMinRows()}: a LIMIT within them never waits
+     * for a round of tasks, and a result of a few hundred thousand rows, a frequent key's, is still
+     * mostly computed by the workers.
+     */
+    long getSqlParallelWindowPrefixRows();
+
+    /**
+     * Rows one round of the parallel window's tasks holds at most, past the last key it takes,
+     * whatever the number of workers. Two rounds are live at a time, so this bounds the output
+     * the parallel window buffers.
+     */
+    long getSqlParallelWindowRoundRows();
+
+    /**
+     * Rows a task of the parallel window collects before it closes at the next key boundary.
+     */
+    long getSqlParallelWindowTaskRows();
 
     int getSqlUnorderedMapMaxEntrySize();
 
@@ -1498,15 +1638,192 @@ public interface CairoConfiguration {
 
     boolean isSqlJitDebugEnabled();
 
+    /**
+     * Whether the JIT filter compiler evaluates a {@code symbol IN (...)} list longer than
+     * {@link #getSqlJitMaxInListSizeThreshold()} as a bitset over the symbol keys rather than
+     * declining the whole filter to the Java one.
+     */
+    boolean isSqlJitSymbolInBitsetEnabled();
+
+    /**
+     * Plans a non-keyed ASOF JOIN whose two sides are filtered by the same SYMBOL equality with a
+     * literal, such as (... WHERE sym = 'AAPL') t ASOF JOIN (... WHERE sym = 'AAPL') q, as the keyed
+     * parallel ASOF JOIN on those columns. A bind variable ({@code sym = $1}) stays serial.
+     */
+    default boolean isSqlAsOfJoinVirtualKeyEnabled() {
+        return true;
+    }
+
+    /**
+     * Binds an uncorrelated scalar sub-query compared with a column, such as bid >= (SELECT ...), as a
+     * constant of each execution, so the filter stays JIT-compiled.
+     */
+    default boolean isSqlJitScalarSubQueryEnabled() {
+        return true;
+    }
+
+    /**
+     * Compiles a SYMBOL column compared with the empty string ('') into the JIT filter instead of
+     * falling back to the Java filter.
+     */
+    default boolean isSqlJitSymbolEmptyConstantEnabled() {
+        return true;
+    }
+
+    /**
+     * Whether the Java {@code symbol IN (...)} function tests membership with a bitset over the
+     * symbol keys rather than with a hash set probe.
+     */
+    boolean isSqlSymbolInBitsetEnabled();
+
     boolean isSqlLatestByJitEnabled();
 
     boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();
 
+    /**
+     * Whether the parallel GROUP BY evaluates the arguments of the aggregates that have a batch
+     * kernel (weighted_avg, corr, covar_*, stddev/var, and sum/avg/min/max over an expression)
+     * column-wise per batch of rows, and updates the groups with the kernel instead of a
+     * computeNext() call per row. Read when the query is compiled; EXPLAIN shows it as
+     * {@code batchKernels}.
+     */
+    boolean isSqlParallelGroupByBatchKernelsEnabled();
+
+    /**
+     * The share of the scanned rows, between 0 and 1, that a symbol {@code IN}/{@code =} filter
+     * over a POSTING index may select for a GROUP BY to read through the index rather than scan.
+     * The share is estimated from the index's per-key row counts when the cursor opens, see
+     * {@link #isSqlIndexScanChoiceEnabled()}.
+     */
+    double getSqlIndexScanChoiceMaxSelectivity();
+
+    /**
+     * The share of the scanned rows, between 0 and 1, that the symbol keys of a covering-index
+     * scan may select for the query to keep the covering plan rather than scan the table. A
+     * covering scan reads only the selected rows' covered values, laid out by key, so it pays
+     * off up to a larger share than the plain index's gather, see
+     * {@link #getSqlIndexScanChoiceMaxSelectivity()}.
+     */
+    double getSqlCoveringScanChoiceMaxSelectivity();
+
+    /**
+     * {@link #getSqlCoveringScanChoiceMaxSelectivity()} for a covering scan whose rows a GROUP BY
+     * aggregates rather than the query returning them.
+     */
+    double getSqlCoveringGroupByScanChoiceMaxSelectivity();
+
+    /**
+     * Rows of a covering-index scan's page frames, up to the page frame row cap: each frame holds
+     * the rows of one key in one partition, which a worker of a parallel GROUP BY or filter reads
+     * from the index, row ids and covered values, so a key's rows of a partition spread over the
+     * workers in frames of this size.
+     */
+    long getSqlParallelCoveringFrameRows();
+
+    /**
+     * Rows under which a parallel GROUP BY or filter over a covering-index scan reduces its page
+     * frames on the query's thread instead of dispatching them to the workers. It is decided each
+     * time the cursor opens, from the rows of the frames; 0 always dispatches.
+     */
+    long getSqlParallelCoveringLocalMaxRows();
+
+    /**
+     * Rows of the posting index that one task of an index-driven parallel GROUP BY gathers, see
+     * {@link #isSqlParallelIndexGroupByEnabled()}. Keys with fewer rows share a task; a key with
+     * more is split by row range.
+     */
+    long getSqlParallelIndexGroupByTaskRows();
+
+    /**
+     * Rows of the page frames an index-driven parallel GROUP BY reads a partition through, see
+     * {@link #isSqlParallelIndexGroupByEnabled()}. Its tasks gather rows across frames, so large
+     * frames keep a key's rows of a frame in few batches. At most 16777216, the row index range of
+     * a batched GROUP BY entry.
+     */
+    int getSqlParallelIndexGroupByFrameRows();
+
+    /**
+     * Whether the shared query workers set up the units of a parallel scan themselves where the
+     * query's thread used to: a key-major index walk then only counts each task's rows from the
+     * index, and the worker that computes the task reads its row ids. Read when a cursor opens.
+     */
+    boolean isSqlParallelFrameDispatchEnabled();
+
+    /**
+     * Whether a GROUP BY over a symbol {@code IN}/{@code =} filter that a POSTING index serves
+     * compiles both an index plan and a scan plan, and chooses between them each time the cursor
+     * opens, from the index's per-key row counts. Read when the query is compiled. The
+     * {@code no_index} and {@code use_index} hints take one plan only.
+     */
+    boolean isSqlIndexScanChoiceEnabled();
+
+    /**
+     * Whether a GROUP BY over a symbol {@code IN}/{@code =} filter that a POSTING index serves runs
+     * on the shared query workers: they read the keys' row ids from the index, gather the columns
+     * of those rows only and aggregate them. Read when the query is compiled.
+     */
+    boolean isSqlParallelIndexGroupByEnabled();
+
+    /**
+     * When true, a group by sub-query whose rows reach a consumer that only needs their distinct values
+     * (a DISTINCT, or a GROUP BY without aggregates) and that reads only some of its keys groups by those
+     * keys alone. For example, {@code SELECT DISTINCT sym FROM (SELECT ts_bucket, sym, avg(x) ... )} groups
+     * the source by sym only. The distinct values are the same; their order, which is unspecified, may
+     * differ.
+     */
+    default boolean isSqlDistinctGroupByKeyPruningEnabled() {
+        return true;
+    }
+
+    /**
+     * When true, approx_percentile over a LONG argument keeps its HdrHistogram off-heap in the group by
+     * map at every precision, so it runs in parallel GROUP BY and its per-worker partials merge exactly.
+     * When false, precision 3..5 and the array form use the original on-heap histograms and run serially.
+     * The results are the same either way.
+     * <p>
+     * Memory: each group stores only its non-zero counts, in a hash table of 12-byte slots (at most 4/3
+     * slots per distinct counts index, 64 bytes for a group of up to 3), allocated from the GROUP BY
+     * allocator and charged to the query's memory tracker. It grows with the number of distinct
+     * HdrHistogram buckets a group records, never with the span of its values. Parallel execution holds
+     * one partial per worker and group, plus the merged result. When a per-query memory limit is
+     * configured (cairo.query.memory.limit.bytes), the original serial on-heap functions are used instead,
+     * so a query that ran within the limit before does not fail on the per-worker partials.
+     */
+    default boolean isSqlParallelApproxPercentileEnabled() {
+        return true;
+    }
+
     boolean isSqlParallelGroupByEnabled();
 
+    /**
+     * When true, a PIVOT whose source is a plain projection subquery (no aggregates, window functions,
+     * joins, LIMIT, ORDER BY, ...) aggregates the source's rows directly: the projection's expressions are
+     * substituted into the PIVOT's inner GROUP BY, so it runs over the source table as a parallel GROUP BY
+     * instead of serially over a projection. The rows of each pivot cell are the same, so the results are
+     * the same.
+     */
+    default boolean isSqlPivotFuseSourceEnabled() {
+        return true;
+    }
+
     boolean isSqlParallelHashJoinGroupByEnabled();
+
+    /**
+     * Whether an inner hash join whose build side is unique on the join key, such as a GROUP BY on
+     * that key, may probe its other side on the shared query workers.
+     */
+    boolean isSqlParallelHashJoinProbeEnabled();
+
+    /**
+     * A test seam, false outside tests: whether the planner may take an inner hash join's build
+     * side as unique on the join key without proving it, so that a test reaches the parallel
+     * probe's run-time handling of repeated keys. The planner reads it once per join it plans.
+     */
+    default boolean isSqlParallelHashJoinProbeUniqueBuildAssumed() {
+        return false;
+    }
 
     boolean isSqlParallelHorizonJoinEnabled();
 
@@ -1514,7 +1831,54 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelTopKEnabled();
 
+    /**
+     * Whether a window whose every function is partitioned by the key of a key-major index scan
+     * runs on the shared query workers, a batch of whole keys per task.
+     */
+    boolean isSqlParallelWindowEnabled();
+
+    /**
+     * Whether a filter on {@code min|max(x) OVER (PARTITION BY ...)} may run as a parallel
+     * aggregation per partition followed by a parallel lookup filter.
+     */
+    boolean isSqlParallelWindowMinMaxRewriteEnabled();
+
     boolean isSqlParallelWindowJoinEnabled();
+
+    /**
+     * Whether a keyed ASOF JOIN on one SYMBOL column may join the master's page frames in parallel
+     * (Async AsOf Join). It runs on the parallel window join machinery, so it also needs that
+     * enabled for the execution context. Defaults to the parallel window join's setting, so that an
+     * implementation that predates it follows that one.
+     */
+    default boolean isSqlParallelAsOfJoinEnabled() {
+        return isSqlParallelWindowJoinEnabled();
+    }
+
+    /**
+     * Whether a parallel window task whose window functions are all partitioned by the scan's key
+     * alone computes each key as a run, with the partition's state held in the functions rather
+     * than in their maps. Read when the query is compiled; EXPLAIN shows it as {@code keyRuns}.
+     */
+    boolean isSqlParallelWindowKeyRunsEnabled();
+
+    /**
+     * Whether a streaming window over an Async Window, directly or through a projection, and a
+     * filter over one, become steps the Async Window's workers compute after its own window,
+     * when they keep its keys apart; otherwise they run serially over its output. Read when the
+     * query is compiled; EXPLAIN shows the steps as {@code then}.
+     */
+    boolean isSqlParallelWindowChainEnabled();
+
+    /**
+     * Whether a window partitioned by a symbol column over a whole table, under an ORDER BY that
+     * makes the order of the keys invisible, runs on the shared workers with the keys sharded by
+     * hash over the plain table scan, see
+     * {@link io.questdb.griffin.engine.window.AsyncWindowShardCursor}; otherwise it walks the
+     * column's index key by key, when it has one. Read when the query is compiled; EXPLAIN shows
+     * {@code hashShards}.
+     */
+    boolean isSqlParallelWindowShardEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
 

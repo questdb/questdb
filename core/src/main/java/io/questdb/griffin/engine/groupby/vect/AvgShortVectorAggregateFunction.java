@@ -120,6 +120,11 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
     }

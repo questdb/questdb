@@ -483,6 +483,11 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         }
 
         @Override
+        public int getScanDirection() {
+            return masterFactory.getScanDirection();
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return masterFactory.recordCursorSupportsRandomAccess();
         }

@@ -476,6 +476,15 @@ public class WindowJoinTimeFrameHelper {
         return false;
     }
 
+    /**
+     * Positions the cursor on the given time frame and opens it, returning its row count.
+     * Call {@link #recordAt(int, long)} before reading rows of a non-empty frame.
+     */
+    public long openFrame(int frameIndex) {
+        timeFrameCursor.jumpTo(frameIndex);
+        return timeFrameCursor.open();
+    }
+
     public void of(TimeFrameCursor timeFrameCursor) {
         this.timeFrameCursor = timeFrameCursor;
         this.record = timeFrameCursor.getRecord();

@@ -371,6 +371,11 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_OTHER;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }

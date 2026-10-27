@@ -203,6 +203,11 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

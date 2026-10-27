@@ -139,6 +139,11 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
     }

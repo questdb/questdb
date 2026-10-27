@@ -25,13 +25,16 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * HTTP request handler for QWP egress (query results) WebSocket connections at /read/v1.
@@ -49,7 +52,20 @@ public class QwpEgressHttpProcessor implements HttpRequestHandler, QuietCloseabl
             HttpFullFatServerConfiguration httpConfiguration,
             int sharedWorkerCount
     ) {
-        this.processor = new QwpEgressUpgradeProcessor(engine, httpConfiguration, sharedWorkerCount);
+        this(engine, httpConfiguration, sharedWorkerCount, null);
+    }
+
+    /**
+     * @param sharedSelectCache the select cache every worker's egress processor shares (the caller
+     *                          frees it), or null for a cache of this processor's own
+     */
+    public QwpEgressHttpProcessor(
+            CairoEngine engine,
+            HttpFullFatServerConfiguration httpConfiguration,
+            int sharedWorkerCount,
+            @Nullable AssociativeCache<RecordCursorFactory> sharedSelectCache
+    ) {
+        this.processor = new QwpEgressUpgradeProcessor(engine, httpConfiguration, sharedWorkerCount, sharedSelectCache);
     }
 
     @Override

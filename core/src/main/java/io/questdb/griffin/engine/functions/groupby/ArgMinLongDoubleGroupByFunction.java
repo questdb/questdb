@@ -113,6 +113,11 @@ public class ArgMinLongDoubleGroupByFunction extends LongFunction implements Gro
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

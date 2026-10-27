@@ -115,7 +115,14 @@ public class CaseFunctionFactory implements FunctionFactory {
             return elseB;
         };
 
-        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+        // the values as the picker returns them, cast to the CASE's type
+        final ObjList<Function> thenValues = new ObjList<>(argsLen / 2);
+        final ObjList<Function> conditions = new ObjList<>(argsLen / 2);
+        for (int i = 1; i < argsLen; i += 2) {
+            conditions.add(vars.getQuick(i - 1));
+            thenValues.add(vars.getQuick(i));
+        }
+        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke, new CaseBranches.Values(thenValues, elseB, conditions));
     }
 
     @Override

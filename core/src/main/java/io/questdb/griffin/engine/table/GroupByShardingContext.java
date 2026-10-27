@@ -91,8 +91,16 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final PerWorkerLocks perWorkerLocks;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ColumnTypes valueTypes;
+    // finishes each destination shard's groups after its merge, see setShardFinalizer()
+    private ShardFinalizer shardFinalizer;
     volatile boolean sharded;
     boolean shardedHint;
+    // false for a GROUP BY whose workers' maps hold mostly disjoint groups, see setShardingAllowed()
+    private boolean shardingAllowed = true;
+    // scales the sharding threshold, see setShardingThresholdMultiplier()
+    private long shardingThresholdMultiplier = 1;
+    // set by a serial pass that must hold a single map, until clear()
+    private boolean shardingDisabled;
 
     GroupByShardingContext(
             CairoConfiguration configuration,
@@ -136,6 +144,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     @Override
     public void clear() {
         sharded = false;
+        shardingDisabled = false;
         Misc.free(ownerFragment);
         Misc.freeObjListAndKeepObjects(perWorkerFragments);
         Misc.freeObjListAndKeepObjects(destShards);
@@ -153,6 +162,57 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         Misc.freeObjList(destShards);
     }
 
+    /**
+     * Keeps the maps of this query unsharded, whatever their size, until {@link #clear()}: for a
+     * pass on the query's thread alone, which merges nothing and should hold one map.
+     */
+    public void disableSharding() {
+        shardingDisabled = true;
+        sharded = false;
+    }
+
+    /**
+     * Whether this GROUP BY may shard its maps at all. An index gather grouped by its key column
+     * gives each task whole keys, so the workers' maps hold mostly disjoint groups: their merge is
+     * a copy as long as the result, and the sharded reduce, which goes row by row, would cost more
+     * than it saves.
+     */
+    public void setShardingAllowed(boolean shardingAllowed) {
+        this.shardingAllowed = shardingAllowed;
+    }
+
+    /**
+     * Sets what finishes each destination shard's groups once merged, on the thread that merged it.
+     */
+    public void setShardFinalizer(ShardFinalizer shardFinalizer) {
+        this.shardFinalizer = shardFinalizer;
+    }
+
+    /**
+     * Shards the aggregated, not yet merged maps of a GROUP BY that did not reach the sharding threshold
+     * as it aggregated, so that {@link #mergeShards} merges, and finishes, the groups on the workers: for
+     * groups whose merge and result cost more than their count suggests, such as a percentile's values.
+     *
+     * @return whether the maps are now to be merged as shards
+     */
+    public boolean shardAfterAggregation() {
+        if (!sharded && shardingAllowed && !shardingDisabled) {
+            sharded = true;
+        }
+        return sharded;
+    }
+
+    /**
+     * Scales the map size (and function cardinality) past which this GROUP BY shards. An index
+     * gather grouped by its key column and other columns gives each task whole keys, so the
+     * workers' maps hold mostly disjoint groups, and its unsharded reduce probes a run of rows
+     * sharing a group once: it shards only once the maps are this many times larger than usual,
+     * so that a high-cardinality grouping, such as (sym, ts), still merges in parallel.
+     */
+    public void setShardingThresholdMultiplier(long shardingThresholdMultiplier) {
+        this.shardingThresholdMultiplier = Math.max(1, shardingThresholdMultiplier);
+    }
+
     public AsyncQueryProgressState getProgressState() {
         return progressState;
     }
@@ -166,6 +226,9 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     public void mergeShard(int slotId, int shardIndex) {
         mergeShard(shardIndex, getFunctionUpdater(slotId));
+        if (shardFinalizer != null) {
+            shardFinalizer.finalizeShard(slotId, destShards.getQuick(shardIndex));
+        }
     }
 
     public void release(int slotId) {
@@ -308,7 +371,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             functionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
         }
 
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        final long shardingThreshold = getShardingThreshold();
         // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
         shardedHint = (mapSize > shardingThreshold || functionCardinality > 10L * shardingThreshold);
     }
@@ -349,6 +412,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
+    private long getShardingThreshold() {
+        return configuration.getGroupByShardingThreshold() * shardingThresholdMultiplier;
+    }
+
     boolean isSharded() {
         return sharded;
     }
@@ -356,8 +423,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     void maybeEnableSharding(GroupByMapFragment fragment, long functionCardinalityIncrement) {
         fragment.totalFunctionCardinality += functionCardinalityIncrement;
         // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
-        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
+        final long shardingThreshold = getShardingThreshold();
+        if (!sharded && shardingAllowed && !shardingDisabled && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
             sharded = true;
         }
     }
@@ -497,7 +564,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     void reopen() {
-        if (shardedHint) {
+        if (shardedHint && shardingAllowed && !shardingDisabled) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
         }
@@ -516,5 +583,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
             perWorkerFragments.getQuick(i).shard();
         }
+    }
+
+    @FunctionalInterface
+    public interface ShardFinalizer {
+        void finalizeShard(int slotId, Map destShard);
     }
 }

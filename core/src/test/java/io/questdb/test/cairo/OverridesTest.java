@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.HashJoinBuildMode;
 import org.junit.Assert;
@@ -144,5 +145,39 @@ public class OverridesTest extends AbstractCairoTest {
             Assert.assertEquals(20, configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows());
             Assert.assertEquals(5, configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition());
         });
+    }
+
+    @Test
+    public void testNoOpRemoveKeepsPendingChange() {
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, "false");
+        Assert.assertFalse(configuration().isSqlSymbolInBitsetEnabled());
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, "true");
+        // Removing a property that was never set changes nothing, and must not drop the change above.
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, (String) null);
+        Assert.assertTrue(configuration().isSqlSymbolInBitsetEnabled());
+    }
+
+    @Test
+    public void testNoOpSetKeepsPendingChange() {
+        // The sequence that made SymbolInBitSetTest#testLargeSymbolTableFallsBack vacuous: a set to
+        // the value a property already holds used to clear the change pending from the sets before it.
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 100);
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "false");
+        Assert.assertFalse(configuration().isSqlJitSymbolInBitsetEnabled());
+        Assert.assertFalse(configuration().isSqlSymbolInBitsetEnabled());
+
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 100);
+        final CairoConfiguration configuration = configuration();
+        Assert.assertTrue(configuration.isSqlJitSymbolInBitsetEnabled());
+        Assert.assertTrue(configuration.isSqlSymbolInBitsetEnabled());
+        Assert.assertEquals(100, configuration.getSqlSymbolInBitsetMaxKeys());
+    }
+
+    private static CairoConfiguration configuration() {
+        // The engine's configuration reads the overrides on every call.
+        return engine.getConfiguration();
     }
 }

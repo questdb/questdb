@@ -63,6 +63,9 @@ public class ApproxMedianLongGroupByFunctionFactory implements FunctionFactory {
         final int precision = checkAndReturnPrecision(precisionFunc, precisionPosition);
 
         if (precision > 2) {
+            if (ApproxPercentileLongSparseGroupByFunction.isEnabled(configuration)) {
+                return new ApproxPercentileLongSparseGroupByFunction(exprFunc, percentileFunc, precision, position);
+            }
             return new ApproxPercentileLongPackedGroupByFunction(exprFunc, percentileFunc, precision, position);
         }
         return new ApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, precision, position);

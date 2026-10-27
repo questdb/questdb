@@ -1223,6 +1223,11 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_OTHER;
+        }
+
+        @Override
         protected void _close() {
             memory = Unsafe.free(memory, MEMORY_SIZE, MemoryTag.NATIVE_DEFAULT);
         }

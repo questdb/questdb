@@ -25,6 +25,7 @@
 package io.questdb.cutlass;
 
 import io.questdb.mp.EagerThreadSetup;
+import io.questdb.mp.IdleParkJob;
 import io.questdb.mp.Job;
 import org.jetbrains.annotations.NotNull;
 
@@ -41,14 +42,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * without allocating once the gate opens, even under memory pressure. Forwarding
  * {@code setup()} to the delegate unconditionally is what preserves that
  * pre-allocation.
+ *
+ * <p>A worker may park in the delegate when the delegate allows it (see {@link IdleParkJob}), under
+ * the same gate as {@link #run}.
  */
-public class AcceptGatedJob implements Job, EagerThreadSetup {
+public class AcceptGatedJob implements IdleParkJob, EagerThreadSetup {
     private final AtomicBoolean acceptOpen;
     private final Job delegate;
+    private final IdleParkJob idleParkDelegate;
 
     public AcceptGatedJob(Job delegate, AtomicBoolean acceptOpen) {
         this.delegate = delegate;
         this.acceptOpen = acceptOpen;
+        this.idleParkDelegate = delegate instanceof IdleParkJob idleParkJob ? idleParkJob : null;
+    }
+
+    @Override
+    public void cancelIdlePark() {
+        idleParkDelegate.cancelIdlePark();
+    }
+
+    @Override
+    public boolean idlePark(long maxParkNanos) {
+        return idleParkDelegate.idlePark(maxParkNanos);
     }
 
     @Override
@@ -64,5 +80,10 @@ public class AcceptGatedJob implements Job, EagerThreadSetup {
         if (delegate instanceof EagerThreadSetup) {
             ((EagerThreadSetup) delegate).setup();
         }
+    }
+
+    @Override
+    public boolean tryBeginIdlePark() {
+        return idleParkDelegate != null && acceptOpen.get() && idleParkDelegate.tryBeginIdlePark();
     }
 }

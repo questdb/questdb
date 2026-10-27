@@ -351,6 +351,20 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Returns true if the function or one of its arguments keeps state from call to call within
+     * an execution, so that its value at a row depends on how many calls came before it:
+     * timestamp_sequence() counts its calls. A copy of such a function per worker restarts the
+     * count on every copy, and workers sharing one race on it and see the rows out of order, so
+     * the plan must call it on one thread, in row order. Random functions are not counted here:
+     * see {@link #isRandom()}.
+     *
+     * @return true if the value depends on the calls before it
+     */
+    default boolean hasPerCallState() {
+        return false;
+    }
+
+    /**
      * Returns true if this function is non-deterministic.
      *
      * @return true if non-deterministic

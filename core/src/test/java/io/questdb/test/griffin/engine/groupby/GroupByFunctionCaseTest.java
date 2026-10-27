@@ -215,6 +215,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                                       keys: [candle_st,venue]
                                       keyFunctions: [timestamp_floor_utc('1h',trade_timestamp)]
                                       values: [count(*),sum(qty*price),sum(qty)]
+                                      batchKernels: true
                                       filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
                                         PageFrame
                                             Row forward scan
@@ -271,6 +272,11 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
             planSink.put("  keys: [").put(keys).put("]\n");
         }
         planSink.put("  values: [").put(expectedFunction).put("]\n");
+        // avg() over a FLOAT column is avg(DOUBLE) reading the column through getDouble(): it has
+        // no direct-column loop, so the parallel GROUP BY uses its column-wise batch kernel
+        if (!keyedVectorized && t == FLOAT && f == 3) {
+            planSink.put("  batchKernels: true\n");
+        }
         if (!keyedVectorized) {
             planSink.put("  filter: null\n");
         }

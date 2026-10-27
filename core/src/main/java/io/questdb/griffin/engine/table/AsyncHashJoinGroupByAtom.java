@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -50,6 +51,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -64,12 +67,16 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.Arrays;
 
 /**
  * Owns execution backing; functions, both filter contexts, the build ON filter and the build
@@ -271,6 +278,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                         perWorkerLocks, workerCount);
             }
             final boolean hasSymbolKey = symbolKeyProbeColumns.size() > 0;
+            // the batched build-key aggregation, see AsyncHashJoinGroupByRecordCursorFactory.addByBuildKey()
+            final boolean isBatched = functions.isKeyed() && functions.isKeysReadBuildOnly() && functions.isAggregatesReadProbeOnly();
+            final int batchSize = configuration.getGroupByBatchSize();
+            final GroupByBatchKernels.Program kernelProgram = isBatched && configuration.isSqlParallelGroupByBatchKernelsEnabled()
+                    ? GroupByBatchKernels.compile(functions.getGroupByFunctions(-1), batchSize, workerCount + 1)
+                    : null;
             // The metadata does not outlive construction, so the slots share a copy of its mapping.
             final IntList payloadBuildColumns = new IntList();
             payloadBuildColumns.addAll(metadata.getBuildColumns());
@@ -288,6 +301,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount());
                 }
                 slots.add(slot);
+                if (isBatched) {
+                    slot.batchSize = batchSize;
+                    // Allocated per execution in init() and released in Slot.clear(), so an idle
+                    // factory holds no batch memory.
+                    slot.batchList = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true);
+                    slot.batchMapValue = new FlyweightPackedMapValue(functions.getValueTypes());
+                    slot.batchKernels = kernelProgram != null ? kernelProgram.newInstance(functions.getGroupByFunctions(i)) : null;
+                }
             }
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -599,6 +620,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     slot.value.setNew(true);
                 }
                 slot.bindSymbols(symbolTableSource, buildSymbols);
+                if (slot.batchList != null) {
+                    slot.batchList.reopen();
+                }
             }
             isFiltersInitialized = true;
             filterContext.initFilters(symbolTableSource, executionContext);
@@ -1045,7 +1069,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         rows.clear();
         final Function filter = buildFilterContext.getFilter(slotId);
         if (filter != null) {
-            final CompiledFilter compiledFilter = buildFilterContext.getCompiledFilter();
+            final CompiledFilter compiledFilter = buildFilterContext.getExecutionCompiledFilter();
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 AsyncFilterUtils.applyFilter(filter, rows, record, rowCount);
             } else {
@@ -1466,6 +1490,36 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         FrozenHashJoinBuild.RecordProbe partitionedRecordProbe;
         FrozenHashJoinBuild.RecordProbe recordProbe;
         SimpleMapValue value;
+        // The map value address of each group when the grouping keys read only build columns, plus at most one
+        // probe SYMBOL (HashJoinGroupByFunctions.isKeysReadBuildOnly()), keyed by the build key (+1, 0 for the outer
+        // no-match group), combined with the probe symbol key. Valid until the map adds a group (which may move its
+        // heap, so adding one clears the cache) or the slot aggregates into another map.
+        final GroupValueCache groupValueCache = new GroupValueCache();
+        Map groupValueMap;
+        // The map's size when the cache was last valid: a cleared or reused map has another size, so a stale
+        // address is never read.
+        long groupValueMapSize = -1;
+        // The batched form of the cache, see AsyncHashJoinGroupByRecordCursorFactory.addByBuildKey(): each group's
+        // value offset into the map's heap, which survives the heap growing, and the batch of rows that update
+        // existing groups. Null batchList when the aggregates do not batch.
+        final GroupValueCache batchOffsetCache = new GroupValueCache();
+        // Per probe SYMBOL key of the join, what the frozen build resolves it to for the build-key groups: the
+        // build key + 1, 0 for an outer no-match, PROBE_KEY_UNMATCHED for an inner one; PROBE_KEY_UNKNOWN until
+        // a row resolves it. Valid for the execution, whose build does not change.
+        static final int PROBE_KEY_UNKNOWN = Integer.MIN_VALUE;
+        static final int PROBE_KEY_UNMATCHED = -1;
+        private static final int MAX_RESOLVED_PROBE_KEYS = 1 << 16;
+        private int[] resolvedProbeKeys;
+        long batchBaseRowId;
+        int batchCount;
+        @Nullable
+        GroupByBatchKernels batchKernels;
+        @Nullable
+        DirectLongList batchList;
+        Map batchMap;
+        long batchMapSize = -1;
+        FlyweightPackedMapValue batchMapValue;
+        int batchSize;
         // The open cursor's build scan, which serves this slot's build symbol tables; null otherwise.
         private SymbolTableSource buildSymbols;
 
@@ -1513,6 +1567,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             failure = Misc.freeObjListIfCloseableBestEffort(failure, buildSymbolTables);
             buildSymbolTables.clear();
             buildSymbols = null;
+            failure = Misc.freeBestEffort(failure, batchList);
+            batchList = null;
+            failure = Misc.freeBestEffort(failure, batchKernels);
+            batchKernels = null;
             CairoException.rethrowCleanupFailure(failure);
         }
 
@@ -1549,6 +1607,26 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             this.buildSymbols = buildSymbols;
         }
 
+        void resolveProbeKey(int probeKey, int resolution) {
+            if (probeKey < 0 || probeKey >= MAX_RESOLVED_PROBE_KEYS) {
+                return;
+            }
+            if (resolvedProbeKeys == null || probeKey >= resolvedProbeKeys.length) {
+                final int[] grown = new int[Math.min(MAX_RESOLVED_PROBE_KEYS, Math.max(64, Integer.highestOneBit(probeKey) << 1))];
+                Arrays.fill(grown, PROBE_KEY_UNKNOWN);
+                if (resolvedProbeKeys != null) {
+                    System.arraycopy(resolvedProbeKeys, 0, grown, 0, resolvedProbeKeys.length);
+                }
+                resolvedProbeKeys = grown;
+            }
+            resolvedProbeKeys[probeKey] = resolution;
+        }
+
+        int resolvedProbeKey(int probeKey) {
+            final int[] keys = resolvedProbeKeys;
+            return keys != null && probeKey >= 0 && probeKey < keys.length ? keys[probeKey] : PROBE_KEY_UNKNOWN;
+        }
+
         /**
          * The translation path of one SYMBOL key column, wherever this slot keeps it.
          */
@@ -1561,6 +1639,18 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 updater.updateEmpty(value);
                 value.setNew(true);
             }
+            groupValueMap = null;
+            groupValueMapSize = -1;
+            batchMap = null;
+            batchMapSize = -1;
+            batchCount = 0;
+            if (batchList != null) {
+                batchList.close();
+            }
+            if (resolvedProbeKeys != null) {
+                Arrays.fill(resolvedProbeKeys, PROBE_KEY_UNKNOWN);
+            }
+            Misc.clear(batchKernels);
             joinedRecord.clear();
             probeRecord.of(null);
             buildRecord.of(null);

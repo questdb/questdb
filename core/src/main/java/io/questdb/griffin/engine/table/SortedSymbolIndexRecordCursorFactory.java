@@ -1,0 +1,169 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
+
+public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
+    private final boolean columnOrderAsc;
+    private KeyMajorPageFrameRecordCursor cursor;
+    // false for a walk the planner chose for a window rather than for an ORDER BY
+    private boolean isOrderByAdviceFollowed = true;
+    private int keyMajorTimestampIndex = -1;
+
+    public SortedSymbolIndexRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
+            int columnIndex,
+            boolean columnOrderAsc,
+            int indexDirection,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
+    ) {
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        this.columnOrderAsc = columnOrderAsc;
+
+        // walk each symbol key across all page frames, not just within one, so that the
+        // output is in symbol order as a whole
+        cursor = new KeyMajorPageFrameRecordCursor(
+                configuration,
+                metadata,
+                new SortedSymbolIndexRowCursorFactory(
+                        columnIndex,
+                        columnOrderAsc,
+                        indexDirection
+                ),
+                partitionFrameCursorFactory.getOrder(),
+                null
+        );
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        // the fact this factory is created means we are following order by advice, unless the
+        // planner chose it for a window, see setOrderByAdviceFollowed()
+        return isOrderByAdviceFollowed;
+    }
+
+    /**
+     * Sets what {@link #followedOrderByAdvice()} answers: false for a walk the planner chose for
+     * a window partitioned by the symbol, which follows no ORDER BY.
+     */
+    public void setOrderByAdviceFollowed(boolean followed) {
+        this.isOrderByAdviceFollowed = followed;
+    }
+
+    @Override
+    public int getKeyMajorColumnIndex() {
+        return cursor.getRowCursorFactory().getIndexColumnIndex();
+    }
+
+    @Override
+    public boolean isKeyMajorAscending() {
+        return columnOrderAsc;
+    }
+
+    @Override
+    public int getKeyMajorTimestampIndex() {
+        return keyMajorTimestampIndex;
+    }
+
+    // This factory exists to serve "ORDER BY symbol[, timestamp]". It walks the symbol
+    // keys in sorted symbol order and, for each key, emits that symbol's entire index
+    // row range before moving on to the next key. Timestamps therefore restart at every
+    // symbol boundary, so the cursor is ordered by symbol, not by designated timestamp,
+    // and neither FORWARD nor BACKWARD can be claimed.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    /**
+     * Declares the column whose values ascend within each key, see
+     * {@link KeyMajorScanFactory#getKeyMajorTimestampIndex()}: the designated timestamp, when the
+     * index is read forward.
+     */
+    public void setKeyMajorTimestampIndex(int timestampIndex) {
+        this.keyMajorTimestampIndex = timestampIndex;
+    }
+
+    @Override
+    public boolean hasDistinctKeys() {
+        // one key per symbol of the symbol table, plus NULL
+        return true;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    public void toPlan(PlanSink sink) {
+        sink.type("SortedSymbolIndex");
+        sink.attr("keyMajor").val(true);
+        sink.child(cursor.getRowCursorFactory());
+        sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
+    protected void _close() {
+        final KeyMajorPageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @Override
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        cursor.of(pageFrameCursor, executionContext);
+        return cursor;
+    }
+}

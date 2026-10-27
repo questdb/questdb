@@ -183,6 +183,11 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

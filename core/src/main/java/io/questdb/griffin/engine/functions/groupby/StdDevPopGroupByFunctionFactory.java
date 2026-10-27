@@ -76,5 +76,10 @@ public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "stddev_pop";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

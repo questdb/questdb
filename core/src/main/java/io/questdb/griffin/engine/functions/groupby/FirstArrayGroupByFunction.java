@@ -139,6 +139,11 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

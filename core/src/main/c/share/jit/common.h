@@ -78,6 +78,21 @@ enum class opcodes : int32_t {
     Begin_Sc = 20, // Create label at index payload.lo
     End_Sc = 21,   // Bind label at index payload.lo
     Sx_I64 = 22,   // Sign-extend top of stack to i64
+    // Symbol IN-list membership: pops the i32 symbol key (lhs) and a Var placeholder (rhs) and
+    // pushes a mask. payload.lo names the vars slot that holds the membership bitset's address in
+    // its low 8 bytes and the index of the bitset's last bit in its high 8. Bit 0 stands for NULL
+    // (INT_MIN) and bit k + 1 for key k, so the bit index is (key + 1) & ~(key >> 31); an index past
+    // the last bit is not a member. See CompiledFilterIRSerializer.SYM_IN_SET and SymbolKeyBitSet.
+    Sym_In_Set = 23,
+};
+
+// Capabilities this library's backend reports to Java through FiltersCompiler.getFeatures(), so
+// the frontend emits an opcode only to a library that compiles it. A library that predates the
+// function has none of them: Java treats the missing JNI symbol as a zero mask. Keep in sync with
+// JitUtil.FEATURE_*.
+enum jit_features : int32_t {
+    // opcodes::Sym_In_Set, in both the scalar and the AVX2 x86 backends.
+    kFeatureSymInSet = 1,
 };
 
 struct instruction_t {

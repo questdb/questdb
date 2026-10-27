@@ -74,6 +74,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         this.tableFunctionView = tableFunctionView;
     }
 
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     public static void inVolumeToSink(CairoConfiguration configuration, CairoTable table, CharSink<?> sink) {
         if (table.isSoftLink()) {
             sink.putAscii(", IN VOLUME ");

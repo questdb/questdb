@@ -133,6 +133,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             setFullFatJoins(false);
             final AbstractMultiTenantPool<C> pool = this.pool;
             if (pool != null && entry != null) {
+                // the plans of PIVOT IN sub-queries a model compile left unclaimed would
+                // otherwise live until the next borrow
+                delegate.freeUnclaimedPivotPlans();
                 if (pool.returnToPool(this)) {
                     return;
                 }
@@ -153,6 +156,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public boolean execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
             return delegate.execute(op, executionContext);
+        }
+
+        @Override
+        public void freeUnclaimedPivotPlans() {
+            delegate.freeUnclaimedPivotPlans();
         }
 
         @Override

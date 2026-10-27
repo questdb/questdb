@@ -71,12 +71,21 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // ACTIVE_COLUMNS_OPEN values: the active columns are mapped (1), or every column is (2), which
+    // stays true from one checkout to the next, so that a reader's open partitions are not walked
+    // column by column again at every query; see resetAllColumnsOpenFlag()
+    private static final int COLUMNS_OPEN_ACTIVE = 1;
+    private static final int COLUMNS_OPEN_ALL = 2;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
+    // whether a partition whose every column is mapped keeps saying so across checkouts, see COLUMNS_OPEN_ALL
+    private final boolean keepAllColumnsOpenFlag;
+    // tests: partitions whose active columns openPartition() walked again, see getOpenMissingColumnsCalls()
+    private long openMissingColumnsCalls;
     private final int dbRootSize;
     private final FilesFacade ff;
     private final int id;
@@ -138,6 +147,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     ) {
         this.id = id;
         this.configuration = configuration;
+        this.keepAllColumnsOpenFlag = configuration.isSqlParallelFrameDispatchEnabled();
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
         this.ff = configuration.getFilesFacade();
@@ -190,6 +200,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         assert srcReader.isOpen() && srcReader.isActive();
         this.id = id;
         this.configuration = configuration;
+        this.keepAllColumnsOpenFlag = configuration.isSqlParallelFrameDispatchEnabled();
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
         this.ff = configuration.getFilesFacade();
@@ -430,6 +441,33 @@ public class TableReader implements Closeable, SymbolTableSource {
             return indexReader;
         }
         return createIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
+    }
+
+    /**
+     * {@link #getIndexReader} without the reload: the cached reader of the partition's column when
+     * it is open at the partition's txns, pinned at this reader's txn, but not reloaded; null when
+     * {@link #getIndexReader} would build, reopen or replace it. A caller that takes it must call
+     * {@link IndexReader#reloadConditionally()} once before reading it, which another thread may
+     * do: the reload touches the index reader's own state only. Readers of distinct partitions are
+     * distinct objects.
+     */
+    @Nullable
+    public IndexReader getOpenIndexReaderWithoutReload(int partitionIndex, int columnIndex, int direction) {
+        final int columnBase = getColumnBase(partitionIndex);
+        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
+        final IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader == null
+                || !indexReader.isOpen()
+                || isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
+            return null;
+        }
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        if (indexReader.getColumnTxn() != columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex))
+                || indexReader.getPartitionTxn() != txFile.getPartitionNameTxn(partitionIndex)) {
+            return null;
+        }
+        indexReader.setPinnedTableTxn(txn);
+        return indexReader;
     }
 
     public IndexReader getIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {
@@ -719,6 +757,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         hasActiveColumns = false;
         resetAllColumnsOpenFlag();
         scanProfile = ReaderScanProfile.DEFAULT;
+    }
+
+    /**
+     * Partitions, already open, whose active columns {@link #openPartition(int)} walked again to map
+     * the missing ones, since the reader was created.
+     */
+    @TestOnly
+    public long getOpenMissingColumnsCalls() {
+        return openMissingColumnsCalls;
     }
 
     public boolean hasParquetPartitions() {
@@ -1388,6 +1435,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void openMissingColumnsInPartition(int partitionIndex, int offset, long partitionSize) {
+        openMissingColumnsCalls++;
         final int columnBase = getColumnBase(partitionIndex);
         boolean hasNewColumns = false;
         try {
@@ -1432,7 +1480,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.trimTo(rootLen);
         }
 
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, columnsOpenFlag());
+    }
+
+    // What a partition whose columns were just mapped for the active set has open.
+    private int columnsOpenFlag() {
+        return keepAllColumnsOpenFlag && !hasActiveColumns ? COLUMNS_OPEN_ALL : COLUMNS_OPEN_ACTIVE;
     }
 
     @NotNull
@@ -1562,7 +1615,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // throws, the slot stays marked closed (-1) so a retry sees a clean
                         // state instead of a torn "open" slot with null resources.
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, columnsOpenFlag());
                         openPartitionCount++;
                     }
                     // Release native state on the existing decoder but keep the Java instance.
@@ -1595,7 +1648,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // MAP as far as the highest live piece reaches, not the live row count - see mappedRowCount.
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), mappedRowCount(partitionIndex, partitionSize));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, columnsOpenFlag());
                         openPartitionCount++;
                     }
 
@@ -2169,7 +2222,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void resetAllColumnsOpenFlag() {
         for (int i = 0; i < partitionCount; i++) {
             final int offset = i * PARTITIONS_SLOT_SIZE;
-            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1) {
+            // a partition with every column mapped has the next active set's mapped too
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1
+                    && openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN) != COLUMNS_OPEN_ALL) {
                 openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
             }
         }

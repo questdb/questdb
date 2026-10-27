@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseBooleanOp;
+import io.questdb.griffin.engine.functions.ColumnwiseComparison;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
@@ -114,7 +116,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class Func extends AbstractEqBinaryFunction {
+    protected static class Func extends AbstractEqBinaryFunction implements ColumnwiseComparison {
         // This function class uses both subtraction and equality to judge whether two parameters
         // are equal because subtraction is to prevent the judging mistakes with different
         // precision, and equality is for the comparison of Infinity. In java,
@@ -123,6 +125,16 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         public Func(Function left, Function right) {
             super(left, right);
+        }
+
+        @Override
+        public int getColumnwiseComparison() {
+            return ColumnwiseComparison.CMP_EQ;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.DOUBLE;
         }
 
         @Override
@@ -144,9 +156,29 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncDoubleIsNaN extends AbstractIsNaNFunction {
+    protected static class FuncDoubleIsNaN extends AbstractIsNaNFunction implements ColumnwiseBooleanOp {
         public FuncDoubleIsNaN(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return arg;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_IS_NULL;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return negated;
         }
 
         @Override
@@ -155,9 +187,29 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncFloatIsNaN extends AbstractIsNaNFunction {
+    protected static class FuncFloatIsNaN extends AbstractIsNaNFunction implements ColumnwiseBooleanOp {
         public FuncFloatIsNaN(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return arg;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_IS_NULL;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.FLOAT;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return negated;
         }
 
         @Override
@@ -166,9 +218,29 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncIntIsNaN extends AbstractIsNaNFunction {
+    protected static class FuncIntIsNaN extends AbstractIsNaNFunction implements ColumnwiseBooleanOp {
         public FuncIntIsNaN(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return arg;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_IS_NULL;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.INT;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return negated;
         }
 
         @Override
@@ -177,9 +249,29 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncLongIsNaN extends AbstractIsNaNFunction {
+    protected static class FuncLongIsNaN extends AbstractIsNaNFunction implements ColumnwiseBooleanOp {
         public FuncLongIsNaN(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return arg;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_IS_NULL;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return negated;
         }
 
         @Override
@@ -188,9 +280,29 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncTimestampIsNaN extends AbstractIsNaNFunction {
+    protected static class FuncTimestampIsNaN extends AbstractIsNaNFunction implements ColumnwiseBooleanOp {
         public FuncTimestampIsNaN(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return arg;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_IS_NULL;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.TIMESTAMP;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return negated;
         }
 
         @Override

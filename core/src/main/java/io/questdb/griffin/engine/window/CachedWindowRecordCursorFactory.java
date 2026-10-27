@@ -216,6 +216,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         return base;
     }
 
+    /**
+     * Detaches the base factory, which the caller then owns: closing this factory leaves it open.
+     * Used when the planner replaces the window with a plan of its own over the same base.
+     */
+    public RecordCursorFactory stealBaseFactory() {
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        return base;
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);

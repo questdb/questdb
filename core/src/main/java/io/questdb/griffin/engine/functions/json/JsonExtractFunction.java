@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -513,5 +514,25 @@ public class JsonExtractFunction implements Function {
                 stateA.destUtf8Sink,
                 maxSize
         );
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(json, path);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return FunctionFlags.isNonDeterministic(json, path);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(json, path);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return FunctionFlags.isStableWithinExecution(json, path);
     }
 }

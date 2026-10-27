@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.UntypedFunction;
 import io.questdb.std.Interval;
@@ -206,5 +207,15 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         // int and long bounds both read as long: IntFunction.getLong() widens and
         // maps INT_NULL to LONG_NULL, the no-rows sentinel checked by the caller.
         return f.getLong(null);
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(head, hiBound, loBound);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(head, hiBound, loBound);
     }
 }

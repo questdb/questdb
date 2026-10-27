@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.QuietCloseable;
 
 /**
@@ -79,5 +80,27 @@ public interface RowCursor extends QuietCloseable {
 
     default long size() {
         return -1;
+    }
+
+    /**
+     * Appends the next rows to {@code sink}, at most {@code maxRows} of them, each as
+     * {@code rowIdBase | next()}: exactly the rows, in the order, that {@link #hasNext()} and
+     * {@link #next()} would return one by one. Returns how many it appended; fewer than
+     * {@code maxRows} means the cursor is exhausted.
+     */
+    default long drainTo(DirectLongList sink, long rowIdBase, long maxRows) {
+        return drainRows(this, sink, rowIdBase, maxRows);
+    }
+
+    /**
+     * {@link #drainTo} one row at a time.
+     */
+    static long drainRows(RowCursor cursor, DirectLongList sink, long rowIdBase, long maxRows) {
+        long n = 0;
+        while (n < maxRows && cursor.hasNext()) {
+            sink.add(rowIdBase | cursor.next());
+            n++;
+        }
+        return n;
     }
 }

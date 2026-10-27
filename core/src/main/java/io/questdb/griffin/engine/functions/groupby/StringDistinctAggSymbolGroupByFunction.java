@@ -158,6 +158,11 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

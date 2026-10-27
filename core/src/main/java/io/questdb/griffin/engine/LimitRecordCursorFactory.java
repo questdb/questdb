@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -255,6 +256,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public RecordBlock peekRecordBlock(int maxRows) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            ensureReadyToConsume();
+            if (remaining <= 0) {
+                return null;
+            }
+            return base.peekRecordBlock((int) Math.min(maxRows, remaining));
+        }
+
+        @Override
         public long preComputedStateSize() {
             return RecordCursor.fromBool(isBaseSizeKnown()) + RecordCursor.fromBool(areBoundsResolved()) + base.preComputedStateSize();
         }
@@ -285,6 +296,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void skipRecordBlock(int rowCount) {
+            base.skipRecordBlock(rowCount);
+            remaining -= rowCount;
+        }
+
+        @Override
         public void skipRows(Counter skipCounter, long maxRowsAfterSkip) {
             ensureReadyToConsume();
             long rowsToSkip = skipCounter.get();
@@ -306,6 +323,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
             skipCounter.add(excessCount);
+        }
+
+        @Override
+        public boolean supportsRecordBlocks() {
+            return base.supportsRecordBlocks();
         }
 
         @Override

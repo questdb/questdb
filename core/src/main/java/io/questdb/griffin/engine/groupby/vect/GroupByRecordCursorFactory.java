@@ -89,6 +89,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    // native frames come without column addresses, which the aggregating threads compute, see
+    // PageFrameCursor.deferFrameAddresses()
+    private final boolean deferFrameAddresses;
     private final PageFrameAddressCache frameAddressCache;
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
@@ -131,6 +134,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             this.base = base;
             this.frameAddressCache = new PageFrameAddressCache();
+            this.deferFrameAddresses = configuration.isSqlParallelFrameDispatchEnabled();
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
@@ -217,6 +221,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Emits the Rosti hash table's occupied slots, not the base cursor's rows: RostiRecordCursor
+    // walks the control bytes from slot 0 upwards and yields whichever symbol key happens to hash
+    // there, so the emission order is hash-slot order over the single group-by key. Any timestamp
+    // in the output is an aggregate value (max(ts), first(ts), ...) carried along for the ride, so
+    // it comes out in key-hash order, not ascending order. Same defect and same reasoning as the
+    // serial and parallel keyed group-bys; there is no source fix, because ordering the output by
+    // timestamp would mean sorting output the query never asked to sort.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     // Vector aggregates are column-bound builtins (sum/min/max/avg/count/...) with no argument
     // expressions, hence deterministic by construction; stability is the base's.
     @Override
@@ -242,6 +258,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             vafList.getQuick(i).clear();
         }
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        if (deferFrameAddresses) {
+            // the vector aggregates read every frame through the memory pools, which fill it in
+            pageFrameCursor.deferFrameAddresses();
+        }
         return cursor.of(
                 base.getMetadata(),
                 pageFrameCursor,

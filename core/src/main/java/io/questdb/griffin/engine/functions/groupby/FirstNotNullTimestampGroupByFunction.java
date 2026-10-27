@@ -131,6 +131,16 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getTimestamp(valueIndex + 1);
         if (srcVal == Numbers.LONG_NULL) {

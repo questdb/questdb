@@ -51,6 +51,7 @@ import org.jetbrains.annotations.TestOnly;
 public class QwpEgressMetrics implements Mutable {
     private final Counter batchOverflowSplitCounter;
     private final Counter batchesSentCounter;
+    private final Counter blockFillRowsCounter;
     private final Counter bytesCompressedSavedCounter;
     private final Counter bytesSentCounter;
     private final Counter cacheResetDictCounter;
@@ -68,6 +69,8 @@ public class QwpEgressMetrics implements Mutable {
         this.queriesCancelledCounter = metricsRegistry.newCounter("qwp_egress_queries_cancelled");
         this.batchesSentCounter = metricsRegistry.newCounter("qwp_egress_batches_sent");
         this.batchOverflowSplitCounter = metricsRegistry.newCounter("qwp_egress_batch_overflow_splits");
+        // rows of record-cursor results filled column by column from cursor blocks
+        this.blockFillRowsCounter = metricsRegistry.newCounter("qwp_egress_block_fill_rows");
         this.bytesSentCounter = metricsRegistry.newCounter("qwp_egress_bytes_sent");
         this.bytesCompressedSavedCounter = metricsRegistry.newCounter("qwp_egress_bytes_zstd_saved");
         this.rowsStreamedCounter = metricsRegistry.newCounter("qwp_egress_rows_streamed");
@@ -83,6 +86,11 @@ public class QwpEgressMetrics implements Mutable {
     @TestOnly
     public long batchesSentCount() {
         return batchesSentCounter.getValue();
+    }
+
+    @TestOnly
+    public long blockFillRowsCount() {
+        return blockFillRowsCounter.getValue();
     }
 
     public Counter bytesCompressedSavedCounter() {
@@ -106,6 +114,7 @@ public class QwpEgressMetrics implements Mutable {
         queriesCancelledCounter.reset();
         batchesSentCounter.reset();
         batchOverflowSplitCounter.reset();
+        blockFillRowsCounter.reset();
         bytesSentCounter.reset();
         bytesCompressedSavedCounter.reset();
         rowsStreamedCounter.reset();
@@ -130,6 +139,12 @@ public class QwpEgressMetrics implements Mutable {
         batchesSentCounter.inc();
         bytesSentCounter.add(bytes);
         rowsStreamedCounter.add(rows);
+    }
+
+    public void markBlockFillRows(int rows) {
+        if (rows > 0) {
+            blockFillRowsCounter.add(rows);
+        }
     }
 
     public void markBytesCompressedSaved(int bytes) {

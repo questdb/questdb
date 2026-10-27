@@ -140,6 +140,11 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

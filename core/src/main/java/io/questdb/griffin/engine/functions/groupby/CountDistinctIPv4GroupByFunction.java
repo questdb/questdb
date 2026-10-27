@@ -84,4 +84,9 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
             }
         }
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

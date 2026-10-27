@@ -155,6 +155,16 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

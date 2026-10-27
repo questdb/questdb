@@ -35,12 +35,28 @@ import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 abstract class AbstractPageFrameSequence {
+    // test-only: executions of a base with a local reduce threshold, see
+    // RecordCursorFactory.getLocalReduceMaxRows(), whose frames were reduced on the query's
+    // thread, and those whose frames were dispatched; counted only while a test asks for it
+    // (countFrameOpens()), so that production opens do not share a contended counter
+    // of the dispatched ones, those whose frames the workers decoded for a fold on the query's
+    // thread, see FrameDecodeAheadAtom
+    static final AtomicLong DECODED_AHEAD_FRAME_OPENS = new AtomicLong();
+    static final AtomicLong DISPATCHED_FRAME_OPENS = new AtomicLong();
+    static final AtomicLong LOCAL_FRAME_OPENS = new AtomicLong();
+    static volatile boolean isCountingFrameOpens;
+    // With the frame dispatch switch on, frames a base's local reduce threshold keeps on the
+    // query's thread at most: past them the per-frame work (a covered frame's detached cursor
+    // and decode) is the cost, whatever the rows, and the workers share it.
+    static final int LOCAL_REDUCE_MAX_FRAMES_DEFAULT = 64;
+    static volatile int LOCAL_REDUCE_MAX_FRAMES = LOCAL_REDUCE_MAX_FRAMES_DEFAULT;
     private static final int CANCEL_REASON_REDUCER_ERROR = -2;
     private static final int CANCEL_REASON_UNSET = -1;
     private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);
@@ -49,6 +65,25 @@ abstract class AbstractPageFrameSequence {
     private final FiberEventWaitQueue progressWaitQueue =
             new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private FiberDispatchContext dispatchContext;
+
+    /**
+     * Tests: the frames past which a local reduce threshold no longer keeps a sequence's frames
+     * on the query's thread, with the frame dispatch switch on; a negative value restores the
+     * default.
+     */
+    @TestOnly
+    public static void setLocalReduceMaxFramesForTesting(int frames) {
+        LOCAL_REDUCE_MAX_FRAMES = frames < 0 ? LOCAL_REDUCE_MAX_FRAMES_DEFAULT : frames;
+    }
+
+    static void countFrameOpens(boolean reduceFramesLocally, boolean decodeFramesAhead) {
+        if (isCountingFrameOpens) {
+            (reduceFramesLocally ? LOCAL_FRAME_OPENS : DISPATCHED_FRAME_OPENS).incrementAndGet();
+            if (decodeFramesAhead) {
+                DECODED_AHEAD_FRAME_OPENS.incrementAndGet();
+            }
+        }
+    }
 
     public CairoException buildInterruptionException() {
         final int reason = getCancelReason();

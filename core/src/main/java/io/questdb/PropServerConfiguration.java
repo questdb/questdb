@@ -53,6 +53,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
@@ -197,6 +198,17 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final boolean cairoGroupByBatchKernelsEnabled;
+    private final double cairoIndexScanChoiceMaxSelectivity;
+    private final double cairoCoveringScanChoiceMaxSelectivity;
+    private final double cairoCoveringGroupByScanChoiceMaxSelectivity;
+    private final long cairoParallelCoveringFrameRows;
+    private final long cairoParallelCoveringLocalMaxRows;
+    private final boolean cairoIndexScanChoiceEnabled;
+    private final boolean cairoParallelIndexGroupByEnabled;
+    private final int cairoParallelIndexGroupByFrameRows;
+    private final boolean cairoParallelFrameDispatchEnabled;
+    private final long cairoParallelIndexGroupByTaskRows;
     private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
@@ -521,10 +533,18 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int queryCacheEventQueueCapacity;
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
+    private final long sqlAsOfAdaptiveBackScanBudget;
+    private final boolean sqlAsOfAutoAlgo;
+    private final int sqlAsOfIndexMaxMasterBp;
+    private final int sqlAsOfIndexPostingMaxMasterBp;
+    private final int sqlAsOfMultiKeyFastMaxBackScanPct;
+    private final int sqlAsOfMultiKeyFastMaxMasterBp;
+    private final int sqlAsOfMemoizedDenseRunThreshold;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
+    private final int qwpEgressSymbolDenseMaxKeys;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
@@ -562,6 +582,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
     private final int sqlAsOfJoinShortCircuitCacheCapacity;
+    private final boolean sqlAsOfJoinVirtualKeyEnabled;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -591,6 +612,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlHorizonJoinBwdScanMinGap;
     private final long sqlHorizonJoinBwdScanSwitchFactor;
     private final int sqlHorizonJoinMaxOffsets;
+    private final int sqlIndexKeyMajorMaxKeys;
+    private final long sqlIndexKeyMajorMaxPartitionPasses;
+    private final int sqlIndexScanPageFrameMaxRows;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
     private final int sqlIntervalIncrementalMergeThreshold;
@@ -602,6 +626,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJitIRMemoryMaxPages;
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitMaxInListSizeThreshold;
+    private final boolean sqlJitScalarSubQueryEnabled;
+    private final boolean sqlJitSymbolEmptyConstantEnabled;
+    private final boolean sqlJitSymbolInBitsetEnabled;
+    private final boolean sqlSymbolInBitsetEnabled;
+    private final int sqlSymbolInBitsetMaxKeys;
     private final int sqlJitMode;
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
@@ -626,18 +655,34 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelHashJoinGroupByBuildParallelMinRows;
     private final long sqlParallelHashJoinGroupByBuildRowsPerPartition;
     private final boolean sqlParallelHashJoinGroupByEnabled;
+    private final boolean sqlParallelHashJoinProbeEnabled;
     private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
     private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
     private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
     private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
+    private final boolean sqlParallelWindowEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
+    private final boolean sqlParallelAsOfJoinEnabled;
+    private final boolean sqlParallelWindowChainEnabled;
+    private final boolean sqlParallelWindowShardEnabled;
+    private final boolean sqlParallelWindowKeyRunsEnabled;
+    private final long sqlParallelWindowMaxKeyRows;
+    private final int sqlParallelWindowMaxRounds;
+    private final long sqlParallelWindowMinRows;
+    private final long sqlParallelWindowPrefixRows;
+    private final boolean sqlParallelWindowMinMaxRewriteEnabled;
+    private final long sqlParallelWindowRoundRows;
+    private final long sqlParallelWindowTaskRows;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
     private final long sqlParquetCacheMemorySize;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
+    private final boolean sqlDistinctGroupByKeyPruningEnabled;
+    private final boolean sqlParallelApproxPercentileEnabled;
+    private final boolean sqlPivotFuseSourceEnabled;
     private final int sqlPivotMaxProducedColumns;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
@@ -789,6 +834,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int httpNetConnectionLimit;
     private long httpNetConnectionQueueTimeout;
+    private int httpNetPollBlockTimeout;
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
@@ -1550,6 +1596,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             // deprecated
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT, 5 * 1000L);
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT, this.httpNetConnectionQueueTimeout);
+            final long pollBlockTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT, 10);
+            if (pollBlockTimeout < 0 || pollBlockTimeout > 1_000) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getPropertyPath() + " must be between 0 and 1000 milliseconds");
+            }
+            this.httpNetPollBlockTimeout = (int) pollBlockTimeout;
 
             // deprecated
             this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, -1);
@@ -1887,6 +1938,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
             this.sqlPivotForColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY, 8);
             this.sqlPivotMaxProducedColumns = getInt(properties, env, PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5_000);
+            this.sqlPivotFuseSourceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PIVOT_FUSE_SOURCE_ENABLED, true);
+            this.sqlDistinctGroupByKeyPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_GROUPBY_KEY_PRUNING_ENABLED, true);
+            this.sqlParallelApproxPercentileEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_APPROX_PERCENTILE_ENABLED, true);
             this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlCreateTableColumnModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
@@ -1898,6 +1952,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            this.sqlAsOfAdaptiveBackScanBudget = getLong(properties, env, PropertyKey.CAIRO_SQL_ASOF_ADAPTIVE_BACKSCAN_BUDGET, -1);
+            this.sqlAsOfAutoAlgo = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_AUTO_ALGO, true);
+            this.sqlAsOfIndexMaxMasterBp = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_INDEX_MAX_MASTER_BP, 200);
+            this.sqlAsOfIndexPostingMaxMasterBp = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_INDEX_POSTING_MAX_MASTER_BP, 20);
+            this.sqlAsOfMultiKeyFastMaxBackScanPct = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_BACKSCAN_PCT, 25);
+            this.sqlAsOfMultiKeyFastMaxMasterBp = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_MASTER_BP, 10);
+            this.sqlAsOfMemoizedDenseRunThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_MEMOIZED_DENSE_RUN_THRESHOLD, 4096);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
             this.liveViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
@@ -1947,6 +2008,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
+            this.sqlIndexKeyMajorMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 1024);
+            this.sqlIndexKeyMajorMaxPartitionPasses = getLong(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 100_000);
             this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
             this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
             this.sqlAllPartitionOperationsAllowed = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, false);
@@ -1964,12 +2027,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, "0.5");
             this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+            this.sqlIndexScanPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1);
             this.sqlSmallPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
             this.sqlSmallPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
             // The batched GROUP BY probe packs the frame-relative row index into a
             // 24-bit slot. Reject misconfigurations that would silently truncate.
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, this.sqlPageFrameMinRows);
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, this.sqlPageFrameMaxRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, this.sqlIndexScanPageFrameMaxRows);
             validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, this.sqlSmallPageFrameMinRows);
             validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, this.sqlSmallPageFrameMaxRows);
 
@@ -1980,6 +2045,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 8);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
             this.sqlJitMaxInListSizeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 10);
+            this.sqlJitSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, true);
+            this.sqlAsOfJoinVirtualKeyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_VIRTUAL_KEY_ENABLED, true);
+            this.sqlJitScalarSubQueryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED, true);
+            this.sqlJitSymbolEmptyConstantEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_EMPTY_CONSTANT_ENABLED, true);
+            this.sqlSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, true);
+            this.sqlSymbolInBitsetMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 16 * 1024 * 1024);
 
             this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
@@ -2258,6 +2329,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be 0 (off) or in ["
                                 + QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL + ", "
                                 + QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + "]"
+                );
+            }
+            this.qwpEgressSymbolDenseMaxKeys = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS,
+                    QwpResultBatchBuffer.DEFAULT_SYMBOL_DENSE_MAX_KEYS
+            );
+            if (qwpEgressSymbolDenseMaxKeys < 0) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_EGRESS_SYMBOL_DENSE_MAX_KEYS.getPropertyPath() + " must be 0 (off) or positive"
                 );
             }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
@@ -2583,10 +2665,40 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByBatchSize = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 2048);
             validateGroupByBatchSize(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, this.cairoGroupByBatchSize);
+            this.cairoGroupByBatchKernelsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_KERNELS_ENABLED, true);
+            this.cairoParallelIndexGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, true);
+            this.cairoParallelIndexGroupByTaskRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_TASK_ROWS, 65_536);
+            if (cairoParallelIndexGroupByTaskRows < 1) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_TASK_ROWS.getPropertyPath() + " must be at least 1");
+            }
+            this.cairoParallelIndexGroupByFrameRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, cairoParallelIndexGroupByFrameRows);
+            this.cairoParallelFrameDispatchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, true);
+            this.cairoIndexScanChoiceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, true);
+            this.cairoIndexScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.05");
+            if (!(cairoIndexScanChoiceMaxSelectivity >= 0 && cairoIndexScanChoiceMaxSelectivity <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
+            }
+            this.cairoCoveringScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY, "0.15");
+            if (!(cairoCoveringScanChoiceMaxSelectivity >= 0 && cairoCoveringScanChoiceMaxSelectivity <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
+            }
+            this.cairoCoveringGroupByScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY, "0.25");
+            if (!(cairoCoveringGroupByScanChoiceMaxSelectivity >= 0 && cairoCoveringGroupByScanChoiceMaxSelectivity <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
+            }
+            this.cairoParallelCoveringFrameRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 65_536);
+            if (cairoParallelCoveringFrameRows < 1) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS.getPropertyPath() + " must be at least 1");
+            }
+            this.cairoParallelCoveringLocalMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS, 8_192);
+            if (cairoParallelCoveringLocalMaxRows < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS.getPropertyPath() + " must not be negative");
+            }
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
-            this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
+            this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100_000);
             this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
             this.cairoGroupByPresizeMaxCapacity = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY, 100_000_000);
             this.cairoGroupByPresizeMaxHeapSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, Numbers.SIZE_1GB);
@@ -2609,8 +2721,45 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelAsOfJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_ASOF_JOIN_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelWindowEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelWindowKeyRunsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, true);
+            this.sqlParallelWindowChainEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_CHAIN_ENABLED, true);
+            this.sqlParallelWindowShardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_SHARD_ENABLED, true);
+            this.sqlParallelWindowTaskRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 131_072);
+            if (sqlParallelWindowTaskRows < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowTaskRows));
+            }
+            this.sqlParallelWindowMaxKeyRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 4_194_304);
+            if (sqlParallelWindowMaxKeyRows < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowMaxKeyRows));
+            }
+            this.sqlParallelWindowMaxRounds = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS, 3);
+            if (sqlParallelWindowMaxRounds < 2) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS.getPropertyPath(),
+                        Integer.toString(sqlParallelWindowMaxRounds));
+            }
+            this.sqlParallelWindowMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 262_144);
+            if (sqlParallelWindowMinRows < 0) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowMinRows));
+            }
+            this.sqlParallelWindowPrefixRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16_384);
+            if (sqlParallelWindowPrefixRows < 0) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowPrefixRows));
+            }
+            this.sqlParallelWindowRoundRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 2_097_152);
+            if (sqlParallelWindowRoundRows < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowRoundRows));
+            }
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelWindowMinMaxRewriteEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MINMAX_REWRITE_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinProbeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PROBE_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByBuildParallelMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 300_000);
             if (sqlParallelHashJoinGroupByBuildParallelMinRows < 0) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS.getPropertyPath(),
@@ -2632,7 +2781,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
-                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
+                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled
+                    && !sqlParallelWindowEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
@@ -5331,6 +5481,41 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlAsOfAdaptiveBackScanBudget() {
+            return sqlAsOfAdaptiveBackScanBudget;
+        }
+
+        @Override
+        public boolean isSqlAsOfAutoAlgoEnabled() {
+            return sqlAsOfAutoAlgo;
+        }
+
+        @Override
+        public int getSqlAsOfIndexMaxMasterBp() {
+            return sqlAsOfIndexMaxMasterBp;
+        }
+
+        @Override
+        public int getSqlAsOfIndexPostingMaxMasterBp() {
+            return sqlAsOfIndexPostingMaxMasterBp;
+        }
+
+        @Override
+        public int getSqlAsOfMultiKeyFastMaxBackScanPct() {
+            return sqlAsOfMultiKeyFastMaxBackScanPct;
+        }
+
+        @Override
+        public int getSqlAsOfMultiKeyFastMaxMasterBp() {
+            return sqlAsOfMultiKeyFastMaxMasterBp;
+        }
+
+        @Override
+        public int getSqlAsOfMemoizedDenseRunThreshold() {
+            return sqlAsOfMemoizedDenseRunThreshold;
+        }
+
+        @Override
         public int getQueryRegistryPoolSize() {
             return sqlQueryRegistryPoolSize;
         }
@@ -5338,6 +5523,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpEgressForcedZstdLevel() {
             return qwpEgressForcedZstdLevel;
+        }
+
+        @Override
+        public int getQwpEgressSymbolDenseMaxKeys() {
+            return qwpEgressSymbolDenseMaxKeys;
         }
 
         @Override
@@ -5546,6 +5736,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlIndexKeyMajorMaxKeys() {
+            return sqlIndexKeyMajorMaxKeys;
+        }
+
+        @Override
+        public long getSqlIndexKeyMajorMaxPartitionPasses() {
+            return sqlIndexKeyMajorMaxPartitionPasses;
+        }
+
+        @Override
+        public int getSqlIndexScanPageFrameMaxRows() {
+            return sqlIndexScanPageFrameMaxRows;
+        }
+
+        @Override
         public int getSqlIntervalIncrementalMergeThreshold() {
             return sqlIntervalIncrementalMergeThreshold;
         }
@@ -5583,6 +5788,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJitMaxInListSizeThreshold() {
             return sqlJitMaxInListSizeThreshold;
+        }
+
+        @Override
+        public int getSqlSymbolInBitsetMaxKeys() {
+            return sqlSymbolInBitsetMaxKeys;
         }
 
         @Override
@@ -6242,6 +6452,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlAsOfJoinVirtualKeyEnabled() {
+            return sqlAsOfJoinVirtualKeyEnabled;
+        }
+
+        @Override
         public boolean isSqlDistinctGroupByRewriteEnabled() {
             // No production property backs this seam: the rewrite is always on in
             // a running server. Only tests override it (to reach
@@ -6252,6 +6467,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitScalarSubQueryEnabled() {
+            return sqlJitScalarSubQueryEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitSymbolEmptyConstantEnabled() {
+            return sqlJitSymbolEmptyConstantEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitSymbolInBitsetEnabled() {
+            return sqlJitSymbolInBitsetEnabled;
+        }
+
+        @Override
+        public boolean isSqlSymbolInBitsetEnabled() {
+            return sqlSymbolInBitsetEnabled;
         }
 
         @Override
@@ -6270,13 +6505,88 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlParallelGroupByBatchKernelsEnabled() {
+            return cairoGroupByBatchKernelsEnabled;
+        }
+
+        @Override
+        public double getSqlIndexScanChoiceMaxSelectivity() {
+            return cairoIndexScanChoiceMaxSelectivity;
+        }
+
+        @Override
+        public double getSqlCoveringScanChoiceMaxSelectivity() {
+            return cairoCoveringScanChoiceMaxSelectivity;
+        }
+
+        @Override
+        public double getSqlCoveringGroupByScanChoiceMaxSelectivity() {
+            return cairoCoveringGroupByScanChoiceMaxSelectivity;
+        }
+
+        @Override
+        public int getSqlParallelIndexGroupByFrameRows() {
+            return cairoParallelIndexGroupByFrameRows;
+        }
+
+        @Override
+        public long getSqlParallelCoveringFrameRows() {
+            return cairoParallelCoveringFrameRows;
+        }
+
+        @Override
+        public long getSqlParallelCoveringLocalMaxRows() {
+            return cairoParallelCoveringLocalMaxRows;
+        }
+
+        @Override
+        public boolean isSqlParallelFrameDispatchEnabled() {
+            return cairoParallelFrameDispatchEnabled;
+        }
+
+        @Override
+        public long getSqlParallelIndexGroupByTaskRows() {
+            return cairoParallelIndexGroupByTaskRows;
+        }
+
+        @Override
+        public boolean isSqlIndexScanChoiceEnabled() {
+            return cairoIndexScanChoiceEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelIndexGroupByEnabled() {
+            return cairoParallelIndexGroupByEnabled;
+        }
+
+        @Override
+        public boolean isSqlDistinctGroupByKeyPruningEnabled() {
+            return sqlDistinctGroupByKeyPruningEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelApproxPercentileEnabled() {
+            return sqlParallelApproxPercentileEnabled;
+        }
+
+        @Override
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
         }
 
         @Override
+        public boolean isSqlPivotFuseSourceEnabled() {
+            return sqlPivotFuseSourceEnabled;
+        }
+
+        @Override
         public boolean isSqlParallelHashJoinGroupByEnabled() {
             return sqlParallelHashJoinGroupByEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelHashJoinProbeEnabled() {
+            return sqlParallelHashJoinProbeEnabled;
         }
 
         @Override
@@ -6295,8 +6605,68 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlParallelWindowMaxKeyRows() {
+            return sqlParallelWindowMaxKeyRows;
+        }
+
+        @Override
+        public int getSqlParallelWindowMaxRounds() {
+            return sqlParallelWindowMaxRounds;
+        }
+
+        @Override
+        public long getSqlParallelWindowMinRows() {
+            return sqlParallelWindowMinRows;
+        }
+
+        @Override
+        public long getSqlParallelWindowPrefixRows() {
+            return sqlParallelWindowPrefixRows;
+        }
+
+        @Override
+        public long getSqlParallelWindowRoundRows() {
+            return sqlParallelWindowRoundRows;
+        }
+
+        @Override
+        public long getSqlParallelWindowTaskRows() {
+            return sqlParallelWindowTaskRows;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowEnabled() {
+            return sqlParallelWindowEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowMinMaxRewriteEnabled() {
+            return sqlParallelWindowMinMaxRewriteEnabled;
+        }
+
+        @Override
         public boolean isSqlParallelWindowJoinEnabled() {
             return sqlParallelWindowJoinEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelAsOfJoinEnabled() {
+            return sqlParallelAsOfJoinEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowKeyRunsEnabled() {
+            return sqlParallelWindowKeyRunsEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowChainEnabled() {
+            return sqlParallelWindowChainEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowShardEnabled() {
+            return sqlParallelWindowShardEnabled;
         }
 
         @Override
@@ -6817,6 +7187,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "http";
+        }
+
+        @Override
+        public int getPollBlockTimeout() {
+            return httpNetPollBlockTimeout;
         }
 
         @Override
