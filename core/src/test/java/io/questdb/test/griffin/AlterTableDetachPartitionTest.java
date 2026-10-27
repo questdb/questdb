@@ -1442,6 +1442,31 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testDetachAttachParquetPartitionAfterAddColumn() throws Exception {
+        // y, added while the partition is detached, has no Parquet column: attach skips it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-01T12:00:00.000000Z', 2),
+                        ('2024-01-02T00:00:00.000000Z', 3)
+                    """);
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE tab ADD COLUMN y INT");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            assertQuery("SELECT * FROM tab").timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
+                    ts\tx\ty
+                    2024-01-01T00:00:00.000000Z\t1\tnull
+                    2024-01-01T12:00:00.000000Z\t2\tnull
+                    2024-01-02T00:00:00.000000Z\t3\tnull
+                    """));
+        });
+    }
+
+    @Test
     public void testDetachAttachParquetPartitionAfterRoundTrip() throws Exception {
         // Reattach a parquet partition, then round-trip it through native and
         // back to parquet. Both writes rewrite the _pm; the test asserts the

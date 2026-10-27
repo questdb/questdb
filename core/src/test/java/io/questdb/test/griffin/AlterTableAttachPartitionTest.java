@@ -57,6 +57,7 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -433,6 +434,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachParquetPartitionWithDroppedUnknownColumnType() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("ALTER TABLE t DROP COLUMN x");
@@ -450,6 +452,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachParquetPartitionWithStagedMetadataUnknownColumnTypeFails() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
@@ -478,6 +481,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachParquetPartitionWithUnknownColumnTypeFailsCleanly() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
@@ -510,7 +514,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     """);
             execute("ALTER TABLE src CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             java.nio.file.Files.copy(
-                    firstPartitionDir("src", "2024-01-01").resolve(TableUtils.PARQUET_PARTITION_NAME),
+                    getPartitionPath("src", "2024-01-01").resolve(TableUtils.PARQUET_PARTITION_NAME),
                     attachable.resolve(TableUtils.PARQUET_PARTITION_NAME),
                     StandardCopyOption.REPLACE_EXISTING
             );
@@ -528,6 +532,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachParquetPartitionWithUnknownColumnTypeWalSkipped() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', 100)");
@@ -554,6 +559,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachParquetPartitionWithUnmappedUnknownColumnType() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             stageForeignParquet();
@@ -1435,7 +1441,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testReadParquetPartitionWithUnknownColumnTypeFailsCleanly() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             // The active partition cannot be converted, so keep a later native partition.
             execute("""
                     INSERT INTO t VALUES
@@ -1444,7 +1450,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         ('2024-01-02T00:00:00.000000Z', 101)
                     """);
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            final java.nio.file.Path pm = firstPartitionDir("t", "2024-01-01").resolve(TableUtils.PARQUET_METADATA_FILE_NAME);
+            final java.nio.file.Path pm = getPartitionPath("t", "2024-01-01").resolve(TableUtils.PARQUET_METADATA_FILE_NAME);
             engine.clear();
             final int originalType = patchParquetColumnType(pm, -1);
             for (int code : new int[]{-1, 0, 255}) {
@@ -1458,12 +1464,12 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 engine.clear();
             }
             patchParquetColumnType(pm, originalType);
-            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
+            assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
                     ts\tx
                     2024-01-01T00:00:00.000000Z\t100
                     2024-01-01T01:00:00.000000Z\tnull
                     2024-01-02T00:00:00.000000Z\t101
-                    """);
+                    """));
         });
     }
 
@@ -1658,20 +1664,6 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         );
     }
 
-    // The Parquet tests use microsecond tables whatever the test parameter, so look the
-    // partition up by index rather than by a timestamp parsed with the parameter's driver.
-    private java.nio.file.Path firstPartitionDir(String tableName, String partitionName) {
-        final long partitionNameTxn;
-        try (TableReader reader = getReader(tableName)) {
-            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-        }
-        return Paths.get(
-                configuration.getDbRoot(),
-                engine.verifyTableName(tableName).getDirName(),
-                partitionNameTxn > -1 ? partitionName + "." + partitionNameTxn : partitionName
-        );
-    }
-
     private void generateParquetMetadata(java.nio.file.Path partitionDir) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
@@ -1704,6 +1696,14 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         }
     }
 
+    private java.nio.file.Path getPartitionPath(String tableName, String partitionName) throws NumericException {
+        return Paths.get(
+                configuration.getDbRoot(),
+                engine.verifyTableName(tableName).getDirName(),
+                getPartitionDirName(tableName, partitionName)
+        );
+    }
+
     private int readAllRows(String tableName) {
         try (FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor()) {
             cursor.of(getReader(tableName));
@@ -1724,6 +1724,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
+    // The fixture holds microsecond timestamps, so its tests run under the MICRO parameter only.
     private java.nio.file.Path stageForeignParquet() throws Exception {
         final byte[] foreignParquet = Base64.getMimeDecoder().decode("""
                 UEFSMRUEFTAVNEwVBhUAEgAAGFwAICEQ1w0GAAD4lhfcDQYAAKiCJuYNBgAVABUIFQwsFQYVEBUG
