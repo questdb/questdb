@@ -1009,6 +1009,112 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprMaxIntervalCount() throws SqlException {
+        // Elements, time overrides and contiguous ranges take one interval each.
+        assertMaxIntervalCount("$today", 10, 1);
+        assertMaxIntervalCount("$now - 2h", 10, 1);
+        assertMaxIntervalCount("$today - 3bd", 10, 1);
+        assertMaxIntervalCount("[$yesterday, $today]", 10, 2);
+        assertMaxIntervalCount("[$yesterday, 2024-01-02]", 10, 2);
+        assertMaxIntervalCount("[$today, 2024-06-[01..05]]", 10, 6);
+        assertMaxIntervalCount("[$today, $yesterday]T[09:00,12:00,15:00]", 10, 6);
+        assertMaxIntervalCount("$today#workday", 10, 1);
+        assertMaxIntervalCount("$today@Europe/London", 10, 1);
+        assertMaxIntervalCount("$today..$today+5d", 10, 1);
+        assertMaxIntervalCount("$now - 1h..$now@+05:30", 10, 1);
+        assertMaxIntervalCount("[$today..$today+2d, $yesterday, 2024-01-01]", 10, 3);
+        // The end precedes the start, so the range never yields an interval, but a check stays.
+        assertMaxIntervalCount("$today..$today - 3d", 10, 1);
+        // The bound comes from the IR alone, so an offset that would walk billions of days costs
+        // nothing here.
+        assertMaxIntervalCount("$today..$today + 2147483647d", 10, 1);
+        assertMaxIntervalCount("$today - 2147483647y", 10, 1);
+
+        // The cap.
+        final String elevenTimes = "[$today]T[01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00]";
+        assertMaxIntervalCount(elevenTimes, 11, 11);
+        assertMaxIntervalCount(elevenTimes, 10, -1);
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 11, 11);
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 10, -1);
+        assertMaxIntervalCount("[$yesterday, $today]", 1, -1);
+
+        // No bound: these yield an interval per day or per session, and a range of days varies in
+        // its weekend days, its month or year lengths and the clock changes of its zone.
+        assertMaxIntervalCount("$today..$today+3bd", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$today..$today+5d@Europe/London", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$now - 1h..$now@America/Santiago", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$today..$today+1M#workday", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("[$today..$today+1y]T09:00", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$today..$today+2d;1h", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("[$today, $yesterday..$today+3bd]", Integer.MAX_VALUE, -1);
+        // Micros.addPeriod() and Nanos.addPeriod() return NULL for an unknown unit.
+        assertMaxIntervalCount("$today + 1x", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("[$yesterday, $today + 1x]", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$today..$today + 1x", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$today + 1x..$today", Integer.MAX_VALUE, -1);
+        assertMaxIntervalCount("$today;1h1x", Integer.MAX_VALUE, -1);
+        // evaluateExpr() maps an offset in 'D' to 'd', while applyDuration() does not.
+        assertMaxIntervalCount("$today + 1D", Integer.MAX_VALUE, 1);
+        assertMaxIntervalCount("$todayT09:00;1D", Integer.MAX_VALUE, -1);
+    }
+
+    @Test
+    public void testCompiledTickExprMaxIntervalCountHoldsForAnyNow() throws SqlException {
+        // The JIT filter compiles getMaxIntervalCount() range checks for an expression and refills
+        // them on every run, so a count above the bound at any "now" would lose rows. Evaluates each
+        // expression every 30 minutes through 2024 and 2025, and one unit either side of each of
+        // those instants. The half hours cover the midnights of every zone here, the clock changes
+        // at local midnight in America/Santiago and Asia/Beirut, and the one before it in
+        // Atlantic/Azores.
+        final String[] expressions = {
+                "$today", "$yesterday", "$tomorrow", "$now", "$now - 2h", "$now + 90m", "$now - 7s",
+                "$now + 1T", "$now - 3u", "$now + 5n", "$today + 1M", "$today - 1y", "$today + 3bd",
+                "$today - 1w", "$today + 5D",
+                "[$yesterday, $today]", "[$today, $tomorrow, $today + 2d]", "[$yesterday, 2024-01-02]",
+                "[$today, 2024-06-[01..05]]", "[$today - 1bd, $today + 1bd]",
+                "$todayT09:30;1h", "[$today]T[09:30,14:30];1h", "[$today, $yesterday]T[09:00,12:00,15:00]",
+                "[$today]T[09:00@Europe/London,10:00@America/New_York]", "[$today]T[00:00,23:30];1h",
+                "$today;6h", "$now;1h30m",
+                "$today#workday", "[$yesterday, $today, $tomorrow]#weekend", "[$now, $today]#workday",
+                "$today@Europe/London", "$today@+02:00", "$now@-03:30",
+                "[$yesterday, $today, $tomorrow]@America/Santiago", "[$yesterday, $today]@Asia/Beirut",
+                "[$today]T[00:00,23:00]@Atlantic/Azores;1h", "[$today, $tomorrow]@America/Santiago#workday",
+                "$now - 1h..$now", "$now - 1d..$now", "$today..$today+5d", "$yesterday..$tomorrow",
+                "$now..$now + 1M", "$today - 1y..$today", "$now - 3h..$today", "$today..$now",
+                "$now - 1h..$now@+05:30", "$today..$today+5d@-03:00",
+                "[$today..$today+2d, $yesterday]", "[$now - 1h..$now, 2024-03-[01..03]]",
+                "[$today..$tomorrow, $today + 1w..$today + 8d]"
+        };
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long start = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+        final long end = timestampDriver.parseFloorLiteral("2026-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(30);
+        final LongList intervals = new LongList();
+        for (String expression : expressions) {
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+                final int bound = compiled.getMaxIntervalCount(Integer.MAX_VALUE);
+                Assert.assertTrue(expression, bound > 0);
+                int maxCount = 0;
+                for (long now = start; now < end; now += step) {
+                    for (long delta = -1; delta <= 1; delta++) {
+                        intervals.clear();
+                        compiled.evaluate(intervals, now + delta);
+                        final int count = intervals.size() / 2;
+                        if (count > bound) {
+                            Assert.fail(expression + " yields " + count + " intervals, above its bound of " + bound
+                                    + ", at " + timestampDriver.toMSecString(now + delta));
+                        }
+                        maxCount = Math.max(maxCount, count);
+                    }
+                }
+                // Each expression yields an interval at some point, so the walk did evaluate it.
+                Assert.assertTrue(expression, maxCount > 0);
+            }
+        }
+    }
+
+    @Test
     public void testCompiledTickExprMixedListWithMoreThan255Elements() throws SqlException {
         // The element count used to take 8 bits, so the expression kept only count % 256 elements.
         // 2024-[01..09]-[01..28]T10:00 holds 252 elements and 2024-10-[01..0N]T10:00 holds N.
@@ -5997,6 +6103,13 @@ public class TickExprTest {
             Assert.assertEquals(expression, 2 * expectedElementCount, intervals.size());
         }
         assertCompiledTickExpr(expression);
+    }
+
+    private void assertMaxIntervalCount(String expression, int cap, int expectedCount) throws SqlException {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampType.getDriver(), configuration, expression, 0, expression.length(), 0)) {
+            Assert.assertEquals(expression, expectedCount, compiled.getMaxIntervalCount(cap));
+        }
     }
 
     private void assertCompiledTickExprWithNow(String expression, String nowStr) throws SqlException {

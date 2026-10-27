@@ -35,11 +35,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBoundBindVariable;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
@@ -1611,6 +1613,136 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testInTimestampDateVariableReadsBoundsFromBindVariables() throws Exception {
+        // Immediates would freeze the bounds a date variable has when the filter compiles, so a
+        // cached plan would go stale. The range checks read their bounds from bind variable slots,
+        // which the JIT factories refill on every cursor open.
+        final String oneCheck = "(i64 :0)(i64 %1$s)(>=)(i64 :1)(i64 %1$s)(<=)(&&)";
+        final String twoChecks = oneCheck + "(i64 :2)(i64 %1$s)(>=)(i64 :3)(i64 %1$s)(<=)(&&)(||)";
+        for (String c : new String[]{"adate", "atimestamp", "atimestampns"}) {
+            int options = serialize(c + " IN '$today'", false, false, true);
+            assertIR(String.format(oneCheck + "(ret)", c));
+            assertIRStackBalanced();
+            assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
+            assertTickBoundBindVariables(2);
+
+            options = serialize(c + " IN ('$TODAY')", false, false, true);
+            assertIR(String.format(oneCheck + "(ret)", c));
+            assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
+
+            // A check per interval the expression can yield.
+            serialize(c + " IN '[$yesterday, $today]'");
+            assertIR(String.format(twoChecks + "(ret)", c));
+            assertIRStackBalanced();
+            assertTickBoundBindVariables(4);
+
+            serialize(c + " NOT IN ('[$yesterday, $today]')");
+            assertIR(String.format(twoChecks + "(!)(ret)", c));
+            assertIRStackBalanced();
+
+            options = serialize(c + " IN '$today' OR along = 1", false, false, true);
+            assertIR(String.format("(i64 1L)(i64 along)(=)" + oneCheck + "(||)(ret)", c));
+            assertIRStackBalanced();
+            assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
+        }
+
+        // Each element, time override and contiguous range below takes one check.
+        assertDateVariableCheckCount("atimestamp IN '$today@Europe/London'", 1);
+        assertDateVariableCheckCount("atimestamp IN '$today#workday'", 1);
+        assertDateVariableCheckCount("atimestamp IN '$now - 2h'", 1);
+        assertDateVariableCheckCount("atimestamp IN '[$today - 1bd]'", 1);
+        assertDateVariableCheckCount("atimestamp IN '$todayT09:30;1h'", 1);
+        assertDateVariableCheckCount("atimestamp IN '[$today]T[09:30,14:30];1h'", 2);
+        assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-01]'", 2);
+        assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-[01..03]]'", 4);
+        assertDateVariableCheckCount("atimestampns IN '$now - 1h..$now'", 1);
+        assertDateVariableCheckCount("atimestamp IN '$now - 1h..$now@+02:00'", 1);
+        assertDateVariableCheckCount("atimestamp IN '$today..$today+5d'", 1);
+        assertDateVariableCheckCount("adate IN ('[$today..$today+5d, $tomorrow + 1M]')", 2);
+        assertDateVariableCheckCount("atimestamp IN '[$today]T[01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00]'", 10);
+
+        bindVariableService.clear();
+        bindVariableService.setTimestamp("ts", 0);
+        serialize(":ts IN '$today' OR along = 1");
+        // The key takes the slot between the two bounds and keeps it on the second read.
+        assertIR("(i64 1L)(i64 along)(=)(i64 :0)(i64 :1)(>=)(i64 :2)(i64 :1)(<=)(&&)(||)(ret)");
+        assertIRStackBalanced();
+        Assert.assertEquals(3, bindVarFunctions.size());
+
+        // In a short-circuit AND chain, the chain emits the interval's exit.
+        serialize("anint = 1 and atimestamp IN '$today' and auuid != '22222222-2222-2222-2222-222222222222'", true, false, true);
+        assertIR("(i32 1L)(i32 anint)(=)(&&_sc)" +
+                "(i64 :0)(i64 atimestamp)(>=)(i64 :1)(i64 atimestamp)(<=)(&&)(&&_sc)" +
+                "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)");
+    }
+
+    @Test
+    public void testInTimestampDateVariableResolvesBoundsOnInit() throws Exception {
+        // 2020-01-03 is a Friday and 2020-01-04 a Saturday.
+        final long fri = Micros.toMicros(2020, 1, 3, 10, 0);
+        final long sat = Micros.toMicros(2020, 1, 4, 10, 0);
+        final long friStart = Micros.toMicros(2020, 1, 3, 0, 0);
+        final long friEnd = Micros.toMicros(2020, 1, 4, 0, 0) - 1;
+        final long empty = Long.MAX_VALUE;
+        final long emptyHi = Long.MIN_VALUE;
+
+        serialize("atimestamp IN '$today#workday'");
+        assertTickBounds(fri, friStart, friEnd);
+        // No interval at a weekend: the padding matches no row.
+        assertTickBounds(sat, empty, emptyHi);
+        assertTickBounds(fri, friStart, friEnd);
+
+        // DATE compares in milliseconds, and the padding stays as is.
+        serialize("adate IN '[$today, $yesterday]#workday'");
+        assertTickBounds(sat, friStart / 1000, friEnd / 1000, empty, emptyHi);
+
+        // TIMESTAMP_NS compares in nanoseconds, against the nanosecond "now".
+        serialize("atimestampns IN '$now - 2h'");
+        assertTickBounds(fri, (fri - 2 * Micros.HOUR_MICROS) * 1000, (fri - 2 * Micros.HOUR_MICROS) * 1000);
+
+        // The two days merge into one interval.
+        serialize("atimestamp IN '[$yesterday, $today]'");
+        assertTickBounds(sat, friStart, friEnd + Micros.DAY_MICROS, empty, emptyHi);
+    }
+
+    @Test
+    public void testInTimestampDateVariableWithoutBoundDeclinesJit() throws Exception {
+        // These expressions have no interval bound that holds for every "now", or one above the IN
+        // list threshold (10 by default), in both IN forms. The Java filter runs them.
+        for (String expression : new String[]{
+                // A business-day range splits at weekends.
+                "$today..$today+3bd",
+                // A named zone can split a range of days at a clock change.
+                "$today..$today+5d@Europe/London",
+                // These yield an interval per day, and a month or a year has a varying day count.
+                "$today..$today+1M#workday",
+                "[$today..$today+1y]T09:00",
+                "$today..$today+2d;1h",
+                // Eleven intervals a day.
+                "[$today]T[01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00]",
+                "[$today, 2020-01-[01..10]]",
+                // An unknown offset unit.
+                "$today + 1x",
+                "$today..$today + 1x"
+        }) {
+            for (String filter : new String[]{
+                    "atimestamp IN '" + expression + "'",
+                    "adate IN ('" + expression + "')"
+            }) {
+                try {
+                    serialize(filter);
+                    Assert.fail("JIT must decline: " + filter);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "date variable interval has no bound within the JIT IN list threshold [threshold=10]"
+                    );
+                }
+            }
+        }
+    }
+
+    @Test
     public void testInTimestampEmptyIntervalNeverMatches() throws Exception {
         // 2020-01-04 is a Saturday, so the day filter leaves no interval. The IN used to push no
         // value, so the parent OR, AND or NOT popped one that was never pushed: the JVM crashed, or
@@ -2831,26 +2963,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedConstantPredicate2() throws Exception {
         serialize("anint = 0 or 2 > 1");
-    }
-
-    @Test
-    public void testUnsupportedDateVariableInterval() throws Exception {
-        // The Java filter resolves a date variable each time the cursor opens. The IR would freeze
-        // the bounds at compile time, and a cached plan would go stale.
-        for (String filter : new String[]{
-                "atimestamp IN '$today'",
-                "atimestamp IN ('$today')",
-                "atimestampns IN '$now - 1h..$now'",
-                "adate IN ('[$yesterday, $tomorrow]')",
-                "along = 1 and atimestamp IN '$TODAY'"
-        }) {
-            try {
-                serialize(filter);
-                Assert.fail("JIT must decline: " + filter);
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "date variables are not supported by JIT");
-            }
-        }
     }
 
     @Test(expected = SqlException.class)
@@ -4520,6 +4632,18 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
     }
 
+    // Serializes the filter and checks that it holds expectedCheckCount range checks on bind
+    // variable slots.
+    private void assertDateVariableCheckCount(String filter, int expectedCheckCount) throws SqlException {
+        serialize(filter);
+        assertIRStackBalanced();
+        assertTickBoundBindVariables(2 * expectedCheckCount);
+        final String ir = new TestIRSerializer(irMemory, metadata).serialize();
+        Assert.assertEquals(filter, expectedCheckCount, ir.split("\\(>=\\)", -1).length - 1);
+        Assert.assertEquals(filter, expectedCheckCount - 1, ir.split("\\(\\|\\|\\)", -1).length - 1);
+        Assert.assertFalse(filter, ir.contains("L)"));
+    }
+
     private void assertIR(String message, String expectedIR) {
         assertIR(irMemory, message, expectedIR);
     }
@@ -4593,6 +4717,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
      * walk rejects the whole opcode class instead; pin a short-circuit shape with
      * {@link #assertIR}.
      */
+    // Initializes the bind variable functions of the last serialized filter at the given clock, as
+    // the JIT factories do on every cursor open, and checks the bounds they hold.
+    private void assertTickBounds(long nowMicros, long... expectedBounds) throws SqlException {
+        setCurrentMicros(nowMicros);
+        Assert.assertEquals(expectedBounds.length, bindVarFunctions.size());
+        Function.init(bindVarFunctions, null, sqlExecutionContext, null);
+        for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+            Assert.assertEquals("bound " + i, expectedBounds[i], bindVarFunctions.getQuick(i).getLong(null));
+        }
+    }
+
+    private void assertTickBoundBindVariables(int expectedCount) {
+        Assert.assertEquals(expectedCount, bindVarFunctions.size());
+        for (int i = 0; i < expectedCount; i++) {
+            final Function function = bindVarFunctions.getQuick(i);
+            Assert.assertTrue(function instanceof CompiledFilterTickBoundBindVariable);
+            Assert.assertEquals(ColumnType.LONG, function.getType());
+        }
+    }
+
     private void assertIRStackBalanced() {
         long offset = 0;
         int depth = 0;

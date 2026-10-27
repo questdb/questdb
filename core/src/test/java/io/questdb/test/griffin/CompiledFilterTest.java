@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -57,6 +58,20 @@ import java.util.function.UnaryOperator;
  * random access, record behavior, and so on.
  */
 public class CompiledFilterTest extends AbstractCairoTest {
+    // Three days in two intervals, since $yesterday and $today merge. The JIT compiles three range
+    // checks for it and pads the third. Over createTemporalDaysTable(), it holds k = 7, 8 and 10 on
+    // 2024-01-08, and k = 4, 5 and 7 on 2024-01-05.
+    private static final String DAYS_AROUND_TODAY = "'[$yesterday, $today, $today + 2d]'";
+    private static final String DAYS_AROUND_TODAY_GROUPS_5 = """
+            s\tc\tsk
+            a\t2\t12
+            b\t1\t4
+            """;
+    private static final String DAYS_AROUND_TODAY_GROUPS_8 = """
+            s\tc\tsk
+            a\t1\t7
+            b\t2\t18
+            """;
 
     @Before
     public void setUp() {
@@ -222,14 +237,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testDateVariableIntervalAboveInListThresholdFollowsClock() throws Exception {
         // Eleven intervals a day, one more than cairo.sql.jit.max.in.list.size.threshold allows by
-        // default.
+        // default, so the Java filter runs it.
         final String times = "[$today]T[02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00,12:00]";
         assertMemoryLeak(() -> {
             createTemporalDaysTable();
             for (String c : new String[]{"dt", "tm", "tn"}) {
-                assertFilterFollowsClock(c + " IN '" + times + "'", jan2024(5), keys(5), jan2024(6), keys(6));
-                assertFilterFollowsClock(c + " IN ('" + times + "')", jan2024(5), keys(5), jan2024(6), keys(6));
-                assertFilterFollowsClock(c + " NOT IN '" + times + "'", jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept(6));
+                assertFilterFollowsClock(c + " IN '" + times + "'", false, jan2024(5), keys(5), jan2024(6), keys(6));
+                assertFilterFollowsClock(c + " IN ('" + times + "')", false, jan2024(5), keys(5), jan2024(6), keys(6));
+                assertFilterFollowsClock(c + " NOT IN '" + times + "'", false, jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept(6));
             }
             assertFollowsClock("SELECT k FROM x WHERE ts IN '" + times + "'", false, jan2024(5), keys(5), jan2024(6), keys(6));
             assertFollowsClock("SELECT k FROM x WHERE ts IN '" + times + "' OR k = 1", false, jan2024(5), keys(1, 5), jan2024(6), keys(1, 6));
@@ -240,25 +255,27 @@ public class CompiledFilterTest extends AbstractCairoTest {
     public void testDateVariableIntervalCountChangeFollowsClock() throws Exception {
         // The interval count of these expressions moves with the clock: $today#workday has no
         // interval at weekends, $today..$today+3bd splits at a weekend, and [$yesterday, 2024-01-02]
-        // merges into one interval when $yesterday reaches 2024-01-02 or the day after it.
+        // merges into one interval when $yesterday reaches 2024-01-02 or the day after it. The JIT
+        // compiles a range check for each interval an expression can yield and pads the unused
+        // ones. A business-day range has no such bound, and runs on the Java filter.
         assertMemoryLeak(() -> {
             createTemporalDaysTable();
             for (String c : new String[]{"dt", "tm", "tn"}) {
                 // 2024-01-05 is a Friday, 2024-01-06 a Saturday and 2024-01-08 a Monday.
-                assertFilterFollowsClock(c + " IN '$today#workday'", jan2024(5), keys(5), jan2024(6), keys());
-                assertFilterFollowsClock(c + " IN '$today#workday'", jan2024(6), keys(), jan2024(8), keys(8));
-                assertFilterFollowsClock(c + " IN ('$today#workday')", jan2024(5), keys(5), jan2024(6), keys());
-                assertFilterFollowsClock(c + " NOT IN '$today#workday'", jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept());
-                assertFilterFollowsClock("NOT " + c + " IN '$today#workday'", jan2024(6), allDayKeysExcept(), jan2024(5), allDayKeysExcept(5));
-                assertFilterFollowsClock(c + " IN '$today#workday' OR k = 2", jan2024(6), keys(2), jan2024(5), keys(2, 5));
-                assertFilterFollowsClock(c + " IN '$today#workday' AND k > 4", jan2024(6), keys(), jan2024(5), keys(5));
+                assertFilterFollowsClock(c + " IN '$today#workday'", true, jan2024(5), keys(5), jan2024(6), keys());
+                assertFilterFollowsClock(c + " IN '$today#workday'", true, jan2024(6), keys(), jan2024(8), keys(8));
+                assertFilterFollowsClock(c + " IN ('$today#workday')", true, jan2024(5), keys(5), jan2024(6), keys());
+                assertFilterFollowsClock(c + " NOT IN '$today#workday'", true, jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept());
+                assertFilterFollowsClock("NOT " + c + " IN '$today#workday'", true, jan2024(6), allDayKeysExcept(), jan2024(5), allDayKeysExcept(5));
+                assertFilterFollowsClock(c + " IN '$today#workday' OR k = 2", true, jan2024(6), keys(2), jan2024(5), keys(2, 5));
+                assertFilterFollowsClock(c + " IN '$today#workday' AND k > 4", true, jan2024(6), keys(), jan2024(5), keys(5));
                 // From a Monday, 3 business days stay in one week. From a Friday, they cross a weekend.
-                assertFilterFollowsClock(c + " IN '$today..$today+3bd'", jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
-                assertFilterFollowsClock(c + " IN ('$today..$today+3bd')", jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
-                assertFilterFollowsClock(c + " NOT IN '$today..$today+3bd'", jan2024(8), allDayKeysExcept(8, 9, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 9, 10));
-                assertFilterFollowsClock(c + " IN '[$yesterday, 2024-01-02]'", jan2024(3), keys(2), jan2024(5), keys(2, 4));
-                assertFilterFollowsClock(c + " IN '[$yesterday, 2024-01-02]'", jan2024(5), keys(2, 4), jan2024(4), keys(2, 3));
-                assertFilterFollowsClock(c + " NOT IN '[$yesterday, 2024-01-02]'", jan2024(3), allDayKeysExcept(2), jan2024(5), allDayKeysExcept(2, 4));
+                assertFilterFollowsClock(c + " IN '$today..$today+3bd'", false, jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
+                assertFilterFollowsClock(c + " IN ('$today..$today+3bd')", false, jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
+                assertFilterFollowsClock(c + " NOT IN '$today..$today+3bd'", false, jan2024(8), allDayKeysExcept(8, 9, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 9, 10));
+                assertFilterFollowsClock(c + " IN '[$yesterday, 2024-01-02]'", true, jan2024(3), keys(2), jan2024(5), keys(2, 4));
+                assertFilterFollowsClock(c + " IN '[$yesterday, 2024-01-02]'", true, jan2024(5), keys(2, 4), jan2024(4), keys(2, 3));
+                assertFilterFollowsClock(c + " NOT IN '[$yesterday, 2024-01-02]'", true, jan2024(3), allDayKeysExcept(2), jan2024(5), allDayKeysExcept(2, 4));
             }
         });
     }
@@ -275,38 +292,51 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertFollowsClock("SELECT k FROM x WHERE ts NOT IN '$today..$today+3bd'", false, jan2024(8), allDayKeysExcept(8, 9, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 9, 10));
             assertFollowsClock("SELECT k FROM x WHERE ts IN '[$yesterday, 2024-01-02]'", false, jan2024(3), keys(2), jan2024(5), keys(2, 4));
             // Filter.
-            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#workday' OR k = 2", false, jan2024(6), keys(2), jan2024(5), keys(2, 5));
-            assertFollowsClock("SELECT k FROM x WHERE NOT ts IN '$today#workday' OR k = 2", false, jan2024(6), allDayKeysExcept(), jan2024(5), allDayKeysExcept(5));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#workday' OR k = 2", true, jan2024(6), keys(2), jan2024(5), keys(2, 5));
+            assertFollowsClock("SELECT k FROM x WHERE NOT ts IN '$today#workday' OR k = 2", true, jan2024(6), allDayKeysExcept(), jan2024(5), allDayKeysExcept(5));
             assertFollowsClock("SELECT k FROM x WHERE ts IN '$today..$today+3bd' OR k = 2", false, jan2024(8), keys(2, 8, 9, 10, 11), jan2024(5), keys(2, 5, 8, 9, 10));
             assertFollowsClock("SELECT k FROM x WHERE ts NOT IN '$today..$today+3bd' OR k = 9", false, jan2024(8), allDayKeysExcept(8, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 10));
-            assertFollowsClock("SELECT k FROM x WHERE ts IN '[$yesterday, 2024-01-02]' OR k = 1", false, jan2024(3), keys(1, 2), jan2024(5), keys(1, 2, 4));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '[$yesterday, 2024-01-02]' OR k = 1", true, jan2024(3), keys(1, 2), jan2024(5), keys(1, 2, 4));
         });
     }
 
     @Test
     public void testDateVariableIntervalInFilterFollowsClock() throws Exception {
         // The JIT used to resolve date variables such as $today when it compiled the filter, so a
-        // cached plan kept the bounds of the moment it was compiled. The JIT now declines date
-        // variables, and the Java filter resolves them each time the cursor opens.
+        // cached plan kept the bounds of the moment it was compiled. The JIT now reads the bounds
+        // from bind variable slots, which the factory fills each time the cursor opens.
         assertMemoryLeak(() -> {
             createTemporalInTable();
             final long jan2 = 1_704_153_600_000_000L;
             final long hour = 3_600_000_000L;
             final long day = 24 * hour;
             for (String c : new String[]{"dt", "tm", "tn"}) {
-                assertFilterFollowsClock(c + " IN '$today'", jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
-                assertFilterFollowsClock(c + " IN ('$today')", jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
-                assertFilterFollowsClock(c + " NOT IN '$today'", jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
-                assertFilterFollowsClock(c + " NOT IN ('$today')", jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
-                assertFilterFollowsClock(c + " IN '$yesterday'", jan2 + hour, "k\n5\n", jan2 + day + hour, "k\n1\n2\n");
-                assertFilterFollowsClock(c + " IN '$tomorrow'", jan2 - day + hour, "k\n1\n2\n", jan2 + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " IN '$today'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " IN ('$today')", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " NOT IN '$today'", true, jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                assertFilterFollowsClock(c + " NOT IN ('$today')", true, jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                assertFilterFollowsClock(c + " IN '$yesterday'", true, jan2 + hour, "k\n5\n", jan2 + day + hour, "k\n1\n2\n");
+                assertFilterFollowsClock(c + " IN '$tomorrow'", true, jan2 - day + hour, "k\n1\n2\n", jan2 + hour, "k\n3\n");
                 // 2024-01-02 is a Tuesday and 2024-01-03 a Wednesday.
-                assertFilterFollowsClock(c + " IN '[$today - 1bd]'", jan2 + day + hour, "k\n1\n2\n", jan2 + hour, "k\n5\n");
-                assertFilterFollowsClock(c + " IN '[$yesterday, $today]'", jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n1\n2\n3\n");
+                assertFilterFollowsClock(c + " IN '[$today - 1bd]'", true, jan2 + day + hour, "k\n1\n2\n", jan2 + hour, "k\n5\n");
+                assertFilterFollowsClock(c + " IN '[$yesterday, $today]'", true, jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n1\n2\n3\n");
                 // $now moves within the day.
-                assertFilterFollowsClock(c + " IN '$now - 1h..$now'", jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n1\n");
-                assertFilterFollowsClock(c + " IN '$now - 1h..$now' AND k > 1", jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n");
-                assertFilterFollowsClock(c + " IN '$today' OR k = 5", jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n3\n5\n");
+                assertFilterFollowsClock(c + " IN '$now - 1h..$now'", true, jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n1\n");
+                assertFilterFollowsClock(c + " IN '$now - 1h..$now' AND k > 1", true, jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n");
+                assertFilterFollowsClock(c + " IN '$today' OR k = 5", true, jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n3\n5\n");
+                // A point in time, and a range of whole days.
+                assertFilterFollowsClock(c + " IN '$now - 12h'", true, jan2 + day, "k\n1\n", jan2 + 13 * hour, "k\n");
+                assertFilterFollowsClock(c + " IN '$today..$today+1d'", true, jan2 + hour, "k\n1\n2\n3\n", jan2 - day + hour, "k\n1\n2\n5\n");
+                // Time overrides, one interval each.
+                assertFilterFollowsClock(c + " IN '$todayT11:30;1h'", true, jan2 + hour, "k\n1\n", jan2 + day + hour, "k\n");
+                assertFilterFollowsClock(c + " IN '[$today]T[00:00,12:00];1m'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " NOT IN '[$today]T[00:00,12:00];1m'", true, jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                // Timezones. London keeps UTC in January.
+                assertFilterFollowsClock(c + " IN '$today@+01:00'", true, jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " IN '$today@Europe/London'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                // A range of days in a named zone can split at a clock change, so its interval count
+                // has no bound the JIT relies on.
+                assertFilterFollowsClock(c + " IN '$today..$today+1d@Europe/London'", false, jan2 + hour, "k\n1\n2\n3\n", jan2 - day + hour, "k\n1\n2\n5\n");
             }
         });
     }
@@ -332,8 +362,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     """;
             assertFollowsClock(groupBy + constant + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), expected5, jan2024(5), expected5);
             assertFollowsClock(groupBy + "'$today..$today+3bd' ORDER BY s", false, QueryAssertion::expectSize, jan2024(8), expected8, jan2024(5), expected5);
+            assertFollowsClock(groupBy + DAYS_AROUND_TODAY + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), DAYS_AROUND_TODAY_GROUPS_8, jan2024(5), DAYS_AROUND_TODAY_GROUPS_5);
             assertFollowsClock(topK + constant + " ORDER BY k DESC LIMIT 2", true, QueryAssertion::expectSize, jan2024(8), keys(10, 9), jan2024(5), keys(10, 9));
             assertFollowsClock(topK + "'$today..$today+3bd' ORDER BY k DESC LIMIT 2", false, QueryAssertion::expectSize, jan2024(8), keys(11, 10), jan2024(5), keys(10, 9));
+            assertFollowsClock(topK + DAYS_AROUND_TODAY + " ORDER BY k DESC LIMIT 2", true, QueryAssertion::expectSize, jan2024(8), keys(10, 8), jan2024(5), keys(7, 5));
         });
     }
 
@@ -357,6 +389,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     """;
             assertFollowsClock(query + constant + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), expected5, jan2024(5), expected5);
             assertFollowsClock(query + "'$today..$today+3bd' ORDER BY s", false, QueryAssertion::expectSize, jan2024(8), expected8, jan2024(5), expected5);
+            assertFollowsClock(query + DAYS_AROUND_TODAY + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), DAYS_AROUND_TODAY_GROUPS_8, jan2024(5), DAYS_AROUND_TODAY_GROUPS_5);
         });
     }
 
@@ -380,24 +413,62 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     """;
             assertFollowsClock(query + constant + " LATEST ON ts PARTITION BY s", true, QueryAssertion::expectSize, jan2024(8), expected5, jan2024(5), expected5);
             assertFollowsClock(query + "'$today..$today+3bd' LATEST ON ts PARTITION BY s", false, QueryAssertion::expectSize, jan2024(8), expected8, jan2024(5), expected5);
+            assertFollowsClock(
+                    query + DAYS_AROUND_TODAY + " LATEST ON ts PARTITION BY s",
+                    true,
+                    QueryAssertion::expectSize,
+                    jan2024(8),
+                    """
+                            s\tk
+                            a\t7
+                            b\t10
+                            """,
+                    jan2024(5),
+                    """
+                            s\tk
+                            b\t4
+                            a\t7
+                            """
+            );
         });
     }
 
     @Test
     public void testDateVariableIntervalInWindowJoinFollowsClock() throws Exception {
         // AsyncWindowJoinAtom initializes the filter each time the cursor opens. The factory does not
-        // report whether it compiled the filter with the JIT.
+        // report whether it compiled the filter with the JIT through usesCompiledFilter(), so the
+        // test asks its atom.
         assertMemoryLeak(() -> {
             createTemporalDaysTable();
             createDaysJoinSlaveTable();
+            final String query = """
+                    SELECT t.k, sum(p.v) sv
+                    FROM x t
+                    WINDOW JOIN p ON (t.s = p.s)
+                    RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING INCLUDE PREVAILING
+                    WHERE t.tm IN\s""";
             assertFollowsClock(
+                    query + DAYS_AROUND_TODAY,
+                    false,
+                    QueryAssertion::noRandomAccess,
+                    jan2024(8),
                     """
-                            SELECT t.k, sum(p.v) sv
-                            FROM x t
-                            WINDOW JOIN p ON (t.s = p.s)
-                            RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING INCLUDE PREVAILING
-                            WHERE t.tm IN '$today..$today+3bd'
+                            k\tsv
+                            7\t1.0
+                            8\t2.0
+                            10\t2.0
                             """,
+                    jan2024(5),
+                    """
+                            k\tsv
+                            4\t2.0
+                            5\t1.0
+                            7\t1.0
+                            """
+            );
+            assertWindowJoinUsesCompiledFilter(query + DAYS_AROUND_TODAY, true);
+            assertFollowsClock(
+                    query + "'$today..$today+3bd'",
                     false,
                     QueryAssertion::noRandomAccess,
                     jan2024(8),
@@ -417,6 +488,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                             10\t2.0
                             """
             );
+            assertWindowJoinUsesCompiledFilter(query + "'$today..$today+3bd'", false);
         });
     }
 
@@ -449,11 +521,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
             final long t3 = jan2 + 45 * 60_000_000L;
             assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now'", false, t3, "k\n2\n", jan2 + 12 * hour + hour / 2, "k\n3\n");
             assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' AND k > 2", true, t1, "k\n3\n", t2, "k\n4\n5\n");
-            // Filter. The JIT declines date variables, so the Java filter runs in every JIT mode.
-            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' OR k = 1", false, t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
-            assertFollowsClock("SELECT k FROM y WHERE ts IN ('$today') OR k = 1", false, t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
-            assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today' OR k = 3", false, t1, "k\n1\n3\n4\n5\n", t2, "k\n1\n2\n3\n");
-            assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now' OR k = 1", false, t3, "k\n1\n2\n", jan2 + 12 * hour + hour / 2, "k\n1\n3\n");
+            // Filter.
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' OR k = 1", true, t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN ('$today') OR k = 1", true, t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today' OR k = 3", true, t1, "k\n1\n3\n4\n5\n", t2, "k\n1\n2\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now' OR k = 1", true, t3, "k\n1\n2\n", jan2 + 12 * hour + hour / 2, "k\n1\n3\n");
         });
     }
 
@@ -482,10 +554,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 final long sat = Micros.toMicros(2025, 1, 25, 1, 0);
                 final long mon = Micros.toMicros(2025, 1, 27, 1, 0);
                 for (String c : new String[]{"dt", "tm", "tn"}) {
-                    assertFilterFollowsClock(c + " IN '$today#XNYS'", fri, keys(2), mon, keys(3));
-                    assertFilterFollowsClock(c + " IN ('$today#XNYS')", sat, keys(), mon, keys(3));
-                    assertFilterFollowsClock(c + " NOT IN '$today#XNYS'", fri, keys(1, 3, 4), sat, keys(1, 2, 3, 4));
-                    assertFilterFollowsClock(c + " IN '$today#XNYS' OR k = 1", sat, keys(1), fri, keys(1, 2));
+                    assertFilterFollowsClock(c + " IN '$today#XNYS'", false, fri, keys(2), mon, keys(3));
+                    assertFilterFollowsClock(c + " IN ('$today#XNYS')", false, sat, keys(), mon, keys(3));
+                    assertFilterFollowsClock(c + " NOT IN '$today#XNYS'", false, fri, keys(1, 3, 4), sat, keys(1, 2, 3, 4));
+                    assertFilterFollowsClock(c + " IN '$today#XNYS' OR k = 1", false, sat, keys(1), fri, keys(1, 2));
                 }
                 assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#XNYS'", false, fri, keys(2), mon, keys(3));
                 assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#XNYS' OR k = 1", false, sat, keys(1), fri, keys(1, 2));
@@ -2348,9 +2420,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
         assertFollowsClock(query, isJitExpected, q -> q.expectSize().noRandomAccess(), micros1, "count\n" + count1 + "\n", micros2, "count\n" + count2 + "\n");
     }
 
-    private void assertFilterFollowsClock(String filter, long micros1, String expected1, long micros2, String expected2) throws Exception {
-        // The JIT declines date variables, so the Java filter runs in every JIT mode.
-        assertFollowsClock("SELECT k FROM x WHERE " + filter, false, micros1, expected1, micros2, expected2);
+    private void assertFilterFollowsClock(String filter, boolean isJitExpected, long micros1, String expected1, long micros2, String expected2) throws Exception {
+        assertFollowsClock("SELECT k FROM x WHERE " + filter, isJitExpected, micros1, expected1, micros2, expected2);
     }
 
     private void assertFilterWithAndWithoutJit(String filter, String expected, boolean isJitExpected) throws Exception {
@@ -2432,6 +2503,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 (6, 6, 'x')
                 """).returns("v\n", expected);
         assertSqlRunWithJit(query);
+    }
+
+    private void assertWindowJoinUsesCompiledFilter(String query, boolean isJitExpected) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            RecordCursorFactory base = factory;
+            while (!(base instanceof AsyncWindowJoinFastRecordCursorFactory windowJoin)) {
+                base = base.getBaseFactory();
+            }
+            Assert.assertEquals(query, isJitExpected, windowJoin.getAtom().getCompiledMasterFilter() != null);
+        }
     }
 
     private void createDaysJoinSlaveTable() throws SqlException {

@@ -140,10 +140,27 @@ public class CompiledTickExpression extends UntypedFunction {
         return (hasDurationWithExchange ? HDR_DWE_BIT : 0L) | (dayFilterMask & HDR_DAY_MASK);
     }
 
+    // Micros.addPeriod() and Nanos.addPeriod() return NULL for a unit they do not know, and
+    // DateVariableExpr.parseEncoded() accepts any single character as the unit. evaluateExpr()
+    // maps 'D' to 'd', and a zero unit means no offset.
+    private static boolean hasKnownOffsetUnit(long encoded) {
+        final char unit = (char) ((encoded >>> IR_UNIT_SHIFT) & 0xFFFF);
+        return unit == 0 || unit == 'D' || isKnownDurationUnit(unit);
+    }
+
+    // The units Micros.addPeriod() and Nanos.addPeriod() know. IntervalUtils.compileTickExpr()
+    // accepts any character as a duration unit, and applyDuration() passes it to the driver as is.
+    private static boolean isKnownDurationUnit(char unit) {
+        return switch (unit) {
+            case 'n', 'u', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y' -> true;
+            default -> false;
+        };
+    }
+
     /**
      * Evaluates the tick expression with the given "now" timestamp and appends
-     * the resulting [lo, hi] interval pairs to outIntervals.
-     * This overload is intended for testing without a SqlExecutionContext.
+     * the resulting [lo, hi] interval pairs to outIntervals. For callers that
+     * read "now" themselves, and for tests without a SqlExecutionContext.
      */
     public void evaluate(LongList outIntervals, long now) {
         this.now = now;
@@ -195,6 +212,82 @@ public class CompiledTickExpression extends UntypedFunction {
         if (outIntervals.size() > outStart + 2) {
             IntervalUtils.unionBracketExpandedIntervals(outIntervals, outStart);
         }
+    }
+
+    public String getExpression() {
+        return expression;
+    }
+
+    /**
+     * Returns an upper bound on the number of intervals {@link #evaluate} yields for any "now", or
+     * -1 when this method knows no bound or the bound exceeds {@code cap}. The JIT filter compiles a
+     * fixed number of range checks for the expression and fills them on every execution, so the
+     * bound has to hold for every clock value, not only for the current one: '$today#workday' yields
+     * one interval on a weekday and none at a weekend.
+     * <p>
+     * The bound is the sum of the element bounds. The day filter only drops intervals, the timezone
+     * conversion maps each interval to one, and the final merge only joins them, so none of them
+     * raises the count.
+     * <ul>
+     *     <li>STATIC: 1. The compiler expands a static element into one STATIC entry per
+     *     interval.</li>
+     *     <li>SINGLE_VAR: the time override count, or 1 without time overrides.
+     *     {@link #emitSingleVar} emits one interval per time override for a day-aligned value, and
+     *     one interval otherwise.</li>
+     *     <li>RANGE: 1 when the range is contiguous, that is, it has no business-day walk, and the
+     *     expression has no time override, duration, day filter or named timezone (a numeric offset
+     *     is fine). {@link #emitRange} then emits either one interval or a run of adjacent whole
+     *     days, which the final merge joins into one. Any other range yields a count that follows
+     *     the length of the range, the weekends in it or the clock changes of the zone, and gets no
+     *     bound.</li>
+     * </ul>
+     * An exchange calendar splits intervals into sessions, so it gets no bound. Nor does an offset or
+     * duration unit the timestamp driver does not know: the driver adds it as NULL, and the JIT
+     * filter compares a NULL bound unlike the Java filter.
+     */
+    public int getMaxIntervalCount(int cap) {
+        if (exchangeSchedule != null) {
+            return -1;
+        }
+        for (int i = 0; i < durationPartCount; i++) {
+            if (!isKnownDurationUnit((char) ((ir.getQuick(durationOff + i) >>> 32) & 0xFFFF))) {
+                return -1;
+            }
+        }
+        final int perDayCount = Math.max(1, timeOverrideCount);
+        final boolean isContiguousRange = timeOverrideCount == 0
+                && durationPartCount == 0
+                && dayFilterMask == 0
+                && tzRules == null;
+        long count = 0;
+        int pos = elemOff;
+        for (int i = 0; i < elemCount; i++) {
+            final long word = ir.getQuick(pos);
+            final long tag = word & TAG_MASK;
+            if (tag == TAG_SINGLE_VAR) {
+                if (!hasKnownOffsetUnit(word)) {
+                    return -1;
+                }
+                count += perDayCount;
+                pos++;
+            } else if (tag == TAG_STATIC) {
+                count++;
+                pos += 3;
+            } else {
+                if (!isContiguousRange
+                        || (word & RANGE_BD_BIT) != 0
+                        || !hasKnownOffsetUnit(word)
+                        || !hasKnownOffsetUnit(ir.getQuick(pos + 1))) {
+                    return -1;
+                }
+                count++;
+                pos += 2;
+            }
+            if (count > cap) {
+                return -1;
+            }
+        }
+        return (int) count;
     }
 
     @Override

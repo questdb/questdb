@@ -32,6 +32,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
@@ -165,6 +166,18 @@ public class TickCalendarTest {
                 "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T20:59:59.999999Z}]",
                 "[2025-01-24@-05:00#XNYS]"
         );
+    }
+
+    @Test
+    public void testCompiledTickExprWithExchangeFilterHasNoIntervalBound() throws SqlException {
+        // The sessions of a day and its holidays set the interval count, so the JIT filter cannot
+        // compile a fixed number of range checks for the expression and leaves it to the Java filter.
+        for (String expression : new String[]{"$today#XNYS", "[$today, $tomorrow]#XNYS", "$today#XNYS;1h"}) {
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP), configuration, expression, 0, expression.length(), 0)) {
+                Assert.assertEquals(expression, -1, compiled.getMaxIntervalCount(Integer.MAX_VALUE));
+            }
+        }
     }
 
     @Test

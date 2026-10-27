@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -41,10 +42,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBoundBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBounds;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
@@ -4888,23 +4892,88 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Serializes an IN over an interval expression that holds a date variable, such as
+     * {@code tm IN '$today'}. The Java filter resolves $now, $today and the like each time the
+     * cursor opens, so a cached plan keeps up with the clock, and immediates would freeze the bounds
+     * of the moment the filter compiled. The range checks read their bounds from bind variable slots
+     * instead, and {@link CompiledFilterTickBounds} fills them on every cursor open.
+     * <p>
+     * The IR has a fixed shape, while the interval count moves with the clock: '$today#workday'
+     * holds no interval at weekends. So the IR holds as many range checks as
+     * {@link CompiledTickExpression#getMaxIntervalCount(int)} proves the expression can yield, and
+     * the holder pads the unused ones with an interval that matches no row. An expression without
+     * such a bound, or with more intervals than the IN list threshold, goes to the Java filter. The
+     * threshold caps both IN forms here: every check costs a comparison per row whether its interval
+     * is live or padding.
+     */
+    private void serializeInDateVariableRange(
+            int position,
+            CharSequence token,
+            CharSequence intervalEx,
+            TimestampDriver driver,
+            boolean isDate
+    ) throws SqlException {
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        // The same compilation InTimestampTimestampFunctionFactory gives the Java filter, which the
+        // JIT factories run on frames with column tops, so both see the same intervals.
+        final CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(
+                driver,
+                configuration,
+                intervalEx,
+                0,
+                intervalEx.length(),
+                position
+        );
+        final int threshold = configuration.getSqlJitMaxInListSizeThreshold();
+        final int maxIntervalCount = compiledExpr.getMaxIntervalCount(threshold);
+        if (maxIntervalCount < 1) {
+            throw SqlException.position(position)
+                    .put("date variable interval has no bound within the JIT IN list threshold [threshold=")
+                    .put(threshold).put("]: ").put(token);
+        }
+
+        final CompiledFilterTickBounds bounds = new CompiledFilterTickBounds(
+                compiledExpr,
+                driver.getTimestampType(),
+                maxIntervalCount,
+                isDate
+        );
+        final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
+        // The operand order of the constant intervals in serializeInTimestampRange(). No lo == hi
+        // shortcut: whether an interval is a point is only known at run time.
+        for (int i = 0; i < maxIntervalCount; i++) {
+            bindVarFunctions.add(new CompiledFilterTickBoundBindVariable(bounds, 2 * i));
+            putOperand(VAR, I8_TYPE, bindVarFunctions.size() - 1);
+            traverseAlgo.traverse(lhs, this);
+            putOperator(GE);
+            bindVarFunctions.add(new CompiledFilterTickBoundBindVariable(bounds, 2 * i + 1));
+            putOperand(VAR, I8_TYPE, bindVarFunctions.size() - 1);
+            traverseAlgo.traverse(lhs, this);
+            putOperator(LE);
+            putOperator(AND);
+        }
+        for (int i = 1; i < maxIntervalCount; i++) {
+            putOperator(OR);
+        }
+    }
+
     private void serializeInTimestampRange(int position, int maxIntervalCount) throws SqlException {
         predicateContext.currentInSerialization = true;
 
         final CharSequence token = predicateContext.inOperationNode.rhs.token;
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
+        // InTimestampTimestampFunctionFactory compares a DATE key in microseconds.
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(predicateContext.columnType));
+        final boolean isDate = ColumnType.tagOf(predicateContext.columnType) == ColumnType.DATE;
         if (intervalEx != null && DateExpressionEvaluator.containsDateVariable(intervalEx, 0, intervalEx.length())) {
-            // The Java filter resolves $now, $today and the like each time the cursor opens, so a
-            // cached plan keeps up with the clock. The IR would hold the bounds the variables had
-            // at compile time.
-            throw SqlException.position(position).put("date variables are not supported by JIT: ").put(token);
+            serializeInDateVariableRange(position, token, intervalEx, driver, isDate);
+            return;
         }
 
-        // InTimestampTimestampFunctionFactory compares a DATE key in microseconds.
-        final boolean isDate = ColumnType.tagOf(predicateContext.columnType) == ColumnType.DATE;
         final LongList intervals = predicateContext.inIntervals;
         IntervalUtils.parseTickExprAndIntersect(
-                ColumnType.getTimestampDriver(ColumnType.getTimestampType(predicateContext.columnType)),
+                driver,
                 executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
@@ -5387,15 +5456,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // The range checks grow with the interval count while the Java filter's binary
                     // search barely does, so the IN list threshold caps the interval count, as it
                     // caps the element count of a list: '2024-01-01T10:00;1h;1d;30' runs on the
-                    // Java filter.
+                    // Java filter. It caps the bound of a date-variable expression too.
                     serializeInTimestampRange(position, executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold());
                 } else {
                     serializeIn();
                 }
                 return;
             } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
-                // No cap: this form has always compiled any interval count, and the threshold would
-                // move counts just above it to the slower Java filter.
+                // No cap on a constant expression: this form has always compiled any interval
+                // count, and the threshold would move counts just above it to the slower Java
+                // filter. A date-variable expression never ran on the JIT correctly, so the
+                // threshold caps its interval bound, as in the parenthesised form.
                 serializeInTimestampRange(position, Integer.MAX_VALUE);
                 return;
             }

@@ -202,6 +202,30 @@ The `expression` string is also kept for `toPlan()` display only.
 All phases operate on the output `LongList` in-place. No intermediate
 allocations.
 
+## Interval Count Bound
+
+The JIT filter compiles a fixed number of range checks for an expression and
+fills their bounds on every execution (`CompiledFilterTickBounds`), so it needs
+an upper bound on the interval count that holds for every "now".
+`getMaxIntervalCount(cap)` walks the elements and sums:
+
+| Element    | Bound                                                        |
+|------------|--------------------------------------------------------------|
+| STATIC     | 1                                                            |
+| SINGLE_VAR | `max(1, T)`                                                  |
+| RANGE      | 1 if contiguous (see below), otherwise no bound              |
+
+A range is contiguous when it has no business-day walk and the expression has
+no time override, duration, day filter or named timezone. `emitRange()` then
+emits one interval or a run of adjacent whole days, which phase 5 merges into
+one.
+
+The day filter only drops intervals, the timezone conversion maps each interval
+to one, and the merge only joins them, so phases 2, 3 and 5 never raise the
+count. The method returns -1 (no bound) for an exchange calendar, for an offset
+or duration unit the timestamp driver does not know, for any other range, and
+when the sum exceeds `cap`.
+
 ## Compile-Time Construction
 
 `IntervalUtils.compileTickExpr()` builds the IR into a single `LongList`:
