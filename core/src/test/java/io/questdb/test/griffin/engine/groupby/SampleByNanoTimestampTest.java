@@ -6522,32 +6522,28 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Hash Left Outer Join Light
+                                Hash Left Outer Join
                                   condition: b.sym=a.sym
                                   symbolKeyJoin: true
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [ts1]
-                                            Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('1m',ts1)
+                                          keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                    Hash
+                                        SelectedRecord
+                                            Async Stream Group By workers: 1
+                                              segmentKey: timestamp_floor_utc('1m',ts1)
                                               keys: [sym,ts1]
                                               keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                               values: [first(val),avg(val),last(val),max(val)]
-                                              filter: null
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: x
-                                    Hash
-                                        SelectedRecord
-                                            Encode sort light
-                                              keys: [ts1]
-                                                Async Group By workers: 1
-                                                  keys: [sym,ts1]
-                                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                                  values: [first(val),avg(val),last(val),max(val)]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
                             """);
         });
     }
@@ -6568,26 +6564,23 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 AsOf Join
-                                    Encode sort light
-                                      keys: [ts1]
-                                        Async Group By workers: 1
-                                          keys: [ts1,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                    Encode sort light
-                                      keys: [ts1]
-                                        Async Group By workers: 1
-                                          keys: [ts1,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                  condition:\s
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [ts1,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [ts1,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -6639,17 +6632,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [b]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [b,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [b,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -6684,17 +6675,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [d]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [d,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [d,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -6708,16 +6697,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar time zone 'UTC'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts1]
-                                Async Group By workers: 1
-                                  keys: [ts1,sym]
-                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                  values: [min(val),avg(val),max(val)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp_floor_utc('1m',ts1)
+                              keys: [ts1,sym]
+                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                              values: [min(val),avg(val),max(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
                             """);
         });
     }
@@ -6739,27 +6726,23 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                               functions: [sym::symbol,first,avg,last,max]
                                 Union All
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [ts1]
-                                            Async Group By workers: 1
-                                              keys: [sym,ts1]
-                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                              values: [first(val),avg(val),last(val),max(val)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('1m',ts1)
+                                          keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [ts1]
-                                            Async Group By workers: 1
-                                              keys: [sym,ts1]
-                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                              values: [first(val),avg(val),last(val),max(val)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('1m',ts1)
+                                          keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
@@ -6780,26 +6763,22 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             UnionSymbolCast
                               functions: [tstmp,sym::symbol,first,avg,last,max]
                                 Union All
-                                    Encode sort light
-                                      keys: [tstmp]
-                                        Async Group By workers: 1
-                                          keys: [tstmp,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                    Encode sort light
-                                      keys: [tstmp]
-                                        Async Group By workers: 1
-                                          keys: [tstmp,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [tstmp,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [tstmp,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -6813,17 +6792,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar) select * from y ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [d]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [d,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [d,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -10600,7 +10577,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T01:00:00.000000000Z
@@ -18035,7 +18012,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tdiff
                             2010-01-01T00:00:00.000000000Z\t1
@@ -18051,7 +18028,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T00:00:00.000000000Z\t1\t0
@@ -18549,8 +18526,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(forceNoIndexQuery)
                     .noLeakCheck()
                     .timestamp("k")
-                    .supportsRandomAccess(supportsRandomAccess)
-                    .expectSize(expectSize)
+                    .noRandomAccess()
                     .returns(expected);
 
             assertQuery(query)

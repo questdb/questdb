@@ -422,15 +422,17 @@ public class LimitTest extends AbstractCairoTest {
                         SELECT ts, k, max(v) AS v_max FROM table1 LIMIT -2
                     ) LIMIT 1""";
             assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                                 SelectedRecord
                                     Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
-                                        Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: ts
                                           keys: [ts,k]
                                           values: [max(v)]
-                                          filter: null
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: table1

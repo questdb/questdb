@@ -27,11 +27,14 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
@@ -42,18 +45,24 @@ import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
     private final int[] batchColumnIndexes;
+    private final StreamGroupByMap collectorMap;
+    private final CairoConfiguration configuration;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final Function keyFunction;
+    private final int keyFunctionIndex;
     private final ObjList<Function> keyFunctions;
     private final PerWorkerLocks locks;
+    private final StreamGroupByMap ownerMap;
     private final ObjList<ObjList<GroupByFunction>> perWorkerFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeys;
+    private final ObjList<StreamGroupByMap> perWorkerMaps;
     private final ObjList<GroupByFunctionsUpdater> perWorkerUpdaters;
     private final ObjList<FlyweightPackedMapValue> perWorkerValues;
     private final ArrayColumnTypes stateTypes;
@@ -64,7 +73,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
             CairoConfiguration configuration,
             BytecodeAssembler asm,
             RecordMetadata baseMetadata,
+            ListColumnFilter columnFilter,
+            ArrayColumnTypes keyTypes,
             ArrayColumnTypes valueTypes,
+            int streamKeyIndex,
             Function keyFunction,
             ObjList<Function> keyFunctions,
             ObjList<ObjList<Function>> perWorkerKeys,
@@ -72,7 +84,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
             ObjList<ObjList<GroupByFunction>> perWorkerFunctions,
             int workerCount
     ) {
+        this.configuration = configuration;
         this.keyFunction = keyFunction;
+        this.keyFunctionIndex = streamKeyIndex - columnFilter.getColumnCount();
         this.keyFunctions = keyFunctions;
         this.perWorkerKeys = perWorkerKeys;
         this.groupByFunctions = groupByFunctions;
@@ -95,6 +109,21 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
                 perWorkerUpdaters.add(perWorkerFunctions == null ? updater
                         : GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerFunctions.getQuick(i)));
             }
+            if (keyTypes.getColumnCount() > 1) {
+                ownerMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
+                        streamKeyIndex, keyFunctions, groupByFunctions, updater);
+                collectorMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
+                        streamKeyIndex, keyFunctions, groupByFunctions, updater);
+                perWorkerMaps = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerMaps.add(new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
+                            streamKeyIndex, perWorkerKeys == null ? keyFunctions : perWorkerKeys.getQuick(i),
+                            getFunctions(i), getUpdater(i)));
+                }
+            } else {
+                ownerMap = collectorMap = null;
+                perWorkerMaps = null;
+            }
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -103,10 +132,19 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
 
     @Override
     public void clear() {
+        CairoException.rethrowCleanupFailure(closeMaps(null));
+        cursorClosed(groupByFunctions);
+        cursorClosed(keyFunctions);
         Misc.clearObjList(groupByFunctions);
         if (perWorkerFunctions != null) {
             for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                cursorClosed(perWorkerFunctions.getQuick(i));
                 PerWorkerFunctionList.clear(perWorkerFunctions.getQuick(i));
+            }
+        }
+        if (perWorkerKeys != null) {
+            for (int i = 0, n = perWorkerKeys.size(); i < n; i++) {
+                cursorClosed(perWorkerKeys.getQuick(i));
             }
         }
     }
@@ -114,6 +152,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     @Override
     public void close() {
         Throwable th = Misc.freeObjListBestEffort(null, keyFunctions);
+        th = closeMaps(th);
         th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerKeys);
         th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerFunctions);
         CairoException.rethrowCleanupFailure(th);
@@ -123,22 +162,34 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         return batchColumnIndexes;
     }
 
+    public StreamGroupByMap getCollectorMap() {
+        return collectorMap;
+    }
+
     public ObjList<GroupByFunction> getFunctions(int slot) {
         return slot < 0 || perWorkerFunctions == null ? groupByFunctions : perWorkerFunctions.getQuick(slot);
     }
 
     public Function getKey(int slot) {
-        return slot < 0 || perWorkerKeys == null || keyFunctions.size() == 0
-                ? keyFunction : perWorkerKeys.getQuick(slot).getQuick(0);
+        return slot < 0 || perWorkerKeys == null || keyFunctionIndex < 0
+                ? keyFunction : perWorkerKeys.getQuick(slot).getQuick(keyFunctionIndex);
     }
 
     public ObjList<Function> getKeyFunctions() {
         return keyFunctions;
     }
 
+    public StreamGroupByMap getMap(int slot) {
+        return slot < 0 ? ownerMap : perWorkerMaps.getQuick(slot);
+    }
+
     @Override
     public PerWorkerLocks getPerWorkerLocks() {
         return locks;
+    }
+
+    public RecordChain getResultRecords(PageFrameReduceTask task) {
+        return task.getGroupByRecords(ownerMap.getStateTypes(), configuration.getSqlSmallMapPageSize());
     }
 
     public ArrayColumnTypes getStateTypes() {
@@ -173,6 +224,18 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         } finally {
             executionContext.setCloneSymbolTables(cloneSymbolTables);
         }
+        if (ownerMap != null) {
+            try {
+                ownerMap.reopen(executionContext.getMemoryTracker());
+                collectorMap.reopen(executionContext.getMemoryTracker());
+                for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
+                    perWorkerMaps.getQuick(i).reopen(executionContext.getMemoryTracker());
+                }
+            } catch (Throwable th) {
+                closeMaps(th);
+                throw th;
+            }
+        }
     }
 
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -185,7 +248,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
 
     public void toTop() {
         GroupByUtils.toTop(groupByFunctions);
-        keyFunction.toTop();
+        GroupByUtils.toTop(keyFunctions);
         if (perWorkerFunctions != null) {
             for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerFunctions.getQuick(i));
@@ -194,6 +257,25 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         if (perWorkerKeys != null) {
             for (int i = 0, n = perWorkerKeys.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerKeys.getQuick(i));
+            }
+        }
+    }
+
+    private Throwable closeMaps(Throwable th) {
+        th = Misc.freeBestEffort(th, ownerMap);
+        th = Misc.freeBestEffort(th, collectorMap);
+        if (perWorkerMaps != null) {
+            for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
+                th = Misc.freeBestEffort(th, perWorkerMaps.getQuick(i));
+            }
+        }
+        return th;
+    }
+
+    private static void cursorClosed(ObjList<? extends Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (PerWorkerFunctionList.isOwned(functions, i)) {
+                functions.getQuick(i).cursorClosed();
             }
         }
     }

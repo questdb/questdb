@@ -26,7 +26,9 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -67,6 +69,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
+    private ColumnTypes groupByRecordTypes;
+    private RecordChain groupByRecords;
     private DirectLongList groupByValues;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
@@ -203,6 +207,20 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public long getFrameSequenceId() {
         return frameSequenceId;
+    }
+
+    public RecordChain getGroupByRecords() {
+        return groupByRecords;
+    }
+
+    public RecordChain getGroupByRecords(ColumnTypes types, long pageSize) {
+        if (groupByRecordTypes != types) {
+            groupByRecords = Misc.free(groupByRecords);
+            groupByRecords = new RecordChain(types, null, pageSize, Integer.MAX_VALUE);
+            groupByRecordTypes = types;
+        }
+        groupByRecords.setMemoryTracker(getMemoryTracker());
+        return groupByRecords;
     }
 
     public DirectLongList getGroupByValues() {
@@ -371,6 +389,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     private void closeGroupByValues() {
+        if (groupByRecords != null) {
+            groupByRecords.close();
+            groupByRecords.setMemoryTracker(null);
+        }
         if (groupByValues != null) {
             groupByValues.close();
             groupByValues.setMemoryTracker(null);

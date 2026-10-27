@@ -1613,16 +1613,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
                 .assertsPlan("""
                         Create materialized view: test
-                            Encode sort light
-                              keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts,k]
-                                  keyFunctions: [timestamp_floor_utc('30s',ts)]
-                                  values: [avg(v)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp_floor_utc('30s',ts)
+                              keys: [ts,k]
+                              keyFunctions: [timestamp_floor_utc('30s',ts)]
+                              values: [avg(v)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
                         """);
     }
 
@@ -8305,13 +8303,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8321,13 +8319,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8337,13 +8335,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8353,13 +8351,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a desc]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8369,13 +8367,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a10]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a10,ts]
                                       keyFunctions: [10*a,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8385,13 +8383,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -8402,13 +8400,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -8419,13 +8417,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0, berlin_ts desc]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [ts,berlin_ts,a0,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(ts),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -8442,34 +8440,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k1,ts]
-                                          keyFunctions: [timestamp_floor_utc('3h',ts)]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('3h',ts)
+                                      keys: [b,k1,ts]
+                                      keyFunctions: [timestamp_floor_utc('3h',ts)]
+                                      values: [sum(a)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
 
             assertQuery("select b, sum(a), k, k k1 from x sample by 3h")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k,ts]
-                                          keyFunctions: [timestamp_floor_utc('3h',ts)]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('3h',ts)
+                                      keys: [b,k,ts]
+                                      keyFunctions: [timestamp_floor_utc('3h',ts)]
+                                      values: [sum(a)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -9069,16 +9063,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [l,i,ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1h',ts)
+                                  keys: [l,i,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -9102,16 +9094,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [l,i,ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1h',ts)
+                                  keys: [l,i,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -9309,13 +9299,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9325,13 +9315,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9341,13 +9331,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9357,13 +9347,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a desc]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9373,13 +9363,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a10]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a10,ts]
                                       keyFunctions: [10*a,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9389,13 +9379,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -9406,13 +9396,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -9423,15 +9413,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0, berlin_ts desc]
                                     VirtualRecord
                                       functions: [ts,to_utc(ts),a0,sum,10*a0]
-                                        Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                           keys: [ts,a0]
                                           keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                           values: [sum(b)]
-                                          filter: null
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
@@ -9447,15 +9437,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts desc]
                                 VirtualRecord
                                   functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9464,15 +9454,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts]
                                 VirtualRecord
                                   functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9481,15 +9471,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts]
                                 VirtualRecord
                                   functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9498,15 +9488,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts desc, a, month_ts]
                                 VirtualRecord
                                   functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9966,9 +9956,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct l, ts from tab")
                 .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        Async Group By workers: 1
+                        Async Stream Group By workers: 1
+                          segmentKey: ts
                           keys: [l,ts]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab

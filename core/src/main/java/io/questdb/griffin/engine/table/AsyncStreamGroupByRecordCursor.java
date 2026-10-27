@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -40,6 +42,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -52,6 +55,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final DirectLongList memory;
     private final ObjList<Function> nonGroupByFunctions;
     private final VirtualRecord record;
+    private final StreamGroupByMap segmentMap;
     private final FlyweightPackedMapValue source;
     private final long stride;
     private final FlyweightPackedMapValue value;
@@ -61,11 +65,15 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private int frameIndex = -1;
     private int frameLimit = -1;
     private PageFrameSequence<AsyncStreamGroupByAtom> frameSequence;
+    private boolean hasPartial;
+    private MapRecordCursor mapCursor;
     private boolean prepared;
-    private DirectLongList results;
     private long resultOffset;
+    private RecordChain resultRecords;
+    private DirectLongList results;
 
-    AsyncStreamGroupByRecordCursor(CairoConfiguration configuration, ColumnTypes stateTypes, ObjList<Function> functions) {
+    AsyncStreamGroupByRecordCursor(CairoConfiguration configuration, ColumnTypes stateTypes, ObjList<Function> functions, StreamGroupByMap segmentMap) {
+        this.segmentMap = segmentMap;
         dispatchLimit = Math.max(1, configuration.getSqlParallelFilterDispatchLimit());
         keyIndex = stateTypes.getColumnCount() - 1;
         isIntKey = stateTypes.getColumnType(keyIndex) == ColumnType.INT;
@@ -74,7 +82,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         stride = (value.getSizeInBytes() + 7) / 8;
         record = new VirtualRecord(functions);
         nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(functions);
-        record.of(value);
+        record.of(segmentMap != null ? segmentMap.getRecord() : value);
         memory = new DirectLongList(stride, MemoryTag.NATIVE_FAST_MAP, true);
     }
 
@@ -91,8 +99,11 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         } finally {
             frameSequence = null;
             results = null;
+            resultRecords = null;
+            mapCursor = null;
             memory.close();
             memory.setMemoryTracker(null);
+            Function.cursorClosed(nonGroupByFunctions);
         }
     }
 
@@ -108,6 +119,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (segmentMap != null) {
+            return hasNextSegment();
+        }
         if (done) {
             return false;
         }
@@ -151,6 +165,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         frameSequence.getAtom().toTop();
         frameIndex = -1;
         done = false;
+        mapCursor = null;
     }
 
     void of(PageFrameSequence<AsyncStreamGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
@@ -160,9 +175,14 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         frameIndex = frameLimit = -1;
         cursor = -1;
         results = null;
-        memory.setMemoryTracker(executionContext.getMemoryTracker());
-        memory.ensureCapacity(stride);
-        value.of(memory.getAddress());
+        resultRecords = null;
+        mapCursor = null;
+        hasPartial = false;
+        if (segmentMap == null) {
+            memory.setMemoryTracker(executionContext.getMemoryTracker());
+            memory.ensureCapacity(stride);
+            value.of(memory.getAddress());
+        }
         Function.init(nonGroupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
     }
 
@@ -172,9 +192,42 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             cursor = -1;
         }
         results = null;
+        resultRecords = null;
+        hasPartial = false;
+    }
+
+    private boolean hasNextSegment() {
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        if (mapCursor != null && mapCursor.hasNext()) {
+            return true;
+        }
+        if (done) {
+            return false;
+        }
+        if (!nextPartial()) {
+            done = true;
+            return false;
+        }
+        final long key = segmentMap.getSegmentKey(resultRecords.getRecord());
+        segmentMap.clear(key);
+        do {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            segmentMap.merge(resultRecords.getRecord());
+            hasPartial = false;
+            if (!nextPartial()) {
+                done = true;
+                break;
+            }
+        } while (key == segmentMap.getSegmentKey(resultRecords.getRecord()));
+        mapCursor = segmentMap.getCursor();
+        return mapCursor.hasNext();
     }
 
     private boolean nextPartial() {
+        if (hasPartial || (resultRecords != null && resultRecords.hasNext())) {
+            hasPartial = true;
+            return true;
+        }
         if (results != null && resultOffset < results.size()) {
             return true;
         }
@@ -196,10 +249,18 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     throw frameSequence.buildInterruptionException();
                 }
                 frameIndex = task.getFrameIndex();
-                results = task.getGroupByValues();
-                resultOffset = 0;
-                if (results.size() > 0) {
-                    return true;
+                if (segmentMap != null) {
+                    resultRecords = task.getGroupByRecords();
+                    if (resultRecords.hasNext()) {
+                        hasPartial = true;
+                        return true;
+                    }
+                } else {
+                    results = task.getGroupByValues();
+                    resultOffset = 0;
+                    if (results.size() > 0) {
+                        return true;
+                    }
                 }
                 collect(false);
             } else if (cursor == -2) {

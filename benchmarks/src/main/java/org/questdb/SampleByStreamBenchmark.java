@@ -74,11 +74,13 @@ public class SampleByStreamBenchmark {
     public int nullEvery;
     @Param({"2000000"})
     public int rowCount;
+    @Param({"64"})
+    public int symbolCount;
     @Param({"UTC"})
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "expression", "filtered", "keyed"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "expression", "filtered", "keyed", "keyed_string", "keyed_multi"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -99,6 +101,7 @@ public class SampleByStreamBenchmark {
                         case ColumnType.LONG -> blackhole.consume(record.getLong(i));
                         case ColumnType.INT, ColumnType.SYMBOL -> blackhole.consume(record.getInt(i));
                         case ColumnType.DOUBLE -> blackhole.consume(record.getDouble(i));
+                        case ColumnType.VARCHAR -> blackhole.consume(record.getVarcharA(i));
                         default -> throw new IllegalStateException("unexpected result type: " + columnTypes[i]);
                     }
                 }
@@ -139,7 +142,7 @@ public class SampleByStreamBenchmark {
             final String d = nullable("(x % 31)::double");
             engine.execute("create table trades as (select "
                     + "timestamp_sequence('2024-01-01'::timestamp, 1000L) ts, "
-                    + v + " v, " + d + " d, (x % 64)::symbol sym, "
+                    + v + " v, " + d + " d, (x % " + symbolCount + ")::symbol sym, "
                     + v + "::decimal(18,2) price from long_sequence(" + rowCount + ")) "
                     + "timestamp(ts) partition by day", context);
             if ("parquet".equals(dataFormat)) {
@@ -156,6 +159,8 @@ public class SampleByStreamBenchmark {
                 case "first_last" -> "first(v), last(v), first_not_null(v), last_not_null(v), first(sym), last(sym)";
                 case "expression" -> "sum(v + 1), avg(d * 2), sum(sqrt(d))";
                 case "keyed" -> "sym, count(*), sum(v), avg(d)";
+                case "keyed_string" -> "sym::varchar name, count(*), sum(v), avg(d)";
+                case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
                 default -> throw new IllegalArgumentException("unknown workload: " + workload);
             };
             factory = compiler.compile("select ts, " + select + " from trades "
@@ -171,7 +176,7 @@ public class SampleByStreamBenchmark {
             for (int i = 1; i <= plan.getLineCount(); i++) {
                 stream |= plan.getLine(i).toString().contains("Stream Group By");
             }
-            final boolean expectStream = "stream".equals(expectedStrategy) && !"keyed".equals(workload)
+            final boolean expectStream = "stream".equals(expectedStrategy)
                     && !("filtered".equals(workload) && workers > 0);
             if (stream != expectStream) {
                 throw new IllegalStateException("unexpected aggregation strategy: " + expectedStrategy);

@@ -2262,16 +2262,6 @@ public class GroupByTest extends AbstractCairoTest {
                             C\t1\t40.0
                             """
                     },
-                    {
-                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ORDER BY price * 2",
-                            """
-                            ts\ta
-                            2000-01-01T00:00:00.000000Z\t11.0
-                            2000-01-01T00:00:01.000000Z\t21.0
-                            2000-01-01T00:00:02.000000Z\t31.0
-                            2000-01-01T00:00:03.000000Z\t41.0
-                            """
-                    },
                     // with DISTINCT, the distinct model referenced the expression as a regular column
                     {
                             "SELECT DISTINCT sym, count() c FROM trades ORDER BY max(price) * 2, sym",
@@ -2295,6 +2285,16 @@ public class GroupByTest extends AbstractCairoTest {
             // SAMPLE BY with FILL, and ALIGN TO FIRST OBSERVATION, which keeps the SAMPLE BY model,
             // with and without a projection above it; their sorted cursors do not report a size
             final String[][] sampleByQueries = {
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ORDER BY price * 2",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\t21.0
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            2000-01-01T00:00:03.000000Z\t41.0
+                            """
+                    },
                     {
                             "SELECT ts, avg(price) + 1 a FROM trades WHERE sym = 'A' SAMPLE BY 1s FILL(NULL) ORDER BY price * 2, ts",
                             """
@@ -3064,7 +3064,8 @@ public class GroupByTest extends AbstractCairoTest {
                       SUM(1)\s
                     FROM foo;""";
             assertQuery(query)
-                    .expectSize()
+                    .timestamp("time")
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             time\tTO_STR\tSUM

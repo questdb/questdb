@@ -57,6 +57,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
@@ -414,7 +415,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
-        final int functionCount = functions.size();
         final int batchSize = atom.getBatchSize();
 
         // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
@@ -424,28 +424,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         for (long batchStart = 0; batchStart < frameRowCount; batchStart += batchSize) {
             final long batchEnd = Math.min(batchStart + batchSize, frameRowCount);
-            final long batchRows = batchEnd - batchStart;
-
-            // Must reserve capacity before probeBatch: probeBatch packs entry offsets relative to the
-            // current memStart, so a mid-batch rehash would break the offsets for unordered maps.
-            map.reserveCapacity(batchRows);
-
-            // Probe phase — delegate to the map for inlined probe loop.
-            final long baseValueAddress = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
-
-            // Update phase — one call per function per sub-batch. The encoded rowIndex in each
-            // batch entry is already the frame-relative row id, so computeKeyedBatch computes
-            // the global row id as baseRowId + rowIndex.
-            for (int i = 0; i < functionCount; i++) {
-                functions.getQuick(i).computeKeyedBatch(
-                        record,
-                        mapValue,
-                        baseValueAddress,
-                        batchAddr,
-                        batchRows,
-                        baseRowId
-                );
-            }
+            GroupByUtils.aggregateKeyedBatch(record, map, mapSink, functions, mapValue, batchAddr, batchStart, batchEnd, baseRowId);
         }
     }
 

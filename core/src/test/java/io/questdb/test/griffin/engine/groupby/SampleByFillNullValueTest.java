@@ -42,18 +42,15 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                VirtualRecord
-                                  functions: [count,count,ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [count(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                            VirtualRecord
+                              functions: [count,count,ts]
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [count(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """);
         });
     }

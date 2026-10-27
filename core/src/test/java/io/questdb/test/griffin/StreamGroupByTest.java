@@ -113,12 +113,14 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testFilteredInput() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
-            final String sql = "select timestamp_floor('1m', ts) bucket, count(*), sum(v), first(v), last(v) "
-                    + "from $table where v % 7 = 0 order by bucket";
-            try (RecordCursorFactory expected = compiler.compile(sql.replace("$table", "hash_input"), context).getRecordCursorFactory();
-                 RecordCursorFactory actual = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
-                assertStream(actual, !parallel);
-                Assert.assertEquals(read(expected, context), read(actual, context));
+            for (String keys : new String[]{"", ", sym"}) {
+                final String sql = "select timestamp_floor('1m', ts) bucket" + keys + ", count(*), sum(v), first(v), last(v) "
+                        + "from $table where v % 7 = 0 order by bucket" + keys;
+                try (RecordCursorFactory expected = compiler.compile(sql.replace("$table", "hash_input"), context).getRecordCursorFactory();
+                     RecordCursorFactory actual = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
+                    assertStream(actual, !parallel);
+                    Assert.assertEquals(read(expected, context), read(actual, context));
+                }
             }
         });
     }
@@ -306,19 +308,200 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSegmentedKeysAcrossFrames() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            for (String keys : new String[]{
+                    "timestamp_floor('1m', ts) bucket, sym",
+                    "sym, timestamp_floor('1m', ts) bucket",
+                    "sym::varchar name, timestamp_floor('1m', ts) bucket",
+                    "sym::string name, timestamp_floor('1m', ts) bucket",
+                    "v % 7 id, sym, timestamp_floor('1m', ts) bucket",
+                    "CASE WHEN v % 3 = 0 THEN null ELSE sym::varchar END name, timestamp_floor('1m', ts) bucket",
+                    "timestamp_floor('1m', ts) bucket, (v % 3)::decimal(18,2) price",
+                    "year(ts) bucket, sym"
+            }) {
+                final String order = keys.contains(" id,") ? "bucket, sym, id"
+                        : keys.contains(" name,") ? "bucket, name"
+                        : keys.contains(" price") ? "bucket, price" : "bucket, sym";
+                assertMatchesHash(compiler, context, "SELECT " + keys
+                        + ", count(*), sum(v), avg(d), min(v), max(v), first(v), last(v), first(sym), last(sym) "
+                        + "FROM $table ORDER BY " + order);
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentedDistinct() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            assertMatchesHash(compiler, context, "SELECT DISTINCT timestamp_floor('1m', ts) bucket, sym "
+                    + "FROM $table ORDER BY bucket, sym");
+        });
+    }
+
+    @Test
+    public void testSegmentedDynamicSymbol() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            assertMatchesHash(compiler, context, "SELECT timestamp_floor('1m', ts) bucket, "
+                    + "(v % 7)::symbol name, count(*), sum(v) FROM $table ORDER BY bucket, name", false);
+        });
+    }
+
+    @Test
+    public void testSegmentedFrameResultGrowth() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 128);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2048);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "x v, (x % 31)::double d, (x % 17)::symbol sym "
+                    + "FROM long_sequence(2001)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, v long, d double, sym symbol)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            final String sql = "SELECT timestamp_floor('1U', ts) bucket, sym, "
+                    + "count(*), sum(v), avg(d), first(v), last(v) FROM $table ORDER BY bucket";
+            assertMatchesHash(compiler, context, sql);
+            if (parallel) {
+                try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
+                    final String expected = read(factory, context);
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        try {
+                            while (cursor.hasNext()) {
+                            }
+                            Assert.fail("expected frame result memory limit breach");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                        }
+                    } finally {
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    }
+                    Assert.assertEquals(expected, read(factory, context));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentedMapGrowth() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "CASE WHEN x % 17 = 0 THEN null ELSE (x % 257)::symbol END sym, x v "
+                    + "FROM long_sequence(2001)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, sym symbol, v long)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            for (String key : new String[]{"sym", "sym::varchar"}) {
+                assertMatchesHash(compiler, context, "SELECT timestamp_floor('10m', ts) bucket, " + key
+                        + " k, count(*), sum(v), first(v), last(v) FROM $table ORDER BY bucket, k");
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentedNativeKeyTypes() throws Exception {
+        run((engine, compiler, context) -> {
+            final String columns = "(ts TIMESTAMP, a DOUBLE[], b BINARY, id UUID, d DECIMAL(38,2), w DECIMAL(76,2), v LONG)";
+            engine.execute("CREATE TABLE trades " + columns + " TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01'::timestamp, 1000000L), "
+                    + "CASE WHEN x % 5 = 0 THEN null ELSE ARRAY[(x % 3)::double, 1.0] END, "
+                    + "rnd_bin(8, 16, 3), CASE WHEN x % 7 = 0 THEN null ELSE to_uuid(x % 3, x % 7) END, "
+                    + "CASE WHEN x % 11 = 0 THEN null ELSE (x % 13)::decimal(38,2) END, (x % 17)::decimal(76,2), x "
+                    + "FROM long_sequence(257)", context);
+            engine.execute("CREATE TABLE hash_input " + columns, context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            for (String keys : new String[]{"a", "b", "id", "d", "w", "a, b, id, d, w"}) {
+                assertMatchesHash(compiler, context, "SELECT timestamp_floor('2m', ts) bucket, " + keys
+                        + ", count(*), min(v) first_v, first(id), last(id), first(d), last(d), sum(d), first(w), last(w), sum(w) "
+                        + "FROM $table ORDER BY bucket, first_v");
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentedSampleByAndParquet() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            for (int iteration = 0; iteration < 2; iteration++) {
+                if (iteration == 1) {
+                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                }
+                final String expectedSql = "SELECT timestamp_floor('1m', ts) ts, sym, count(*), sum(v), avg(d) "
+                        + "FROM hash_input ORDER BY ts, sym";
+                final String sql = "SELECT ts, sym, count(*), sum(v), avg(d) FROM trades "
+                        + "SAMPLE BY 1m ALIGN TO CALENDAR ORDER BY ts, sym";
+                try (RecordCursorFactory expected = compiler.compile(expectedSql, context).getRecordCursorFactory();
+                     RecordCursorFactory actual = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    assertStream(actual, true);
+                    Assert.assertEquals(read(expected, context), read(actual, context));
+                    Assert.assertEquals(0, actual.getMetadata().getTimestampIndex());
+                    final String plan = TestUtils.printSqlToString(engine, context, "EXPLAIN " + sql, new StringSink());
+                    Assert.assertTrue(plan, plan.contains("segmentKey:"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentedEmptyAndSingleRow() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades (ts timestamp, sym symbol, v long) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, sym symbol, v long)", context);
+            final String sql = "SELECT timestamp_floor('1m', ts) bucket, sym, count(*), sum(v) FROM $table ORDER BY bucket, sym";
+            assertMatchesHash(compiler, context, sql);
+            engine.execute("INSERT INTO trades VALUES ('2024-01-01', null, null)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            assertMatchesHash(compiler, context, sql);
+        });
+    }
+
+    @Test
+    public void testSegmentedColumnTopsAndPartitions() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01T23:59:30'::timestamp, 1000000L) ts, "
+                    + "x v FROM long_sequence(101)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("ALTER TABLE trades ADD COLUMN name varchar", context);
+            engine.execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-02T00:02:00'::timestamp, 1000000L), x, "
+                    + "CASE WHEN x % 3 = 0 THEN null WHEN x % 2 = 0 THEN '東京' ELSE 'é' END::varchar FROM long_sequence(301)", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, v long, name varchar)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            assertMatchesHash(compiler, context, "SELECT name, timestamp_floor('1h', ts) bucket, "
+                    + "count(*), sum(v), first(v), last(v) FROM $table ORDER BY bucket, name");
+        });
+    }
+
+    @Test
+    public void testSegmentedLongSequence() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE hash_input AS (SELECT x FROM long_sequence(101))", context);
+            final String sql = "SELECT x % 3 k, x, count(*), sum(x) FROM ";
+            try (RecordCursorFactory expected = compiler.compile(sql + "hash_input ORDER BY x", context).getRecordCursorFactory();
+                 RecordCursorFactory actual = compiler.compile(sql + "long_sequence(101) ORDER BY x", context).getRecordCursorFactory()) {
+                assertStream(actual, true, false);
+                Assert.assertEquals(read(expected, context), read(actual, context));
+            }
+        });
+    }
+
+    @Test
     public void testUnsafeKeysAndAggregatesUseHash() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
             for (String sql : new String[]{
-                    "select timestamp_floor('1m', ts), sym, sum(v) from trades",
+                    "select timestamp_floor('1m', ts), rnd_long(), sum(v) from trades",
+                    "select timestamp_floor('1m', ts), sym, count_distinct(v) from trades",
                     "select timestamp_floor('1m', ts), count_distinct(v) from trades",
                     "select timestamp_floor_utc('1d', ts, null, '01:30', 'America/New_York'), sum(v) from trades",
+                    "select timestamp_floor_utc('1d', ts, null, '01:30', 'America/New_York'), sym, sum(v) from trades",
                     "select timestamp_floor('1m', ts), sum(rnd_long()) from trades",
                     "select timestamp_floor('2147483647d', ts), sum(v) from trades",
                     "select timestamp_floor('3n', ts), sum(v) from trades",
                     "select dateadd('M', 1, ts), sum(v) from trades",
                     "select timestamp_floor('1h', ts, null, '00:00', 'America/New_York'), sum(v) from trades",
-                    "select ts, sum(v) from trades sample by 1m fill(prev) align to calendar"
+                    "select ts, sum(v) from trades sample by 1m fill(prev) align to calendar",
+                    "select ts, sym, sum(v) from trades sample by 1m fill(prev) align to calendar"
             }) {
                 try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                     assertStream(factory, false);
@@ -610,23 +793,26 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testMemoryIsReleasedOnClose() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
-            try (RecordCursorFactory factory = compiler.compile(
-                    "select timestamp_floor('1U', ts) bucket, count(*), sum(v) from trades", context).getRecordCursorFactory();
-                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
-                assertStream(factory, true);
-                context.setMemoryTracker(tracker);
-                try {
-                    for (int iteration = 0; iteration < 5; iteration++) {
-                        try (RecordCursor cursor = factory.getCursor(context)) {
-                            Assert.assertTrue(cursor.hasNext());
-                            Assert.assertTrue(tracker.getUsed() > 0);
-                            cursor.toTop();
-                            Assert.assertTrue(cursor.hasNext());
+            for (String keys : new String[]{"", ", sym::varchar name, v % 7 k"}) {
+                final String period = keys.isEmpty() ? "1U" : "1m";
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select timestamp_floor('" + period + "', ts) bucket" + keys + ", count(*), sum(v) from trades", context).getRecordCursorFactory();
+                     MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                    assertStream(factory, true);
+                    context.setMemoryTracker(tracker);
+                    try {
+                        for (int iteration = 0; iteration < 5; iteration++) {
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                Assert.assertTrue(cursor.hasNext());
+                                Assert.assertTrue(tracker.getUsed() > 0);
+                                cursor.toTop();
+                                Assert.assertTrue(cursor.hasNext());
+                            }
+                            Assert.assertEquals(0, tracker.getUsed());
                         }
-                        Assert.assertEquals(0, tracker.getUsed());
+                    } finally {
+                        context.setMemoryTracker(null);
                     }
-                } finally {
-                    context.setMemoryTracker(null);
                 }
             }
         });
@@ -636,25 +822,27 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testMemoryLimitAndReuse() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
-            try (RecordCursorFactory factory = compiler.compile(
-                    "select timestamp_floor('1U', ts) bucket, count(*), sum(v), avg(d) from trades", context).getRecordCursorFactory()) {
-                assertStream(factory, true);
-                for (int iteration = 0; iteration < 3; iteration++) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, parallel && frameRows > 1 ? 128 : 1);
-                    try {
-                        read(factory, context);
-                        Assert.fail("expected memory limit breach");
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
-                    } finally {
-                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                    }
-                    try (RecordCursor cursor = factory.getCursor(context)) {
-                        long count = 0;
-                        while (cursor.hasNext()) {
-                            count++;
+            for (String keys : new String[]{"", ", sym"}) {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select timestamp_floor('1U', ts) bucket" + keys + ", count(*), sum(v), avg(d) from trades", context).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    for (int iteration = 0; iteration < 3; iteration++) {
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, parallel && frameRows > 1 ? 128 : 1);
+                        try {
+                            read(factory, context);
+                            Assert.fail("expected memory limit breach");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                        } finally {
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
                         }
-                        Assert.assertEquals(1001, count);
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            long count = 0;
+                            while (cursor.hasNext()) {
+                                count++;
+                            }
+                            Assert.assertEquals(1001, count);
+                        }
                     }
                 }
             }
@@ -665,33 +853,36 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testCancellationAndReuse() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
-            try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine,
-                    new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                        @Override
-                        public int getCircuitBreakerThrottle() {
-                            return 0;
-                        }
-                    });
-                 SqlExecutionContextImpl cancellable = new SqlExecutionContextImpl(engine, Math.max(1, workers))
-                         .with(context.getSecurityContext(), null, null, -1, breaker);
-                 RecordCursorFactory factory = compiler.compile(
-                         "select timestamp_floor('1U', ts) bucket, count(*), sum(v) from trades", cancellable).getRecordCursorFactory()) {
-                assertStream(factory, true);
-                for (int iteration = 0; iteration < 3; iteration++) {
-                    try (RecordCursor cursor = factory.getCursor(cancellable)) {
-                        Assert.assertTrue(cursor.hasNext());
-                        breaker.cancel();
-                        try {
-                            while (cursor.hasNext()) {
+            for (String keys : new String[]{"", ", sym"}) {
+                final String period = keys.isEmpty() ? "1U" : "1h";
+                try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine,
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public int getCircuitBreakerThrottle() {
+                                return 0;
                             }
-                            Assert.fail("expected cancellation");
-                        } catch (CairoException e) {
-                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isInterruption());
+                        });
+                     SqlExecutionContextImpl cancellable = new SqlExecutionContextImpl(engine, Math.max(1, workers))
+                             .with(context.getSecurityContext(), null, null, -1, breaker);
+                     RecordCursorFactory factory = compiler.compile(
+                             "select timestamp_floor('" + period + "', ts) bucket" + keys + ", count(*), sum(v) from trades", cancellable).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    for (int iteration = 0; iteration < 3; iteration++) {
+                        try (RecordCursor cursor = factory.getCursor(cancellable)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            breaker.cancel();
+                            try {
+                                while (cursor.hasNext()) {
+                                }
+                                Assert.fail("expected cancellation");
+                            } catch (CairoException e) {
+                                Assert.assertTrue(e.getFlyweightMessage().toString(), e.isInterruption());
+                            }
+                        } finally {
+                            breaker.clear();
                         }
-                    } finally {
-                        breaker.clear();
+                        Assert.assertFalse(read(factory, cancellable).isEmpty());
                     }
-                    Assert.assertFalse(read(factory, cancellable).isEmpty());
                 }
             }
         });

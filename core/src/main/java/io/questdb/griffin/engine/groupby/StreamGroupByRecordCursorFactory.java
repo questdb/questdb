@@ -26,7 +26,10 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -57,9 +60,13 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
 
     public StreamGroupByRecordCursorFactory(
             BytecodeAssembler asm,
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
+            ArrayColumnTypes keyTypes,
             ArrayColumnTypes valueTypes,
+            ListColumnFilter columnFilter,
+            int streamKeyIndex,
             Function keyFunction,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> keyFunctions,
@@ -72,7 +79,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         this.keyFunctions = keyFunctions;
         this.recordFunctions = recordFunctions;
         try {
-            this.cursor = new StreamGroupByRecordCursor(asm, valueTypes);
+            this.cursor = new StreamGroupByRecordCursor(asm, configuration, keyTypes, valueTypes, columnFilter, streamKeyIndex);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -106,6 +113,9 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Stream Group By");
+        if (cursor.segmentMap != null) {
+            sink.optAttr("segmentKey", keyFunction, true);
+        }
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("keyFunctions", keyFunctions, true);
         sink.optAttr("values", groupByFunctions, true);
@@ -129,32 +139,42 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         private final int keyIndex;
         private final DirectLongList memory;
         private final VirtualRecord record;
+        private final StreamGroupByMap segmentMap;
         private final GroupByFunctionsUpdater updater;
         private final FlyweightPackedMapValue value;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean done;
+        private MapRecordCursor mapCursor;
         private boolean pending;
         private long pendingKey;
         private long rowId;
 
-        private StreamGroupByRecordCursor(BytecodeAssembler asm, ArrayColumnTypes valueTypes) {
+        private StreamGroupByRecordCursor(BytecodeAssembler asm, CairoConfiguration configuration, ArrayColumnTypes keyTypes,
+                                         ArrayColumnTypes valueTypes, ListColumnFilter columnFilter, int streamKeyIndex) {
             keyIndex = valueTypes.getColumnCount();
             value = new FlyweightPackedMapValue(new ArrayColumnTypes().addAll(valueTypes).add(keyFunction.getType()));
             updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             record = new VirtualRecord(recordFunctions);
-            record.of(value);
             memory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
+            segmentMap = keyTypes.getColumnCount() > 1
+                    ? new StreamGroupByMap(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes,
+                            streamKeyIndex, keyFunctions, groupByFunctions, updater)
+                    : null;
+            record.of(segmentMap != null ? segmentMap.getRecord() : value);
         }
 
         @Override
         public void close() {
-            try {
-                baseCursor = Misc.free(baseCursor);
-            } finally {
-                memory.close();
-                memory.setMemoryTracker(null);
-            }
+            Throwable th = Misc.freeBestEffort(null, baseCursor);
+            baseCursor = null;
+            mapCursor = null;
+            th = Misc.freeBestEffort(th, segmentMap);
+            th = Misc.freeBestEffort(th, memory);
+            memory.setMemoryTracker(null);
+            Function.cursorClosed(recordFunctions);
+            Function.cursorClosed(keyFunctions);
+            CairoException.rethrowCleanupFailure(th);
         }
 
         @Override
@@ -169,6 +189,9 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
+            if (segmentMap != null) {
+                return hasNextSegment();
+            }
             if (done) {
                 return false;
             }
@@ -216,8 +239,9 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         @Override
         public void toTop() {
             baseCursor.toTop();
-            keyFunction.toTop();
+            GroupByUtils.toTop(keyFunctions);
             GroupByUtils.toTop(groupByFunctions);
+            mapCursor = null;
             done = pending = false;
             rowId = 0;
         }
@@ -225,11 +249,52 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
             this.baseCursor = baseCursor;
             circuitBreaker = executionContext.getCircuitBreaker();
-            memory.setMemoryTracker(executionContext.getMemoryTracker());
-            memory.ensureCapacity((value.getSizeInBytes() + 7) / 8);
-            value.of(memory.getAddress());
+            if (segmentMap != null) {
+                segmentMap.reopen(executionContext.getMemoryTracker());
+            } else {
+                memory.setMemoryTracker(executionContext.getMemoryTracker());
+                memory.ensureCapacity((value.getSizeInBytes() + 7) / 8);
+                value.of(memory.getAddress());
+            }
+            mapCursor = null;
             done = pending = false;
             rowId = 0;
+        }
+
+        private boolean hasNextSegment() {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            if (mapCursor != null && mapCursor.hasNext()) {
+                return true;
+            }
+            if (done) {
+                return false;
+            }
+            final Record baseRecord = baseCursor.getRecord();
+            if (!pending) {
+                if (!baseCursor.hasNext()) {
+                    done = true;
+                    return false;
+                }
+                pendingKey = keyFunction.getLong(baseRecord);
+            }
+            final long key = pendingKey;
+            segmentMap.clear(key);
+            pending = false;
+            while (true) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                segmentMap.update(baseRecord, rowId++);
+                if (!baseCursor.hasNext()) {
+                    done = true;
+                    break;
+                }
+                pendingKey = keyFunction.getLong(baseRecord);
+                if (pendingKey != key) {
+                    pending = true;
+                    break;
+                }
+            }
+            mapCursor = segmentMap.getCursor();
+            return mapCursor.hasNext();
         }
     }
 }

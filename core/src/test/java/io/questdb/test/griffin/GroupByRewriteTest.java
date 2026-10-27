@@ -41,10 +41,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price/sum]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -55,10 +55,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price0,price0/sum]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price0]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -69,10 +69,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price+price/sum]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -83,10 +83,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price,price+price/sum]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -97,10 +97,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price0,price0+price0/sum]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price0]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -112,10 +112,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price/sum,price]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -126,10 +126,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price/sum,price]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -140,10 +140,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price1/sum,price1]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price,price1]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -154,10 +154,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price+price/sum,price]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -168,10 +168,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price+price/sum,price,price]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
@@ -182,10 +182,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price+price/sum,price]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,price]
                                   values: [sum(amount)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades

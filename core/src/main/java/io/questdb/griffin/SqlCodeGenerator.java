@@ -11289,8 +11289,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            final Function streamKey = sharedOuterProjectionFunctions == null && isStreamGroupByFillSupported(model)
-                    ? GroupByUtils.getStreamGroupByKey(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
+            final int streamKeyIndex = sharedOuterProjectionFunctions == null && isStreamGroupByFillSupported(model)
+                    ? GroupByUtils.getStreamGroupByKeyIndex(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
+                    : -1;
+            final Function streamKey = streamKeyIndex >= 0
+                    ? GroupByUtils.getGroupByKeyFunction(factory, keyTypes, listColumnFilterA, keyFunctions, streamKeyIndex)
                     : null;
             if (
                     enableParallelGroupBy
@@ -11422,12 +11425,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sharedOuterProjectionFunctions = null;
 
                     if (streamKey != null && filter == null) {
-                        GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount());
+                        GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount() + streamKeyIndex);
                         return generateFill(
                                 model,
                                 new AsyncStreamGroupByRecordCursorFactory(
                                         executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(),
-                                        factory, outerProjectionMetadata, valueTypesCopy, streamKey,
+                                        factory, outerProjectionMetadata, listColumnFilterCopy, keyTypesCopy, valueTypesCopy, streamKeyIndex, streamKey,
                                         groupByFunctions0, perWorkerGroupByFunctions0, keyFunctions, perWorkerKeyFunctions0,
                                         outerProjectionFunctions0, reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
                                 ),
@@ -11496,10 +11499,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sharedOuterProjectionFunctions = null;
 
             if (streamKey != null) {
-                GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount());
+                GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount() + streamKeyIndex);
                 return generateFill(
                         model,
-                        new StreamGroupByRecordCursorFactory(asm, factory, outerProjectionMetadata, valueTypes,
+                        new StreamGroupByRecordCursorFactory(asm, configuration, factory, outerProjectionMetadata,
+                                keyTypes, valueTypes, listColumnFilterA, streamKeyIndex,
                                 streamKey, groupByFunctions0, keyFunctions, outerProjectionFunctions0),
                         executionContext
                 );

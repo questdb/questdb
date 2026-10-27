@@ -31,6 +31,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -49,6 +51,7 @@ import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
@@ -73,7 +76,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             MessageBus messageBus,
             RecordCursorFactory base,
             RecordMetadata metadata,
+            ListColumnFilter columnFilter,
+            ArrayColumnTypes keyTypes,
             ArrayColumnTypes valueTypes,
+            int streamKeyIndex,
             Function keyFunction,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<ObjList<GroupByFunction>> perWorkerFunctions,
@@ -92,14 +98,15 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     engine,
                     configuration,
                     messageBus,
-                    new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), valueTypes,
+                    new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes, streamKeyIndex,
                             keyFunction, keyFunctions, perWorkerKeys, groupByFunctions, perWorkerFunctions, workerCount),
                     AsyncStreamGroupByRecordCursorFactory::aggregate,
                     reduceTaskFactory,
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
-            cursor = new AsyncStreamGroupByRecordCursor(configuration, frameSequence.getAtom().getStateTypes(), recordFunctions);
+            cursor = new AsyncStreamGroupByRecordCursor(configuration, frameSequence.getAtom().getStateTypes(), recordFunctions,
+                    frameSequence.getAtom().getCollectorMap());
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -139,6 +146,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
     public void toPlan(PlanSink sink) {
         sink.type("Async Stream Group By");
         sink.meta("workers").val(workerCount);
+        if (frameSequence.getAtom().getCollectorMap() != null) {
+            sink.optAttr("segmentKey", frameSequence.getAtom().getKey(-1), true);
+        }
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("keyFunctions", frameSequence.getAtom().getKeyFunctions(), true);
         sink.optAttr("values", frameSequence.getAtom().getFunctions(-1), true);
@@ -175,6 +185,24 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final long baseRowId = record.getRowId();
             final long rowCount = task.getFrameRowCount();
             final Function keyFunction = atom.getKey(slot);
+            final boolean batch = !frameMemory.hasColumnTops() && !frameMemory.hasColumnTypeCasts();
+            if (atom.getCollectorMap() != null) {
+                final StreamGroupByMap map = atom.getMap(slot);
+                final RecordChain results = atom.getResultRecords(task);
+                long previous = -1;
+                for (long row = 0; row < rowCount; ) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    record.setRowIndex(row);
+                    final long key = keyFunction.getLong(record);
+                    final long end = findGroupEnd(record, keyFunction, key, row, rowCount);
+                    map.clear(key);
+                    map.aggregate(record, row, end, baseRowId, batch, circuitBreaker);
+                    previous = map.appendTo(results, previous, circuitBreaker);
+                    row = end;
+                }
+                results.toTop();
+                return;
+            }
             final FlyweightPackedMapValue value = atom.getValue(slot);
             final GroupByFunctionsUpdater updater = atom.getUpdater(slot);
             final ObjList<GroupByFunction> functions = atom.getFunctions(slot);
@@ -182,7 +210,6 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final int keyIndex = atom.getStateTypes().getColumnCount() - 1;
             final long stride = (value.getSizeInBytes() + 7) / 8;
             final DirectLongList results = task.getGroupByValues();
-            final boolean batch = !frameMemory.hasColumnTops() && !frameMemory.hasColumnTypeCasts();
             for (long row = 0, groups = 0; row < rowCount; groups++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 record.setRowIndex(row);

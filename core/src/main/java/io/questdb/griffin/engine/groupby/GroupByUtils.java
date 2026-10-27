@@ -31,9 +31,12 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
@@ -98,6 +101,25 @@ public class GroupByUtils {
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
+
+    public static void aggregateKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            RecordSink sink,
+            ObjList<GroupByFunction> functions,
+            FlyweightPackedMapValue value,
+            long batchAddress,
+            long lo,
+            long hi,
+            long baseRowId
+    ) {
+        // Entry offsets must remain valid until every function has updated the batch.
+        map.reserveCapacity(hi - lo);
+        final long baseAddress = map.probeBatch(record, sink, lo, hi, batchAddress);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).computeKeyedBatch(record, value, baseAddress, batchAddress, hi - lo, baseRowId);
+        }
+    }
 
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
@@ -646,7 +668,13 @@ public class GroupByUtils {
         }
     }
 
-    public static Function getStreamGroupByKey(
+    public static Function getGroupByKeyFunction(RecordCursorFactory base, ColumnTypes keyTypes, ListColumnFilter columnFilter, ObjList<Function> keyFunctions, int index) {
+        return index < columnFilter.getColumnCount()
+                ? createColumnFunction(base.getMetadata(), columnFilter.getColumnIndex(index), keyTypes.getColumnType(index), 0)
+                : keyFunctions.getQuick(index - columnFilter.getColumnCount());
+    }
+
+    public static int getStreamGroupByKeyIndex(
             RecordCursorFactory base,
             ColumnTypes keyTypes,
             ListColumnFilter columnFilter,
@@ -654,36 +682,35 @@ public class GroupByUtils {
             ObjList<GroupByFunction> groupByFunctions
     ) {
         if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
-                || keyTypes.getColumnCount() != 1 || !base.isStableWithinExecution()) {
-            return null;
-        }
-        final int keyType = keyTypes.getColumnType(0);
-        if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
-            return null;
+                || keyTypes.getColumnCount() == 0 || !base.isStableWithinExecution()) {
+            return -1;
         }
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction function = groupByFunctions.getQuick(i);
             if (!function.isStateSelfContained() || !function.isStableWithinExecution()) {
-                return null;
+                return -1;
             }
         }
-        final Function key;
-        if (keyFunctions.size() == 0 && columnFilter.getColumnCount() == 1) {
-            key = createColumnFunction(base.getMetadata(), columnFilter.getColumnIndex(0), keyType, 0);
-        } else if (keyFunctions.size() == 1 && columnFilter.getColumnCount() == 0) {
-            key = keyFunctions.getQuick(0);
-        } else {
-            return null;
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return -1;
+            }
         }
-        final Function arg;
-        if (key instanceof MonotonicTimestampFunction monotonic && monotonic.preservesTimestampOrder()) {
-            arg = monotonic.getTimestampArg();
-        } else {
-            arg = key;
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int keyType = keyTypes.getColumnType(i);
+            if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
+                continue;
+            }
+            final Function key = getGroupByKeyFunction(base, keyTypes, columnFilter, keyFunctions, i);
+            final Function arg = key instanceof MonotonicTimestampFunction monotonic && monotonic.preservesTimestampOrder()
+                    ? monotonic.getTimestampArg() : key;
+            if (arg instanceof ColumnFunction column
+                    && arg.getType() == base.getMetadata().getColumnType(column.getColumnIndex())
+                    && isAscendingKey(base, column.getColumnIndex())) {
+                return i;
+            }
         }
-        return arg instanceof ColumnFunction column
-                && arg.getType() == base.getMetadata().getColumnType(column.getColumnIndex())
-                && isAscendingKey(base, column.getColumnIndex()) ? key : null;
+        return -1;
     }
 
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
