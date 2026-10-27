@@ -146,4 +146,9 @@ public class ArgMinDoubleLongGroupByFunction extends DoubleFunction implements G
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

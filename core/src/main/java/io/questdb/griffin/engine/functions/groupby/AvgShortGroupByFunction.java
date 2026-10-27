@@ -211,6 +211,11 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     private static void applyAvg(long sumAddr, long countAddr, short value, boolean isNew) {
         if (isNew) {
             Unsafe.putLong(sumAddr, value);

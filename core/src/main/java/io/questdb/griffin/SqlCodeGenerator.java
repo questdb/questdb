@@ -192,6 +192,7 @@ import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFa
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
@@ -282,6 +283,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -294,8 +296,8 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
-import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -1877,6 +1879,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
+    }
+
+    private static boolean isStreamGroupByFillSupported(IQueryModel model) {
+        for (IQueryModel current = model; current != null; current = current.getNestedModel()) {
+            if (current.getFillStride() != null) {
+                final ObjList<ExpressionNode> fill = current.getFillValues();
+                if (fill == null || fill.size() > 1 || (fill.size() == 1 && !isNoneKeyword(fill.getQuick(0).token))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // FunctionParser resolves a column literal through SqlUtil.getColumnIndexQuiet(), which ignores
@@ -11275,6 +11289,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+            final Function streamKey = sharedOuterProjectionFunctions == null && isStreamGroupByFillSupported(model)
+                    ? GroupByUtils.getStreamGroupByKey(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
+                    : null;
             if (
                     enableParallelGroupBy
                             && SqlUtil.isParallelismSupported(keyFunctions)
@@ -11404,6 +11421,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerKeyFunctions = null;
                     sharedOuterProjectionFunctions = null;
 
+                    if (streamKey != null && filter == null) {
+                        GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount());
+                        return generateFill(
+                                model,
+                                new AsyncStreamGroupByRecordCursorFactory(
+                                        executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(),
+                                        factory, outerProjectionMetadata, valueTypesCopy, streamKey,
+                                        groupByFunctions0, perWorkerGroupByFunctions0, keyFunctions, perWorkerKeyFunctions0,
+                                        outerProjectionFunctions0, reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
+                                ),
+                                executionContext
+                        );
+                    }
+
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
@@ -11463,6 +11494,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             innerProjectionFunctions = null;
             outerProjectionFunctions = null;
             sharedOuterProjectionFunctions = null;
+
+            if (streamKey != null) {
+                GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount());
+                return generateFill(
+                        model,
+                        new StreamGroupByRecordCursorFactory(asm, factory, outerProjectionMetadata, valueTypes,
+                                streamKey, groupByFunctions0, keyFunctions, outerProjectionFunctions0),
+                        executionContext
+                );
+            }
 
             return generateFill(
                     model,

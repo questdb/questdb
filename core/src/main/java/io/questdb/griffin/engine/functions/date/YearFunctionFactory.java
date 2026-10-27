@@ -90,6 +90,11 @@ public class YearFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            return ColumnType.isTimestamp(arg.getType());
+        }
+
+        @Override
         public int invertTimestampInterval(Interval io) {
             // The grade must be bound-independent (the runtime path probes with an open
             // interval), so an out-of-range year maps to an empty or unbounded interval, never NONE.

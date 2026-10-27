@@ -95,6 +95,15 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            if (!right.isConstant() || left.getType() != getType()) {
+                return false;
+            }
+            final long shift = right.getLong(null);
+            return shift != Numbers.LONG_NULL && -shift <= Long.MAX_VALUE - timestampDriver.getMaxDesignatedTimestamp();
+        }
+
+        @Override
         public int invertTimestampInterval(Interval io) {
             if (!right.isConstant()) {
                 return NONE;

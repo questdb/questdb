@@ -219,6 +219,11 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             return BinaryFunction.super.supportsParallelism();
         }
 
+        @Override
+        public boolean isStateSelfContained() {
+            return true;
+        }
+
         // mean_x, sum_x, mean_y, sum_y, sum_xy
         protected void aggregate(MapValue mapValue, double y, double x) {
             double meanY = mapValue.getDouble(valueIndex);

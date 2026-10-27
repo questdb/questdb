@@ -192,6 +192,11 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("nsum(").val(arg).val(')');
     }

@@ -191,4 +191,9 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

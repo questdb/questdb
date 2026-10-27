@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -46,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
+    public static final byte TYPE_GROUP_BY = 4;
     public static final byte TYPE_HORIZON_JOIN = 3;
     public static final byte TYPE_TOP_K = 1;
     public static final byte TYPE_WINDOW_JOIN = 2;
@@ -65,6 +67,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
+    private DirectLongList groupByValues;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
     // and the collecting cursor must not read filteredRows: a filtered TYPE_HORIZON_JOIN reducer
@@ -141,6 +144,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
         frameMemoryPool.clear();
+        closeGroupByValues();
     }
 
     @Override
@@ -151,6 +155,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
         Misc.free(frameMemoryPool);
+        closeGroupByValues();
     }
 
     /**
@@ -198,6 +203,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public long getFrameSequenceId() {
         return frameSequenceId;
+    }
+
+    public DirectLongList getGroupByValues() {
+        if (groupByValues == null) {
+            groupByValues = new DirectLongList(64, MemoryTag.NATIVE_FAST_MAP, true);
+        }
+        groupByValues.setMemoryTracker(getMemoryTracker());
+        return groupByValues;
     }
 
     /**
@@ -343,6 +356,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
         frameSequence = null;
         frameMemory = null;
+        closeGroupByValues();
 
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
@@ -353,6 +367,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         } else {
             // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
             releaseFrameMemory();
+        }
+    }
+
+    private void closeGroupByValues() {
+        if (groupByValues != null) {
+            groupByValues.close();
+            groupByValues.setMemoryTracker(null);
         }
     }
 }

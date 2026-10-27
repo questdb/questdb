@@ -180,6 +180,11 @@ public abstract class AbstractKurtosisGroupByFunction extends DoubleFunction imp
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     protected void aggregate(MapValue mapValue, double value) {
         double mean = mapValue.getDouble(valueIndex);
         double m2 = mapValue.getDouble(valueIndex + 1);

@@ -2204,7 +2204,6 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByOrderByExpression() throws Exception {
         assertQuery("SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');")
                 .ddl("CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);")
-                .expectSize()
                 .returns("""
                         ref0
                         1970-01-01T00:00:00.000002Z
@@ -3623,24 +3622,22 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .timestamp("y_utc_15m")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(expected);
 
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Stream Group By
                               keys: [y_utc_15m]
-                                GroupBy vectorized: false
-                                  keys: [y_utc_15m]
-                                  values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: (seller='sf' or buyer='sf')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                              values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]
+                                SelectedRecord
+                                    Async JIT Filter workers: 1
+                                      filter: (seller='sf' or buyer='sf')
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
                             """);
         });
     }
@@ -4486,7 +4483,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY ts " +
                     "ORDER BY ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4495,7 +4492,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tst.ts " +
                     "ORDER BY tst.ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4504,7 +4501,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY ts " +
                     "ORDER BY tst.ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4513,7 +4510,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tst.ts " +
                     "ORDER BY ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 

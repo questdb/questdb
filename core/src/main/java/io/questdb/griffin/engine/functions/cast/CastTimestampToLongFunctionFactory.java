@@ -67,6 +67,11 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            return true;
+        }
+
+        @Override
         public int invertTimestampInterval(Interval io) {
             // The long value is the timestamp epoch in the column's own unit, so the
             // preimage is the queried range unchanged.

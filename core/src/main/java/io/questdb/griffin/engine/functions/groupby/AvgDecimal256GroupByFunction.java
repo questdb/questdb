@@ -172,4 +172,9 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

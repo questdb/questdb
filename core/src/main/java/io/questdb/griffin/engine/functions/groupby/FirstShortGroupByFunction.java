@@ -196,4 +196,9 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

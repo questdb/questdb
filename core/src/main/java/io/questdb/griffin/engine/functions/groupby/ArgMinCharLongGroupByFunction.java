@@ -140,4 +140,9 @@ public class ArgMinCharLongGroupByFunction extends CharFunction implements Group
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

@@ -1209,11 +1209,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct ts from di order by 1 limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Long Top K lo: 10
-                          keys: [ts asc]
-                            Async Group By workers: 1
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: di
@@ -1242,9 +1240,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: di
@@ -1257,9 +1254,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: di
@@ -8276,16 +8272,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }

@@ -204,4 +204,9 @@ class AvgDecimal8Rescale256GroupByFunction extends Decimal256Function implements
             return false;
         }
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

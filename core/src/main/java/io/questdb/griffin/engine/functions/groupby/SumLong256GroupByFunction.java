@@ -201,6 +201,11 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     private Long256 getLong256(Record rec, Long256Impl long256) {
         long256.copyFrom(rec.getLong256A(valueIndex));
         return long256;

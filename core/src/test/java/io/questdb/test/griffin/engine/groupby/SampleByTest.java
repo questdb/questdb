@@ -1197,7 +1197,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .mutateWith("insert into x select * from (" +
                         "select" +
                         " rnd_float(0)*100 a," +
@@ -5002,7 +5002,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
                     "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tcount\tts
@@ -5045,7 +5045,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
                     "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tcount\tts
@@ -5091,23 +5091,20 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('17m',ts,null,'00:00','Europe/Berlin')]
-                                  values: [min(i),max(i)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: x
-                                          intervals: [("2021-03-27T23:00:00.000000Z","2021-03-28T01:42:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('17m',ts,null,'00:00','Europe/Berlin')]
+                              values: [min(i),max(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2021-03-27T23:00:00.000000Z","2021-03-28T01:42:59.999999Z")]
                             """);
 
             // 17m
             assertQuery(query)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5130,7 +5127,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
                     "sample by 17m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5178,7 +5175,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
                     "sample by 5m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5221,7 +5218,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
                     "sample by 5m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5356,7 +5353,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
                     "sample by 15m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5377,7 +5374,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
                     "sample by 15m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5430,7 +5427,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
                     "sample by 30m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5446,7 +5443,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
                     "sample by 30m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5544,7 +5541,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
                     "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -5567,7 +5564,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
                     "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -6175,7 +6172,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000Z\t6
@@ -6246,7 +6243,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000Z\t6
@@ -6269,7 +6266,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000Z\t6
@@ -7005,7 +7002,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
                     "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tcount\tts
@@ -8461,7 +8458,7 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
                     """)
                     .timestamp("value_time")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             sum\tvalue_time
@@ -8585,7 +8582,7 @@ public class SampleByTest extends AbstractCairoTest {
                     SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
                     """)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tavg
@@ -8828,7 +8825,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tavg
@@ -8950,7 +8947,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tavg
@@ -8961,7 +8958,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20'")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tavg
@@ -8972,7 +8969,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2018-01-01'")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tavg
@@ -8982,7 +8979,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2018-01-01' to '2018-01-31'")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tavg
@@ -9010,64 +9007,52 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
 
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
                             """);
 
             assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
                             """);
 
             assertQuery("select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tbl
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl
                             """);
         });
     }
@@ -9607,7 +9592,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT min(i), max(i), ts FROM x " +
                     "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -9647,7 +9632,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT min(i), max(i), ts FROM x " +
                     "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             min\tmax\tts
@@ -9787,7 +9772,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertQuery("select sum(a), k from x sample by 100U fill(none) align to calendar")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         sum\tk
                         11.427984775756228\t1970-01-04T05:00:00.000000Z
@@ -9886,7 +9871,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertQuery("select sum(a), k from x sample by 100T fill(none) align to calendar")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         sum\tk
                         0.35983672154330515\t1970-01-04T05:00:00.000000Z
@@ -10948,7 +10933,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tc
                         2021-03-28T04:00:00.000000Z\t3
@@ -10979,7 +10964,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
                         " from long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tc
                         2021-03-28T01:00:00.000000Z\t8
@@ -11011,7 +10996,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tc
                         2021-10-31T02:00:00.000000Z\t8
@@ -11043,7 +11028,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tc
                         2021-10-31T02:00:00.000000Z\t3
@@ -11195,7 +11180,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000Z\t18
@@ -11223,7 +11208,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-02T23:12:00.000000Z\t9
@@ -12382,7 +12367,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   long_sequence(120)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tsum
                         2021-03-25T18:00:00.000000Z\t144.77803379943109
@@ -12445,17 +12430,14 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [b]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [b]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  keys: [b]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -12615,7 +12597,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """;
             assertQuery(query)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tcount\tts_divided
@@ -12626,18 +12608,15 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                VirtualRecord
-                                  functions: [ts,count,max::long/count]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                      values: [count(*),max(ts)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            VirtualRecord
+                              functions: [ts,count,max::long/count]
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                  values: [count(*),max(ts)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
 
             query = """
@@ -12647,7 +12626,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """;
             assertQuery(query)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tdiff1\tdiff2
@@ -12658,18 +12637,15 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                VirtualRecord
-                                  functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [max(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            VirtualRecord
+                              functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [max(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
 
             query = """
@@ -12679,7 +12655,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """;
             assertQuery(query)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tdiff1\tdiff2
@@ -12690,18 +12666,15 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                VirtualRecord
-                                  functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [max(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            VirtualRecord
+                              functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [max(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
 
             query = """
@@ -12711,7 +12684,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """;
             assertQuery(query)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tmax\tdiff1\tdiff2
@@ -12722,18 +12695,15 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                VirtualRecord
-                                  functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [max(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            VirtualRecord
+                              functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [max(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
 
             query = """
@@ -17497,7 +17467,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertQuery("select ts, count() from x sample by 5m align to calendar\n")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ts\tcount
@@ -24467,18 +24437,15 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT sum(c - 1000) AS s, ts FROM t_fv_no_fill SAMPLE BY 1h ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                VirtualRecord
-                                  functions: [sum-COUNT*1000,ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c),count(*)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_no_fill
+                            VirtualRecord
+                              functions: [sum-COUNT*1000,ts]
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [sum(c),count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t_fv_no_fill
                             """);
         });
     }

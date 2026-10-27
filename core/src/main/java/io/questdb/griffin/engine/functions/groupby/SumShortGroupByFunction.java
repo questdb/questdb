@@ -193,4 +193,9 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

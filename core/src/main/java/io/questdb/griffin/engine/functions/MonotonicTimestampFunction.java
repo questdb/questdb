@@ -237,6 +237,14 @@ public interface MonotonicTimestampFunction {
     Function getTimestampArg();
 
     /**
+     * Nondecreasing on a non-negative designated timestamp, without changing its precision.
+     * This is stronger than the interval-pruning contract, which permits supersets.
+     */
+    default boolean preservesTimestampOrder() {
+        return false;
+    }
+
+    /**
      * Returns the ceiling on this shift function's input for the overflow check in
      * {@link #invertConstantShift}. Only the innermost shift sits directly on the designated
      * timestamp, whose stored values {@code TableWriter}/{@code WalWriter.validateBounds} caps at
