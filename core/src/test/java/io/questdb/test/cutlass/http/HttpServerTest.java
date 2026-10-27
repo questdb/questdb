@@ -202,8 +202,10 @@ public class HttpServerTest extends AbstractBootstrapTest {
                             switch (kind) {
                                 case 0 -> context.simpleResponse().sendStatusNoContent(status);
                                 case 1 -> context.simpleResponse().sendStatusNoContent(status, "X-Test: char");
-                                case 2 -> context.simpleResponse().sendStatusNoContent(status, new Utf8String("X-Test: utf8"));
-                                case 3 -> context.simpleResponse().sendStatusJsonContent(status, new Utf8String("{\"ok\":true}"), false);
+                                case 2 ->
+                                        context.simpleResponse().sendStatusNoContent(status, new Utf8String("X-Test: utf8"));
+                                case 3 ->
+                                        context.simpleResponse().sendStatusJsonContent(status, new Utf8String("{\"ok\":true}"), false);
                                 case 4 -> context.simpleResponse().sendStatusTextContent(status, SUCCESS_UTF8, null);
                                 default -> throw new AssertionError(kind);
                             }

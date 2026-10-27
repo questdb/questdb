@@ -165,12 +165,29 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
             final String normalizedContext = "/".equals(contextPath) ? "" : contextPath;
             final String pagePath = normalizedContext + "/index.html";
             final RecordingHttpClientNetwork network = new RecordingHttpClientNetwork();
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath,
-                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(sendFragmentSize),
-                    PropertyKey.HTTP_REDIRECT_COUNT.getEnvVarName(), "1",
-                    "QDB_HTTP_REDIRECT_1", "/custom -> " + pagePath
-            ); HttpClient httpClient = network.newClient()) {
+            final Bootstrap bootstrap = new Bootstrap(
+                    new PropBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            final Map<String, String> env = new HashMap<>(super.getEnv());
+                            env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+                            env.put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
+                            env.put(PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(sendFragmentSize));
+                            env.put(PropertyKey.HTTP_REDIRECT_COUNT.getEnvVarName(), "1");
+                            env.put("QDB_HTTP_REDIRECT_1", "/custom -> " + pagePath);
+                            return Collections.unmodifiableMap(env);
+                        }
+
+                        @Override
+                        public boolean useSite() {
+                            return false;
+                        }
+                    },
+                    getServerMainArgs()
+            );
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap);
+                 HttpClient httpClient = network.newClient()) {
+                serverMain.start();
                 followRedirect(httpClient, network, normalizedContext + "/", pagePath + "?test=1");
 
                 network.clearReceived();
