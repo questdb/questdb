@@ -8,32 +8,32 @@ arithmetic only.
 ## Overall Layout
 
 ```
-ir[0]                          header (counts + flags)
+ir[0]                          header (flags)
 ir[1]                          numericTzOffset
-ir[2 .. 2+D)                   duration parts          (D longs)
-ir[2+D .. 2+D+3T)              time override triples   (T triples, 3 longs each)
-ir[2+D+3T .. end)              elements                (variable-length)
+ir[2]                          element count
+ir[3]                          time override count     (T)
+ir[4]                          duration part count     (D)
+ir[5 .. 5+D)                   duration parts          (D longs)
+ir[5+D .. 5+D+3T)              time override triples   (T triples, 3 longs each)
+ir[5+D+3T .. end)              elements                (variable-length)
 ```
 
-`D`, `T`, and the element count are all encoded in the header.
+Each count takes a whole slot, so no count is capped.
 
 ## Header — `ir[0]`
 
 ```
 bit 63                                                              bit 0
- ├─ elemCount ─┤─ toCount ──┤─ durCount ─┤          ┤DWE┤          ┤dayMask┤
- [63      56]   [55      48] [47      40] [39 .. 24] [23] [22 .. 7] [6 .. 0]
+          ┤DWE┤          ┤dayMask┤
+ [63 .. 24] [23] [22 .. 7] [6 .. 0]
 ```
 
 | Bits    | Name                     | Description                              |
 |---------|--------------------------|------------------------------------------|
-| 63 – 56 | `elemCount`             | Number of elements (max 255)             |
-| 55 – 48 | `timeOverrideCount`     | Number of time override pairs            |
-| 47 – 40 | `durationPartCount`     | Number of duration (unit, value) parts   |
 | 23      | `hasDurationWithExchange`| Duration applied after exchange schedule |
 | 6 – 0   | `dayFilterMask`         | Bitmask of allowed days (Mon=bit 0, Sun=bit 6) |
 
-Bits 39–24 and 22–7 are reserved (zero).
+Bits 63–24 and 22–7 are reserved (zero).
 
 ## Timezone Offset — `ir[1]`
 
@@ -44,7 +44,7 @@ Named timezones (e.g. `Europe/London`) are stored separately as a
 `TimeZoneRules` object reference on the `CompiledTickExpression` instance, since
 DST rules cannot be encoded as a single long.
 
-## Duration Parts — `ir[2 .. 2+D)`
+## Duration Parts — `ir[5 .. 5+D)`
 
 Each duration part (e.g. the `6h30m` in `;6h30m`) is encoded as one long:
 
@@ -60,7 +60,7 @@ bit 63                                    bit 0
 | 47 – 32 | `unit` | Duration unit char (`h`, `m`, `s`, `d`, `M`, `y`, etc.) |
 | 31 – 0  | `value`| Duration amount (signed int stored as 32-bit pattern) |
 
-## Time Override Triples — `ir[2+D .. 2+D+3T)`
+## Time Override Triples — `ir[5+D .. 5+D+3T)`
 
 Each time override (e.g. `T09:30` or each entry in `T[09:00,14:00]`) is stored
 as three consecutive longs:
@@ -157,11 +157,11 @@ iterates day-by-day from `startDay` to `endDay`, emitting per-day intervals
 
 ## Section Offsets
 
-Computed once in the constructor from the header:
+Computed once in the constructor from the counts:
 
 ```
-durationOff      = 2
-toOff            = 2 + durationPartCount
+durationOff      = 5
+toOff            = 5 + durationPartCount
 elemOff          = toOff + timeOverrideCount * 3
 ```
 
@@ -204,15 +204,15 @@ allocations.
 
 ## Compile-Time Construction
 
-`IntervalUtils.compileTickExpr()` builds the IR into a single `long[]`:
+`IntervalUtils.compileTickExpr()` builds the IR into a single `LongList`:
 
-1. Allocate one `long[64]`
-2. Write duration parts at `ir[0..D)`
-3. Write time override triples at `ir[D..D+3T)`
-4. **Shift** suffix data right by 2 (`arraycopy`) to insert header + tz offset
-5. Append elements at `ir[2+D+3T..)`
-6. Write header at `ir[0]`, trim array to exact size
+1. Append the header placeholder, the numeric timezone offset and three count
+   placeholders at `ir[0..5)`
+2. Append duration parts at `ir[5..5+D)`
+3. Append time override triples at `ir[5+D..5+D+3T)`
+4. Append elements at `ir[5+D+3T..)`
+5. Write the header at `ir[0]` and the counts at `ir[2..5)`
 
-This produces exactly **one `long[]` allocation** for the stored IR. Compile-time
-temporaries (two `StringSink`, one `LongList`) are reused across all parsing
-phases via `clear()` between uses.
+This produces exactly **one `LongList`** for the stored IR. Compile-time
+temporaries (`StringSink`s and one `LongList`) are thread-local and reused
+across all parsing phases via `clear()` between uses.

@@ -496,6 +496,47 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableIntervalWithManyElementsFollowsClock() throws Exception {
+        // CompiledTickExpression used to keep the element count of a date variable expression in 8
+        // bits, so the Java filter and the interval scan lost all but count % 256 of the elements.
+        assertMemoryLeak(() -> {
+            // One row a day at 10:00:30 through 2024.
+            execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT k, t::DATE, t, t::TIMESTAMP_NS, t
+                    FROM (SELECT x::INT k, dateadd('d', (x - 1)::INT, '2024-01-01T10:00:30.000000Z'::TIMESTAMP) t FROM long_sequence(366))
+                    """);
+            // Each static element matches the row of its day. $today matches no row on 2025-06-01
+            // and the row of 2024-12-30, which no static element holds, on that day.
+            final String days336 = "2024-[01..12]-[01..28]T10:00";
+            final String days252 = "2024-[01..09]-[01..28]T10:00";
+            final String elements256 = "[$today, " + days252 + ", 2024-10-[01..03]T10:00]";
+            final long jun2025 = Micros.toMicros(2025, 6, 1, 1, 0);
+            final long dec2024 = Micros.toMicros(2024, 12, 30, 1, 0);
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                final String query = "SELECT count() FROM x WHERE " + c;
+                // The JIT compiles the static expression.
+                assertCountFollowsClock(query + " IN '[" + days336 + "]'", true, jun2025, 336, dec2024, 336);
+                assertCountFollowsClock(query + " IN '[$today, " + days336 + "]'", false, jun2025, 336, dec2024, 337);
+                assertCountFollowsClock(query + " IN ('[$today, " + days336 + "]')", false, jun2025, 336, dec2024, 337);
+                assertCountFollowsClock(query + " NOT IN '[$today, " + days336 + "]'", false, jun2025, 30, dec2024, 29);
+                assertCountFollowsClock(query + " IN '" + elements256 + "'", false, jun2025, 255, dec2024, 256);
+                assertCountFollowsClock(query + " IN '[$today, " + days252 + "]'", false, jun2025, 252, dec2024, 253);
+            }
+            // Interval scan.
+            final String query = "SELECT count() FROM x WHERE ts";
+            assertCountFollowsClock(query + " IN '[$today, " + days336 + "]'", false, jun2025, 336, dec2024, 337);
+            assertCountFollowsClock(query + " NOT IN '[$today, " + days336 + "]'", false, jun2025, 30, dec2024, 29);
+            assertCountFollowsClock(query + " IN '" + elements256 + "'", false, jun2025, 255, dec2024, 256);
+            // Filter.
+            assertCountFollowsClock(query + " IN '[" + days336 + "]' OR k = 0", true, jun2025, 336, dec2024, 336);
+            assertCountFollowsClock(query + " IN '[$today, " + days336 + "]' OR k = 0", false, jun2025, 336, dec2024, 337);
+            assertCountFollowsClock(query + " IN '" + elements256 + "' OR k = 0", false, jun2025, 255, dec2024, 256);
+        });
+    }
+
+    @Test
     public void testDeferredSymbolConstants() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
@@ -2301,6 +2342,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             sb.append(k).append('\n');
         }
         return sb.toString();
+    }
+
+    private void assertCountFollowsClock(String query, boolean isJitExpected, long micros1, long count1, long micros2, long count2) throws Exception {
+        assertFollowsClock(query, isJitExpected, q -> q.expectSize().noRandomAccess(), micros1, "count\n" + count1 + "\n", micros2, "count\n" + count2 + "\n");
     }
 
     private void assertFilterFollowsClock(String filter, long micros1, String expected1, long micros2, String expected2) throws Exception {

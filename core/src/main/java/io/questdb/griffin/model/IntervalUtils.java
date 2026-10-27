@@ -261,10 +261,15 @@ public final class IntervalUtils {
         int durationSemicolon = compileFindCharOrNeg1(effectiveSeq, suffixLo, durationHi, ';');
 
         // Build IR using LongList — no manual capacity management, no shift hack.
-        // Layout: [header, numericTz, durationParts..., timeOverrides..., elements...]
+        // Layout: [header, numericTz, elemCount, timeOverrideCount, durationPartCount,
+        //          durationParts..., timeOverrides..., elements...]
         LongList irList = new LongList(64);
         irList.add(0L);               // [0] header placeholder
         irList.add(numericTzOffset);   // [1] numeric timezone offset
+        irList.add(0L);               // [2] element count placeholder
+        irList.add(0L);               // [3] time override count placeholder
+        irList.add(0L);               // [4] duration part count placeholder
+        assert irList.size() == CompiledTickExpression.IR_PREFIX_SIZE;
 
         // 3c: Duration parts
         int durationPartCount = 0;
@@ -298,16 +303,14 @@ public final class IntervalUtils {
                 position, irList, parseSink, tmp
         );
 
-        // Phase 5: Finalize header and extract IR array
-        irList.setQuick(0,
-                CompiledTickExpression.encodeHeader(
-                        elemCount,
-                        timeOverrideCount,
-                        durationPartCount,
-                        hasDurationWithExchange,
-                        dayFilterMask
-                )
+        // Phase 5: Finalize header and counts
+        irList.setQuick(
+                CompiledTickExpression.IR_HEADER_INDEX,
+                CompiledTickExpression.encodeHeader(hasDurationWithExchange, dayFilterMask)
         );
+        irList.setQuick(CompiledTickExpression.IR_ELEM_COUNT_INDEX, elemCount);
+        irList.setQuick(CompiledTickExpression.IR_TIME_OVERRIDE_COUNT_INDEX, timeOverrideCount);
+        irList.setQuick(CompiledTickExpression.IR_DURATION_COUNT_INDEX, durationPartCount);
 
         return new CompiledTickExpression(
                 timestampDriver,

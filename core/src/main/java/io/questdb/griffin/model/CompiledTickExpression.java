@@ -43,12 +43,16 @@ import io.questdb.std.datetime.TimeZoneRules;
  * <p>
  * IR layout:
  * <pre>
- *   ir[0]:                         header (counts + flags, see HDR_* constants)
+ *   ir[0]:                         header (flags, see HDR_* constants)
  *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
- *   ir[2 .. 2+D):                  duration parts (encoded unit+value)
- *   ir[2+D .. 2+D+3T):             time override triples (offset, width, zoneMatch)
- *   ir[2+D+3T .. end):             elements
+ *   ir[2]:                         element count
+ *   ir[3]:                         time override count (T)
+ *   ir[4]:                         duration part count (D)
+ *   ir[5 .. 5+D):                  duration parts (encoded unit+value)
+ *   ir[5+D .. 5+D+3T):             time override triples (offset, width, zoneMatch)
+ *   ir[5+D+3T .. end):             elements
  * </pre>
+ * Each count takes a whole IR slot, so no count can overflow its field.
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
  *   <li>SINGLE_VAR (tag 00): 1 long — encoded DateVariableExpr</li>
@@ -63,12 +67,17 @@ public class CompiledTickExpression extends UntypedFunction {
     static final long TAG_SINGLE_VAR = 0x0000_0000_0000_0000L;
     static final long TAG_STATIC = 0x4000_0000_0000_0000L;
 
+    // ---- IR prefix slots ----
+    static final int IR_DURATION_COUNT_INDEX = 4;
+    static final int IR_ELEM_COUNT_INDEX = 2;
+    static final int IR_HEADER_INDEX = 0;
+    static final int IR_PREFIX_SIZE = 5;
+    static final int IR_TIME_OVERRIDE_COUNT_INDEX = 3;
+    static final int IR_TZ_OFFSET_INDEX = 1;
+
     // ---- Header (ir[0]) bit layout ----
     private static final long HDR_DAY_MASK = 0x7FL;
-    private static final int HDR_DUR_SHIFT = 40;
     private static final long HDR_DWE_BIT = 1L << 23;
-    private static final int HDR_ELEM_SHIFT = 56;
-    private static final int HDR_TO_SHIFT = 48;
 
     // ---- Expr encoding (bits 59-0) ----
     private static final long IR_BD_BIT = 1L << 57;
@@ -111,15 +120,15 @@ public class CompiledTickExpression extends UntypedFunction {
         this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
 
-        // Pre-decode header and section offsets
-        long header = ir.getQuick(0);
-        this.elemCount = (int) ((header >>> HDR_ELEM_SHIFT) & 0xFF);
-        this.timeOverrideCount = (int) ((header >>> HDR_TO_SHIFT) & 0xFF);
-        this.durationPartCount = (int) ((header >>> HDR_DUR_SHIFT) & 0xFF);
+        // Pre-decode header, counts and section offsets
+        long header = ir.getQuick(IR_HEADER_INDEX);
+        this.elemCount = (int) ir.getQuick(IR_ELEM_COUNT_INDEX);
+        this.timeOverrideCount = (int) ir.getQuick(IR_TIME_OVERRIDE_COUNT_INDEX);
+        this.durationPartCount = (int) ir.getQuick(IR_DURATION_COUNT_INDEX);
         this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
-        this.durationOff = 2;
-        this.toOff = 2 + durationPartCount;
+        this.durationOff = IR_PREFIX_SIZE;
+        this.toOff = durationOff + durationPartCount;
         this.elemOff = toOff + timeOverrideCount * 3;
     }
 
@@ -127,13 +136,8 @@ public class CompiledTickExpression extends UntypedFunction {
         return ((long) (unit & 0xFFFF) << 32) | (value & 0xFFFFFFFFL);
     }
 
-    static long encodeHeader(int elemCount, int timeOverrideCount, int durationPartCount,
-                             boolean hasDurationWithExchange, int dayFilterMask) {
-        return ((long) (elemCount & 0xFF) << HDR_ELEM_SHIFT)
-                | ((long) (timeOverrideCount & 0xFF) << HDR_TO_SHIFT)
-                | ((long) (durationPartCount & 0xFF) << HDR_DUR_SHIFT)
-                | (hasDurationWithExchange ? HDR_DWE_BIT : 0L)
-                | (dayFilterMask & HDR_DAY_MASK);
+    static long encodeHeader(boolean hasDurationWithExchange, int dayFilterMask) {
+        return (hasDurationWithExchange ? HDR_DWE_BIT : 0L) | (dayFilterMask & HDR_DAY_MASK);
     }
 
     /**
@@ -281,7 +285,7 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     private void applyTimezone(LongList out, int startIndex) {
-        long numericTzOffset = ir.getQuick(1);
+        long numericTzOffset = ir.getQuick(IR_TZ_OFFSET_INDEX);
         int size = out.size();
         if (numericTzOffset != Long.MIN_VALUE) {
             for (int i = startIndex; i < size; i++) {
@@ -403,7 +407,7 @@ public class CompiledTickExpression extends UntypedFunction {
      * Used for per-element timezone entries that are already in UTC.
      */
     private long utcToGlobalLocal(long utc) {
-        long numericTzOffset = ir.getQuick(1);
+        long numericTzOffset = ir.getQuick(IR_TZ_OFFSET_INDEX);
         if (numericTzOffset != Long.MIN_VALUE) {
             return utc + numericTzOffset;
         } else if (tzRules != null) {

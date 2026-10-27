@@ -821,6 +821,12 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprDurationMoreThan255Parts() throws SqlException {
+        // The duration part count used to take 8 bits, so 300 parts read as 44.
+        assertCompiledTickExpr("$todayT09:30;" + "1s".repeat(300));
+    }
+
+    @Test
     public void testCompiledTickExprDurationMultiPart() throws SqlException {
         assertCompiledTickExpr("$today;1h30m15s");
     }
@@ -1003,6 +1009,20 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprMixedListWithMoreThan255Elements() throws SqlException {
+        // The element count used to take 8 bits, so the expression kept only count % 256 elements.
+        // 2024-[01..09]-[01..28]T10:00 holds 252 elements and 2024-10-[01..0N]T10:00 holds N.
+        final String days252 = "2024-[01..09]-[01..28]T10:00";
+        assertCompiledTickExprElementCount("[$today, " + days252 + "]", 253);
+        assertCompiledTickExprElementCount("[$today, " + days252 + ", 2024-10-[01..02]T10:00]", 255);
+        assertCompiledTickExprElementCount("[$today, " + days252 + ", 2024-10-[01..03]T10:00]", 256);
+        assertCompiledTickExprElementCount("[$today, " + days252 + ", 2024-10-[01..04]T10:00]", 257);
+        assertCompiledTickExprElementCount("[$today, 2024-[01..12]-[01..28]T10:00]", 337);
+        assertCompiledTickExprElementCount("[2024-[01..12]-[01..28]T10:00, $today, 2025-[01..12]-[01..28]T10:00]", 673);
+        assertCompiledTickExpr("[2024-[01..12]-[01..28]T10:00, $today..$tomorrow, 2025-01-[01..28]T10:00]");
+    }
+
+    @Test
     public void testCompiledTickExprMixedListWithRange() throws SqlException {
         assertCompiledTickExpr("[2025-03-01, $today .. $today + 2d , $yesterday]");
     }
@@ -1118,6 +1138,30 @@ public class TickExprTest {
         // 20 bracket-expanded static dates → 60 longs → irPos=64.
         // Single var needs 1 more → triggers IR growth at L537.
         assertCompiledTickExpr("[2025-01-[01..20], $today];1s1s");
+    }
+
+    @Test
+    public void testCompiledTickExprSingleVarWithMoreThan255TimeOverrides() throws SqlException {
+        // The time override count used to take 8 bits, so 300 time overrides read as 44. The times
+        // are 2 minutes apart, so their intervals do not merge.
+        final StringBuilder times = new StringBuilder("[$today]T[");
+        for (int i = 0; i < 300; i++) {
+            if (i > 0) {
+                times.append(',');
+            }
+            final int minutes = 2 * i;
+            times.append(String.format("%02d:%02d", minutes / 60, minutes % 60));
+        }
+        times.append(']');
+        assertCompiledTickExpr(times.toString());
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, times, 0, times.length(), 0)) {
+            final LongList intervals = new LongList();
+            compiled.evaluate(intervals, timestampDriver.parseFloorLiteral("2025-06-01T01:00:00.000000Z"));
+            Assert.assertEquals(600, intervals.size());
+            Assert.assertEquals(timestampDriver.parseFloorLiteral("2025-06-01T09:58:00.000000Z"), intervals.getQuick(598));
+        }
     }
 
     @Test
@@ -5940,6 +5984,19 @@ public class TickExprTest {
                 );
             }
         }
+    }
+
+    // Evaluates the expression in 2026, outside the static elements of the tests, where each element
+    // yields one interval, and then runs assertCompiledTickExpr().
+    private void assertCompiledTickExprElementCount(String expression, int expectedElementCount) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            final LongList intervals = new LongList();
+            compiled.evaluate(intervals, timestampDriver.parseFloorLiteral("2026-06-01T01:00:00.000000Z"));
+            Assert.assertEquals(expression, 2 * expectedElementCount, intervals.size());
+        }
+        assertCompiledTickExpr(expression);
     }
 
     private void assertCompiledTickExprWithNow(String expression, String nowStr) throws SqlException {
