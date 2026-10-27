@@ -541,6 +541,32 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyIntervalInFilterMatchesNoRow() throws Exception {
+        // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval. The JIT used to push
+        // no value for it: under OR or NOT the JVM crashed, and under AND or alone the filter
+        // stored rows. The JIT now compiles the IN as a comparison that is false on every row.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            final String empty = " IN '2024-01-06#workday'";
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + empty, keys(), true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-06#workday')", keys(), true);
+                assertFilterWithAndWithoutJit(c + empty + " OR k = 2", keys(2), true);
+                assertFilterWithAndWithoutJit(c + empty + " AND k = 6", keys(), true);
+                assertFilterWithAndWithoutJit("NOT " + c + empty, allDayKeysExcept(), true);
+                assertFilterWithAndWithoutJit(c + " NOT IN ('2024-01-06#workday')", allDayKeysExcept(), true);
+                assertFilterWithAndWithoutJit(c + " NOT" + empty + " AND k < 3", keys(0, 1, 2), true);
+                // A key of a single width leaves the filter vectorized.
+                assertFilterWithAndWithoutJit(c + empty + " OR " + c + " IN '2024-01-02'", keys(2), true);
+                assertFilterWithAndWithoutJit(c + empty + " AND " + c + " IN '2024-01'", keys(), true);
+            }
+            // The interval scan takes an IN on the designated timestamp only from an AND chain.
+            assertFilterWithAndWithoutJit("ts" + empty + " OR k = 2", keys(2), true);
+            assertFilterWithAndWithoutJit("NOT ts" + empty + " OR k = 2", allDayKeysExcept(), true);
+        });
+    }
+
+    @Test
     public void testFilteringOnSingleQuote() throws Exception {
         assertQuery("""
                 SELECT timestamp as Time,

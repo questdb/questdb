@@ -4379,7 +4379,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Emits a pairing that is false on every row. The mask is an all-zero full register, so the
      * width only has to be one the backend can compare at, not the key's own. See
-     * {@link #neverMatchingInPairingWidth}.
+     * {@link #neverMatchingInPairingWidth}. {@link #serializeInTimestampRange} emits it for an
+     * interval expression that holds no instant.
      */
     private void putNeverMatchingInPairing(int typeCode) {
         putOperand(IMM, typeCode, 0);
@@ -4917,6 +4918,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.$(position, "exceeded JIT IN list threshold [threshold=")
                     .put(maxIntervalCount)
                     .put(", intervals=").put(intervalCount).put(']');
+        }
+
+        if (intervalCount == 0) {
+            // The expression holds no instant, e.g. '2024-01-06#workday', where the day filter drops
+            // the only day, a Saturday. The Java filter matches no row then, NULL included. The
+            // parent OR, AND or NOT pops one value per operand, and a lone predicate with no value
+            // stores every row, so push a comparison that is false on every row. It compares two
+            // immediates at I8, the width of every temporal key, and reads no column.
+            putNeverMatchingInPairing(I8_TYPE);
+            return;
         }
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;

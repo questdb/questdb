@@ -1610,6 +1610,53 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)");
     }
 
+    @Test
+    public void testInTimestampEmptyIntervalNeverMatches() throws Exception {
+        // 2020-01-04 is a Saturday, so the day filter leaves no interval. The IN used to push no
+        // value, so the parent OR, AND or NOT popped one that was never pushed: the JVM crashed, or
+        // the filter stored rows the Java filter does not match. The IN now pushes a comparison that
+        // is false on every row, at the I8 width of the key, so the filter stays vectorized.
+        for (String c : new String[]{"adate", "atimestamp", "atimestampns"}) {
+            int options = serialize(c + " IN '2020-01-04#workday'", false, false, true);
+            assertIR("(i64 0L)(i64 1L)(=)(ret)");
+            assertIRStackBalanced();
+            assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
+
+            options = serialize(c + " IN ('2020-01-04#workday')", false, false, true);
+            assertIR("(i64 0L)(i64 1L)(=)(ret)");
+            assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
+
+            options = serialize(c + " IN '2020-01-04#workday' OR along = 1", false, false, true);
+            assertIR("(i64 1L)(i64 along)(=)(i64 0L)(i64 1L)(=)(||)(ret)");
+            assertIRStackBalanced();
+            assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
+
+            serialize("NOT " + c + " IN '2020-01-04#workday'");
+            assertIR("(i64 0L)(i64 1L)(=)(!)(ret)");
+            assertIRStackBalanced();
+
+            serialize(c + " NOT IN ('2020-01-04#workday')");
+            assertIR("(i64 0L)(i64 1L)(=)(!)(ret)");
+            assertIRStackBalanced();
+
+            serialize(c + " IN '2020-01-04#workday' AND along = 1");
+            assertIR("(i64 1L)(i64 along)(=)(i64 0L)(i64 1L)(=)(&&)(ret)");
+            assertIRStackBalanced();
+        }
+
+        bindVariableService.clear();
+        bindVariableService.setTimestamp("ts", 0);
+        serialize(":ts IN '2020-01-04#workday' OR along = 1");
+        assertIR("(i64 1L)(i64 along)(=)(i64 0L)(i64 1L)(=)(||)(ret)");
+        assertIRStackBalanced();
+
+        // In a short-circuit AND chain, the chain emits the exit.
+        serialize("anint = 1 and atimestamp IN '2020-01-04#workday' and auuid != '22222222-2222-2222-2222-222222222222'", true, false, true);
+        assertIR("(i32 1L)(i32 anint)(=)(&&_sc)" +
+                "(i64 0L)(i64 1L)(=)(&&_sc)" +
+                "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)");
+    }
+
     @Test(expected = SqlException.class)
     public void testInSubSelect() throws Exception {
         serialize("asymbol in (select asymbol from tab limit 1)");
