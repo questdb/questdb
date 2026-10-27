@@ -340,30 +340,27 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             String expected = "count\n" + counts[i] + "\n";
                             assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
 
-                            // a slot array does not fit 1KiB, so the tiny budget caches only map keys
                             boolean isTiny = limit == 1024;
                             int lowCount = symbols.getLowCacheSize();
                             int cachedCount = symbols.getCacheSize();
+                            Assert.assertEquals(predicates.getQuick(i), 4096, lowCount);
                             if (isTiny) {
-                                Assert.assertEquals(predicates.getQuick(i), 0, lowCount);
                                 Assert.assertTrue(predicates.getQuick(i), cachedCount > 0 && cachedCount < 904);
                             } else {
-                                Assert.assertEquals(predicates.getQuick(i), 4096, lowCount);
                                 Assert.assertEquals(predicates.getQuick(i), 904, cachedCount);
                             }
                             long cachedBytes = budget.getUsedBytes();
-                            Assert.assertEquals(symbols.getCacheAllocatedBytes() + symbols.getLowCacheAllocatedBytes(), cachedBytes);
+                            Assert.assertEquals(symbols.getCacheAllocatedBytes(), cachedBytes);
                             Assert.assertTrue(cachedBytes > 0 && cachedBytes <= limit);
-                            // the map takes scanned keys in order, so the tiny budget runs out before key 4096
+                            // the map takes scanned keys in order, so the tiny budget runs out before key 4999
                             long lowAddress = ((DirectString) symbols.valueOf(0)).lo();
-                            long highAddress = ((DirectString) symbols.valueOf(4096)).lo();
+                            long highAddress = ((DirectString) symbols.valueOf(4999)).lo();
                             DirectString mapped = new DirectString();
+                            Assert.assertNotEquals(((DirectString) symbols.valueOf(0, mapped)).lo(), lowAddress);
                             if (isTiny) {
-                                Assert.assertEquals(((DirectString) symbols.valueOf(0, mapped)).lo(), lowAddress);
-                                Assert.assertEquals(((DirectString) symbols.valueOf(4096, mapped)).lo(), highAddress);
+                                Assert.assertEquals(((DirectString) symbols.valueOf(4999, mapped)).lo(), highAddress);
                             } else {
-                                Assert.assertNotEquals(((DirectString) symbols.valueOf(0, mapped)).lo(), lowAddress);
-                                Assert.assertNotEquals(((DirectString) symbols.valueOf(4096, mapped)).lo(), highAddress);
+                                Assert.assertNotEquals(((DirectString) symbols.valueOf(4999, mapped)).lo(), highAddress);
                             }
 
                             assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
@@ -371,7 +368,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             Assert.assertEquals(cachedCount, symbols.getCacheSize());
                             Assert.assertEquals(cachedBytes, budget.getUsedBytes());
                             Assert.assertEquals(lowAddress, ((DirectString) symbols.valueOf(0)).lo());
-                            Assert.assertEquals(highAddress, ((DirectString) symbols.valueOf(4096)).lo());
+                            Assert.assertEquals(highAddress, ((DirectString) symbols.valueOf(4999)).lo());
                             TestUtils.assertEquals("symbol1", symbols.valueOf(0));
                             TestUtils.assertEquals("symbol4097", symbols.valueOf(4096));
                             TestUtils.assertEquals("symbol5000", symbols.valueOf(4999));

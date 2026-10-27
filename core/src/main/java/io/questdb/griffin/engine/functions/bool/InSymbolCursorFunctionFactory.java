@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
@@ -104,7 +105,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         return new StrInCursorFunc(symbolFunction, cursorFunction, func);
     }
 
-    private static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {
+    public static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final StringSink sink = new StringSink();
@@ -133,6 +134,16 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return cursorArg;
+        }
+
+        @TestOnly
+        public CharSequenceHashSet getSpareValueSet() {
+            return spareValueSet;
+        }
+
+        @TestOnly
+        public CharSequenceHashSet getValueSet() {
+            return valueSet;
         }
 
         @Override

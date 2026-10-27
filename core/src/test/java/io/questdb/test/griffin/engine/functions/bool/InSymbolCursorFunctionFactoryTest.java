@@ -50,8 +50,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
@@ -69,7 +67,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(0, cloneRhs.openCount);
                     Assert.assertEquals(1, cloneRhs.initCount);
                     Assert.assertNotSame(valueSet(donor), valueSet(clone));
-                    Assert.assertNotSame(setField(donor, "spareValueSet"), setField(clone, "spareValueSet"));
+                    Assert.assertNotSame(spareValueSet(donor), spareValueSet(clone));
                     Assert.assertSame(key(valueSet(donor), "old"), key(valueSet(clone), "old"));
                     donorRhs.values.clear();
                     donorRhs.values.add("new");
@@ -108,7 +106,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                         Assert.assertEquals("failure " + failure, e.getMessage());
                     }
                     Assert.assertEquals(failure <= 2 ? 1 : 2, rhs.closeCount);
-                    Assert.assertEquals(0, setField(function, "spareValueSet").size());
+                    Assert.assertEquals(0, spareValueSet(function).size());
                     rhs.failure = 0;
                     rhs.values.clear();
                     rhs.values.add("retry");
@@ -116,7 +114,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                     Assert.assertTrue(matches(function, "retry"));
                     Assert.assertFalse(matches(function, "old"));
                     Assert.assertFalse(matches(function, "partial"));
-                    Assert.assertEquals(0, setField(function, "spareValueSet").size());
+                    Assert.assertEquals(0, spareValueSet(function).size());
                 }
             }
         });
@@ -155,7 +153,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                             Assert.assertTrue(matches(function, value));
                         }
                         Assert.assertEquals(copies, rhs.flyweight.copyCount);
-                        Assert.assertEquals(0, setField(function, "spareValueSet").size());
+                        Assert.assertEquals(0, spareValueSet(function).size());
                     }
                     rhs.flyweight.isCopyForbidden = false;
                     rhs.values.clear();
@@ -203,7 +201,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                     }
                     retained = current;
                     Assert.assertEquals(16, valueSet(function).size());
-                    Assert.assertEquals(0, setField(function, "spareValueSet").size());
+                    Assert.assertEquals(0, spareValueSet(function).size());
                     for (int i = 0; i < 16; i++) {
                         Assert.assertTrue(matches(function, rhs.values.getQuick(i)));
                     }
@@ -213,7 +211,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                 function.init(null, sqlExecutionContext);
                 Assert.assertEquals(1, valueSet(function).size());
                 Assert.assertEquals("small", valueSet(function).get(0));
-                Assert.assertEquals(0, setField(function, "spareValueSet").size());
+                Assert.assertEquals(0, spareValueSet(function).size());
                 Assert.assertFalse(matches(function, longValue));
             }
         });
@@ -614,14 +612,12 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
         return new InSymbolCursorFunctionFactory().newInstance(0, args, new IntList(), configuration, sqlExecutionContext);
     }
 
-    private static CharSequenceHashSet setField(Function function, String name) throws Exception {
-        Field field = function.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return (CharSequenceHashSet) field.get(function);
+    private static CharSequenceHashSet spareValueSet(Function function) {
+        return ((InSymbolCursorFunctionFactory.StrInCursorFunc) function).getSpareValueSet();
     }
 
-    private static CharSequenceHashSet valueSet(Function function) throws Exception {
-        return setField(function, "valueSet");
+    private static CharSequenceHashSet valueSet(Function function) {
+        return ((InSymbolCursorFunctionFactory.StrInCursorFunc) function).getValueSet();
     }
 
     private static class CopyCountingSequence implements CharSequence {

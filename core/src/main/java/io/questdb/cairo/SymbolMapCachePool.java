@@ -53,7 +53,7 @@ public class SymbolMapCachePool implements QuietCloseable {
     }
 
     public @Nullable Entry acquire(Utf8Sequence tableDir, CharSequence columnName, long symbolTableNameTxn, long truncateVersion) {
-        if (isClosed) {
+        if (isClosed || budget.getLimit() == 0) {
             return null;
         }
         // Length prefixes keep names containing separators unambiguous.
@@ -93,7 +93,7 @@ public class SymbolMapCachePool implements QuietCloseable {
 
     public class Entry implements QuietCloseable {
         private final String key;
-        private final SymbolMapLowSlice low = new SymbolMapLowSlice(budget);
+        private final SymbolMapLowSlice low = new SymbolMapLowSlice();
         private final DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_SYMBOL_CACHE, budget);
         private final AtomicInteger refCount = new AtomicInteger(1);
 

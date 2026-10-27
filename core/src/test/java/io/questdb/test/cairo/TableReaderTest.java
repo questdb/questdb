@@ -5045,6 +5045,8 @@ public class TableReaderTest extends AbstractCairoTest {
                     (localEngine, _, context) -> {
                         localEngine.execute("CREATE TABLE cache_disabled (s SYMBOL CAPACITY 8192 CACHE)", context);
                         localEngine.execute("INSERT INTO cache_disabled SELECT x::STRING FROM long_sequence(4097)", context);
+                        final boolean isDisabled = budget == 0;
+                        final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE);
                         try (TableReader reader = localEngine.getReader("cache_disabled")) {
                             SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
                             SymbolTable view = symbols.newSymbolTableView();
@@ -5052,11 +5054,13 @@ public class TableReaderTest extends AbstractCairoTest {
                             TestUtils.assertEquals("4097", symbols.valueBOf(4096));
                             TestUtils.assertEquals("1", view.valueOf(0));
                             TestUtils.assertEquals("4097", view.valueBOf(4096));
-                            Assert.assertEquals(0, symbols.getLowCacheSize());
-                            Assert.assertEquals(0, symbols.getLowCacheAllocatedBytes());
+                            Assert.assertEquals(isDisabled ? 0 : 1, symbols.getLowCacheSize());
+                            Assert.assertEquals(isDisabled ? 0 : 66 * 64, symbols.getLowCacheAllocatedBytes());
                             Assert.assertEquals(0, symbols.getCacheSize());
                             Assert.assertEquals(0, symbols.getCacheAllocatedBytes());
                             Assert.assertEquals(0, localEngine.getSymbolMapCachePool().getBudget().getUsedBytes());
+                            Assert.assertEquals(isDisabled ? 0 : 1, localEngine.getSymbolMapCachePool().getEntryCount());
+                            Assert.assertEquals(isDisabled ? 0 : 66 * 64, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE) - baseline);
                         }
                         localEngine.execute("DROP TABLE cache_disabled", context);
                     },

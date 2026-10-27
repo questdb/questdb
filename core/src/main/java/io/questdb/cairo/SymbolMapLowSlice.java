@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.std.MemoryTag;
-import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -42,8 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * into a slot of one cache line: the length plus one, then up to {@link #MAX_INLINE_CHARS} chars.
  * A zero header marks a key that is not copied yet. Reads are lock-free; copies and growth take a
  * try-lock that never waits. Published slots never change and retired arrays stay allocated until
- * close, so views survive later copies. Every array is charged to the shared budget, and a refused
- * array stops admission for good.
+ * close, so views survive later copies. {@link #MAX_KEYS} bounds every array, so the arrays do not
+ * count toward the shared cache limit. An allocation that runs out of memory stops admission for good.
  */
 final class SymbolMapLowSlice implements QuietCloseable {
     static final int BUSY = 3;
@@ -61,16 +60,11 @@ final class SymbolMapLowSlice implements QuietCloseable {
     private static final int RETIRED_OFFSET = 24;
     private static final int SLOT_SHIFT = 6;
     private static final int SLOT_SIZE = 1 << SLOT_SHIFT;
-    private final NativeMemoryBudget budget;
     private final AtomicBoolean lock = new AtomicBoolean();
     private volatile long allocatedBytes;
     private volatile long array;
     private volatile boolean isFilling = true;
     private volatile int size;
-
-    SymbolMapLowSlice(NativeMemoryBudget budget) {
-        this.budget = budget;
-    }
 
     @TestOnly
     public long allocatedBytes() {
@@ -89,9 +83,7 @@ final class SymbolMapLowSlice implements QuietCloseable {
         array = 0;
         while (a != 0) {
             final long next = Unsafe.getLong(a + RETIRED_OFFSET);
-            final long bytes = Unsafe.getLong(a + RAW_SIZE_OFFSET);
-            Unsafe.free(Unsafe.getLong(a + RAW_ADDRESS_OFFSET), bytes, MemoryTag.NATIVE_SYMBOL_CACHE);
-            budget.release(bytes);
+            Unsafe.free(Unsafe.getLong(a + RAW_ADDRESS_OFFSET), Unsafe.getLong(a + RAW_SIZE_OFFSET), MemoryTag.NATIVE_SYMBOL_CACHE);
             a = next;
         }
         allocatedBytes = 0;
@@ -169,15 +161,11 @@ final class SymbolMapLowSlice implements QuietCloseable {
                 : Math.max(MIN_CAPACITY, Numbers.ceilPow2(Math.min(symbolCount, MAX_KEYS)));
         // the header slot, the slots and the slack that aligns them to a cache line
         final long bytes = (newCapacity + 2L) * SLOT_SIZE;
-        if (!budget.tryReserve(bytes)) {
-            return 0;
-        }
         final long raw;
         try {
             raw = Unsafe.malloc(bytes, MemoryTag.NATIVE_SYMBOL_CACHE);
-        } catch (Throwable e) {
-            budget.release(bytes);
-            if (e instanceof CairoException ce && ce.isOutOfMemory()) {
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
                 return 0;
             }
             throw e;

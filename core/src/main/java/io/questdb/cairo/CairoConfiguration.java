@@ -1174,8 +1174,9 @@ public interface CairoConfiguration {
     }
 
     /**
-     * Native memory that the readers' shared symbol value caches may hold in total. A cache stops
-     * admitting values once the limit is reached and its misses read the mapped symbol file.
+     * Native memory that the readers' shared symbol value caches may hold in total, not counting
+     * the slots of the first 4096 keys of each symbol column. Once the limit is reached, other values
+     * are read from the mapped symbol file. Zero disables the caches.
      */
     long getSymbolCacheMaxSize();
 

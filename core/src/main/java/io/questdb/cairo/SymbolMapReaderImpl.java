@@ -415,13 +415,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private void logLowSliceStopped() {
-        final NativeMemoryBudget budget = cacheEntry.getBudget();
-        final long budgetUsed = budget.getUsedBytes();
-        final long budgetLimit = budget.getLimit();
         final int cachedKeys = low.size();
         LOG.info().$("symbol cache low slice stopped admitting new values [table=").$(path)
-                .$(", column=").$(columnNameSink).$(", cachedKeys=").$(cachedKeys)
-                .$(", budgetUsed=").$(budgetUsed).$(", budgetLimit=").$(budgetLimit).I$();
+                .$(", column=").$(columnNameSink).$(", reason=oom, cachedKeys=").$(cachedKeys).I$();
     }
 
     private void refreshCacheBounds() {
