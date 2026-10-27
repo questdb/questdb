@@ -2133,10 +2133,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // Delta readers and Run window maps depend on this base's format and window grid.
-        // Conversion requires a replacement PhysicalBase and compatible navigation.
+        // Conversion requires a replacement PhysicalBase and compatible navigation. SQL refuses
+        // it before WAL; WAL apply tolerates a partition that turned delta-active since.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition is delta-active [table=")
+            throw CairoException.partitionManipulationRecoverable().put("cannot convert partition to parquet, partition is delta-active [table=")
                     .put(tableToken.getTableName())
                     .put(", partition=").put(utf8Sink).put(']');
         }
@@ -2279,10 +2280,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // The retrofit delta switch clears read_only, so the guard above no longer covers a
-        // delta-active partition; conversion needs the later base-rewrite protocol.
+        // delta-active partition; conversion needs the later base-rewrite protocol. SQL refuses
+        // it before WAL; WAL apply tolerates a partition that turned delta-active since.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition is delta-active [table=")
+            throw CairoException.partitionManipulationRecoverable().put("cannot convert parquet partition to native, partition is delta-active [table=")
                     .put(tableToken.getTableName())
                     .put(", partition=").put(utf8Sink)
                     .put(']');

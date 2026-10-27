@@ -1748,6 +1748,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         TableReader reader = null;
+        TableReader layoutReader = null;
         if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
             reader = executionContext.getReader(tableToken);
         }
@@ -1756,10 +1757,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                 throw SqlException.$(pos, "table is not partitioned");
             }
+            // Conversion checks partition layout before WAL; a WAL table has no reader yet.
+            TableReader deltaCheckReader = null;
+            if ((action == PartitionAction.CONVERT_TO_PARQUET || action == PartitionAction.CONVERT_TO_NATIVE)
+                    && !isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+                if (reader == null) {
+                    layoutReader = executionContext.getReader(tableToken);
+                }
+                deltaCheckReader = reader != null ? reader : layoutReader;
+            }
 
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
-                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, deltaCheckReader, pos, action);
             } else if (isWhereKeyword(tok)) {
                 AlterOperationBuilder alterOperationBuilder = switch (action) {
                     case PartitionAction.DROP ->
@@ -1788,6 +1798,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     try {
                         if (function != null && ColumnType.isBoolean(function.getType())) {
                             function.init(null, executionContext);
+                            if (deltaCheckReader != null) {
+                                rejectDeltaPartitionConversion(deltaCheckReader, tableToken, function, Long.MIN_VALUE,
+                                        action == PartitionAction.CONVERT_TO_PARQUET, functionPosition);
+                            }
                             if (reader != null) {
                                 int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
                                 if (affected == 0) {
@@ -1819,6 +1833,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } finally {
             Misc.free(reader);
+            Misc.free(layoutReader);
         }
     }
 
@@ -1826,6 +1841,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
             @Nullable TableReader reader,
+            @Nullable TableReader deltaCheckReader,
             int pos,
             int action
     ) throws SqlException {
@@ -1888,6 +1904,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
+                if (deltaCheckReader != null) {
+                    rejectDeltaPartitionConversion(deltaCheckReader, tableToken, null, timestamp,
+                            action == PartitionAction.CONVERT_TO_PARQUET, lastPosition);
+                }
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
@@ -2805,7 +2825,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = expectToken(lexer, "'list'");
                         if (isListKeyword(tok)) {
                             executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
-                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
+                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
                         }
@@ -6046,6 +6066,45 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         engine.checkTableSuspendable(tableToken, tableNamePosition);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    /**
+     * Rejects CONVERT PARTITION of a delta-active partition before WAL submission. TableWriter
+     * cannot convert a delta-active base, and WAL apply would skip the whole ALTER. A delta-active
+     * base already in the target format stays the usual no-op. Checks the partitions that
+     * {@code filter} selects, or else the one at {@code listedTimestamp}.
+     */
+    private void rejectDeltaPartitionConversion(
+            TableReader reader,
+            TableToken tableToken,
+            @Nullable Function filter,
+            long listedTimestamp,
+            boolean toParquet,
+            int position
+    ) throws SqlException {
+        final TxReader txFile = reader.getTxFile();
+        for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+            if (!txFile.isPartitionDeltaActive(i) || txFile.isPartitionParquet(i) == toParquet) {
+                continue;
+            }
+            final long logicalTimestamp = txFile.getPartitionFloor(txFile.getPartitionTimestampByIndex(i));
+            final boolean selected;
+            if (filter != null) {
+                partitionFunctionRec.setTimestamp(logicalTimestamp);
+                selected = filter.getBool(partitionFunctionRec);
+            } else {
+                selected = logicalTimestamp == listedTimestamp;
+            }
+            if (selected) {
+                throw SqlException.position(position)
+                        .put(toParquet
+                                ? "cannot convert partition to parquet, partition is delta-active [table="
+                                : "cannot convert parquet partition to native, partition is delta-active [table=")
+                        .put(tableToken.getTableName())
+                        .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
+                        .put(']');
+            }
+        }
     }
 
     // A table the principal may not see fails exactly like a missing one, before the statement reads
