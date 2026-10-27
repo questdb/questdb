@@ -76,8 +76,8 @@ stages:
   # Compiles the Rust library once per architecture; the self-hosted Linux legs below download
   # it instead of compiling the crate in every leg (templates/rust-build-job.yml). dependsOn []
   # starts it next to CheckChanges. Fork PRs run no code on the self-hosted pools, so this stage
-  # skips them like the test stages do; the coverage legs, which do run on forks, then compile
-  # the crate themselves (steps.yml).
+  # skips them like the test stages do. The coverage legs compile the crate themselves: their
+  # library is instrumented for coverage, so it cannot be this release build.
   - stage: BuildRustLibrary
     displayName: "Build Rust library"
     dependsOn: []
@@ -166,10 +166,6 @@ stages:
     displayName: "SelfHosted Running tests with cover"
     dependsOn:
       - CheckChanges
-      - BuildRustLibrary
-    # BuildRustLibrary is skipped on fork PRs, and these legs must still run there (Coverage
-    # Report is a required check), so a skipped build counts as success here.
-    condition: and(succeeded('CheckChanges'), in(dependencies.BuildRustLibrary.result, 'Succeeded', 'SucceededWithIssues', 'Skipped'))
     jobs:
       - template: templates/self-hosted-cover-jobs.yml
 

@@ -214,41 +214,23 @@ steps:
   # Where the Rust library comes from. With prebuiltRustArtifact, the leg tests against the
   # library a rust-build-job.yml job published instead of compiling the crate; RUST_NATIVE_ARGS
   # carries the Maven flags for that. It is set on every agent, empty where Maven compiles the
-  # crate itself, because an undefined $(VAR) would reach Maven as literal text. Fork PRs get no
-  # build job on the self-hosted pools (fork code does not run there), so a fork leg on such a
-  # pool falls back to compiling the crate.
+  # crate itself, because an undefined $(VAR) would reach Maven as literal text. Coverage legs
+  # never pass an artifact: they need the library instrumented for coverage (qdbr-coverage).
   - ${{ if ne(parameters.prebuiltRustArtifact, '') }}:
-      - bash: |
-          if [ "${IS_FORK}" = "true" ] && [[ "${POOL_NAME}" == hetzner-* ]]; then
-            echo "##vso[task.setvariable variable=RUST_PREBUILT]false"
-            echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
-          else
-            echo "##vso[task.setvariable variable=RUST_PREBUILT]true"
-            echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-native"
-          fi
-        displayName: "Select Rust library source"
-        env:
-          IS_FORK: $(System.PullRequest.IsFork)
-          POOL_NAME: $(poolName)
       - task: DownloadPipelineArtifact@2
         displayName: "Download prebuilt Rust library"
         inputs:
           buildType: current
           artifactName: ${{ parameters.prebuiltRustArtifact }}
           targetPath: $(Pipeline.Workspace)/qdbr-native
-        condition: and(succeeded(), eq(variables['RUST_PREBUILT'], 'true'))
+      - bash: echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-native"
+        displayName: "Use prebuilt Rust library"
   - ${{ else }}:
-      - bash: |
-          echo "##vso[task.setvariable variable=RUST_PREBUILT]false"
-          echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
-        displayName: "Select Rust library source"
-
-  - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
-    displayName: "Ensure Rust is installed"
-    # Note, the `prepare_rust_env.py` script exports a number of variables.
-    # A leg on a prebuilt library compiles no Rust, except the coverage legs, whose
-    # coverage run builds the instrumented library (qdbr-coverage profile).
-    condition: and(succeeded(), or(ne(variables['RUST_PREBUILT'], 'true'), startsWith(variables['testset'], 'coverage')))
+      - bash: echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
+        displayName: "Use Maven-built Rust library"
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed"
+        # Note, the `prepare_rust_env.py` script exports a number of variables.
 
   - template: install-llvm.yml
     parameters:
@@ -351,11 +333,9 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "install"
-      # RUST_NATIVE_ARGS skips the release Rust build here; the coverage run below
-      # compiles the instrumented library either way (qdbr-coverage profile).
       options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests
         -P build-web-console
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
