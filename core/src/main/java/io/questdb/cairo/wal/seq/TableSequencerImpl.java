@@ -401,8 +401,19 @@ public class TableSequencerImpl implements TableSequencer {
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
 
+                // The tracker follows the log for every txn, suspended or not, the way
+                // nextTxn() already does for data txns. QwpTudCache gates its structure
+                // change replay on the tracker's seqTxn; a tracker that stalls on a
+                // suspended ALTER lets the next commit resolve rows against the pre-ALTER
+                // columns, and the WalWriter's NO_TXN replay then discards a dropped
+                // column's values. notifyOnCommit() withholds the apply-job wakeup while
+                // the table is suspended; the listener and live view notifications stay
+                // gated on suspension as before.
+                if (seqTxnTracker.notifyOnCommit(txn)) {
+                    engine.notifyWalTxnCommitted(tableToken);
+                }
                 if (!seqTxnTracker.isSuspended()) {
-                    notifyTxnCommitted(txn);
+                    engine.notifyLiveViewBaseTableCommit(tableToken, txn);
                     if (!tableToken.equals(oldTableToken)) {
                         engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
                     } else {

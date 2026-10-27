@@ -779,6 +779,13 @@ public class QwpTudCache implements QuietCloseable {
      * -- for a txn this connection wrote itself (6% of the ingress fiber at one
      * row per message). Only the exact single-step case is taken: any interleaved
      * txn by another writer may be structural and keeps the full check.
+     * <p>
+     * That relies on the sequencer advancing the tracker for EVERY txn it logs,
+     * including an ALTER on a suspended table (see
+     * {@code TableSequencerImpl.nextStructureTxn}). A tracker that lagged the log
+     * there would leave this gate closed over a DROP or RENAME COLUMN, and the
+     * next commit's NO_TXN replay in the WalWriter would discard or re-home the
+     * values this connection already appended under the old columns.
      */
     private static void advanceStructureCheckGate(WalTableUpdateDetails tud) {
         final long seqTxn = tud.getLastSeqTxn();
