@@ -61,6 +61,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -858,6 +859,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             final ObjList<byte[]> sent = new ObjList<>();
             try {
                 ingestInOnePass(
+                        engine,
                         processor,
                         httpConfig,
                         AllowAllSecurityContext.INSTANCE,
@@ -1049,6 +1051,120 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             Assert.assertEquals("the batch must be acked through the frame before the failed one", 1, maxCumulativeOkAck(sent));
             Assert.assertTrue("the failed frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 2));
             Assert.assertFalse("the batch's frame must not be NACKed", hasErrorResponseForSeq(sent, 1));
+        });
+    }
+
+    /**
+     * The read-only gate refuses a frame with a batch pending, and the demote
+     * that tripped the gate reverts before the recovery commit: the batch's
+     * commit succeeds, so the batch must be acked before the role-change CLOSE
+     * goes out. A close without that ack makes the client replay rows the
+     * server holds, and a demote that reverts this fast is an enterprise
+     * in-place role switch, which OSS cannot produce -- hence the scripted
+     * engine below.
+     */
+    @Test
+    public void testBatchCommittedAfterTransientGateRefusalIsAckedBeforeRoleChangeClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger readOnlyChecks = new AtomicInteger();
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    // seq=0 and seq=1 pass their gate checks (calls 1 and 2) and
+                    // form the batch; seq=2's gate check (call 3) sees the demote;
+                    // the recovery commit's own checks in TableUpdateDetails.commit
+                    // (calls 4 and 5) see it reverted and the batch commits.
+                    return readOnlyChecks.incrementAndGet() == 3;
+                }
+            }) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+                final ObjList<byte[]> sent = new ObjList<>();
+                try {
+                    ingestInOnePass(
+                            demotableEngine,
+                            processor,
+                            httpConfig,
+                            AllowAllSecurityContext.INSTANCE,
+                            false,
+                            sent,
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+                    );
+                } catch (ServerDisconnectException ignore) {
+                    // the role-change CLOSE tells the dispatcher to drop the fd
+                }
+
+                Assert.assertTrue("test setup: the recovery commit must have re-checked the gate after the refusal",
+                        readOnlyChecks.get() >= 4);
+                drainWalQueue(demotableEngine);
+                try (TableReader reader = demotableEngine.getReader("tab")) {
+                    Assert.assertEquals("the batch commits once the demote reverts", 2, reader.size());
+                }
+                final int closeIndex = indexOfCloseFrame(sent);
+                Assert.assertTrue("the gate refusal must still close the connection", closeIndex >= 0);
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 2));
+                final int ackIndex = indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1);
+                Assert.assertTrue("the committed batch must be acked, or the client replays it after the close", ackIndex >= 0);
+                Assert.assertTrue("the ack must precede the CLOSE", ackIndex < closeIndex);
+                Assert.assertEquals("no ack may cover the refused frame", 1, maxCumulativeOkAck(sent));
+            }
+        });
+    }
+
+    /**
+     * The control for
+     * {@link #testBatchCommittedAfterTransientGateRefusalIsAckedBeforeRoleChangeClose}:
+     * the demote holds, so the recovery commit is refused too. Nothing is
+     * committed, nothing is acked, and the connection closes for the role
+     * change; the client replays the whole batch on a primary.
+     */
+    @Test
+    public void testBatchRefusedAfterGateRefusalIsNotAckedBeforeRoleChangeClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger readOnlyChecks = new AtomicInteger();
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    // the demote lands at seq=2's gate check and stays
+                    return readOnlyChecks.incrementAndGet() >= 3;
+                }
+            }) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+                final ObjList<byte[]> sent = new ObjList<>();
+                try {
+                    ingestInOnePass(
+                            demotableEngine,
+                            processor,
+                            httpConfig,
+                            AllowAllSecurityContext.INSTANCE,
+                            false,
+                            sent,
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+                    );
+                } catch (ServerDisconnectException ignore) {
+                    // the role-change CLOSE tells the dispatcher to drop the fd
+                }
+
+                Assert.assertTrue("test setup: the recovery commit must have re-checked the gate after the refusal",
+                        readOnlyChecks.get() >= 4);
+                drainWalQueue(demotableEngine);
+                try (TableReader reader = demotableEngine.getReader("tab")) {
+                    Assert.assertEquals("a refused recovery commit leaves nothing in the table", 0, reader.size());
+                }
+                Assert.assertTrue("the refusal must close the connection", indexOfCloseFrame(sent) >= 0);
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 0));
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 2));
+                Assert.assertEquals("nothing committed, nothing acked", -1, maxCumulativeOkAck(sent));
+            }
         });
     }
 
@@ -1622,6 +1738,16 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
      * status and sequence, or -1 when none was sent. Order matters where an ack
      * and an error leave in the same pass.
      */
+    private static int indexOfCloseFrame(ObjList<byte[]> frames) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (f.length >= 2 && (f[0] & 0x0F) == WebSocketOpcode.CLOSE) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private static int indexOfBinaryFrame(ObjList<byte[]> frames, byte status, long seq) {
         for (int i = 0, n = frames.size(); i < n; i++) {
             byte[] f = frames.getQuick(i);
@@ -1846,8 +1972,32 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             SecurityContext securityContext,
             byte[]... frames
     ) throws Exception {
+        return ingestInOnePass(engine, processor, httpConfig, securityContext, frames);
+    }
+
+    /**
+     * Like {@link #ingestInOnePass(QwpIngressUpgradeProcessor, HttpFullFatServerConfiguration, byte[]...)}
+     * but the connection state is bound to {@code stateEngine}, whose
+     * {@code isReadOnlyMode()} the gate and the commit path consult.
+     */
+    private ObjList<byte[]> ingestInOnePass(
+            CairoEngine stateEngine,
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            byte[]... frames
+    ) throws Exception {
+        return ingestInOnePass(stateEngine, processor, httpConfig, AllowAllSecurityContext.INSTANCE, frames);
+    }
+
+    private ObjList<byte[]> ingestInOnePass(
+            CairoEngine stateEngine,
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            SecurityContext securityContext,
+            byte[]... frames
+    ) throws Exception {
         final ObjList<byte[]> sent = new ObjList<>();
-        ingestInOnePass(processor, httpConfig, securityContext, false, sent, frames);
+        ingestInOnePass(stateEngine, processor, httpConfig, securityContext, false, sent, frames);
         return sent;
     }
 
@@ -1858,11 +2008,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             byte[]... frames
     ) throws Exception {
         final ObjList<byte[]> sent = new ObjList<>();
-        ingestInOnePass(processor, httpConfig, securityContext, true, sent, frames);
+        ingestInOnePass(engine, processor, httpConfig, securityContext, true, sent, frames);
         return sent;
     }
 
     private void ingestInOnePass(
+            CairoEngine stateEngine,
             QwpIngressUpgradeProcessor processor,
             HttpFullFatServerConfiguration httpConfig,
             SecurityContext securityContext,
@@ -1880,7 +2031,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             QwpIngressProcessorState state = new QwpIngressProcessorState(
                     RECV_BUFFER_SIZE,
                     httpConfig.getSendBufferSize(),
-                    engine,
+                    stateEngine,
                     httpConfig.getLineHttpProcessorConfiguration()
             );
             state.of(-1, securityContext);

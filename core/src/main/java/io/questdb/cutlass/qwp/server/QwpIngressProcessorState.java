@@ -577,10 +577,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * Clears this frame's error so a following {@link #commit()} reports its own.
      * Used only to commit the batch the frame failed after.
+     * <p>
+     * The role-change flag is part of that error: the read-only gate sets it with
+     * the refusal, and a demote that reverts before the batch's commit leaves the
+     * commit successful. The caller has already captured the flag for the close
+     * it owes this frame; left set here, it would report the successful commit
+     * as failed and pin the ack watermark below rows the WAL holds, so the
+     * client's replay after the close would duplicate them.
      */
     public void clearErrorForBatchSalvage() {
         error.clear();
         currentStatus = Status.OK;
+        roleChangeClosePending = false;
     }
 
     public void commit() {
