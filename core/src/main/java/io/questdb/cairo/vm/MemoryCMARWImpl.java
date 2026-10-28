@@ -50,7 +50,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private final Long256Acceptor long256Acceptor = this::putLong256;
     // How far this object's own allocations backed allocatedFd; see
     // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
-    // while fd == allocatedFd, so a new fd needs no reset.
+    // while fd == allocatedFd. A QuestDB fd carries a per-open counter (FdCache),
+    // so a reopen gets a new fd even on the same OS fd, and needs no reset.
     private long allocatedFd = -1;
     private long allocatedHi;
     private long appendAddress = 0;

@@ -1663,7 +1663,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             deferCommit = state.isDeferCommit();
             assert !isBatchPending || !deferCommit;
 
-            // Decodes the message and checks the live read-only gate.
             state.prepareMessage();
 
             boolean isNormalPath = true;
@@ -1672,8 +1671,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // Set when the batch's own commit fails: the client replays from its first frame.
                 boolean isBatchCommitFailed = false;
                 if (state.isOk() && state.isPreparedMessageJoinableToCommitBatch()) {
-                    // A joining frame: a pure append to the batch writer, no lookup and
-                    // no column creation, so nothing else can touch the batch's rows.
                     isNormalPath = false;
                     state.processPreparedJoiningMessage();
                     if (state.isOk()) {
@@ -1778,7 +1775,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         deferredFrameFullyCommitted = state.refreshDeferredAckCoverage();
                     }
                 }
-                // Read AFTER the commit calls: processMessage's read-only gate AND the
+                // Read AFTER the commit calls: the live read-only gate AND the
                 // commit path's authorization-refusal containment (rejectCairoError)
                 // can both flag the role-change close; reading before commit() would
                 // miss the latter and send a client-visible error status instead of
@@ -1845,8 +1842,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         // Send response using cumulative ACK strategy
         if (responseStatus == STATUS_OK && isBatched) {
-            // Withheld until the batch commits: at the end of this receive pass, at
-            // the next boundary frame, or before a control frame.
+            // The ack waits for the batch commit.
             return;
         }
         if (responseStatus == STATUS_OK) {
@@ -1882,10 +1878,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // re-sending rows that are already durable and duplicating them.
                 //
                 // A frame that closes a run of withheld deferred frames flushes
-                // eagerly (hasPendingAck) instead of waiting for the batch
-                // threshold: those frames were never individually acked, and the
-                // client's transaction confirmation should not wait for
-                // unrelated follow-up traffic.
+                // eagerly (hasPendingAck) instead of waiting for the
+                // ACK_BATCH_SIZE threshold: those frames were never
+                // individually acked, and the client's transaction
+                // confirmation should not wait for unrelated follow-up traffic.
                 state.setHighestProcessedSequence(seq);
                 if (closesDeferredGroup ? state.hasPendingAck() : state.shouldSendAck(ACK_BATCH_SIZE)) {
                     trySendAck(context, state);
@@ -1898,10 +1894,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     /**
      * Commits the pending commit batch outside {@link #handleBinaryMessage}'s frame
-     * processing -- at the end of a receive pass, before a control frame, before a
-     * frame that can never join a batch, before a fatal close -- and sends the
-     * failure response itself. On success the watermark is past the batch. On
-     * failure the batch's rows are rolled back, the watermark is pinned below its
+     * processing (see the commit batch fields of {@link QwpIngressProcessorState} for
+     * where) and sends the failure response itself. On success the watermark is past
+     * the batch. On failure the batch's rows are rolled back, the watermark is pinned below its
      * first frame, and the failure goes out against that frame (the frame the client
      * replays first, so a deterministic failure keeps striking it), or as the
      * role-change close; returns false.
@@ -1912,7 +1907,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (state.commitBatch()) {
             return true;
         }
-        // Capture before clear(), which resets both.
         final boolean isRoleChangeClose = state.isRoleChangeClosePending();
         final String errorMessage = state.getErrorText();
         final byte status = responseStatusOf(state);

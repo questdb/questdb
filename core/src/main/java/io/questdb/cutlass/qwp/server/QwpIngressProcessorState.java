@@ -187,8 +187,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // / SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE), or -1 when no
     // client-close continuation is armed. Reset on onDisconnected().
     private int pendingCloseResponseCode = -1;
-    // Set when a batch is refused because the node just flipped to a read-only
-    // replica (an in-place PRIMARY->REPLICA demote). A TRANSIENT failover, not a
+    // Set when a message or commit is refused because the node just flipped to a
+    // read-only replica (an in-place PRIMARY->REPLICA demote). A TRANSIENT failover, not a
     // permanent auth failure -- the upgrade processor closes the connection with a
     // reconnect-eligible code instead of sending a SECURITY_ERROR that a
     // store-and-forward client would treat as a terminal HALT.
@@ -244,7 +244,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // reset by a successful commitAll and by onDisconnected().
     private long firstRowlessDeferredSequence = -1;
     // True when the message currently being processed appended at least one row.
-    // Reset at the top of every processMessage(), so it describes THIS frame and
+    // Reset at the top of every prepareMessage(), so it describes THIS frame and
     // not the connection. A frame that registers symbols and nothing else -- the
     // client's dictionary-chunk frames, which carry tableCount=0 and
     // FLAG_DEFER_COMMIT -- leaves it false.
@@ -270,18 +270,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // together, as one WAL txn. A commit is a sequencer txn, a txn-log record, an
     // ack-watermark step and an apply-job unit of work, which one-row frames cannot
     // amortize. The frames' sequences stay out of the cumulative-ack watermark until
-    // that commit. The upgrade processor's handleBinaryMessage owns the rules: the
-    // batch commits when the receive pass drains, or at the first frame that cannot
-    // join (isPreparedMessageJoinableToCommitBatch). It stays below the
-    // max-uncommitted-rows cap, so it needs no bound of its own. Reset by clear(),
-    // which rolls the rows back.
+    // that commit. The upgrade processor commits the batch when the receive pass
+    // drains, at the first data frame that cannot join
+    // (isPreparedMessageJoinableToCommitBatch), and before any other frame: a
+    // deferred frame, a durable-ack poll, a control frame, a fragment or an
+    // oversized frame. The batch stays below the max-uncommitted-rows cap, so it
+    // needs no bound of its own. Reset by clear(), which rolls the rows back.
     //
     // While a batch is pending nothing but the batch commit touches the batch's
     // writer: a joining frame skips the table lookup and cannot create columns, so
-    // it only appends its block or cancels it. A positive check that the writer
-    // still holds exactly the batch's rows (isCommitBatchIntact), not a report from
-    // every path that might commit or discard rows, decides whether the batch may
-    // be acknowledged.
+    // it only appends its block or cancels it, and nothing evicts the batch's cache
+    // entry. A positive check that the writer still holds exactly the batch's rows
+    // (isCommitBatchIntact), not a report from every path that might commit or
+    // discard rows, decides whether the batch may be acknowledged.
     private long commitBatchRows;
     // The table's sequencer txn tracker, fetched at the batch's first join.
     private SeqTxnTracker commitBatchTracker;
@@ -546,15 +547,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Admission of the prepared message to the pending commit batch. True only when
-     * appending it can touch nothing but the batch writer's uncommitted rows: a
-     * single plain block with rows, for the batch's table; the batch intact; the
-     * table's structure unchanged since the writer last synced (another connection's
-     * ALTER or RENAME, or a DROP, cuts the batch here); the block's schema settled on
-     * the writer, so appending it cannot create a column; and the rows staying below
-     * the writer's max-uncommitted-rows commit, so the appender cannot commit them.
-     * A message that is not admitted is a batch boundary. Checks identity only: it
-     * acquires, refreshes and evicts nothing.
+     * True when appending the prepared message can touch nothing but the batch
+     * writer's uncommitted rows; a message that is not admitted is a batch boundary.
+     * The structure-version check cuts the batch at another connection's ALTER,
+     * RENAME or DROP, the settled-schema check rules out column creation, and the
+     * row cap keeps the appender from committing the batch on its own. Checks
+     * identity only: it acquires, refreshes and evicts nothing.
      */
     public boolean isPreparedMessageJoinableToCommitBatch() {
         if (!isCommitBatchPending() || !isOk() || isDeferCommit() || !isPreparedSingleBlock || preparedRowCount <= 0
@@ -573,7 +571,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * Appends the prepared message, which {@link #isPreparedMessageJoinableToCommitBatch()}
-     * admitted, to the commit batch's writer: no table lookup, no column creation. A
+     * admitted, to the commit batch's writer with column creation refused. A
      * failure cancels the block's rows (the appender's columnar write rollback) and
      * leaves this state in error; the batch's rows stay as they were.
      */
@@ -609,11 +607,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * Opens a commit batch with the plain frame just processed on the normal path,
-     * instead of committing it, when its rows can start one: a single block with
-     * rows, no deferred group to close, no role-change close pending, and the
-     * frame's rows being exactly what its writer holds uncommitted. That last check
-     * also turns away a frame the appender already committed at the
-     * max-uncommitted-rows cap, which leaves nothing uncommitted.
+     * instead of committing it. Requires the writer's uncommitted rows to be exactly
+     * this frame's, which also turns away a frame the appender already committed at
+     * the max-uncommitted-rows cap.
      */
     public boolean tryOpenCommitBatch(long seq) {
         assert !isCommitBatchPending();
@@ -1522,6 +1518,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
     }
 
+    @TestOnly
     public void processMessage() {
         prepareMessage();
         processPreparedMessage();
@@ -1757,9 +1754,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
-    // The intact checks that need no hash lookup: cheap enough for every joining frame.
-    // Nothing evicts a cache entry while a batch is pending (joining frames skip the
-    // lookup), so admission leaves the cache-entry check to isCommitBatchIntact().
+    // The intact checks that need no hash lookup, cheap enough for every joining frame.
+    // Admission leaves the cache-entry check to isCommitBatchIntact(): nothing evicts
+    // the entry while a batch is pending (see the commit batch fields).
     private boolean isCommitBatchWriterIntact() {
         return !tudCache.isDistressed()
                 && !commitBatchTud.isDropped()
@@ -1771,13 +1768,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     private boolean isLiveWriteAllowed() {
-        // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
+        // Re-check the LIVE write-refusal state on every message. A QWP ingress connection
         // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
         // connection opened while this node was PRIMARY would otherwise keep writing after an
         // in-place PRIMARY-to-REPLICA switch flips the node read-only -- the cached state
         // bypasses per-write authorization entirely. Consulting engine.isReadOnlyMode() here
         // closes that boundary race: the instant the node starts demoting (the dynamic
-        // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
+        // read-only-replica flag flips FIRST in the switch cascade), the message is
         // refused. HOW it is refused depends on WHY the node is read-only -- see
         // isStaticReadOnlyInstance() for the contract.
         if (engine.isReadOnlyMode()) {
@@ -1799,7 +1796,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // INVARIANT B: role-derived read-only means an in-place PRIMARY-to-REPLICA
             // demote is underway -- a TRANSIENT failover (the node can be promoted
             // back / a sibling primary may exist), NOT a permanent auth failure. Do
-            // not reject the batch as an authorization error (which maps to
+            // not reject the message as an authorization error (which maps to
             // SECURITY_ERROR and a store-and-forward client treats as a terminal
             // HALT). Flag the connection for a reconnect-eligible close instead: the
             // client reconnects, hits the 421 role reject on the now-replica
@@ -1884,7 +1881,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * Whether this node is read-only STATICALLY -- {@code readonly=true}
      * ({@code READ_ONLY_INSTANCE}) in the server configuration -- as opposed to
      * DYNAMICALLY through the role an enterprise engine reports. The distinction
-     * decides the refusal shape for write batches on a read-only node:
+     * decides the refusal shape for writes on a read-only node:
      * <ul>
      * <li>Role-derived read-only ({@code engine.isReadOnlyMode()} true while this
      * flag is false; only reachable where an enterprise engine widens
@@ -1901,7 +1898,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * read-only) the static answer wins: the node refuses writes regardless of
      * any future promote, so the terminal NACK is the truthful signal. (The
      * combination is unreachable mid-connection anyway -- a statically read-only
-     * node refuses the very first batch, before any role flip can land.)
+     * node refuses the very first message, before any role flip can land.)
      * <p>
      * The flag is immutable for the process lifetime (a {@code final} field of
      * the server configuration; the dynamic replica leg is a SEPARATE
@@ -1914,14 +1911,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Rejects a batch that failed with a {@link CairoException}, with Invariant B
-     * containment for the in-place demote race.
+     * Rejects a message or commit that failed with a {@link CairoException}, with
+     * Invariant B containment for the in-place demote race.
      * <p>
-     * The {@code engine.isReadOnlyMode()} gate at the top of
-     * {@link #processMessage()} re-checks the live role per batch, but the flag
-     * can flip BETWEEN that check and the WAL writer acquisition (or the commit)
-     * within the same batch. The deeper engine gates then refuse with
-     * {@code CairoException.readOnlyAccess()}, which
+     * The {@code engine.isReadOnlyMode()} gate in {@link #isLiveWriteAllowed()}
+     * re-checks the live role per message, but the flag can flip BETWEEN that
+     * check and the WAL writer acquisition or the commit. The deeper engine gates
+     * then refuse with {@code CairoException.readOnlyAccess()}, which
      * {@link #cairoExceptionStatus} would map to {@link Status#SECURITY_ERROR}
      * -- a status a store-and-forward client latches as a terminal HALT and
      * surfaces to its producer.

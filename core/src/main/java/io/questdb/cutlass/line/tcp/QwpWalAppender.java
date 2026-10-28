@@ -198,10 +198,7 @@ public class QwpWalAppender implements QuietCloseable {
      * such a block cannot create a column.
      */
     public boolean isSchemaSettled(ObjList<QwpColumnDef> schema, TableWriterAPI writer) {
-        return schema != null
-                && schema == resolvedSchema
-                && writer == resolvedWriter
-                && writer.getMetadataVersion() == resolvedMetadataVersion;
+        return isResolvedFor(schema, writer, writer.getMetadataVersion());
     }
 
     /**
@@ -990,8 +987,7 @@ public class QwpWalAppender implements QuietCloseable {
         final ObjList<QwpColumnDef> schema = tableBlock.getSchema();
         // Array columns check their dimensions against each block's data, so a schema
         // with one goes through Phase 1 every time.
-        if (!hasResolvedArrayColumn && schema != null && schema == resolvedSchema && writer == resolvedWriter
-                && metadataVersion == resolvedMetadataVersion) {
+        if (!hasResolvedArrayColumn && isResolvedFor(schema, writer, metadataVersion)) {
             appendToWalColumnar(tableBlock, (WalWriter) writer, resolvedTimestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
             return;
         }
@@ -1112,5 +1108,14 @@ public class QwpWalAppender implements QuietCloseable {
         // Writer is always a WalWriter in this context (QWP v1 only supports WAL tables)
         WalWriter walWriter = (WalWriter) writer;
         appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
+    }
+
+    // The Phase 1 cache hit: the one definition behind isSchemaSettled() and the
+    // appender's own Phase 1 skip.
+    private boolean isResolvedFor(ObjList<QwpColumnDef> schema, TableWriterAPI writer, long metadataVersion) {
+        return schema != null
+                && schema == resolvedSchema
+                && writer == resolvedWriter
+                && metadataVersion == resolvedMetadataVersion;
     }
 }

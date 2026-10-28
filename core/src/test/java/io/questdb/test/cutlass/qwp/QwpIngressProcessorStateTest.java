@@ -148,17 +148,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 for (int frame = 0; frame < 3; frame++) {
-                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-                         QwpTableBuffer table = new QwpTableBuffer("arrays")) {
-                        table.getOrCreateColumn("arr", QwpConstants.TYPE_DOUBLE_ARRAY, true).addDoubleArray(new double[]{frame, frame + 0.5});
-                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L + frame);
-                        table.nextRow();
-                        int length = encoder.encode(table);
-                        long address = encoder.getBuffer().getBufferPtr();
-                        state.addData(address, address + length);
-                    }
-                    state.prepareMessage();
-                    Assert.assertTrue(state.isOk());
+                    final double value = frame;
+                    prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{value, value + 0.5}), 1_000_000L + frame);
                     if (frame == 0) {
                         state.processPreparedMessage();
                         Assert.assertTrue(state.tryOpenCommitBatch(frame));

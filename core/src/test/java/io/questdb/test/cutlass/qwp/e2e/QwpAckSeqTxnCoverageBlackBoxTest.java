@@ -208,24 +208,16 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 long lastAck = -1;
                 WebSocketResponse response = new WebSocketResponse();
                 for (byte[] payload : frames) {
-                    long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        for (int i = 0; i < payload.length; i++) {
-                            Unsafe.putByte(ptr + i, payload[i]);
-                        }
-                        Assert.assertTrue(response.readFrom(ptr, payload.length));
-                        if (response.isSuccess()) {
-                            lastAck = Math.max(lastAck, response.getSequence());
-                            for (int i = 0; i < response.getTableEntryCount(); i++) {
-                                if ("boundary_a".equals(response.getTableName(i))) {
-                                    aTxn = Math.max(aTxn, response.getTableSeqTxn(i));
-                                } else if ("boundary_b".equals(response.getTableName(i))) {
-                                    bTxn = Math.max(bTxn, response.getTableSeqTxn(i));
-                                }
+                    Assert.assertTrue(readResponse(response, payload));
+                    if (response.isSuccess()) {
+                        lastAck = Math.max(lastAck, response.getSequence());
+                        for (int i = 0; i < response.getTableEntryCount(); i++) {
+                            if ("boundary_a".equals(response.getTableName(i))) {
+                                aTxn = Math.max(aTxn, response.getTableSeqTxn(i));
+                            } else if ("boundary_b".equals(response.getTableName(i))) {
+                                bTxn = Math.max(bTxn, response.getTableSeqTxn(i));
                             }
                         }
-                    } finally {
-                        Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
                     }
                 }
                 Assert.assertEquals(1, lastAck);
@@ -454,20 +446,11 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             final StringBuilder observed = new StringBuilder();
             final WebSocketResponse response = new WebSocketResponse();
             for (int f = 0, n = serverFrames.size(); f < n; f++) {
-                final byte[] payload = serverFrames.get(f);
-                final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < payload.length; i++) {
-                        Unsafe.putByte(ptr + i, payload[i]);
-                    }
-                    if (response.readFrom(ptr, payload.length) && response.isSuccess()) {
-                        okAckCount++;
-                        minAckSeq = Math.min(minAckSeq, response.getSequence());
-                        maxAckSeq = Math.max(maxAckSeq, response.getSequence());
-                        observed.append("[seq=").append(response.getSequence()).append(']');
-                    }
-                } finally {
-                    Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                if (readResponse(response, serverFrames.get(f)) && response.isSuccess()) {
+                    okAckCount++;
+                    minAckSeq = Math.min(minAckSeq, response.getSequence());
+                    maxAckSeq = Math.max(maxAckSeq, response.getSequence());
+                    observed.append("[seq=").append(response.getSequence()).append(']');
                 }
             }
 
@@ -525,6 +508,20 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 throw new IOException("peer closed after " + read + " of " + dst.length + " bytes");
             }
             read += n;
+        }
+    }
+
+    // Parses one server frame payload; readFrom copies what it keeps, so the native
+    // copy is freed before the caller reads the response.
+    private static boolean readResponse(WebSocketResponse response, byte[] payload) {
+        final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < payload.length; i++) {
+                Unsafe.putByte(ptr + i, payload[i]);
+            }
+            return response.readFrom(ptr, payload.length);
+        } finally {
+            Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -591,30 +588,21 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             final StringBuilder observed = new StringBuilder();
             final WebSocketResponse response = new WebSocketResponse();
             for (int f = 0, n = serverFrames.size(); f < n; f++) {
-                final byte[] payload = serverFrames.get(f);
-                final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < payload.length; i++) {
-                        Unsafe.putByte(ptr + i, payload[i]);
-                    }
-                    if (!response.readFrom(ptr, payload.length) || !response.isSuccess()) {
-                        continue;
-                    }
-                    okAckCount++;
-                    final int entries = response.getTableEntryCount();
-                    observed.append("[seq=").append(response.getSequence())
-                            .append(" tables=").append(entries);
-                    for (int e = 0; e < entries; e++) {
-                        observed.append(' ').append(response.getTableName(e))
-                                .append("->").append(response.getTableSeqTxn(e));
-                        if (table.equals(response.getTableName(e))) {
-                            reportedSeqTxn = Math.max(reportedSeqTxn, response.getTableSeqTxn(e));
-                        }
-                    }
-                    observed.append(']');
-                } finally {
-                    Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                if (!readResponse(response, serverFrames.get(f)) || !response.isSuccess()) {
+                    continue;
                 }
+                okAckCount++;
+                final int entries = response.getTableEntryCount();
+                observed.append("[seq=").append(response.getSequence())
+                        .append(" tables=").append(entries);
+                for (int e = 0; e < entries; e++) {
+                    observed.append(' ').append(response.getTableName(e))
+                            .append("->").append(response.getTableSeqTxn(e));
+                    if (table.equals(response.getTableName(e))) {
+                        reportedSeqTxn = Math.max(reportedSeqTxn, response.getTableSeqTxn(e));
+                    }
+                }
+                observed.append(']');
             }
 
             Assert.assertTrue("the server sent no OK ack", okAckCount > 0);

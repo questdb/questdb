@@ -87,153 +87,19 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_SCHEMA_MISMATCH = 6;
     private static final int FUZZ_TWO_BLOCKS = 4;
 
-    /**
-     * The appender commits a writer on its own once its uncommitted rows reach
-     * maxUncommittedRows. A commit batch never lets that happen: a frame whose rows
-     * would reach the cap is a boundary, so the batch commits first. With a cap of 2
-     * and every commit after the first denied, the wire matches one commit per frame:
-     * frame 0 committed and acked, frame 1 NACKed, frame 2 refused behind it.
-     */
     @Test
     public void testBatchCommitsBeforeReachingCap() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(2);
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long before = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
-
-            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            ObjList<byte[]> sent = ingestInOnePass(
-                    processor,
-                    httpConfig,
-                    denyCommitsAfterFirst("b"),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L))
-            );
-
-            drainWalQueue();
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
-            Assert.assertEquals("only frame 0 committed", 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")) - before);
-            Assert.assertEquals("the committed frame must be acked", 0, maxCumulativeOkAck(sent));
-            Assert.assertTrue("the denied commit must be NACKed at its batch's first frame", hasErrorResponseForSeq(sent, 1));
-            Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
-            Assert.assertFalse("a frame behind the refused batch gets no response", hasErrorResponseForSeq(sent, 2));
-        });
+        assertBatchCommitsBeforeReachingCap(false);
     }
 
-    /**
-     * The read-only gate refuses a frame with a batch pending, and the demote
-     * that tripped the gate reverts before the recovery commit: the batch's
-     * commit succeeds, so the batch must be acked before the role-change CLOSE
-     * goes out. A close without that ack makes the client replay rows the
-     * server holds, and a demote that reverts this fast is an enterprise
-     * in-place role switch, which OSS cannot produce -- hence the scripted
-     * engine below.
-     */
     @Test
     public void testBatchCommittedAfterTransientGateRefusalIsAckedBeforeRoleChangeClose() throws Exception {
-        assertMemoryLeak(() -> {
-            final AtomicInteger readOnlyChecks = new AtomicInteger();
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public boolean isReadOnlyMode() {
-                    // seq=0 checks at preparation and before its lookup (calls 1, 2)
-                    // and opens the batch; seq=1 joins it, checked only at
-                    // preparation (call 3). seq=2's preparation sees the demote
-                    // (call 4); the batch commit's checks see it reverted, so the
-                    // prefix commits.
-                    return readOnlyChecks.incrementAndGet() == 4;
-                }
-            }) {
-                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
-                final ObjList<byte[]> sent = new ObjList<>();
-                try {
-                    ingestInOnePass(
-                            demotableEngine,
-                            processor,
-                            httpConfig,
-                            AllowAllSecurityContext.INSTANCE,
-                            false,
-                            sent,
-                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
-                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
-                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
-                    );
-                } catch (ServerDisconnectException ignore) {
-                    // the role-change CLOSE tells the dispatcher to drop the fd
-                }
-
-                Assert.assertTrue("test setup: the batch commit must have re-checked the gate after the refusal",
-                        readOnlyChecks.get() >= 5);
-                drainWalQueue(demotableEngine);
-                try (TableReader reader = demotableEngine.getReader("tab")) {
-                    Assert.assertEquals("the batch commits once the demote reverts", 2, reader.size());
-                }
-                final int closeIndex = indexOfCloseFrame(sent);
-                Assert.assertTrue("the gate refusal must still close the connection", closeIndex >= 0);
-                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 2));
-                final int ackIndex = indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1);
-                Assert.assertTrue("the committed batch must be acked, or the client replays it after the close", ackIndex >= 0);
-                Assert.assertTrue("the ack must precede the CLOSE", ackIndex < closeIndex);
-                Assert.assertEquals("no ack may cover the refused frame", 1, maxCumulativeOkAck(sent));
-            }
-        });
+        assertGateRefusalWithBatchPending(true);
     }
 
-    /**
-     * The control for
-     * {@link #testBatchCommittedAfterTransientGateRefusalIsAckedBeforeRoleChangeClose}:
-     * the demote holds, so the recovery commit is refused too. Nothing is
-     * committed, nothing is acked, and the connection closes for the role
-     * change; the client replays the whole batch on a primary.
-     */
     @Test
     public void testBatchRefusedAfterGateRefusalIsNotAckedBeforeRoleChangeClose() throws Exception {
-        assertMemoryLeak(() -> {
-            final AtomicInteger readOnlyChecks = new AtomicInteger();
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public boolean isReadOnlyMode() {
-                    // the demote lands at seq=2's gate check (call 4) and stays
-                    return readOnlyChecks.incrementAndGet() >= 4;
-                }
-            }) {
-                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
-                final ObjList<byte[]> sent = new ObjList<>();
-                try {
-                    ingestInOnePass(
-                            demotableEngine,
-                            processor,
-                            httpConfig,
-                            AllowAllSecurityContext.INSTANCE,
-                            false,
-                            sent,
-                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
-                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
-                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
-                    );
-                } catch (ServerDisconnectException ignore) {
-                    // the role-change CLOSE tells the dispatcher to drop the fd
-                }
-
-                Assert.assertTrue("test setup: the batch commit must have re-checked the gate after the refusal",
-                        readOnlyChecks.get() >= 5);
-                drainWalQueue(demotableEngine);
-                try (TableReader reader = demotableEngine.getReader("tab")) {
-                    Assert.assertEquals("a refused recovery commit leaves nothing in the table", 0, reader.size());
-                }
-                Assert.assertTrue("the refusal must close the connection", indexOfCloseFrame(sent) >= 0);
-                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 0));
-                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 2));
-                Assert.assertEquals("nothing committed, nothing acked", -1, maxCumulativeOkAck(sent));
-            }
-        });
+        assertGateRefusalWithBatchPending(false);
     }
 
     /**
@@ -460,41 +326,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The explicit boundary commits the prefix before a standalone multi-block
-     * frame reaches the cap and fails. The prefix ACK must report that boundary's
-     * seqTxn even though the current frame fails before its ordinary commit.
-     */
     @Test
     public void testDurableAckCarriesBoundaryCommitBeforeStandaloneCapFailure() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(2);
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
-
-            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            ObjList<byte[]> sent = ingestDurableInOnePass(
-                    processor,
-                    httpConfig,
-                    denyCommitsAfterFirst("b"),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("b", 200L, 2_000_000L, 300L, 3_000_000L),
-                            tableBlock("b", 400L, 4_000_000L)
-                    ))
-            );
-
-            drainWalQueue();
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
-            Assert.assertEquals("the boundary-committed prefix must be acked", 0, maxCumulativeOkAck(sent));
-            Assert.assertTrue("the denied frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 1));
-            Assert.assertTrue("the prefix ack must name the boundary commit",
-                    okAckSeqTxn(sent, 0, "b") > txnBefore);
-        });
+        assertStandaloneFrameCapFailure(true);
     }
 
     /**
-     * As {@link #testDurableAckCarriesBoundaryCommitBeforeStandaloneCapFailure}, but
+     * As {@link #assertStandaloneFrameCapFailure} on a durable-ack connection, but
      * the standalone frame cap-commits its first block, then fails its second
      * block's schema. Its partial commit survives, independently of the prefix.
      */
@@ -529,27 +367,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     @Test
     public void testDurableAckCarriesCommitBeforeCapBoundaryFailure() throws Exception {
-        assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration config = httpConfigWithMaxUncommittedRows(2);
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            long before = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
-            ObjList<byte[]> sent = ingestDurableInOnePass(new QwpIngressUpgradeProcessor(engine, config), config,
-                    denyCommitsAfterFirst("b"),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100, 1_000_000)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200, 2_000_000)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300, 3_000_000)));
-            // With a cap of 2 no batch can reach the cap: frame 1 cannot join frame 0's
-            // batch, so frame 0 commits on its own (the one allowed commit) and frame 1
-            // opens a new batch; frame 2 cannot join it either, and frame 1's commit is
-            // denied. The wire matches one commit per frame.
-            drainWalQueue();
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
-            Assert.assertEquals(0, maxCumulativeOkAck(sent));
-            Assert.assertEquals(before + 1, okAckSeqTxn(sent, 0, "b"));
-            Assert.assertTrue(hasErrorResponseForSeq(sent, 1));
-            Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
-            Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
-        });
+        assertBatchCommitsBeforeReachingCap(true);
     }
 
     /**
@@ -1077,35 +895,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a"));
     }
 
-    /**
-     * A multi-block frame resolves the prefix first. That boundary is the first
-     * successful commit; the standalone frame's first block reaches the cap and
-     * its second commit attempt is denied. Only the prefix survives.
-     */
     @Test
     public void testStandaloneFrameCapFailureIsNackedAfterBoundaryAck() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(2);
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            ObjList<byte[]> sent = ingestInOnePass(
-                    processor,
-                    httpConfig,
-                    denyCommitsAfterFirst("b"),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("b", 200L, 2_000_000L, 300L, 3_000_000L),
-                            tableBlock("b", 400L, 4_000_000L)
-                    ))
-            );
-
-            drainWalQueue();
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
-            Assert.assertEquals("the boundary-committed prefix must be acked", 0, maxCumulativeOkAck(sent));
-            Assert.assertTrue("the denied frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 1));
-            Assert.assertFalse("a NACK at seq=0 would replay committed rows", hasErrorResponseForSeq(sent, 0));
-        });
+        assertStandaloneFrameCapFailure(false);
     }
 
     private static void assertOnlyRoleChangeCloseSent(ObjList<byte[]> sent) {
@@ -1261,6 +1053,47 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return array;
     }
 
+    /**
+     * The appender commits a writer on its own once its uncommitted rows reach
+     * maxUncommittedRows; a commit batch never lets that happen. With a cap of 2,
+     * frame 1 cannot join frame 0's batch, so frame 0 commits on its own (the one
+     * allowed commit) and frame 1 opens a new batch; frame 2 cannot join it either,
+     * and frame 1's commit is denied. The wire matches one commit per frame: frame 0
+     * committed and acked, frame 1 NACKed, frame 2 refused behind it. A durable ack
+     * must also name frame 0's commit.
+     */
+    private void assertBatchCommitsBeforeReachingCap(boolean isDurableAck) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(2);
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long before = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
+
+            final ObjList<byte[]> sent = new ObjList<>();
+            ingestInOnePass(
+                    engine,
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    denyCommitsAfterFirst("b"),
+                    isDurableAck,
+                    sent,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L))
+            );
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
+            Assert.assertEquals("only frame 0 committed", 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")) - before);
+            Assert.assertEquals("the committed frame must be acked", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the denied commit must be NACKed at its batch's first frame", hasErrorResponseForSeq(sent, 1));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse("a frame behind the refused batch gets no response", hasErrorResponseForSeq(sent, 2));
+            if (isDurableAck) {
+                Assert.assertEquals("the ack must name frame 0's commit", before + 1, okAckSeqTxn(sent, 0, "b"));
+            }
+        });
+    }
+
     private void assertBatchCommittedBeforeFatalClose(byte[] badFrame) throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -1282,12 +1115,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             } catch (ServerDisconnectException ignore) {
                 // the fatal CLOSE ends with a drain and disconnect
             }
-            int closeIndex = -1;
-            for (int i = 0, n = sent.size(); i < n && closeIndex < 0; i++) {
-                if ((sent.getQuick(i)[0] & 0x0F) == WebSocketOpcode.CLOSE) {
-                    closeIndex = i;
-                }
-            }
+            final int closeIndex = indexOfCloseFrame(sent);
             Assert.assertTrue("test setup: the bad frame must draw a fatal CLOSE", closeIndex >= 0);
             drainWalQueue();
             assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
@@ -1346,6 +1174,71 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
             Assert.assertEquals("later B must not publish a WAL transaction", bBefore,
                     engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")));
+        });
+    }
+
+    /**
+     * The read-only gate refuses frame 2 with a batch of frames 0 and 1 pending. The
+     * engine is scripted by call count: frame 0 checks at preparation and before its
+     * lookup (calls 1, 2) and opens the batch; frame 1 joins it, checked only at
+     * preparation (call 3); frame 2's preparation sees the demote (call 4).
+     * <p>
+     * A transient demote reverts before the batch commit's checks: the commit
+     * succeeds, so the batch must be acked before the role-change CLOSE, or the
+     * client replays rows the server holds. A demote that reverts this fast is an
+     * enterprise in-place role switch, which OSS cannot produce, hence the script.
+     * A demote that holds refuses the commit too: nothing is committed or acked, and
+     * the client replays the whole batch on a primary.
+     */
+    private void assertGateRefusalWithBatchPending(boolean isDemoteTransient) throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger readOnlyChecks = new AtomicInteger();
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    final int call = readOnlyChecks.incrementAndGet();
+                    return isDemoteTransient ? call == 4 : call >= 4;
+                }
+            }) {
+                final ObjList<byte[]> sent = new ObjList<>();
+                try {
+                    ingestInOnePass(
+                            demotableEngine,
+                            new QwpIngressUpgradeProcessor(demotableEngine, httpConfig),
+                            httpConfig,
+                            AllowAllSecurityContext.INSTANCE,
+                            false,
+                            sent,
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+                    );
+                } catch (ServerDisconnectException ignore) {
+                    // the role-change CLOSE tells the dispatcher to drop the fd
+                }
+
+                Assert.assertTrue("test setup: the batch commit must have re-checked the gate after the refusal",
+                        readOnlyChecks.get() >= 5);
+                drainWalQueue(demotableEngine);
+                try (TableReader reader = demotableEngine.getReader("tab")) {
+                    Assert.assertEquals("the batch commits only if the demote reverts", isDemoteTransient ? 2 : 0, reader.size());
+                }
+                final int closeIndex = indexOfCloseFrame(sent);
+                Assert.assertTrue("the gate refusal must close the connection", closeIndex >= 0);
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 0));
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 2));
+                if (isDemoteTransient) {
+                    final int ackIndex = indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1);
+                    Assert.assertTrue("the committed batch must be acked, or the client replays it after the close", ackIndex >= 0);
+                    Assert.assertTrue("the ack must precede the CLOSE", ackIndex < closeIndex);
+                    Assert.assertEquals("no ack may cover the refused frame", 1, maxCumulativeOkAck(sent));
+                } else {
+                    Assert.assertEquals("nothing committed, nothing acked", -1, maxCumulativeOkAck(sent));
+                }
+            }
         });
     }
 
@@ -1513,6 +1406,45 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 Assert.assertEquals("nothing committed may be acked", -1, maxCumulativeOkAck(sent));
                 Assert.assertTrue("the batch is refused at its first frame", hasErrorResponseForSeq(sent, 0));
                 Assert.assertFalse("the boundary frame is dropped and replayed with the batch", hasErrorResponseForSeq(sent, 1));
+            }
+        });
+    }
+
+    /**
+     * A multi-block frame behind a one-frame batch is a boundary, so the batch commits
+     * first; that is the one allowed commit. The frame's first block then reaches the
+     * cap and its commit is denied. Only the prefix survives and is acked, and the
+     * frame is NACKed by its own sequence. A durable ack must also name the boundary
+     * commit, although the frame fails before its own ordinary commit.
+     */
+    private void assertStandaloneFrameCapFailure(boolean isDurableAck) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(2);
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
+
+            final ObjList<byte[]> sent = new ObjList<>();
+            ingestInOnePass(
+                    engine,
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    denyCommitsAfterFirst("b"),
+                    isDurableAck,
+                    sent,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("b", 200L, 2_000_000L, 300L, 3_000_000L),
+                            tableBlock("b", 400L, 4_000_000L)
+                    ))
+            );
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
+            Assert.assertEquals("the boundary-committed prefix must be acked", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the denied frame must be NACKed by its own sequence", hasErrorResponseForSeq(sent, 1));
+            Assert.assertFalse("a NACK at seq=0 would replay committed rows", hasErrorResponseForSeq(sent, 0));
+            if (isDurableAck) {
+                Assert.assertTrue("the prefix ack must name the boundary commit", okAckSeqTxn(sent, 0, "b") > txnBefore);
             }
         });
     }
@@ -1703,10 +1635,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             seq++;
         }
         final int lastSeq = seq - 1;
-        final byte[][] frames = new byte[wireFrames.size()][];
-        for (int i = 0, n = wireFrames.size(); i < n; i++) {
-            frames[i] = wireFrames.getQuick(i);
-        }
+        final byte[][] frames = toArray(wireFrames);
 
         final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(cap);
         final ObjList<byte[]> sent = new ObjList<>();

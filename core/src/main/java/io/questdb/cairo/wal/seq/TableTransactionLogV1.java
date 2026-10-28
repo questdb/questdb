@@ -66,7 +66,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
-    // ~1500 records per extension; the file is at least this big on disk.
+    // ~2300 records per extension; the file is at least this big on disk.
     private static final long EXTEND_SEGMENT_SIZE = 64 * 1024;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
