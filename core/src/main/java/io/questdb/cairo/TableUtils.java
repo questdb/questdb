@@ -315,12 +315,33 @@ public final class TableUtils {
     }
 
     /**
+     * Like {@link #allocateDiskSpaceAligned(FilesFacade, long, long)}, for a caller that grows the same
+     * file repeatedly: backs only from {@code min(allocatedHi, length)}, where {@code allocatedHi} is how
+     * far this caller's own earlier calls on this fd backed the file, 0 for none. The first growth thus
+     * backs the whole file from offset 0, holes below its length included, exactly as the plain variant
+     * does; later ones back only the new range. Re-backing from 0 costs time in proportion to the whole
+     * file: tmpfs walks every page, XFS opens a transaction per extent.
+     *
+     * @return the new {@code allocatedHi} for the next call
+     */
+    public static long allocateDiskSpaceAligned(FilesFacade ff, long fd, long allocatedHi, long size) {
+        return allocateDiskSpace(ff, fd, allocatedHi, size, alignedSize(size));
+    }
+
+    /**
      * Grows the file to exactly {@code size} bytes if it is shorter. Use it for small files that never grow.
      */
     public static void allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
+    }
+
+    /**
+     * {@link #allocateDiskSpaceAligned(FilesFacade, long, long, long)} for exact sizes.
+     */
+    public static long allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long allocatedHi, long size) {
+        return allocateDiskSpace(ff, fd, allocatedHi, size, size);
     }
 
     public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -3125,6 +3146,21 @@ public final class TableUtils {
                 }
             }
         }
+    }
+
+    private static long allocateDiskSpace(FilesFacade ff, long fd, long allocatedHi, long size, long allocateTo) {
+        final long length = ff.length(fd);
+        if (length < 0) {
+            throw CairoException.critical(ff.errno()).put("could not read file size [fd=").put(fd).put(']');
+        }
+        if (length >= size) {
+            return allocatedHi;
+        }
+        // Below min(allocatedHi, length) the file was backed by this caller; a shrink since leaves no holes.
+        if (!ff.allocate(fd, Math.min(allocatedHi, length), allocateTo)) {
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+        return allocateTo;
     }
 
     private static int exists(FilesFacade ff, Path path) {

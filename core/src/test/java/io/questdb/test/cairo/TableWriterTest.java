@@ -4705,6 +4705,12 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fd = -1;
 
                 @Override
+                public boolean allocate(long fd, long allocatedSize, long size) {
+                    // route ranged growth through the allocate(fd, size) hook below
+                    return allocate(fd, size);
+                }
+
+                @Override
                 public boolean allocate(long fd, long size) {
                     if (fd == this.fd) {
                         return false;
