@@ -572,6 +572,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         commit();
     }
 
+    /**
+     * True between {@code beginColumnarWrite} and its {@code endColumnarWrite} or
+     * {@code cancelColumnarWrite}; also true after a cancel that failed to rewind.
+     */
+    public boolean isInColumnarWrite() {
+        return columnarAppender != null && columnarAppender.isInColumnarWrite();
+    }
+
     @Override
     public TableWriter.Row newRow() {
         return newRow(0L);
@@ -1753,10 +1761,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private boolean inTransaction() {
         return segmentRowCount > currentTxnStartRowNum;
-    }
-
-    private boolean isInColumnarWrite() {
-        return columnarAppender != null && columnarAppender.isInColumnarWrite();
     }
 
     private boolean isTruncateFilesOnClose() {

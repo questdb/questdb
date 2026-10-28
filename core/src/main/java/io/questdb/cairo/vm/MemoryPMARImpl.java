@@ -42,6 +42,9 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
+    // How far this object's own page mappings backed allocatedFd, as in MemoryCMARWImpl.
+    private long allocatedFd = -1;
+    private long allocatedHi;
     // The commit mode threaded in by the opening caller (TableWriter.configureColumn), mirroring
     // isApplyLazy. CommitMode.UNSET (default) => never threaded, so read the instance-global
     // configuration.getCommitMode() instead. TableWriter threads its own grade because a table that is
@@ -150,9 +153,15 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     public long mapPage(int page) {
         // set page to "not mapped" in case mapping fails
-        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
+        final long size = getExtendSegmentSize();
+        final long offset = pageOffset(page);
+        assert fd != -1;
+        assert offset % Files.PAGE_SIZE == 0;
+        allocatedHi = TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedFd == fd ? allocatedHi : 0, size + offset);
+        allocatedFd = fd;
+        final long address = TableUtils.mapRWNoAlloc(ff, fd, size, offset, memoryTag);
         mappedPage = page;
-        ff.madvise(address, getExtendSegmentSize(), madviseOpts);
+        ff.madvise(address, size, madviseOpts);
         return address;
     }
 

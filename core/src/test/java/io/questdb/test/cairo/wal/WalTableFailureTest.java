@@ -1454,6 +1454,48 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSuspendWalAlterAdvancesSequencerTxn() throws Exception {
+        // A structure txn on a suspended table moves the tracker's seqTxn like a data
+        // txn does (QwpTudCache.advanceStructureCheckGate relies on it), while the
+        // apply job stays asleep until RESUME.
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableToken.getTableName() + " SUSPEND WAL");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            execute("ALTER TABLE " + tableToken.getTableName() + " ADD COLUMN y INT");
+            execute("ALTER TABLE " + tableToken.getTableName() + " DROP COLUMN sym2");
+            Assert.assertEquals(3, engine.getTableSequencerAPI().lastTxn(tableToken));
+            Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            // The durability columns depend on the commit mode and the clock; this test is about the others.
+            assertQuery("select name, suspended, writerTxn, bufferedTxnSize, sequencerTxn, errorTag, errorMessage, memoryPressure from wal_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t3\t\t\t0\n");
+
+            // Nothing applied while suspended: the ALTERs are logged, not applied.
+            drainWalQueue();
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            execute("ALTER TABLE " + tableToken.getTableName() + " RESUME WAL");
+            drainWalQueue();
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("x\tsym\tts\ty\n1\tAB\t2022-02-24T00:00:00.000000Z\tnull\n");
+        });
+    }
+
+    @Test
     public void testSuspendWalFailure() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());

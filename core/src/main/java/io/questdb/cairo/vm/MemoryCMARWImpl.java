@@ -48,10 +48,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // allocates exactly the requested size instead of TableUtils.alignedSize()
     private final boolean exact;
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    // extend0() reserved disk space for [0, allocatedSize) since this instance last mapped the file. It starts
-    // at 0 because a file this instance did not grow may have holes, e.g. from an ftruncate() that grew it,
-    // so the first extend after mapping reserves from offset 0.
-    private long allocatedSize = 0;
+    // How far this object's own allocations backed allocatedFd; see
+    // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
+    // while fd == allocatedFd. A QuestDB fd carries a per-open counter (FdCache),
+    // so a reopen gets a new fd even on the same OS fd, and needs no reset.
+    private long allocatedFd = -1;
+    private long allocatedHi;
     private long appendAddress = 0;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
@@ -158,7 +160,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             fd = -1;
         }
         size = 0;
-        allocatedSize = 0;
         ff = null;
         // Drop the append bounds of the mapping we no longer own. checkAndExtend() returns
         // early for any address at or below lim, so a stale lim lets jumpTo()/appendAddressFor()
@@ -362,9 +363,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         this.closeFdOnClose = other.closeFdOnClose;
         other.closeFdOnClose = tCof;
 
-        long tAllocated = this.allocatedSize;
-        this.allocatedSize = other.allocatedSize;
-        other.allocatedSize = tAllocated;
+        // The disk-space reservation describes the swapped fd, so it travels with it.
+        long tAllocatedFd = this.allocatedFd;
+        this.allocatedFd = other.allocatedFd;
+        other.allocatedFd = tAllocatedFd;
+
+        long tAllocatedHi = this.allocatedHi;
+        this.allocatedHi = other.allocatedHi;
+        other.allocatedHi = tAllocatedHi;
 
         long tLastSynced = this.lastSyncedSize;
         this.lastSyncedSize = other.lastSyncedSize;
@@ -473,7 +479,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void truncate() {
-        allocatedSize = 0;
         if (pageAddress != 0) {
             // try to remap to min size
             final long fileSize = ff.length(fd);
@@ -538,11 +543,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     private void allocateDiskSpace(long size) {
-        if (exact) {
-            TableUtils.allocateDiskSpaceUnaligned(ff, fd, size);
-        } else {
-            TableUtils.allocateDiskSpaceAligned(ff, fd, size);
-        }
+        final long hi = allocatedFd == fd ? allocatedHi : 0;
+        allocatedHi = exact
+                ? TableUtils.allocateDiskSpaceUnaligned(ff, fd, hi, size)
+                : TableUtils.allocateDiskSpaceAligned(ff, fd, hi, size);
+        allocatedFd = fd;
     }
 
     private void checkAndExtend(long address) {
@@ -558,19 +563,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         long offset = appendAddress - pageAddress;
         long previousSize = size;
         assert size > 0;
-        // Reserve only what this instance has not reserved yet. posix_fallocate() visits every extent of the
-        // range it is given, so reserving [0, newSize) on each 4 KiB step of a long-lived, fragmented file
-        // costs more with every call. The minimum with the file length keeps the range covered after a
-        // shrink through another fd. The target is rounded as allocateDiskSpace() rounds it.
-        final long fileSize = ff.length(fd);
-        if (fileSize < newSize) {
-            final long targetSize = exact ? newSize : TableUtils.alignedSize(newSize);
-            final long allocatedLo = Math.min(allocatedSize, fileSize);
-            if (!(allocatedLo > 0 ? ff.allocate(fd, allocatedLo, targetSize) : ff.allocate(fd, targetSize))) {
-                throw CairoException.critical(ff.errno()).put("No space left [size=").put(targetSize).put(", fd=").put(fd).put(']');
-            }
-            allocatedSize = targetSize;
-        }
+        allocateDiskSpace(newSize);
         try {
             this.pageAddress = TableUtils.mremap(
                     ff,
@@ -618,7 +611,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     protected void map(FilesFacade ff, @Nullable Utf8Sequence name, long size, int memoryTag) {
         this.memoryTag = memoryTag;
-        this.allocatedSize = 0;
         // file either did not exist when length() was called or empty
         if (size < 1) {
             this.size = minMappedMemorySize;

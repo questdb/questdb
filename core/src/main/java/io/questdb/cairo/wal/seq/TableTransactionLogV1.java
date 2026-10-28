@@ -50,7 +50,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
-import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
@@ -88,6 +87,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final long TAIL_CHECK_READ_RECORDS = 4096;
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+    // ~2300 records per extension; the file is at least this big on disk.
+    private static final long EXTEND_SEGMENT_SIZE = 64 * 1024;
     private final Supplier<long[]> committedTableTxn;
     private final CairoConfiguration configuration;
     private final LocalDurabilityPolicy durabilityPolicy;
@@ -206,7 +207,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     @Override
     public void create(Path path, long tableCreateTimestamp) {
         final int pathLength = path.size();
-        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openTxnLog(path, pathLength);
         // A previous lineage's records may still be in the file and on disk. The new lineage writes over
         // them, so zero them and flush in every mode: a torn record must tear over zeros.
         final boolean isReplacingLineage = (txnMem.size() >= MAX_TXN_OFFSET_64 + Long.BYTES
@@ -316,7 +317,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public long open(Path path) {
         if (!txnMem.isOpen()) {
             txnMem.close(false);
-            openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+            openTxnLog(path, path.size());
         }
 
         final long publishedTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
@@ -424,6 +425,21 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     // Every record up to the tail is on disk.
     private void markFlushed() {
         txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, maxTxn.get() + 1);
+    }
+
+    /**
+     * The txn log grows by one {@link #RECORD_SIZE} record per commit, so this
+     * maps it with a {@link #EXTEND_SEGMENT_SIZE} extend segment rather than as a
+     * one-page small file. Every extension is a fallocate plus an mremap, and the
+     * mremap shoots down TLBs on every core the process runs on.
+     */
+    private void openTxnLog(Path path, int rootLen) {
+        path.concat(TXNLOG_FILE_NAME);
+        try {
+            txnMem.of(ff, path.$(), EXTEND_SEGMENT_SIZE, ff.length(path.$()), MemoryTag.MMAP_TX_LOG, CairoConfiguration.O_NONE, -1);
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     // Store order matters: a writeback that catches the record half-stored must show a zero timestamp.

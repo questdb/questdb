@@ -248,7 +248,7 @@ public class MemoryCMARWImplTest {
                     ff.log.clear();
                     appendLongs(mem, 2 * pageSize);
                     TestUtils.assertEquals(
-                            "allocate " + 3 * pageSize + "\n"
+                            "range 0 " + 3 * pageSize + "\n"
                                     + "range " + 3 * pageSize + " " + 4 * pageSize + "\n",
                             ff.log
                     );
@@ -265,7 +265,7 @@ public class MemoryCMARWImplTest {
      */
     @Test
     public void testExtendAfterShrinkReservesFromFileLength() throws Exception {
-        // testExtendAfterTruncateReservesFromFileStart covers what Windows does instead.
+        // testExtendAfterTruncateReservesFromFileLength covers what Windows does instead.
         Assume.assumeFalse("Windows does not shrink a mapped file", Os.isWindows());
         TestUtils.assertMemoryLeak(() -> {
             final RecordingFilesFacade ff = new RecordingFilesFacade();
@@ -291,10 +291,11 @@ public class MemoryCMARWImplTest {
     }
 
     /**
-     * truncate() shrinks the file, so the next extend reserves from offset 0 again.
+     * truncate() shrinks the file to a length this instance already reserved, so the next extend
+     * reserves from that length, not from offset 0.
      */
     @Test
-    public void testExtendAfterTruncateReservesFromFileStart() throws Exception {
+    public void testExtendAfterTruncateReservesFromFileLength() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final RecordingFilesFacade ff = new RecordingFilesFacade();
             final long pageSize = Files.PAGE_SIZE;
@@ -316,7 +317,7 @@ public class MemoryCMARWImplTest {
                         ff.log.clear();
                         appendLongs(mem, 3 * pageSize);
                         TestUtils.assertEquals(
-                                "allocate " + 2 * pageSize + "\n"
+                                "range " + pageSize + " " + 2 * pageSize + "\n"
                                         + "range " + 2 * pageSize + " " + 3 * pageSize + "\n",
                                 ff.log
                         );
@@ -329,8 +330,9 @@ public class MemoryCMARWImplTest {
     }
 
     /**
-     * Once this instance has reserved the file from offset 0, each extend reserves only the new tail.
-     * Reserving [0, size) on every call would make posix_fallocate() walk all the file's extents.
+     * Once this instance has reserved the file from offset 0, here when the open mapped the new file,
+     * each extend reserves only the new tail. Reserving [0, size) on every call would make
+     * posix_fallocate() walk all the file's extents.
      */
     @Test
     public void testExtendReservesOnlyNewTail() throws Exception {
@@ -344,7 +346,7 @@ public class MemoryCMARWImplTest {
                     ff.log.clear();
                     appendLongs(mem, 4 * pageSize);
                     TestUtils.assertEquals(
-                            "allocate " + 2 * pageSize + "\n"
+                            "range " + pageSize + " " + 2 * pageSize + "\n"
                                     + "range " + 2 * pageSize + " " + 3 * pageSize + "\n"
                                     + "range " + 3 * pageSize + " " + 4 * pageSize + "\n",
                             ff.log
