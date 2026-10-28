@@ -124,6 +124,8 @@ public class TableSequencerImpl implements TableSequencer {
             // The txn log is the recovery authority; open it before _meta so a damaged _meta can be rebuilt.
             tableTransactionLog.open(path);
             openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
+            // For a newly created table and an existing one alike.
+            seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
@@ -400,9 +402,19 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+                // Published before notifyOnCommit() below advances the tracker's
+                // seqTxn. CheckWalTransactionsJob reads the log without this lock and
+                // can advance seqTxn first; no reader pairs the two values.
+                seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
 
+                // The tracker follows the log for every txn, suspended or not, as nextTxn()
+                // does for data txns; QwpTudCache.advanceStructureCheckGate relies on it.
+                // notifyOnCommit() withholds the apply-job wakeup while suspended.
+                if (seqTxnTracker.notifyOnCommit(txn)) {
+                    engine.notifyWalTxnCommitted(tableToken);
+                }
                 if (!seqTxnTracker.isSuspended()) {
-                    notifyTxnCommitted(txn);
+                    engine.notifyLiveViewBaseTableCommit(tableToken, txn);
                     if (!tableToken.equals(oldTableToken)) {
                         engine.getWalListener().tableRenamed(tableToken, txn, timestamp, oldTableToken);
                     } else {
@@ -471,6 +483,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         reconcileMetadataWithCommittedLog(tableTransactionLog.getMaxMetadataVersion());
+        seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)
