@@ -160,6 +160,7 @@ public final class TableUtils {
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
+    public static final String PARQUET_METADATA_B_FILE_NAME = "_pm.b";
     public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mig;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -1249,6 +1250,56 @@ public class Mig941Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrateSkipsDeltaPartitions() throws Exception {
+        // A Delta catalog pins an exact _pm prefix, so the migration keeps a Delta partition's _pm.
+        // _txn marks the catalog with bit 59, or with bits 61 and 60 from earlier builds.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z'), (2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+            final long partitionTs;
+            final long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("first partition must be parquet", reader.getTxFile().isPartitionParquet(0));
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+                    txWriter.setPartitionDeltaActiveByTimestamp(partitionTs);
+                    txWriter.setPartitionHasDelta(0, true);
+                    txWriter.commit(new ObjList<>());
+                }
+                assertMig941KeepsMissingPm(ff, token, partitionTs, partitionNameTxn);
+
+                // An earlier build's word: bit 61 next to the delta-write bit 60, without bit 59.
+                try (MemoryMARW txMem = Vm.getCMARWInstance(
+                        ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
+                )) {
+                    final long version = txMem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                    final int baseOffset = txMem.getInt((version & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                    final int symbolColumnCount = txMem.getInt(baseOffset + TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32);
+                    // Offset 3 of the first partition entry.
+                    final long offset3 = baseOffset + TableUtils.getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES + 3 * Long.BYTES;
+                    final long word = txMem.getLong(offset3);
+                    Assert.assertEquals(TxReader.PARTITION_HAS_DELTA_BIT | TxReader.PARTITION_DELTA_WRITE_BIT,
+                            word & (TxReader.PARTITION_HAS_DELTA_BIT | TxReader.PARTITION_DELTA_WRITE_BIT));
+                    txMem.putLong(offset3, (word & ~TxReader.PARTITION_HAS_DELTA_BIT) | (1L << 61));
+                }
+                assertMig941KeepsMissingPm(ff, token, partitionTs, partitionNameTxn);
+            }
+        });
+    }
+
+    @Test
     public void testMigrateSkipsRemotePartitionWithoutDataParquet() throws Exception {
         // A remotely served partition has had its data.parquet uploaded
         // and the local copy removed, leaving only _pm; its _txn entry stays
@@ -1506,6 +1557,16 @@ public class Mig941Test extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertMig941KeepsMissingPm(FilesFacade ff, TableToken token, long partitionTs, long partitionNameTxn) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+            ff.remove(path.$());
+            runMig941(token);
+            Assert.assertFalse("the migration must not regenerate a Delta partition's _pm", ff.exists(path.$()));
+        }
     }
 
     private void patchTxnParquetFileSize(TableToken token, long partitionTs, long newParquetFileSize) {

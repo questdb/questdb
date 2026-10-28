@@ -38,16 +38,23 @@ import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * The WAL apply stamps each native partition's last-modifying seqTxn into the _txn parquet-file-size
@@ -474,6 +481,31 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConverterCancelsPendingTypeChangeOfUploadedTable() throws Exception {
+        // A REMOTE partition is local evidence that an object store holds objects keyed by this
+        // table's seqTxns. The restart cancels a pending SET TYPE instead of restarting the seqTxns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableWriter writer = getWriter("t")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            execute("ALTER TABLE t SET TYPE BYPASS WAL");
+            Assert.assertTrue(convertMarkerExists(tt));
+
+            engine.releaseInactive();
+            engine.load();
+            Assert.assertTrue("the uploaded table stays WAL", engine.verifyTableName("t").isWal());
+            Assert.assertFalse("the restart cancels the request", convertMarkerExists(tt));
+            assertQuery("SELECT x FROM t ORDER BY ts").expectSize().returns("x\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testFailedToParquetSwitchKeepsNativeSeqTxn() throws Exception {
         // switchNativePartitionWithParquet aborts with SWITCH_NO_PARQUET when data.parquet is
         // missing. The partition stays native and its data is unchanged, so its stamped seqTxn must
@@ -784,6 +816,75 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetAttachFailsCleanlyOnAReadOnlyPm() throws Exception {
+        // A parquet ATTACH stamps its seqTxn into the _pm, so it needs a writable one, as a soft link's
+        // target. Without it the ATTACH fails and leaves the directory to attach as it was.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            final String root = configuration.getDbRoot().toString();
+            final File attachable = new File(new File(root, tt.getDirName()), "2024-01-01" + configuration.getAttachPartitionSuffix());
+            Files.move(Paths.get(root, tt.getDirName(), "2024-01-01" + TableUtils.DETACHED_DIR_MARKER), attachable.toPath());
+            final File pm = new File(attachable, TableUtils.PARQUET_METADATA_FILE_NAME);
+            final byte[] pmBytes = Files.readAllBytes(pm.toPath());
+            Assert.assertTrue(pm.setWritable(false));
+            try {
+                execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                Assert.assertTrue("the failed ATTACH keeps the directory to attach", attachable.isDirectory());
+                Assert.assertArrayEquals("and its _pm", pmBytes, Files.readAllBytes(pm.toPath()));
+                assertQuery("SELECT x FROM t ORDER BY ts").expectSize().returns("x\n3\n");
+            } finally {
+                Assert.assertTrue(pm.setWritable(true));
+            }
+        });
+    }
+
+    @Test
+    public void testParquetAttachStampsItsSeqTxnInPm() throws Exception {
+        // A parquet ATTACH brings the _pm stamp of the table the partition was detached from. Like a
+        // native ATTACH stamps _txn, it stamps this table's seqTxn into the _pm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            final long convertedStamp = readPmSeqTxn("t", 0);
+            execute("ALTER TABLE t DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            final String root = configuration.getDbRoot().toString();
+            Files.move(
+                    Paths.get(root, tt.getDirName(), "2024-01-01" + TableUtils.DETACHED_DIR_MARKER),
+                    Paths.get(root, tt.getDirName(), "2024-01-01" + configuration.getAttachPartitionSuffix())
+            );
+            execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+
+            final long attachSeqTxn;
+            try (TableReader reader = getReader("t")) {
+                attachSeqTxn = reader.getSeqTxn();
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            }
+            Assert.assertTrue("fixture: the ATTACH comes after the conversion", attachSeqTxn > convertedStamp);
+            Assert.assertEquals("the _pm carries the ATTACH's seqTxn", attachSeqTxn, readPmSeqTxn("t", 0));
+            assertQuery("SELECT x FROM t ORDER BY ts").expectSize().returns("x\n1\n3\n");
+        });
+    }
+
+    @Test
     public void testReResolveRebindsSeqTxnToSelectedFooter() throws Exception {
         // One reader instance re-resolved across a real two-footer MVCC chain must serve each
         // selected footer's seqTxn: the cached native reader is bound to the resolved snapshot,
@@ -858,6 +959,67 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                     ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSealStampFollowsTheStamp() throws Exception {
+        // Bit 58 marks a stamp a seal wrote. A conversion to parquet keeps it, as the _pm takes the
+        // native stamp; a flip to native or a new native stamp clears it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 2)");
+            drainWalQueue();
+            try (TableWriter writer = getWriter("t")) {
+                writer.getTxWriter().setPartitionSealStamped(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionSealStamped(0));
+                Assert.assertFalse(reader.getTxFile().isPartitionSealStamped(1));
+            }
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue("a conversion to parquet keeps the seal stamp", reader.getTxFile().isPartitionSealStamped(0));
+            }
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = getReader("t")) {
+                Assert.assertFalse("a flip to native stamps anew", reader.getTxFile().isPartitionSealStamped(0));
+            }
+
+            try (TableWriter writer = getWriter("t")) {
+                final TxWriter tx = writer.getTxWriter();
+                tx.setPartitionSealStamped(0, true);
+                Assert.assertTrue(tx.isPartitionSealStamped(0));
+                tx.setPartitionSeqTxn(0, tx.getSeqTxn());
+                Assert.assertFalse("a new stamp clears it", tx.isPartitionSealStamped(0));
+                tx.setPartitionSealStamped(0, true);
+                tx.setPartitionSealStamped(0, false);
+                Assert.assertFalse(tx.isPartitionSealStamped(0));
+            }
+        });
+    }
+
+    @Test
+    public void testSetTypeToCurrentTypeCancelsPendingRequest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            execute("ALTER TABLE t SET TYPE BYPASS WAL");
+            Assert.assertTrue(convertMarkerExists(tt));
+            execute("ALTER TABLE t SET TYPE WAL");
+            Assert.assertFalse("a SET TYPE to the table's own type cancels the request", convertMarkerExists(tt));
+            engine.releaseInactive();
+            engine.load();
+            Assert.assertTrue(engine.verifyTableName("t").isWal());
         });
     }
 
@@ -1403,6 +1565,10 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                             "2024-01-02T00:00:00.000000Z\t102\n" +
                             "2024-01-03T00:00:00.000000Z\t3\n");
         });
+    }
+
+    private static boolean convertMarkerExists(TableToken tt) {
+        return configuration.getFilesFacade().exists(Path.getThreadLocal(configuration.getDbRoot()).concat(tt).concat(WalUtils.CONVERT_FILE_NAME).$());
     }
 
     // Reads the seqTxn stored in a parquet partition's _pm, keyed by its offset-3 file size --

@@ -1358,6 +1358,52 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuiltPmClearsSealStampAndRemote() throws Exception {
+        // A _pm rebuilt from data.parquet takes the footer's stamp, not the one a seal wrote or an
+        // upload keyed, so the restore clears both marks: the partition falls back to released
+        // behaviour and uploads or dedups again. A partition whose _pm survives keeps them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-02T00:00:00.000000Z'),
+                    (3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            try (TableWriter writer = getWriter("t")) {
+                for (int i = 0; i < 2; i++) {
+                    writer.getTxWriter().setPartitionSealStamped(i, true);
+                    writer.getTxWriter().setPartitionRemote(i, true);
+                }
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String dbRoot = engine.getConfiguration().getDbRoot();
+            final File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            Assert.assertTrue("failed to delete _pm", new File(partDir, "_pm").delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("a rebuilt _pm loses the seal stamp", tx.isPartitionSealStamped(0));
+                Assert.assertFalse("and the upload", tx.isPartitionRemote(0));
+                Assert.assertTrue("an untouched _pm keeps the seal stamp", tx.isPartitionSealStamped(1));
+                Assert.assertTrue(tx.isPartitionRemote(1));
+            }
+            assertQuery("SELECT count() FROM t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexesAcrossParquetPartitionsReusingWorkerScratch() throws Exception {
         // Regression guard for cross-partition reuse of the per-worker parquet
         // scratch (metaReader / decoder / RowGroupBuffers / parquetColumns /

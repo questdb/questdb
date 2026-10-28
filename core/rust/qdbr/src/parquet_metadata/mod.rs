@@ -35,6 +35,7 @@
 //! The format specification lives in `docs/parquet-metadata.md`.
 
 pub mod convert;
+#[cfg(feature = "jni-exports")]
 pub mod jni;
 pub mod skip;
 

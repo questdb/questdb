@@ -164,6 +164,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     }
 
+    /**
+     * Clears a partition's seal stamp and REMOTE in place in the current record, with no commit, as
+     * {@link #resetLagAppliedRows()} resets the lag. Snapshot restore only, before any writer opens.
+     */
+    public void clearPartitionStampFlagsUnsafe(int partitionIndex) {
+        if (!isPartitionSealStamped(partitionIndex) && !isPartitionRemote(partitionIndex)) {
+            return;
+        }
+        final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_VERSION_OFFSET;
+        final long word = attachedPartitions.getQuick(indexRaw) & ~(PARTITION_SEAL_STAMP_BIT | PARTITION_REMOTE_BIT);
+        attachedPartitions.setQuick(indexRaw, word);
+        txMemBase.putLong(readBaseOffset + getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolColumnCount), indexRaw), word);
+    }
+
     @Override
     public void close() {
         try {
@@ -594,14 +608,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionRemoteByRawIndex(findAttachedPartitionRawIndex(timestamp), isRemote);
     }
 
+    /**
+     * Marks the partition's current stamp as one a PARTITION_SEAL wrote, or clears the mark. The
+     * next seqTxn stamp or flip to native clears it too.
+     */
+    public void setPartitionSealStamped(int partitionIndex, boolean isSealStamped) {
+        final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        assert !isSealStamped || !isPartitionCompositeByRawIndex(indexRaw) : "a composite partition records no stamp";
+        final long word = getPartitionOffset3(indexRaw);
+        attachedPartitions.setQuick(
+                indexRaw + PARTITION_VERSION_OFFSET,
+                isSealStamped ? word | PARTITION_SEAL_STAMP_BIT : word & ~PARTITION_SEAL_STAMP_BIT
+        );
+    }
+
     public boolean setPartitionSeqTxn(int partitionIndex, long seqTxn) {
         return setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
     }
 
     /**
      * Stamps a native partition's last-modifying seqTxn into the offset-3 word, preserving
-     * reserved flag bits. Clears REMOTE and parquet_generated: the stamp records a data
-     * change, so no remote or generated copy matches the bytes anymore. A positive stamp
+     * reserved flag bits. Clears REMOTE, the seal stamp and parquet_generated: the stamp records a
+     * data change, so no remote or generated copy matches the bytes anymore. A positive stamp
      * carries {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT}, marking the word a trusted seqTxn
      * (untrusted legacy words read as -1). The non-WAL path stamps 0, the cleared word, which
      * reads back as the -1 "no version" sentinel.
@@ -617,7 +645,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
-                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
+                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT | PARTITION_SEAL_STAMP_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
         return true;
@@ -924,8 +952,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // about to take is its file size, not a geometry pointer.
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
                 & ~(PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
-        if (!isParquetFormat && version > 0) {
-            flags |= PARTITION_SEQ_TXN_VALID_BIT;
+        if (!isParquetFormat) {
+            // A flip to native stamps a new seqTxn, which no seal wrote.
+            flags &= ~PARTITION_SEAL_STAMP_BIT;
+            if (version > 0) {
+                flags |= PARTITION_SEQ_TXN_VALID_BIT;
+            }
         }
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (version & PARTITION_VERSION_VALUE_MASK) | flags);
     }
