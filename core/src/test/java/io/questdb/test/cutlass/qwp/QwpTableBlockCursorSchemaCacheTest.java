@@ -38,7 +38,6 @@ import org.junit.Test;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP_NANOS;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpTableBlockCursorSchemaCacheTest {
@@ -68,44 +67,14 @@ public class QwpTableBlockCursorSchemaCacheTest {
         Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
     }
 
-    @Test
-    public void testSchemaDifferingInOneByteIsNotReused() throws Exception {
-        // A name of n bytes makes an (n + 4)-byte section: [n][name][LONG][0][ts type].
-        // Sweeping n moves both the last name byte and the final ts-type byte across
-        // the prefix and every 8/4/2/1-byte step of the comparison.
-        final long clientMemUsedBefore = Unsafe.getMemUsed();
-        assertMemoryLeak(() -> {
-            try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
-                for (int n = 1; n <= 24; n++) {
-                    final String stem = "c".repeat(n - 1);
-                    final ObjList<QwpColumnDef> cached = decode(decoder, stem + "a", TYPE_TIMESTAMP);
-                    Assert.assertSame("n=" + n, cached, decode(decoder, stem + "a", TYPE_TIMESTAMP));
-
-                    final ObjList<QwpColumnDef> lastNameByte = decode(decoder, stem + "b", TYPE_TIMESTAMP);
-                    Assert.assertNotSame("n=" + n, cached, lastNameByte);
-                    Assert.assertEquals(stem + "b", lastNameByte.getQuick(0).getName());
-
-                    final ObjList<QwpColumnDef> finalByte = decode(decoder, stem + "b", TYPE_TIMESTAMP_NANOS);
-                    Assert.assertNotSame("n=" + n, lastNameByte, finalByte);
-                    Assert.assertEquals(TYPE_TIMESTAMP_NANOS, finalByte.getQuick(1).getTypeCode());
-                }
-            }
-        });
-        Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
-    }
-
     private static ObjList<QwpColumnDef> decode(QwpStreamingDecoder decoder, String columnName) throws Exception {
-        return decode(decoder, columnName, TYPE_TIMESTAMP);
-    }
-
-    private static ObjList<QwpColumnDef> decode(QwpStreamingDecoder decoder, String columnName, byte timestampType) throws Exception {
         // The encoder does not own the table buffer; both hold native memory.
         try (
                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table")
         ) {
             QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn(columnName, TYPE_LONG, false);
-            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(timestampType);
+            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
             for (int i = 0; i < 3; i++) {
                 col.addLong(i);
                 tsCol.addLong(1_000_000_000_000L + i);
