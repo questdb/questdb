@@ -66,6 +66,15 @@ public class LastPartitionO3AppendCoveringTest extends AbstractCairoTest {
         PostingIndexWriter.COVERING_SEAL_APPEND_PENDING_DECLINE_COUNT.set(0);
     }
 
+    @Before
+    public void pinNativeO3Route() {
+        // These tests assert on the native O3 seal path, the production default. Tests
+        // default to merge-append, and a merge-append WAL table never reaches that path:
+        // the composite write publishes its covering indexes instead, which
+        // CoveringIndexMergeAppendTest covers.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
+
     @After
     public void disableCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;

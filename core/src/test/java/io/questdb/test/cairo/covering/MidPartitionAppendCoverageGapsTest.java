@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -59,6 +60,15 @@ public class MidPartitionAppendCoverageGapsTest extends AbstractCairoTest {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
+    }
+
+    @Before
+    public void pinNativeO3Route() {
+        // These tests assert on the native O3 seal path, the production default. Tests
+        // default to merge-append, and a merge-append WAL table never reaches that path:
+        // the composite write publishes its covering indexes instead, which
+        // CoveringIndexMergeAppendTest covers.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
     }
 
     @After

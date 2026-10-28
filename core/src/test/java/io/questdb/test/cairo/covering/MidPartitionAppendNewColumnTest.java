@@ -24,10 +24,12 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -47,6 +49,15 @@ import org.junit.Test;
  * never heals.
  */
 public class MidPartitionAppendNewColumnTest extends AbstractCairoTest {
+
+    @Before
+    public void pinNativeO3Route() {
+        // Both tests target the native O3 seal path, the production default: the
+        // column-top guard in TableWriter.isCoveredAppendSealedByWriter() and the reseal
+        // fallback. Tests default to merge-append, and a merge-append WAL table reaches
+        // neither, so both tests would pass without exercising them.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
 
     @After
     public void resetSwitch() {

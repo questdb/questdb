@@ -73,6 +73,15 @@ public class MidPartitionAppendDifferentialFuzzTest extends AbstractFuzzTest {
         resetCoveringCounters();
     }
 
+    @Before
+    public void pinNativeO3Route() {
+        // These tests assert on the native O3 seal path, the production default. Tests
+        // default to merge-append, and a merge-append WAL table never reaches that path:
+        // the composite write publishes its covering indexes instead, which
+        // CoveringIndexMergeAppendTest covers.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
+
     @After
     public void disableCoveringCountersAndAppendPath() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
