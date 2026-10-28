@@ -69,6 +69,9 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
             AsyncAsOfJoinAtom.KEYS_SERIAL,
             AsyncAsOfJoinAtom.KEYS_AUTO
     };
+    // the most quotes a Parquet slave gets: the prevailing scans decode its row groups again for
+    // every master frame that passes them, so the cost grows with quotes times trades
+    private static final int MAX_PARQUET_SLAVE_QUOTES = 10_000;
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final String[] SERIAL_HINTS = {"asof_linear", "asof_dense"};
     private static final int[] WALK_MODES = {
@@ -369,7 +372,8 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                         engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
                         engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 1_000_000L, 'f' || (x % 10), x FROM long_sequence(250000)", ctx);
                         engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 1_000_000L + 1, 'r' || x, x FROM long_sequence(200)", ctx);
-                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // the capacity keeps the symbol hash chains short while one INSERT writes 300k symbols
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 524_288, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
                         engine.execute("INSERT INTO trades SELECT '2023-12-31'::timestamp + x, 'm' || x, 0.0 FROM long_sequence(300000)", ctx);
                         engine.execute("INSERT INTO trades SELECT '2024-01-03'::timestamp + x * 10_000_000L, CASE WHEN x % 3 = 0 THEN 'f' || (x % 10) "
                                 + "ELSE 'r' || (x % 230 + 1) END, x FROM long_sequence(3000)", ctx);
@@ -491,7 +495,8 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                         engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
                         engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 400_000L, 'f' || (x % 10), x FROM long_sequence(1000000)", ctx);
                         engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 60_000_000L + 3, 'r' || (x % 20), x FROM long_sequence(100)", ctx);
-                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                        // the capacity keeps the symbol hash chains short while one INSERT writes 300k symbols
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 524_288, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
                         engine.execute("INSERT INTO trades SELECT '2023-12-31'::timestamp + x, 'm' || x, 0.0 FROM long_sequence(300000)", ctx);
                         engine.execute("INSERT INTO trades SELECT '2024-01-05'::timestamp + x * 10_000_000L, CASE WHEN x % 3 = 0 THEN 'f' || (x % 10) "
                                 + "WHEN x % 3 = 1 THEN 'zz' || (x % 7) ELSE 'r' || (x % 20) END, x FROM long_sequence(3000)", ctx);
@@ -593,9 +598,11 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, ctx) -> {
                         engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
-                        // 80k symbols; every 7th row a NULL key
-                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 200_000L, CASE WHEN x % 7 = 0 THEN NULL ELSE 's' || (x % 80000) END, x "
-                                + "FROM long_sequence(400000)", ctx);
+                        // 80k symbols, two rows each; every 7th row a NULL key. A quote every 1.5s against a trade
+                        // every 0.7s keeps a master frame's span to about 4.7k slave rows, which bounds what
+                        // the forced walk (WALK_ALWAYS) reads back per key
+                        engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 1_500_000L, CASE WHEN x % 7 = 0 THEN NULL ELSE 's' || (x % 80000) END, x "
+                                + "FROM long_sequence(160_000)", ctx);
                         engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
                         // keys quoted recently, keys whose last quote is days back, NULL, and keys never quoted
                         engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 700_000L + 3, CASE WHEN x % 11 = 0 THEN NULL "
@@ -915,8 +922,12 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
     ) throws SqlException {
         // quotes: four days. f0..f9 quote all the time, r0..r29 only on day 1, 'late' only on day 4;
         // NULL keys; ties: several rows per timestamp, and copies of rows at the same timestamp
-        final long step = 5_000_000L + rnd.nextInt(30) * 1_000_000L;
+        long step = 5_000_000L + rnd.nextInt(30) * 1_000_000L;
         final int perTimestamp = 1 + rnd.nextInt(3);
+        if (parquetSlave) {
+            // the same four days, with fewer quotes
+            step = Math.max(step, 4 * 86_400_000_000L * perTimestamp / MAX_PARQUET_SLAVE_QUOTES);
+        }
         final int quoteCount = (int) (4 * 86_400_000_000L / step) * perTimestamp;
         engine.execute(
                 "CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, ex SYMBOL, bid DOUBLE, bsz INT, ok BOOLEAN, b BYTE, sh SHORT, " +

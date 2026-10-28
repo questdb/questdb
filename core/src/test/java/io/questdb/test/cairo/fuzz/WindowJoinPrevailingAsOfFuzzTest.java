@@ -46,7 +46,7 @@ import org.junit.Test;
  * back, keys with no row at all, NULL keys, ties - with one key and with a join filter as a second
  * key, on native and Parquet slaves.
  */
-public class WindowJoinPrevailingAsOfTest extends AbstractCairoTest {
+public class WindowJoinPrevailingAsOfFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
 
     @Override

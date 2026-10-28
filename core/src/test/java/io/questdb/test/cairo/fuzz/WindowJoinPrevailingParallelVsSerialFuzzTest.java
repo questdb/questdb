@@ -49,7 +49,7 @@ import org.junit.Test;
  * equalities, reversed operands, an extra predicate, an OR, a column with a column top and NULLs on
  * both sides, over native and Parquet slaves, with blocks of one or of several time frames.
  */
-public class WindowJoinPrevailingParallelVsSerialTest extends AbstractCairoTest {
+public class WindowJoinPrevailingParallelVsSerialFuzzTest extends AbstractCairoTest {
     private static final String[] FILTERS = {
             "",
             " AND t.ex = q.ex",
@@ -157,12 +157,14 @@ public class WindowJoinPrevailingParallelVsSerialTest extends AbstractCairoTest 
         if (extraKeys > 0) {
             engine.execute("INSERT INTO trades SELECT '2023-12-31'::timestamp + x, 'm' || x, 'X0', 0.0, NULL FROM long_sequence(" + extraKeys + ")", ctx);
         }
-        // trades: k* (some never quoted), r*, z* (never quoted), NULLs
-        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 37_000_000L + rnd_int(0, 3, 0), "
+        // trades: k* (some never quoted), r*, z* (never quoted), NULLs; a few hundred, spread over 20 to
+        // 40 hours: the serial oracle scans back to the table start for every trade no quote passes the
+        // join filter for, and decodes the Parquet row groups it passes on the way
+        engine.execute("INSERT INTO trades SELECT '2024-01-01'::timestamp + x * 370_000_000L + rnd_int(0, 3, 0), "
                 + "CASE WHEN rnd_int(0, 30, 0) = 0 THEN NULL WHEN rnd_int(0, 5, 0) = 0 THEN 'r' || rnd_int(0, 45, 0) "
                 + "WHEN rnd_int(0, 11, 0) = 0 THEN 'z' || rnd_int(0, 3, 0) ELSE 'k' || rnd_int(0, " + (k + 3) + ", 0) END, "
                 + "CASE WHEN rnd_int(0, 20, 0) = 0 THEN NULL ELSE 'X' || rnd_int(0, 3, 0) END, rnd_double() * 10, "
-                + "CASE WHEN rnd_int(0, 6, 0) = 0 THEN NULL ELSE 'X' || rnd_int(0, 4, 0) END FROM long_sequence(" + (2000 + rnd.nextInt(2000)) + ")", ctx);
+                + "CASE WHEN rnd_int(0, 6, 0) = 0 THEN NULL ELSE 'X' || rnd_int(0, 4, 0) END FROM long_sequence(" + (200 + rnd.nextInt(200)) + ")", ctx);
         // trades exactly at quote timestamps
         engine.execute("INSERT INTO trades SELECT ts, sym, ex, 9.0, ex2 FROM quotes WHERE bid > 0.9995", ctx);
     }
