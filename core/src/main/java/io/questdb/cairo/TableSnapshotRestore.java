@@ -408,6 +408,20 @@ public class TableSnapshotRestore implements QuietCloseable {
             AtomicInteger recoveredSymbolFiles,
             boolean rebuildPartitionColumnIndexes
     ) {
+        rebuildTableFiles(tablePath, recoveredSymbolFiles, rebuildPartitionColumnIndexes, false);
+    }
+
+    /**
+     * Like {@link #rebuildTableFiles(Path, AtomicInteger, boolean)}. {@code isRemoteCleared} clears
+     * REMOTE on every partition not remotely served, for a restore onto a cold storage root other than
+     * the one the copies were uploaded to.
+     */
+    public void rebuildTableFiles(
+            Path tablePath,
+            AtomicInteger recoveredSymbolFiles,
+            boolean rebuildPartitionColumnIndexes,
+            boolean isRemoteCleared
+    ) {
         pathTableLen = tablePath.size();
         try {
             if (tableMetadata == null) {
@@ -465,9 +479,18 @@ public class TableSnapshotRestore implements QuietCloseable {
             // A rebuilt _pm loses its seal stamp and its upload, so the partition falls back to released
             // behaviour and uploads or dedups again.
             for (int i = 0, n = rebuiltParquetMetaPartitions.size(); i < n; i++) {
-                txWriter.clearPartitionStampFlagsUnsafe(rebuiltParquetMetaPartitions.getQuick(i));
+                txWriter.clearPartitionStampFlagsUnsafe(rebuiltParquetMetaPartitions.getQuick(i), true);
             }
             rebuiltParquetMetaPartitions.clear();
+            // A local copy's upload went to another root, so it uploads or dedups again against this one.
+            // A remotely served copy reads a base the restore named in this root.
+            if (isRemoteCleared) {
+                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                    if (!txWriter.isPartitionRemotelyServed(i)) {
+                        txWriter.clearPartitionStampFlagsUnsafe(i, false);
+                    }
+                }
+            }
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)

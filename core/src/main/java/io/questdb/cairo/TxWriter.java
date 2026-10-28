@@ -165,15 +165,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Clears a partition's seal stamp and REMOTE in place in the current record, with no commit, as
-     * {@link #resetLagAppliedRows()} resets the lag. Snapshot restore only, before any writer opens.
+     * Clears a partition's REMOTE, and its seal stamp when {@code isSealStampCleared}, in place in the
+     * current record, with no commit, as {@link #resetLagAppliedRows()} resets the lag. Snapshot restore
+     * only, before any writer opens.
      */
-    public void clearPartitionStampFlagsUnsafe(int partitionIndex) {
-        if (!isPartitionSealStamped(partitionIndex) && !isPartitionRemote(partitionIndex)) {
+    public void clearPartitionStampFlagsUnsafe(int partitionIndex, boolean isSealStampCleared) {
+        if (!(isSealStampCleared && isPartitionSealStamped(partitionIndex)) && !isPartitionRemote(partitionIndex)) {
             return;
         }
+        final long flags = isSealStampCleared ? PARTITION_SEAL_STAMP_BIT | PARTITION_REMOTE_BIT : PARTITION_REMOTE_BIT;
         final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_VERSION_OFFSET;
-        final long word = attachedPartitions.getQuick(indexRaw) & ~(PARTITION_SEAL_STAMP_BIT | PARTITION_REMOTE_BIT);
+        final long word = attachedPartitions.getQuick(indexRaw) & ~flags;
         attachedPartitions.setQuick(indexRaw, word);
         txMemBase.putLong(readBaseOffset + getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolColumnCount), indexRaw), word);
     }

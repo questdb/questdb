@@ -885,6 +885,47 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetSoftLinkAttachOnReadOnlyVolumeKeepsFooterStamp() throws Exception {
+        // A parquet partition soft-linked from a read-only volume attaches as it did before the ATTACH
+        // stamped its _pm: the stamp cannot be written, so it keeps the footer's.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            final long convertedStamp = readPmSeqTxn("t", 0);
+            execute("ALTER TABLE t DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            final String root = configuration.getDbRoot().toString();
+            final File linked = new File(temp.newFolder("read-only-volume"), "2024-01-01");
+            Files.move(Paths.get(root, tt.getDirName(), "2024-01-01" + TableUtils.DETACHED_DIR_MARKER), linked.toPath());
+            Files.createSymbolicLink(Paths.get(root, tt.getDirName(), "2024-01-01" + configuration.getAttachPartitionSuffix()), linked.toPath());
+            final File pm = new File(linked, TableUtils.PARQUET_METADATA_FILE_NAME);
+            Assert.assertTrue(pm.setWritable(false, false));
+            Assert.assertTrue(linked.setWritable(false, false));
+            try {
+                Assume.assumeFalse("the volume must refuse writes", pm.canWrite());
+                execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                try (TableReader reader = getReader("t")) {
+                    Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                    Assert.assertTrue("a soft link attaches read-only", reader.getTxFile().isPartitionReadOnly(0));
+                }
+                Assert.assertEquals("the _pm keeps the footer's stamp", convertedStamp, readPmSeqTxn("t", 0));
+                assertQuery("SELECT x FROM t ORDER BY ts").expectSize().returns("x\n1\n3\n");
+            } finally {
+                Assert.assertTrue(linked.setWritable(true, false));
+                Assert.assertTrue(pm.setWritable(true, false));
+            }
+        });
+    }
+
+    @Test
     public void testReResolveRebindsSeqTxnToSelectedFooter() throws Exception {
         // One reader instance re-resolved across a real two-footer MVCC chain must serve each
         // selected footer's seqTxn: the cached native reader is bound to the resolved snapshot,

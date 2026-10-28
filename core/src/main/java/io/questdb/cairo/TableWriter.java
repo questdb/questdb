@@ -1319,11 +1319,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     path.trimTo(partitionPathLen);
                     // The footer stamp came from the table the partition was detached from. Stamp this
-                    // table's seqTxn instead, as a native ATTACH stamps _txn below. A soft link needs a
-                    // writable target, as a later seal writes this _pm too.
+                    // table's seqTxn instead, as a native ATTACH stamps _txn below. A soft link to a
+                    // read-only volume keeps the footer's stamp: it attaches as before, and a later seal
+                    // of it only freezes it.
                     if (parquetFileSize > -1 && tableToken.isWal()
                             && !attachPartitionStampParquetSeqTxn(partitionPathLen, parquetFileSize, txWriter.getSeqTxn())) {
-                        return AttachDetachStatus.ATTACH_ERR_CREATE_PM_FILE;
+                        if (!isSoftLink) {
+                            return AttachDetachStatus.ATTACH_ERR_CREATE_PM_FILE;
+                        }
+                        LOG.info().$("keeping the footer stamp of a soft-linked parquet partition [path=").$(path).I$();
                     }
                     attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
@@ -3621,6 +3625,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Already fully switched to parquet format - nothing to do.
             return true;
         }
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            // The Delta base is frozen. A conversion staged before a replicated Delta switch lands here.
+            return false;
+        }
         if (txWriter.isPartitionComposite(partitionIndex)) {
             // The generated bit masks the composite bit (isPartitionCompositeByRawIndex reads false once it is
             // set) while the geometry pointer stays in offset 3, so marking a composite partition ready would
@@ -3640,6 +3648,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             if (txWriter.isPartitionParquetGenerated(partitionIndex)) {
                 return true;
+            }
+            if (txWriter.isPartitionSealStamped(partitionIndex)) {
+                // A seal can apply between the conversion and this commit. The staged copy holds the
+                // sealed rows, so it takes the seal's stamp rather than the one the conversion read.
+                stampStagedParquetSeqTxn(partitionTimestamp, partitionNameTxn, nativePartitionSeqTxn(partitionIndex));
             }
             if (nativePartitionSeqTxn(partitionIndex) <= 0 && tableToken.isWal()) {
                 txWriter.setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, txWriter.getSeqTxn());
@@ -18655,6 +18668,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.close(parquetMetaFd);
             }
             other.trimTo(stagedDirLen);
+        }
+    }
+
+    /**
+     * Stamps the {@code _pm} staged beside a native partition's columns with {@code seqTxn}, the stamp a
+     * seal applied since the conversion gave the partition.
+     */
+    private void stampStagedParquetSeqTxn(long partitionTimestamp, long partitionNameTxn, long seqTxn) {
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = other.size();
+        try {
+            final long parquetFileSize = ff.length(other.concat(PARQUET_PARTITION_NAME).$());
+            other.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME);
+            final long parquetMetaFd = ff.openRW(other.$(), CairoConfiguration.O_NONE);
+            if (parquetMetaFd < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not open staged parquet metadata [path=").put(other).put(']');
+            }
+            try {
+                ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(parquetMetaFd), parquetFileSize, seqTxn);
+            } finally {
+                ff.close(parquetMetaFd);
+            }
+        } finally {
+            other.trimTo(pathSize);
         }
     }
 
