@@ -904,7 +904,7 @@ public class RecoveryCoordinator {
             assert versionWord - loadedVersion >= 0 && versionWord - loadedVersion <= 1
                     : "TxReader A/B slot-selection regression under adaptive recovery: unsafeLoadAll must "
                     + "return the version-selected (latest) _txn slot, or its immediate predecessor when the "
-                    + "latest is torn — never an older slot [table=" + token.getTableName()
+                    + "latest is torn, never an older slot [table=" + token.getTableName()
                     + ", loadedVersion=" + loadedVersion + ", versionWord=" + versionWord + ']';
 
             // A load from the predecessor slot means a crash, not a restore, even when it is below the epoch.
