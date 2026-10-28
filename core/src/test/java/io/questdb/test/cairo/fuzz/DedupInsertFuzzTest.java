@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -777,22 +778,30 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         String partitions = readTxnToString(tt, false, true, true, false);
         int inserts = 2 + rnd.nextInt(10);
         long minTs, maxTs;
+        TimestampDriver driver;
         try (TableReader reader = getReader(tableNameDedup)) {
             if (reader.size() == 0) {
                 return;
             }
             minTs = reader.getMinTimestamp();
             maxTs = reader.getMaxTimestamp();
+            driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
         }
 
+        StringSink fromTsSink = new StringSink();
+        StringSink toTsSink = new StringSink();
         for (int i = 0; i < inserts; i++) {
             // maxTs > minTs condition prevents arithmetic exception thrown from rnd.nextLong() when maxTs = minTs
             long fromTs = minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
-            long toTs = (long) (fromTs + Micros.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
+            long toTs = (long) (fromTs + driver.fromDays(1) * Math.pow(1.2, rnd.nextDouble()));
+            fromTsSink.clear();
+            driver.append(fromTsSink, fromTs);
+            toTsSink.clear();
+            driver.append(toTsSink, toTs);
 
             String insertSql = "insert into " + tableNameDedup +
                     " select * from " + tableNameDedup +
-                    " where " + timestampColumnName + " >= " + fromTs + " and ts < " + toTs
+                    " where " + timestampColumnName + " >= '" + fromTsSink + "' and ts < '" + toTsSink + "'"
                     + " LIMIT 100000";
 
             execute(insertSql);
@@ -915,7 +924,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                 try {
                     addDuplicates(transactions, rnd, upsertKeyIndexes);
-                    applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
+                    applyWal(transactions, tableNameWalNoDedup, 1, new Rnd(rnd.nextLong(), rnd.nextLong()));
                     applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                     String renamedUpsertKeys;
@@ -981,7 +990,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     initialMaxTs = reader.getMaxTimestamp();
                 }
 
-                transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, 1000000L);
+                // initial rows are 1 second apart, see FuzzRunner.createInitialTable()
+                long initialStep = ColumnType.getTimestampDriver(fuzzer.getTimestampType()).fromSeconds(1);
+                transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, initialStep);
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
