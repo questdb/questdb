@@ -124,9 +124,7 @@ public class TableSequencerImpl implements TableSequencer {
             // The txn log is the recovery authority; open it before _meta so a damaged _meta can be rebuilt.
             tableTransactionLog.open(path);
             openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
-            // Covers both a newly created table (the files were created above) and
-            // an existing one: readers comparing a writer's version against the
-            // tracker see the sequencer's version from the first open on.
+            // For a newly created table and an existing one alike.
             seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
         } catch (CairoException ex) {
             closeLocked();
@@ -408,14 +406,9 @@ public class TableSequencerImpl implements TableSequencer {
                 // seqTxn while the published structure version is still the old one.
                 seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
 
-                // The tracker follows the log for every txn, suspended or not, the way
-                // nextTxn() already does for data txns. QwpTudCache gates its structure
-                // change replay on the tracker's seqTxn; a tracker that stalls on a
-                // suspended ALTER lets the next commit resolve rows against the pre-ALTER
-                // columns, and the WalWriter's NO_TXN replay then discards a dropped
-                // column's values. notifyOnCommit() withholds the apply-job wakeup while
-                // the table is suspended; the listener and live view notifications stay
-                // gated on suspension as before.
+                // The tracker follows the log for every txn, suspended or not, as nextTxn()
+                // does for data txns; QwpTudCache.advanceStructureCheckGate relies on it.
+                // notifyOnCommit() withholds the apply-job wakeup while suspended.
                 if (seqTxnTracker.notifyOnCommit(txn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }

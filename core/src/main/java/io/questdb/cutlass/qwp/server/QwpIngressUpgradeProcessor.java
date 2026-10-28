@@ -992,21 +992,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Commit batching: consecutive plain single-block frames for one table, already
-     * in the receive buffer, share one WAL commit, made when the receive pass drains
-     * or at the next frame that cannot join. A commit is a sequencer txn, a txn-log
-     * record, an ack-watermark step and an apply-job unit of work; at one row per
-     * message it was ~45% of the ingress fiber. The receive pass bounds a batch, and
-     * a batch stays below the max-uncommitted-rows cap, so it takes no bound of its
-     * own: a cap of 256 frames kept a server that fell behind committing 256 one-row
-     * frames at a time while the backlog stood.
-     * <p>
-     * While a batch is pending nothing but its commit may touch its writer: a frame
-     * joins only when appending it cannot commit, discard or restructure anything
-     * (see {@code QwpIngressProcessorState.isPreparedMessageJoinableToCommitBatch}),
-     * and the batch is acknowledged only after a positive check that its writer still
-     * holds exactly its rows. A frame that is deferred or a durable-ack poll can never
-     * join and commits the batch before anything else.
+     * False for a frame that can never join a commit batch. See the commit batch
+     * fields of {@link QwpIngressProcessorState} for how batching works.
      */
     private static boolean isCommitBatchCandidate(long payload, int length) {
         return length >= QwpConstants.HEADER_SIZE
@@ -1682,6 +1669,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             boolean isNormalPath = true;
             if (isBatchPending) {
                 final long batchFirstSeq = state.getFirstCommitBatchSequence();
+                // Set when the batch's own commit fails: the client replays from its first frame.
+                boolean isBatchCommitFailed = false;
                 if (state.isOk() && state.isPreparedMessageJoinableToCommitBatch()) {
                     // A joining frame: a pure append to the batch writer, no lookup and
                     // no column creation, so nothing else can touch the batch's rows.
@@ -1703,43 +1692,29 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     }
                 } else if (state.isOk()) {
                     // A boundary: commit the batch before this frame touches the engine,
-                    // then process the frame the normal way.
-                    if (!state.commitCommitBatch()) {
-                        // Batch lost at its own commit. This frame is not processed:
-                        // the finally's clear() discards it and the client replays it
-                        // with the batch.
-                        isNormalPath = false;
-                        roleChangeClose = state.isRoleChangeClosePending();
-                        errorMessage = state.getErrorText();
-                        responseStatus = responseStatusOf(state);
-                        responseSeq = batchFirstSeq;
-                        logCommitBatchFailed(context, batchFirstSeq, seq, errorMessage);
-                        state.abandonCommitBatch();
-                    }
+                    // then process the frame the normal way. If the commit fails, the
+                    // frame is not processed: the finally's clear() discards it and the
+                    // client replays it with the batch.
+                    isBatchCommitFailed = !state.commitBatch();
+                    isNormalPath = !isBatchCommitFailed;
                 }
-                if (!state.isOk() && state.isCommitBatchPending()) {
+                if (!isBatchCommitFailed && !state.isOk() && state.isCommitBatchPending()) {
                     // This frame failed with the batch still pending: refused by the live
                     // gate, malformed, or failed while joining (the appender cancelled its
                     // block). Commit the batch if it is intact, then answer this frame as
-                    // master would; otherwise the batch is lost.
+                    // it would be answered without a batch; otherwise the batch is lost.
                     isNormalPath = false;
                     final byte frameStatus = responseStatusOf(state);
                     final String frameError = state.getErrorText();
                     final boolean isFrameRoleChangeClose = state.isRoleChangeClosePending();
                     if (state.isCommitBatchIntact()) {
                         state.clearErrorForBatchSalvage();
-                        if (state.commitCommitBatch()) {
+                        isBatchCommitFailed = !state.commitBatch();
+                        if (!isBatchCommitFailed) {
                             // The watermark is past the batch; this frame gets its own answer.
                             roleChangeClose = isFrameRoleChangeClose;
                             errorMessage = frameError;
                             responseStatus = frameStatus;
-                        } else {
-                            roleChangeClose = state.isRoleChangeClosePending();
-                            errorMessage = state.getErrorText();
-                            responseStatus = responseStatusOf(state);
-                            responseSeq = batchFirstSeq;
-                            logCommitBatchFailed(context, batchFirstSeq, seq, errorMessage);
-                            state.abandonCommitBatch();
                         }
                     } else {
                         // This frame's failure left the batch not intact. Strike this frame,
@@ -1755,6 +1730,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         responseStatus = STATUS_INTERNAL_ERROR;
                         state.abandonCommitBatch();
                     }
+                }
+                if (isBatchCommitFailed) {
+                    roleChangeClose = state.isRoleChangeClosePending();
+                    errorMessage = state.getErrorText();
+                    responseStatus = responseStatusOf(state);
+                    responseSeq = batchFirstSeq;
+                    logCommitBatchFailed(context, batchFirstSeq, seq, errorMessage);
+                    state.abandonCommitBatch();
                 }
             }
 
@@ -1926,7 +1909,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     private boolean commitPendingBatch(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final long firstSeq = state.getFirstCommitBatchSequence();
-        if (state.commitCommitBatch()) {
+        if (state.commitBatch()) {
             return true;
         }
         // Capture before clear(), which resets both.

@@ -1448,10 +1448,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testSuspendWalAlterAdvancesSequencerTxn() throws Exception {
-        // A structure txn on a suspended table must move the tracker's seqTxn the
-        // same way a data txn does: QwpTudCache gates its change-log replay on
-        // that counter, and a tracker that stalled here left the gate closed over
-        // a DROP COLUMN. The apply job must still stay asleep until RESUME.
+        // A structure txn on a suspended table moves the tracker's seqTxn like a data
+        // txn does (QwpTudCache.advanceStructureCheckGate relies on it), while the
+        // apply job stays asleep until RESUME.
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());
             drainWalQueue();

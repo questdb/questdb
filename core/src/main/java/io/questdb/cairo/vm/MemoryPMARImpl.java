@@ -41,9 +41,7 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
-    // How far this object's own page mappings backed allocatedFd; see
-    // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
-    // while fd == allocatedFd (fds are unique per open).
+    // How far this object's own page mappings backed allocatedFd, as in MemoryCMARWImpl.
     private long allocatedFd = -1;
     private long allocatedHi;
     private long fd = -1;
@@ -115,7 +113,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         allocatedFd = fd;
         final long address = TableUtils.mapRWNoAlloc(ff, fd, size, offset, memoryTag);
         mappedPage = page;
-        ff.madvise(address, getExtendSegmentSize(), madviseOpts);
+        ff.madvise(address, size, madviseOpts);
         return address;
     }
 

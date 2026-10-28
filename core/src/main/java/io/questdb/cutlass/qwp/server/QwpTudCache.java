@@ -275,24 +275,12 @@ public class QwpTudCache implements QuietCloseable {
 
     /**
      * Commits a QWP commit batch: the rows that consecutive frames appended to
-     * {@code tud}'s writer without committing. The batch is committed only when
-     * {@code tud} is still this cache's entry for its name and its writer holds exactly
-     * {@code expectedRows} uncommitted rows, the rows the batch appended; otherwise it
-     * throws without committing. A batch whose rows another path committed, discarded
-     * or replaced can therefore never be acknowledged as committed through here.
-     * <p>
+     * {@code tud}'s writer without committing. The caller first checks that the
+     * writer holds exactly those rows ({@code QwpIngressProcessorState.isCommitBatchIntact}).
      * Reports the commit's seqTxn to {@code consumer} like {@link #commitAll}. A
      * dropped table throws; the caller rolls everything back and refuses the batch.
      */
-    public void commitBatch(WalTableUpdateDetails tud, long expectedRows, CommittedTxnConsumer consumer) throws Throwable {
-        if (!isCachedEntry(tud) || tud.isDropped() || tud.getWriter() == null
-                || tud.getWriter().getUncommittedRowCount() != expectedRows) {
-            throw CairoException.critical(0)
-                    .put("commit batch rows are not intact, cannot acknowledge [table=")
-                    .put(tud.getTableNameUtf8())
-                    .put(", expectedRows=").put(expectedRows)
-                    .put(']');
-        }
+    public void commitBatch(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
         try {
             tud.commit(false);
         } catch (CommitFailedException e) {
@@ -710,11 +698,11 @@ public class QwpTudCache implements QuietCloseable {
     /**
      * A data commit of our own is one sequencer txn with no structure change in
      * it. applyPendingStructureChanges() gates on the sequencer's seqTxn, so
-     * without this every message on a connection re-ran goActive() -- the
+     * without this every message on a connection would re-run goActive() -- the
      * sequencer read lock, the metadata change log lookup and two token lookups
-     * -- for a txn this connection wrote itself (6% of the ingress fiber at one
-     * row per message). Only the exact single-step case is taken: any interleaved
-     * txn by another writer may be structural and keeps the full check.
+     * -- for a txn this connection wrote itself. Only the exact single-step case
+     * is taken: any interleaved txn by another writer may be structural and keeps
+     * the full check.
      * <p>
      * That relies on the sequencer advancing the tracker for EVERY txn it logs,
      * including an ALTER on a suspended table (see

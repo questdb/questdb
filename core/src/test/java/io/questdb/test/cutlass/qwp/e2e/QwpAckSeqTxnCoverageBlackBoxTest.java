@@ -770,9 +770,8 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             }
         }
 
-        // Forward the actual client's HTTP handshake, then hold its first
-        // frameCount frames for one transport write. No QWP payload or peer
-        // response is forged.
+        // Forward the client's HTTP handshake, then hold its first frameCount
+        // frames and forward them in one transport write.
         private void coalesceFirstFrames(InputStream in, OutputStream out, int frameCount) throws IOException {
             int suffix = 0;
             while (suffix != 0x0d0a0d0a) {

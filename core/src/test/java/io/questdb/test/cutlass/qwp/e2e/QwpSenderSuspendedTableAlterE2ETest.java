@@ -35,17 +35,9 @@ import java.time.temporal.ChronoUnit;
 
 /**
  * Pinned-client coverage for DROP COLUMN and RENAME COLUMN landing on a
- * SUSPENDED WAL table between two frames of one QWP connection.
- * <p>
- * {@code QwpTudCache.applyPendingStructureChanges} gates its change-log replay
- * on the sequencer txn tracker, and {@code advanceStructureCheckGate} parks
- * that gate on the connection's own commit. The tracker therefore has to
- * follow the sequencer log for every txn, including an ALTER on a suspended
- * table; {@code TableSequencerImpl.nextStructureTxn} used to skip the tracker
- * while suspended, so the gate stayed closed over the ALTER, the next frame
- * resolved {@code v} against the pre-ALTER columns, and the WalWriter's
- * NO_TXN replay at commit time dropped the values (DROP) or re-homed them
- * into the renamed column (RENAME) -- with an OK ack either way.
+ * SUSPENDED WAL table between two frames of one QWP connection. The
+ * connection notices the ALTER only if the sequencer txn tracker follows the
+ * log on a suspended table; see {@code QwpTudCache.advanceStructureCheckGate}.
  * <p>
  * The contract pinned here is the one the unsuspended path already honours:
  * a column the frame names that the table no longer has is auto-created, and

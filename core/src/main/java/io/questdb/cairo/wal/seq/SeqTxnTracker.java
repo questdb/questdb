@@ -74,10 +74,8 @@ public class SeqTxnTracker {
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
-    // The sequencer's metadata (column structure) version, published by
-    // TableSequencerImpl under its lock whenever the version changes, and before the
-    // seqTxn of the structure txn that changed it. -1 until published: it never
-    // equals a writer's version, so readers comparing against it fail safe.
+    // Published by TableSequencerImpl under its lock, before the seqTxn of the
+    // structure txn that changed it; see getStructureVersion().
     private volatile long structureVersion = -1;
     // -1 suspended
     // 0 unknown
@@ -126,8 +124,9 @@ public class SeqTxnTracker {
 
     /**
      * The sequencer's metadata (column structure) version as last published, or -1 if
-     * no sequencer published it in this process. Lock-free; may lag the sequencer by
-     * the structure change that is being committed.
+     * no sequencer published it in this process; -1 never equals a writer's version,
+     * so a comparison against it fails safe. Lock-free; may lag the sequencer by the
+     * structure change being committed.
      */
     public long getStructureVersion() {
         return structureVersion;

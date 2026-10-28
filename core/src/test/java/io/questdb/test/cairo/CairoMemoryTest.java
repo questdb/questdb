@@ -107,7 +107,7 @@ public class CairoMemoryTest extends AbstractTest {
 
             @Override
             public boolean allocate(long fd, long allocatedSize, long size) {
-                // production grows files by range; keep this facade's allocate(fd, size) hook on that path
+                // route ranged growth through the allocate(fd, size) hook below
                 return allocate(fd, size);
             }
 

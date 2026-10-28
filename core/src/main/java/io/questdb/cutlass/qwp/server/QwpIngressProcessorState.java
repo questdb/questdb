@@ -267,16 +267,21 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private boolean uncommittedDeferredRows;
     // Commit batch: consecutive plain single-block frames for one WAL table, from one
     // receive pass, whose rows are appended to commitBatchTud's writer and committed
-    // together, as one WAL txn. Their sequences stay out of the cumulative-ack
-    // watermark until that commit. The upgrade processor's handleBinaryMessage owns
-    // the rules. Reset by clear(), which rolls the rows back.
+    // together, as one WAL txn. A commit is a sequencer txn, a txn-log record, an
+    // ack-watermark step and an apply-job unit of work, which one-row frames cannot
+    // amortize. The frames' sequences stay out of the cumulative-ack watermark until
+    // that commit. The upgrade processor's handleBinaryMessage owns the rules: the
+    // batch commits when the receive pass drains, or at the first frame that cannot
+    // join (isPreparedMessageJoinableToCommitBatch). It stays below the
+    // max-uncommitted-rows cap, so it needs no bound of its own. Reset by clear(),
+    // which rolls the rows back.
     //
     // While a batch is pending nothing but the batch commit touches the batch's
     // writer: a joining frame skips the table lookup and cannot create columns, so
-    // it only appends its block or cancels it. The batch is intact while the writer
-    // holds exactly commitBatchRows uncommitted rows, the rows the batch appended;
-    // that positive check, not a report from every path that might commit or discard
-    // rows, decides whether the batch may be acknowledged.
+    // it only appends its block or cancels it. A positive check that the writer
+    // still holds exactly the batch's rows (isCommitBatchIntact), not a report from
+    // every path that might commit or discard rows, decides whether the batch may
+    // be acknowledged.
     private long commitBatchRows;
     // The table's sequencer txn tracker, fetched at the batch's first join.
     private SeqTxnTracker commitBatchTracker;
@@ -502,7 +507,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * refusal, the batch is still pending, and the caller takes the batch-lost path
      * ({@link #abandonCommitBatch()}).
      */
-    public boolean commitCommitBatch() {
+    public boolean commitBatch() {
         if (!isCommitBatchIntact()) {
             LOG.error().$('[').$(fd).$("] commit batch rows are not intact [firstSeq=").$(firstCommitBatchSequence)
                     .$(", lastSeq=").$(lastCommitBatchSequence).I$();
@@ -510,7 +515,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             return false;
         }
         try {
-            tudCache.commitBatch(commitBatchTud, commitBatchRows, committedTxnConsumer);
+            tudCache.commitBatch(commitBatchTud, committedTxnConsumer);
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit batch error: ").$(th).$();
@@ -527,10 +532,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return firstCommitBatchSequence;
     }
 
-    public long getLastCommitBatchSequence() {
-        return lastCommitBatchSequence;
-    }
-
     public boolean isCommitBatchPending() {
         return firstCommitBatchSequence != -1;
     }
@@ -538,8 +539,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * True when the commit batch's rows are exactly what its writer holds
      * uncommitted: the writer is still the cache's entry for the table, healthy, not
-     * mid columnar write, and holds {@code commitBatchRows} uncommitted rows. Any path
-     * that committed, discarded or replaced the rows makes this false.
+     * mid columnar write, and holds {@code commitBatchRows} uncommitted rows.
      */
     public boolean isCommitBatchIntact() {
         return isCommitBatchWriterIntact() && tudCache.isCachedEntry(commitBatchTud);
@@ -1833,11 +1833,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
             rejectCairoError(e);
         } else {
-            Throwable e = th;
-            LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
+            LOG.critical().$('[').$(fd).$("] unexpected error: ").$(th).$();
             tudCache.setDistressed();
             rejectMsg.clear();
-            rejectMsg.put("unexpected error: ").put(e.getMessage());
+            rejectMsg.put("unexpected error: ").put(th.getMessage());
             reject(Status.INTERNAL_ERROR, rejectMsg, fd);
         }
     }

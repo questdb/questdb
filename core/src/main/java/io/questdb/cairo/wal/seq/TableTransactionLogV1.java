@@ -66,7 +66,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
-    // 64 KiB: ~1500 records per extension instead of ~100; the file is this big on disk at minimum.
+    // ~1500 records per extension; the file is at least this big on disk.
     private static final long EXTEND_SEGMENT_SIZE = 64 * 1024;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
@@ -220,12 +220,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     /**
-     * The txn log is an append-only file that grows by one {@link #RECORD_SIZE}
-     * record per commit, so it is opened with a {@link #EXTEND_SEGMENT_SIZE}
-     * extend segment rather than as a small file (one page). Every extension is
-     * a fallocate plus an mremap, and the mremap shoots down TLBs on every core
-     * the process runs on: with a 4 KiB segment that ran once per ~100 one-row
-     * transactions and was 13% of the ingress thread's CPU.
+     * The txn log grows by one {@link #RECORD_SIZE} record per commit, so this
+     * maps it with a {@link #EXTEND_SEGMENT_SIZE} extend segment rather than as a
+     * one-page small file. Every extension is a fallocate plus an mremap, and the
+     * mremap shoots down TLBs on every core the process runs on.
      */
     private void openTxnLog(Path path, int rootLen) {
         path.concat(TXNLOG_FILE_NAME);

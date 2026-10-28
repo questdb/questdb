@@ -525,9 +525,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     public void putFixedColumn(
             int columnIndex, long valuesAddress, int valueCount, int valueSize, long nullBitmapAddress, int rowCount
     ) {
-        // Kept small so the JIT inlines it into its callers' per-column loops; the
-        // null-expanding switch lives in putFixedColumnWithNulls. As one 830-byte
-        // method it was never inlined: a real call per column per block.
+        // Kept small so the JIT can inline it into its callers' per-column loops;
+        // the null-expanding switch lives in putFixedColumnWithNulls.
         checkInColumnarWrite();
         if (nullBitmapAddress == 0) {
             // No nulls: a direct copy.

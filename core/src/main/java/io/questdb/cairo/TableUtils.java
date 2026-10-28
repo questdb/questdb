@@ -315,9 +315,8 @@ public final class TableUtils {
      * file repeatedly: backs only from {@code min(allocatedHi, length)}, where {@code allocatedHi} is how
      * far this caller's own earlier calls on this fd backed the file, 0 for none. The first growth thus
      * backs the whole file from offset 0, holes below its length included, exactly as the plain variant
-     * does; later ones back only the new range. Re-backing from 0 every time costs time in proportion to
-     * the whole file (tmpfs walks every page, XFS opens a transaction per extent): for a WAL txn log grown
-     * a page at a time that was most of the ingest thread at one row per transaction.
+     * does; later ones back only the new range. Re-backing from 0 costs time in proportion to the whole
+     * file: tmpfs walks every page, XFS opens a transaction per extent.
      *
      * @return the new {@code allocatedHi} for the next call
      */

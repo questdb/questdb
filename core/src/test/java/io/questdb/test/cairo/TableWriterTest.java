@@ -863,12 +863,6 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final LazyTestFilesFacade ff = new LazyTestFilesFacade() {
                 @Override
-                public boolean allocate(long fd, long allocatedSize, long size) {
-                    // production grows files by range; keep this facade's allocate(fd, size) hook on that path
-                    return allocate(fd, size);
-                }
-
-                @Override
                 public boolean allocate(long fd, long size) {
                     return !active && super.allocate(fd, size);
                 }
@@ -1462,12 +1456,6 @@ public class TableWriterTest extends AbstractCairoTest {
         populateTable0(FF, N);
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public boolean allocate(long fd, long allocatedSize, long size) {
-                // production grows files by range; keep this facade's allocate(fd, size) hook on that path
-                return allocate(fd, size);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
@@ -1491,12 +1479,6 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new TestFilesFacadeImpl() {
-
-            @Override
-            public boolean allocate(long fd, long allocatedSize, long size) {
-                // production grows files by range; keep this facade's allocate(fd, size) hook on that path
-                return allocate(fd, size);
-            }
 
             @Override
             public boolean allocate(long fd, long size) {
@@ -4678,7 +4660,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public boolean allocate(long fd, long allocatedSize, long size) {
-                    // production grows files by range; keep this facade's allocate(fd, size) hook on that path
+                    // route ranged growth through the allocate(fd, size) hook below
                     return allocate(fd, size);
                 }
 

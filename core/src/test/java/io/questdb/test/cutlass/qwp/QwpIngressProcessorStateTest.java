@@ -129,7 +129,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         // the writer holds uncommitted.
                         Assert.assertTrue(state.isCommitBatchIntact());
                         state.clearErrorForBatchSalvage();
-                        Assert.assertTrue(state.commitCommitBatch());
+                        Assert.assertTrue(state.commitBatch());
                         Assert.assertEquals(0, state.getHighestProcessedSequence());
                     }
                 }
@@ -171,7 +171,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     }
                     state.clearMessageState();
                 }
-                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertTrue(state.commitBatch());
                 Assert.assertEquals(2, state.getHighestProcessedSequence());
             }
             drainWalQueue();
@@ -182,16 +182,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitBatchCapIsTheQwpMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {
-            // The table's own maxUncommittedRows is 1; the cap the appender commits at, and
-            // the batch must stay below, is the connection's qwp.max.uncommitted.rows.
+            // The table's own maxUncommittedRows of 1 has no effect; see lineConfigWithCap.
             execute("CREATE TABLE capped (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=1");
-            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
-                @Override
-                public long getQwpMaxUncommittedRows() {
-                    return 3;
-                }
-            };
-            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(3))) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 prepareLongBlocks(state, 1, "capped");
                 state.processPreparedMessage();
@@ -205,7 +198,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 prepareLongBlocks(state, 1, "capped");
                 Assert.assertFalse("2 + 1 rows would reach the cap", state.isPreparedMessageJoinableToCommitBatch());
                 state.clearMessageState();
-                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertTrue(state.commitBatch());
                 Assert.assertEquals(1, state.getHighestProcessedSequence());
             }
             drainWalQueue();
@@ -231,7 +224,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
                 Assert.assertTrue("the refused block left the batch's rows alone", state.isCommitBatchIntact());
                 state.clearErrorForBatchSalvage();
-                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertTrue(state.commitBatch());
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM evolving").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
@@ -315,7 +308,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 Assert.assertTrue(state.addToCommitBatch(3));
                 state.clearMessageState();
-                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertTrue(state.commitBatch());
                 Assert.assertEquals(3, state.getHighestProcessedSequence());
             }
             drainWalQueue();
@@ -341,94 +334,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testPreparedSingletonReplacementBeforeAdmissionCutsBatch() throws Exception {
         assertBatchLostToReplacement(false, false);
-    }
-
-    /**
-     * The batch's table is dropped, or renamed with its name reused, while a batch is
-     * pending. Before admission the next frame is cut from the batch; after admission
-     * it joins and appends to the old writer. Either way the batch's own commit is
-     * refused (dropped table, or the sequencer's token check), nothing of it is
-     * committed or reported, and the client replays the batch by name.
-     */
-    private void assertBatchLostToReplacement(boolean isDrop, boolean isAfterAdmission) throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setDurableAckEnabled(true);
-                prepareLongBlocks(state, 1, "prepared");
-                state.processPreparedMessage();
-                Assert.assertTrue(state.tryOpenCommitBatch(0));
-                state.clearMessageState();
-                prepareLongBlocks(state, 1, "prepared");
-                if (isAfterAdmission) {
-                    Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                }
-                execute(isDrop ? "DROP TABLE prepared" : "RENAME TABLE prepared TO prepared_old");
-                execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                long replacementTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
-                if (isAfterAdmission) {
-                    state.processPreparedJoiningMessage();
-                    Assert.assertTrue(state.isOk());
-                    state.addToCommitBatch(1);
-                } else {
-                    Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
-                }
-                Assert.assertFalse(state.commitCommitBatch());
-                Assert.assertFalse(state.isOk());
-                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
-                Assert.assertEquals(-1, state.getHighestProcessedSequence());
-                state.abandonCommitBatch();
-                Assert.assertTrue(state.hasUnresolvedSequence());
-                state.clear();
-                state.onDisconnected();
-                Assert.assertEquals(replacementTxn, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
-            }
-            drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
-            if (!isDrop) {
-                assertQuery("SELECT count() FROM prepared_old").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
-            }
-        });
-    }
-
-    private static void prepareEvolvedBlock(QwpIngressProcessorState state, String name) {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-             QwpTableBuffer table = new QwpTableBuffer(name)) {
-            table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
-            table.getOrCreateColumn("extra", QwpConstants.TYPE_LONG, false).addLong(8);
-            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(2_000_000L);
-            table.nextRow();
-            int length = encoder.encode(table);
-            long address = encoder.getBuffer().getBufferPtr();
-            state.addData(address, address + length);
-        }
-        state.prepareMessage();
-        Assert.assertTrue(state.getErrorText(), state.isOk());
-    }
-
-    private static void prepareLongBlocks(QwpIngressProcessorState state, int rows, String... names) {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            encoder.beginMessage(names.length, new GlobalSymbolDictionary(), -1, -1);
-            for (String name : names) {
-                try (QwpTableBuffer table = new QwpTableBuffer(name)) {
-                    var value = table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false);
-                    var timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                    for (int row = 0; row < rows; row++) {
-                        value.addLong(row);
-                        timestamp.addLong(1_000_000L + row);
-                        table.nextRow();
-                    }
-                    encoder.addTable(table);
-                }
-            }
-            int length = encoder.finishMessage();
-            long address = encoder.getBuffer().getBufferPtr();
-            state.addData(address, address + length);
-        }
-        state.prepareMessage();
-        Assert.assertTrue(state.getErrorText(), state.isOk());
     }
 
     /**
@@ -6065,6 +5970,148 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testOwnCommitAdvancesStructureCheckGate() throws Exception {
+        // A connection's own data commit is one sequencer txn with no structure
+        // change in it. The gate in applyPendingStructureChanges must move over
+        // it, otherwise every message re-runs goActive() for a txn this very
+        // connection wrote.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE gate_t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY)) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                );
+                // The miss above does not run the structure check; this hit does and arms the gate.
+                Assert.assertSame(tud, cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                ));
+                long gate = tud.getLastStructureCheckSeqTxn();
+                Assert.assertTrue(gate >= 0);
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = tud.getWriter().newRow(1_000_000L * (i + 1));
+                    row.putLong(1, i);
+                    row.append();
+                    try {
+                        cache.commitAll();
+                    } catch (Throwable t) {
+                        throw new RuntimeException(t);
+                    }
+                    // Asserted BEFORE the next lookup: the commit itself must have
+                    // moved the gate, so the lookup has nothing to replay.
+                    Assert.assertEquals(gate + 1, tud.getLastSeqTxn());
+                    Assert.assertEquals("gate must sit on the connection's own commit (iteration " + i + ")",
+                            tud.getLastSeqTxn(), tud.getLastStructureCheckSeqTxn());
+                    gate = tud.getLastStructureCheckSeqTxn();
+                    Assert.assertSame(tud, cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                    ));
+                }
+                // A structure change by someone else is still picked up by the next lookup.
+                execute("ALTER TABLE gate_t ADD COLUMN w DOUBLE");
+                drainWalQueue();
+                WalTableUpdateDetails again = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
+                );
+                Assert.assertSame(tud, again);
+                Assert.assertTrue(again.getWriter().getMetadata().getColumnIndex("w") >= 0);
+                Assert.assertEquals(engine.getTableSequencerAPI().getTxnTracker(tud.getTableToken()).getSeqTxn(),
+                        again.getLastStructureCheckSeqTxn());
+            }
+        });
+    }
+
+    /**
+     * The batch's table is dropped, or renamed with its name reused, while a batch is
+     * pending. Before admission the next frame is cut from the batch; after admission
+     * it joins and appends to the old writer. Either way the batch's own commit is
+     * refused (dropped table, or the sequencer's token check), nothing of it is
+     * committed or reported, and the client replays the batch by name.
+     */
+    private void assertBatchLostToReplacement(boolean isDrop, boolean isAfterAdmission) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                prepareLongBlocks(state, 1, "prepared");
+                state.processPreparedMessage();
+                Assert.assertTrue(state.tryOpenCommitBatch(0));
+                state.clearMessageState();
+                prepareLongBlocks(state, 1, "prepared");
+                if (isAfterAdmission) {
+                    Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                }
+                execute(isDrop ? "DROP TABLE prepared" : "RENAME TABLE prepared TO prepared_old");
+                execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                long replacementTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
+                if (isAfterAdmission) {
+                    state.processPreparedJoiningMessage();
+                    Assert.assertTrue(state.isOk());
+                    state.addToCommitBatch(1);
+                } else {
+                    Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                }
+                Assert.assertFalse(state.commitBatch());
+                Assert.assertFalse(state.isOk());
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(-1, state.getHighestProcessedSequence());
+                state.abandonCommitBatch();
+                Assert.assertTrue(state.hasUnresolvedSequence());
+                state.clear();
+                state.onDisconnected();
+                Assert.assertEquals(replacementTxn, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            if (!isDrop) {
+                assertQuery("SELECT count() FROM prepared_old").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            }
+        });
+    }
+
+    private static void prepareEvolvedBlock(QwpIngressProcessorState state, String name) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(name)) {
+            table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
+            table.getOrCreateColumn("extra", QwpConstants.TYPE_LONG, false).addLong(8);
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(2_000_000L);
+            table.nextRow();
+            int length = encoder.encode(table);
+            long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
+    private static void prepareLongBlocks(QwpIngressProcessorState state, int rows, String... names) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            encoder.beginMessage(names.length, new GlobalSymbolDictionary(), -1, -1);
+            for (String name : names) {
+                try (QwpTableBuffer table = new QwpTableBuffer(name)) {
+                    var value = table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false);
+                    var timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    for (int row = 0; row < rows; row++) {
+                        value.addLong(row);
+                        timestamp.addLong(1_000_000L + row);
+                        table.nextRow();
+                    }
+                    encoder.addTable(table);
+                }
+            }
+            int length = encoder.finishMessage();
+            long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
     private static void assertReason(String msg, String expected, CharSequence actual) {
         if (expected == null || expected.isEmpty()) {
             Assert.assertEquals(msg, 0, actual.length());
@@ -6636,59 +6683,5 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         void set(String dirName, long seqTxn) {
             watermarks.put(dirName, seqTxn);
         }
-    }
-
-    @Test
-    public void testOwnCommitAdvancesStructureCheckGate() throws Exception {
-        // A connection's own data commit is one sequencer txn with no structure
-        // change in it. The gate in applyPendingStructureChanges must move over
-        // it, otherwise every message re-runs goActive() for a txn this very
-        // connection wrote.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE gate_t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
-            try (QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY)) {
-                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
-                );
-                // The miss above does not run the structure check; this hit does and arms the gate.
-                Assert.assertSame(tud, cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
-                ));
-                long gate = tud.getLastStructureCheckSeqTxn();
-                Assert.assertTrue(gate >= 0);
-                for (int i = 0; i < 3; i++) {
-                    TableWriter.Row row = tud.getWriter().newRow(1_000_000L * (i + 1));
-                    row.putLong(1, i);
-                    row.append();
-                    try {
-                        cache.commitAll();
-                    } catch (Throwable t) {
-                        throw new RuntimeException(t);
-                    }
-                    // Asserted BEFORE the next lookup: the commit itself must have
-                    // moved the gate, so the lookup has nothing to replay.
-                    Assert.assertEquals(gate + 1, tud.getLastSeqTxn());
-                    Assert.assertEquals("gate must sit on the connection's own commit (iteration " + i + ")",
-                            tud.getLastSeqTxn(), tud.getLastStructureCheckSeqTxn());
-                    gate = tud.getLastStructureCheckSeqTxn();
-                    Assert.assertSame(tud, cache.getTableUpdateDetails(
-                            AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
-                    ));
-                }
-                // A structure change by someone else is still picked up by the next lookup.
-                execute("ALTER TABLE gate_t ADD COLUMN w DOUBLE");
-                drainWalQueue();
-                WalTableUpdateDetails again = cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE, new Utf8String("gate_t"), null, null, 1
-                );
-                Assert.assertSame(tud, again);
-                Assert.assertTrue(again.getWriter().getMetadata().getColumnIndex("w") >= 0);
-                Assert.assertEquals(engine.getTableSequencerAPI().getTxnTracker(tud.getTableToken()).getSeqTxn(),
-                        again.getLastStructureCheckSeqTxn());
-            }
-        });
     }
 }

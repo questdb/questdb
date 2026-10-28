@@ -46,9 +46,9 @@ import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
-import io.questdb.std.ObjList;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
@@ -73,28 +73,19 @@ public class QwpWalAppender implements QuietCloseable {
 
     // Reusable mapping arrays
     private int[] columnIndexMap;  // Maps QWP column index to QuestDB column index
-    // Phase 1 cache: what columnIndexMap/columnTypeMap/qwpTypes and the designated
-    // timestamp position were last resolved for. The block cursor hands back the
-    // same schema list for a byte-identical schema section, so the same list,
-    // through the same writer at the same metadata version, resolves the same way;
-    // resolving it again was a lower-case name hash per column per message (13% of
-    // the ingress fiber at one row per message). Phase 1 is the only writer of
-    // those arrays, and it clears this before overwriting them.
+    private int[] columnTypeMap;   // QuestDB column types
+    private byte[] qwpTypes;       // QWP type codes for conversion
+    // Phase 1 cache: the schema list, writer and metadata version that the mapping
+    // arrays and the designated timestamp position were last resolved for, set only
+    // when every column mapped onto an existing writer column. The block cursor
+    // hands back the same list for a byte-identical schema section, and the same
+    // list through the same writer at the same metadata version resolves the same
+    // way. Phase 1 is the only writer of the mapping arrays and clears this first.
+    private boolean hasResolvedArrayColumn;
     private long resolvedMetadataVersion = -1;
     private ObjList<QwpColumnDef> resolvedSchema;
     private int resolvedTimestampColumnInBlock;
     private TableWriterAPI resolvedWriter;
-    // The last schema Phase 1 mapped entirely onto existing writer columns -- no
-    // column created, none deferred -- with the writer and metadata version it was
-    // mapped at. Unlike the Phase 1 cache above it also covers array columns, whose
-    // per-block dimension check still runs. Phase 1 on a settled schema through the
-    // same writer at an unchanged metadata version cannot create a column, which
-    // the QWP commit batch relies on (see isSchemaSettled).
-    private long settledMetadataVersion = -1;
-    private ObjList<QwpColumnDef> settledSchema;
-    private TableWriterAPI settledWriter;
-    private int[] columnTypeMap;   // QuestDB column types
-    private byte[] qwpTypes;       // QWP type codes for conversion
 
     // Optional symbol ID cache for performance optimization
     // Maps clientSymbolId → tableSymbolId to avoid string lookups
@@ -203,14 +194,14 @@ public class QwpWalAppender implements QuietCloseable {
 
     /**
      * True when Phase 1 last mapped exactly this schema object onto existing columns of
-     * this writer, and the writer's metadata version has not changed since. Phase 1 for
-     * such a block cannot create a column: every name it resolves still resolves.
+     * this writer, and the writer's metadata version has not changed since. Appending
+     * such a block cannot create a column.
      */
     public boolean isSchemaSettled(ObjList<QwpColumnDef> schema, TableWriterAPI writer) {
         return schema != null
-                && schema == settledSchema
-                && writer == settledWriter
-                && writer.getMetadataVersion() == settledMetadataVersion;
+                && schema == resolvedSchema
+                && writer == resolvedWriter
+                && writer.getMetadataVersion() == resolvedMetadataVersion;
     }
 
     /**
@@ -997,17 +988,17 @@ public class QwpWalAppender implements QuietCloseable {
         long metadataVersion = writer.getMetadataVersion();
 
         final ObjList<QwpColumnDef> schema = tableBlock.getSchema();
-        if (schema != null && schema == resolvedSchema && writer == resolvedWriter
+        // Array columns check their dimensions against each block's data, so a schema
+        // with one goes through Phase 1 every time.
+        if (!hasResolvedArrayColumn && schema != null && schema == resolvedSchema && writer == resolvedWriter
                 && metadataVersion == resolvedMetadataVersion) {
             appendToWalColumnar(tableBlock, (WalWriter) writer, resolvedTimestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
             return;
         }
         resolvedSchema = null;
-        settledSchema = null;
-        // Not cached: array columns resolve against each block's data, and a
-        // deferred missing column (-1) is created later.
-        boolean isCacheable = schema != null;
-        boolean isSettled = schema != null;
+        // A deferred missing column (-1) is created later, so it leaves the schema unresolved.
+        boolean isResolved = schema != null;
+        boolean hasArrayColumn = false;
 
         // Phase 1: Resolve column indices and create missing columns
         int timestampColumnInBlock = -1;
@@ -1099,8 +1090,8 @@ public class QwpWalAppender implements QuietCloseable {
             }
             columnIndexMap[i] = columnWriterIndex;
             columnTypeMap[i] = columnType;
-            isCacheable &= colType != TYPE_DOUBLE_ARRAY && columnWriterIndex >= 0;
-            isSettled &= columnWriterIndex >= 0;
+            isResolved &= columnWriterIndex >= 0;
+            hasArrayColumn |= colType == TYPE_DOUBLE_ARRAY;
         }
 
         // A concurrent ALTER TABLE (e.g., ALTER COLUMN TYPE) can change the
@@ -1109,16 +1100,12 @@ public class QwpWalAppender implements QuietCloseable {
         if (writer.getMetadataVersion() != metadataVersion) {
             throw MetadataChangedException.INSTANCE;
         }
-        if (isCacheable) {
+        if (isResolved) {
             resolvedSchema = schema;
             resolvedWriter = writer;
             resolvedMetadataVersion = metadataVersion;
             resolvedTimestampColumnInBlock = timestampColumnInBlock;
-        }
-        if (isSettled) {
-            settledSchema = schema;
-            settledWriter = writer;
-            settledMetadataVersion = metadataVersion;
+            hasResolvedArrayColumn = hasArrayColumn;
         }
 
         // Phase 2: Write data - always use columnar path

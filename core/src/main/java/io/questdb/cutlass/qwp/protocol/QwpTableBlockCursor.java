@@ -25,8 +25,8 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.Unsafe;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
@@ -57,30 +57,25 @@ public class QwpTableBlockCursor implements Mutable {
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
     private final QwpSchema.ParseResult parseResult = new QwpSchema.ParseResult();
-    // The previous block's schema section and its parse. A client sends the
-    // same columns message after message, and parsing allocates a String, two
-    // byte[]s and a QwpColumnDef per column (13% of the ingress fiber at one
-    // row per message). Survives clear(): it is a cache, not block state. A
-    // byte-identical section with the same column count is the same schema,
-    // because the section is exactly columnCount self-delimiting definitions.
-    private byte[] cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
-    private int cachedSchemaColumnCount = -1;
-    private int cachedSchemaLen;
-    private QwpSchema cachedSchema;
     private final QwpTableHeader tableHeader;
     private int arrayColumnCount;
     private int[] arrayColumnIndices = new int[16];
     private int booleanColumnCount;
     // Type-bucketed column indices for monomorphic advanceRow() calls
     private int[] booleanColumnIndices = new int[16];
+    // The previous block's schema section and its parse. A client sends the same
+    // columns message after message, and parsing allocates a String, two byte[]s
+    // and a QwpColumnDef per column. Survives clear(): it is a cache, not block
+    // state. A byte-identical section with the same column count is the same
+    // schema, because the section is exactly columnCount self-delimiting definitions.
+    private QwpSchema cachedSchema;
+    private byte[] cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
+    private int cachedSchemaColumnCount = -1;
+    private int cachedSchemaLen;
     // Wire position tracking
     private int columnCount;
     // Column definitions from schema
     private ObjList<QwpColumnDef> columnDefs;
-    // True from of() until clear(). The message cursor clears this cursor when a
-    // message starts and again before each table block; the second clear of an
-    // untouched cursor walked every column cursor for nothing.
-    private boolean isDirty;
     // Cached null flags per column for current row (avoids megamorphic isNull() calls)
     private boolean[] columnNullFlags = new boolean[16];
     // Delta symbol dictionary support
@@ -94,6 +89,10 @@ public class QwpTableBlockCursor implements Mutable {
     private int geoHashColumnCount;
     private int[] geoHashColumnIndices = new int[16];
     private boolean gorillaEnabled;
+    // True from of() until clear(). The message cursor clears this cursor when a
+    // message starts and again before each table block; the second clear of an
+    // untouched cursor has nothing to reset.
+    private boolean isDirty;
     // Table state
     private int rowCount;
     private int stringColumnCount;
@@ -400,8 +399,8 @@ public class QwpTableBlockCursor implements Mutable {
                         "column data exceeds table block bounds before column " + i
                 );
             }
-            // Fixed-width columns take a small method the JIT inlines here; the
-            // 740-byte switch over every type never was, a real call per column.
+            // Fixed-width columns take a method small enough for the JIT to inline;
+            // initializeColumnCursor's switch over every type is too big to inline.
             int consumed = isFixedWidthType(typeCode)
                     ? initializeFixedWidthCursor(i, dataAddress + offset, dataLength - offset, rowCount, typeCode)
                     : initializeColumnCursor(i, dataAddress + offset, dataLength - offset, rowCount, typeCode);

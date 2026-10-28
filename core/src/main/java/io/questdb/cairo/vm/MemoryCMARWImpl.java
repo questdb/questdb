@@ -48,15 +48,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // allocates exactly the requested size instead of TableUtils.alignedSize()
     private final boolean exact;
     private final Long256Acceptor long256Acceptor = this::putLong256;
+    // How far this object's own allocations backed allocatedFd; see
+    // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
+    // while fd == allocatedFd, so a new fd needs no reset.
+    private long allocatedFd = -1;
+    private long allocatedHi;
     private long appendAddress = 0;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
-    // How far this object's own allocations backed allocatedFd; see
-    // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
-    // while fd == allocatedFd (fds are unique per open), so no reset is needed
-    // when the fd changes.
-    private long allocatedFd = -1;
-    private long allocatedHi;
     private long fd = -1;
     private int madviseOpts = -1;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;

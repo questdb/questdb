@@ -27,9 +27,6 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
-import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
-import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -90,13 +87,11 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             execute("CREATE TABLE boundary_c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
-            byte[] a = encodedBoundaryFrame("boundary_a");
-            byte[] b = encodedBoundaryFrame("boundary_b");
-            byte[] c = encodedBoundaryFrame("boundary_c");
-            byte[] wire = new byte[a.length + b.length + c.length];
-            System.arraycopy(a, 0, wire, 0, a.length);
-            System.arraycopy(b, 0, wire, a.length, b.length);
-            System.arraycopy(c, 0, wire, a.length + b.length, c.length);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_b"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_c")
+            );
             MockNetworkFacade nf = new MockNetworkFacade(wire);
             long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -155,11 +150,8 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
-            byte[] data = encodedBoundaryFrame("boundary_a");
             byte[] close = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
-            byte[] wire = new byte[data.length + close.length];
-            System.arraycopy(data, 0, wire, 0, data.length);
-            System.arraycopy(close, 0, wire, data.length, close.length);
+            byte[] wire = QwpIngressWireHarness.concat(QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"), close);
             MockNetworkFacade nf = new MockNetworkFacade(wire);
             long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -204,11 +196,10 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
-            byte[] a = encodedBoundaryFrame("boundary_a");
-            byte[] b = encodedBoundaryFrame("boundary_b", "boundary_b");
-            byte[] wire = new byte[a.length + b.length];
-            System.arraycopy(a, 0, wire, 0, a.length);
-            System.arraycopy(b, 0, wire, a.length, b.length);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_b", "boundary_b")
+            );
             MockNetworkFacade nf = new MockNetworkFacade(wire);
             long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -237,27 +228,6 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
             assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n1\n1\n");
         });
-    }
-
-    private static byte[] encodedBoundaryFrame(String... names) {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            encoder.beginMessage(names.length, new GlobalSymbolDictionary(), -1, -1);
-            for (String name : names) {
-                try (QwpTableBuffer table = new QwpTableBuffer(name)) {
-                    table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false).addLong(1);
-                    table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
-                    table.nextRow();
-                    encoder.addTable(table);
-                }
-            }
-            int length = encoder.finishMessage();
-            byte[] payload = new byte[length];
-            long address = encoder.getBuffer().getBufferPtr();
-            for (int i = 0; i < length; i++) {
-                payload[i] = Unsafe.getByte(address + i);
-            }
-            return createMaskedFrame(WebSocketOpcode.BINARY, payload);
-        }
     }
 
     @Test
