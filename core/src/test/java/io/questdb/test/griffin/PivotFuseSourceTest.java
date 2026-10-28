@@ -47,6 +47,15 @@ import org.junit.Test;
  */
 public class PivotFuseSourceTest extends AbstractCairoTest {
     private static final String SYMS = "('A','B','C','D','E','zz')";
+    // the start of every hour the quote rows cover, and of one more, for the outer side of a JOIN
+    private static final String HOURS = "SELECT ((x - 1) * 3_600_000_000)::TIMESTAMP AS hh FROM long_sequence(12)";
+    // three rows with the columns of PIVOT_AB that no PIVOT produces: a statement that reads them first has
+    // its PIVOT in a later branch, so only that PIVOT can match the fused-plan check
+    private static final String NON_PIVOT_ROWS = "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, bid AS A, ask AS B FROM quote LIMIT 3)";
+    private static final String PIVOT_AB = "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2 FROM quote) "
+            + "PIVOT (sum(b2) FOR sym IN ('A', 'B') GROUP BY h)";
+    private static final String PIVOT_CD = "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, ask AS a FROM quote WHERE bsize > 50) "
+            + "PIVOT (sum(a) FOR sym IN ('C', 'D') GROUP BY h)";
     private static final String[] FUSED = {
             // the IN list from an unordered SELECT DISTINCT, ORDER BY the group key
             "SELECT * FROM (SELECT timestamp_floor('10m', ts) AS minute, sym, (bsize * bid + asize * ask) / (bsize + asize) AS liq FROM quote WHERE sym IN " + SYMS + ") "
@@ -74,6 +83,35 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
             // a projected expression reading a column projected as itself: the name means the same either way
             "SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid, bid * 2 AS b2 FROM quote) "
                     + "PIVOT (sum(bid), max(b2) AS mx FOR sym IN ('A', 'B') GROUP BY h) ORDER BY h",
+    };
+    // A PIVOT in a later set-operation branch or on the joined side of a JOIN sits off its query's top-level
+    // nested chain, inside a sub-query too. There, the optimiser once left the fused PIVOT's filter model
+    // without columns, and the statement failed with "Invalid column".
+    private static final String[] FUSED_IN_SET_OPERATIONS_AND_JOINS = {
+            // the second branch of a UNION ALL, then the second and the third
+            "SELECT * FROM (" + NON_PIVOT_ROWS + " UNION ALL " + PIVOT_AB + ") ORDER BY h, A, B",
+            "SELECT * FROM (" + NON_PIVOT_ROWS + " UNION ALL " + PIVOT_CD + " UNION ALL " + PIVOT_AB + ") ORDER BY h, A, B",
+            // UNION, EXCEPT and INTERSECT
+            "SELECT * FROM (" + NON_PIVOT_ROWS + " UNION " + PIVOT_AB + ") ORDER BY h, A, B",
+            "SELECT * FROM (" + NON_PIVOT_ROWS + " EXCEPT " + PIVOT_AB + ") ORDER BY h, A, B",
+            "SELECT * FROM (" + PIVOT_AB + " INTERSECT " + PIVOT_AB + ") ORDER BY h, A, B",
+            // the joined side of a LEFT JOIN and of a CROSS JOIN
+            "SELECT t.hh, p.A, p.B FROM (" + HOURS + ") t LEFT JOIN (" + PIVOT_AB + ") p ON t.hh = p.h ORDER BY t.hh",
+            "SELECT * FROM (SELECT x FROM long_sequence(2)) l CROSS JOIN (" + PIVOT_AB + ") p ORDER BY x, h",
+            // the right side of a LATERAL join, correlated and not
+            "SELECT t.hh, p.A, p.B FROM (" + HOURS + ") t CROSS JOIN LATERAL (SELECT * FROM (" + PIVOT_AB + ") WHERE h = t.hh) p ORDER BY t.hh",
+            "SELECT l.x, p.h, p.A FROM (SELECT x FROM long_sequence(2)) l CROSS JOIN LATERAL (" + PIVOT_AB + ") p ORDER BY l.x, p.h",
+            // two PIVOTs, the second off the chain: both sides of a JOIN, and two UNION ALL branches over one CTE
+            "SELECT a.h, a.A, a.B, c.C, c.D FROM (" + PIVOT_AB + ") a JOIN (" + PIVOT_CD + ") c ON a.h = c.h ORDER BY a.h",
+            "WITH src AS (SELECT timestamp_floor('1h', ts) AS h, sym, bid * 2 AS b2 FROM quote) "
+                    + "SELECT * FROM (SELECT * FROM src PIVOT (sum(b2) FOR sym IN ('A', 'B') GROUP BY h) "
+                    + "UNION ALL SELECT * FROM src PIVOT (sum(b2) FOR sym IN ('C', 'D') GROUP BY h)) ORDER BY h, A, B",
+            // a source alias, a WHERE and a sub-query IN list in a UNION ALL branch
+            "SELECT * FROM (" + NON_PIVOT_ROWS + " UNION ALL SELECT * FROM (SELECT timestamp_floor('1h', ts) AS h, sym, bid AS b FROM quote) q WHERE q.b > 10 "
+                    + "PIVOT (sum(b) FOR sym IN (SELECT DISTINCT sym FROM quote WHERE sym IN ('A', 'E') ORDER BY sym) GROUP BY h)) ORDER BY h, A, B",
+            // a UNION ALL in a sub-query of a WHERE clause
+            "SELECT ts, sym, bid FROM quote WHERE sym IN (SELECT CASE WHEN h < '1970-01-01T05:00:00.000000Z' THEN 'A'::VARCHAR ELSE 'C'::VARCHAR END "
+                    + "FROM (" + NON_PIVOT_ROWS + " UNION ALL " + PIVOT_AB + ")) LIMIT 4",
     };
     private static final String[] NOT_FUSED = {
             // an aggregating subquery (the hand-written form of the same query) is already parallel inside
@@ -181,6 +219,24 @@ public class PivotFuseSourceTest extends AbstractCairoTest {
                         }
                         for (String query : NOT_FUSED) {
                             assertMatchesUnfused(engine, ctx, query, false);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testFusedInSetOperationsAndJoinsMatchesUnfused() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, ctx) -> {
+                        createQuote(engine, ctx);
+                        for (String query : FUSED_IN_SET_OPERATIONS_AND_JOINS) {
+                            assertMatchesUnfused(engine, ctx, query, true);
                         }
                     },
                     configuration,

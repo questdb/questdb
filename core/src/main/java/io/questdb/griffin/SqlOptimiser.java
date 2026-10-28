@@ -11218,6 +11218,11 @@ public class SqlOptimiser implements Mutable {
             final IQueryModel filter = queryModelPool.next();
             filter.setWhereClause(where);
             filter.setNestedModel(from);
+            // The filter model has no columns yet: enumerateTableColumns() ran before it existed.
+            // rewriteTopLevelLiteralsToFunctions() copies them in only along the statement's top-level
+            // nested chain, so a PIVOT in a set-operation branch or on the joined side of a JOIN would
+            // reach rewriteSelectClause() with nothing to resolve the fused columns against.
+            filter.copyColumnsFrom(from, queryColumnPool, expressionNodePool);
             fused.setNestedModel(filter);
         } else {
             fused.setNestedModel(from);
