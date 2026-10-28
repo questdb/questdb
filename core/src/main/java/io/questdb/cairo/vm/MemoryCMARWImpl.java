@@ -48,6 +48,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // allocates exactly the requested size instead of TableUtils.alignedSize()
     private final boolean exact;
     private final Long256Acceptor long256Acceptor = this::putLong256;
+    // How far this object's own allocations backed allocatedFd; see
+    // TableUtils.allocateDiskSpaceAligned(ff, fd, allocatedHi, size). Valid only
+    // while fd == allocatedFd. A QuestDB fd carries a per-open counter (FdCache),
+    // so a reopen gets a new fd even on the same OS fd, and needs no reset.
+    private long allocatedFd = -1;
+    private long allocatedHi;
     private long appendAddress = 0;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
@@ -401,11 +407,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     private void allocateDiskSpace(long size) {
-        if (exact) {
-            TableUtils.allocateDiskSpaceUnaligned(ff, fd, size);
-        } else {
-            TableUtils.allocateDiskSpaceAligned(ff, fd, size);
-        }
+        final long hi = allocatedFd == fd ? allocatedHi : 0;
+        allocatedHi = exact
+                ? TableUtils.allocateDiskSpaceUnaligned(ff, fd, hi, size)
+                : TableUtils.allocateDiskSpaceAligned(ff, fd, hi, size);
+        allocatedFd = fd;
     }
 
     private void checkAndExtend(long address) {
