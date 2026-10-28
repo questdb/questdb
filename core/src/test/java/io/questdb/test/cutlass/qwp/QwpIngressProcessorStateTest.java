@@ -135,7 +135,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 }
             }
             drainWalQueue();
-            assertQuery("SELECT val FROM prepared_strings").expectSize().returns("val\nprefix\n");
+            assertQuery("SELECT val FROM prepared_strings").noLeakCheck().expectSize().returns("val\nprefix\n");
         });
     }
 
@@ -175,7 +175,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(2, state.getHighestProcessedSequence());
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM arrays").noRandomAccess().expectSize().returns("count\n3\n");
+            assertQuery("SELECT count() FROM arrays").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
         });
     }
 
@@ -209,7 +209,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(1, state.getHighestProcessedSequence());
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM capped").noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM capped").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
         });
     }
 
@@ -234,14 +234,14 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.commitCommitBatch());
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM evolving").noRandomAccess().expectSize().returns("count\n1\n");
-            assertQuery("SELECT \"column\" FROM table_columns('evolving')")
+            assertQuery("SELECT count() FROM evolving").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT \"column\" FROM table_columns('evolving')").noLeakCheck()
                     .noRandomAccess().returns("column\nval\nts\n");
         });
     }
 
     @Test
-    public void testPreparedMessageConsumesEachBlockOnceAndReusesSchema() throws Exception {
+    public void testPreparedMessageConsumesEachBlockOnce() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -268,7 +268,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.processPreparedMessage();
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n4\n");
+            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
         });
     }
 
@@ -319,7 +319,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(3, state.getHighestProcessedSequence());
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
         });
     }
 
@@ -386,9 +386,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(replacementTxn, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
             if (!isDrop) {
-                assertQuery("SELECT count() FROM prepared_old").noRandomAccess().expectSize().returns("count\n0\n");
+                assertQuery("SELECT count() FROM prepared_old").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
             }
         });
     }

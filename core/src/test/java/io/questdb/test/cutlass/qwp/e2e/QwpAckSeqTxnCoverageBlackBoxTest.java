@@ -278,14 +278,10 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * With one table allowed per connection, the server refuses every frame for
-     * a second table, and the sender reconnects and replays from its ack
-     * watermark. A reconnect opens with the client's rowless symbol-dictionary
-     * catch-up, so when the tee releases it together with the replayed frames,
-     * the first replayed frame closes a rowless deferred group in the same
-     * receive pass as the refused frame behind it. The server must commit AND
-     * ack that frame before the refusal, or every further replay writes its
-     * rows again until the client's poison detector halts the sender.
+     * A frame that joins a commit batch and fails on its own value is NACKed only
+     * after the batch's earlier frames are committed and acked: the appender
+     * cancels the bad block, the batch is intact, and the server commits it before
+     * answering the bad frame with its own status.
      */
     @Test
     public void testBadValueInCommitBatchIsNackedAfterEarlierFramesAreAcked() throws Exception {
@@ -341,6 +337,16 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    /**
+     * With one table allowed per connection, the server refuses every frame for
+     * a second table, and the sender reconnects and replays from its ack
+     * watermark. A reconnect opens with the client's rowless symbol-dictionary
+     * catch-up, so when the tee releases it together with the replayed frames,
+     * the first replayed frame closes a rowless deferred group in the same
+     * receive pass as the refused frame behind it. The server must commit AND
+     * ack that frame before the refusal, or every further replay writes its
+     * rows again until the client's poison detector halts the sender.
+     */
     @Test
     public void testReplayAfterReconnectDoesNotDuplicateBoundaryCommittedRows() throws Exception {
         assertMemoryLeak(() -> {

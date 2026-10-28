@@ -138,9 +138,9 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
             drainWalQueue();
-            assertQuery("SELECT v FROM boundary_a").expectSize().returns("v\n1\n");
-            assertQuery("SELECT v FROM boundary_b").expectSize().returns("v\n");
-            assertQuery("SELECT v FROM boundary_c").expectSize().returns("v\n");
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n");
+            assertQuery("SELECT v FROM boundary_c").noLeakCheck().expectSize().returns("v\n");
         });
     }
 
@@ -193,7 +193,7 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
             drainWalQueue();
-            assertQuery("SELECT v FROM boundary_a").expectSize().returns("v\n");
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n");
         });
     }
 
@@ -234,8 +234,8 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
             drainWalQueue();
-            assertQuery("SELECT v FROM boundary_a").expectSize().returns("v\n1\n");
-            assertQuery("SELECT v FROM boundary_b").expectSize().returns("v\n1\n1\n");
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n1\n1\n");
         });
     }
 

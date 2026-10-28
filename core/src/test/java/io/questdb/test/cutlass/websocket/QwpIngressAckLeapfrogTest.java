@@ -211,7 +211,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     createMaskedFrame(WebSocketOpcode.BINARY, malformed),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300, 3_000_000)));
             drainWalQueue();
-            assertQuery("SELECT v FROM tab").expectSize().returns("v\n100\n");
+            assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\n100\n");
             Assert.assertEquals(0, maxCumulativeOkAck(sent));
             Assert.assertTrue(hasErrorResponseForSeq(sent, 1));
             Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
@@ -244,7 +244,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             // opens a new batch; frame 2 cannot join it either, and frame 1's commit is
             // denied. The wire matches one commit per frame.
             drainWalQueue();
-            assertQuery("SELECT v FROM b").expectSize().returns("v\n100\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n100\n");
             Assert.assertEquals(0, maxCumulativeOkAck(sent));
             Assert.assertEquals(before + 1, okAckSeqTxn(sent, 0, "b"));
             Assert.assertTrue(hasErrorResponseForSeq(sent, 1));
@@ -1062,11 +1062,6 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
-     * A failed batch commit is NACKed at the batch's first frame: nothing from it
-     * on is committed, and it is the frame the client replays first, so a
-     * deterministic failure keeps striking the same frame.
-     */
-    /**
      * The appender commits a writer on its own once its uncommitted rows reach
      * maxUncommittedRows. A commit batch never lets that happen: a frame whose rows
      * would reach the cap is a boundary, so the batch commits first. With a cap of 2
@@ -1285,6 +1280,11 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A failed batch commit is NACKed at the batch's first frame: nothing from it
+     * on is committed, and it is the frame the client replays first, so a
+     * deterministic failure keeps striking the same frame.
+     */
     @Test
     public void testFailedBatchCommitIsNackedAtFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
@@ -1524,11 +1524,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
-     * A frame that fails inside a commit batch costs only its own rows: the
-     * frames before it are committed and acked before its error goes out, as
-     * they would be committed one by one. The client's poison detector strikes
-     * the frame a NACK names and replays from its acked watermark, so losing the
-     * earlier frames here would replay good frames behind a NACK for a later one.
+     * A frame that fails right behind a commit batch costs only its own rows. Its
+     * schema differs from the batch's, so it cannot join: the batch commits and is
+     * acked before the frame's error goes out, as one commit per frame would leave
+     * it. The client's poison detector strikes the frame a NACK names and replays
+     * from its acked watermark, so losing the batch here would replay good frames
+     * behind a NACK for a later one.
      */
     @Test
     public void testFailedFrameInCommitBatchKeepsEarlierFramesCommittedAndAcked() throws Exception {
@@ -1566,13 +1567,11 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
 
     /**
      * As {@link #testFailedFrameInCommitBatchKeepsEarlierFramesCommittedAndAcked},
-     * but with the two things that test cannot exercise: the batch's rows start
-     * past a commit in the same WAL segment, and the failed frame has already
-     * appended a block when its next block fails, so the savepoint restore has
-     * rows to discard. The savepoint's row count is relative to the open txn;
-     * a restore that took it as a segment offset would cut row 200 and ack it,
-     * and a restore that did nothing would commit row 300 under a NACK the
-     * client replays.
+     * with a two-block failing frame and a batch whose rows start past an earlier
+     * commit in the same WAL segment. A two-block frame cannot join, so the batch
+     * commits and is acked first; the frame then appends 300 and fails on its
+     * second block, and its rollback must discard 300 and nothing the batch
+     * committed.
      */
     @Test
     public void testFailedFrameAfterCommitInSegmentDropsOnlyItsOwnRows() throws Exception {
@@ -1611,8 +1610,9 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
      * {@link #testFailedFrameAfterCommitInSegmentDropsOnlyItsOwnRows}: the
      * pinned client's flush packs every table with rows into one message, so a
      * frame can append a good block to the batch's table and then fail on
-     * another table's block. The restore must drop the good block from the
-     * batch's table and leave the batch's own rows to commit.
+     * another table's block. The frame cannot join, so the batch commits first,
+     * and the frame's rollback must drop its good block from the batch's table
+     * while the batch's rows stay committed.
      */
     @Test
     public void testFailedMultiTableFrameDropsItsBlockFromBatchTable() throws Exception {
