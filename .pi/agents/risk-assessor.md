@@ -31,8 +31,9 @@ trigger shows.
 
 - **Severe:** harm that outlives a fix or a restart. The database loses or
   corrupts data it committed, replicas or backups diverge, the server fails
-  again on restart, a security or permission check fails, or data or clients
-  of an earlier version stop working.
+  again on restart, a security or permission check fails, memory is read or
+  written out of bounds, or data or clients of an earlier version stop
+  working.
 - **Serious:** harm that ends when the bug is fixed. Silent wrong results,
   materialized view content included; a crash, hang or out-of-memory that a
   restart clears; a leak that grows with each repeat; a query or ingestion
@@ -88,9 +89,13 @@ Rules:
 - Rate per user of the feature: a new or niche feature is no reason for a
   lower rating. A regression of behavior that gives the right result on the
   base reaches everyone who uses that behavior today.
-- Security and permission failures are Routine: an attacker looks for the
-  trigger. Otherwise rate what legitimate users do; the parent deals with
-  failures that only hostile input reaches.
+- Attackers look for triggers. Rate these Routine, whoever triggers them: a
+  security or permission failure; memory read or written out of bounds; and,
+  when only hostile input reaches it, lost, corrupt or wrong data, a server
+  that fails again on restart, a failure that needs no valid credentials, or
+  a failure on input the PR claims to harden against. Rate any other failure
+  by what legitimate users do; the parent deals with the failures that only
+  hostile input reaches.
 - Faults happen: disks fill, connections drop, processes get killed. Only the
   timing a fault needs can make it Rare, never the fault itself.
 - Data grows: rate scale by what real deployments reach, not by test sizes.
