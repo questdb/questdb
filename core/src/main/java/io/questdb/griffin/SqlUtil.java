@@ -1197,6 +1197,10 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by copier bytecode assembler
     public static byte implicitCastCharAsGeoHash(char value, int toType) {
+        // a NULL CHAR is stored as character 0; it becomes a NULL geohash, as CAST(c AS GEOHASH(1c)) already does
+        if (value == 0) {
+            return GeoHashes.BYTE_NULL;
+        }
         int v;
         // '0' .. '9' and 'A-Z', excl 'A', 'I', 'L', 'O'
         if ((value >= '0' && value <= '9') || ((v = value | 32) > 'a' && v <= 'z' && v != 'i' && v != 'l' && v != 'o')) {
