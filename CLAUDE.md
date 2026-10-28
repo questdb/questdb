@@ -336,7 +336,8 @@ qdbr toolchain; the script prints the command when it is missing.
     from the branch's net effects; never append to the body.
   - Give each regression, tradeoff and breaking change its own bullet, as
     plainly as the gains, and each slowdown its measured size, such as
-    `up to 3x slower`. Don't sell: no superlatives, no bold numbers.
+    `up to 3x slower`. Don't sell: no superlatives, no bold numbers. Known
+    bugs the PR ships with are the exception (below).
   - A change made for speed, or one on a data path, adds its JMH results as a
     table: case, before, after, with the slower cases included.
   - Link tandem PRs on one line.
@@ -344,6 +345,13 @@ qdbr toolchain; the script prints the command when it is missing.
     design narrative or investigation output (probe results, "fails without
     the fix" evidence, lists of covered shapes or configs, "Not changed"
     lists). The code and its tests carry those.
+- **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
+  bug a change introduces by what a user who hits it loses and how likely
+  users are to hit it (`.pi/agents/risk-assessor.md`); only Critical and High
+  risk hold up the PR. File each Medium or Low risk bug in
+  `questdb/questdb-enterprise` with the labels `bug` and `deferred`, and keep
+  it out of the PR body, comments and every other public place. A tradeoff
+  the PR makes on purpose, such as a measured slowdown, still gets its bullet.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
