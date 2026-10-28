@@ -6084,6 +6084,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int position
     ) throws SqlException {
         final TxReader txFile = reader.getTxFile();
+        if (!txFile.hasAnyDeltaActive()) {
+            return;
+        }
         for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
             if (!txFile.isPartitionDeltaActive(i) || txFile.isPartitionParquet(i) == toParquet) {
                 continue;
