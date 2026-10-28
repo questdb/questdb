@@ -2681,6 +2681,65 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsPostingIndexOnParquetPartitionKeepsCoveredValues() throws Exception {
+        // A parquet partition has no native column files, so the restore rebuild of its POSTING index must decode
+        // the covered values from the parquet file. Read from the missing .d files instead, every covered value,
+        // the auto-included designated timestamp too, came back as NULL through the covering index.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pi_parquet_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pi_parquet_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-01T03:00:00', 'A', 4.0),
+                    ('2024-01-02T00:00:00', 'A', 5.0)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pi_parquet_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final String query = "SELECT ts, price FROM t_pi_parquet_cov WHERE sym = 'A' AND ts IN '2024-01-01'";
+            final String expected = """
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    2024-01-01T03:00:00.000000Z\t4.0
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns(expected);
+
+            final TableToken tableToken = engine.verifyTableName("t_pi_parquet_cov");
+            engine.clear();
+            try (
+                    Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndexWithTwoCoveringIndexes() throws Exception {
         // Regression: TableSnapshotRestore.configureCoveringForPosting()
         // returns the first indexed-symbol column that has a non-empty

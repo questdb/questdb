@@ -7334,61 +7334,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCoveringQueryArrayDimLenAndElementOverUnavailableSidecar() throws Exception {
-        // A sidecar the reader cannot map makes getVarSidecarArray() hand back a Java null for a row
-        // whose array is not null at all. This drives the missing-file guard: ensureSidecarOpen()
-        // returns quietly and leaves the slot at size 0 when the .pc file is not there to be mapped.
-        // The sibling guard reaches the identical reader state from a published zero end offset,
-        // which PostingIndexWriter's in-place reseal window can produce over a sidecar that exists.
-        // CoveringRecord.getArray() has to turn that into a NULL ArrayView: getArrayDimLen() and
-        // getArrayDouble1d2d() dereference whatever getArray() hands them, so a Java null takes the
-        // whole query down.
-        final AtomicBoolean hideSidecar = new AtomicBoolean(false);
-        ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean exists(LPSZ name) {
-                // Arm only after the write side has published the sidecar, so the index is built
-                // normally and only the covered read finds the .pc missing.
-                if (hideSidecar.get() && name != null && Utf8s.containsAscii(name, ".pc0.")) {
-                    return false;
-                }
-                return super.exists(name);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            execute("""
-                    CREATE TABLE t_arr_sidecar (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
-                        vals DOUBLE[],
-                        extra INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_arr_sidecar VALUES
-                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0, 3.0], 1),
-                    ('2024-01-01T01:00:00', 'A', ARRAY[4.0, 5.0], 2)
-                    """);
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            hideSidecar.set(true);
-            // Every array stored here is non-null, so a null length or element can only have come
-            // from the unmappable sidecar, never from the data.
-            assertQuery("SELECT extra, dim_length(vals, 1) len, vals[1] first FROM t_arr_sidecar WHERE sym = 'A'")
-                    .withPlanContaining("CoveringIndex on: sym with: extra, vals")
-                    .noRandomAccess()
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns("""
-                            extra\tlen\tfirst
-                            1\tnull\tnull
-                            2\tnull\tnull
-                            """);
-        });
-    }
-
-    @Test
     public void testCoveringQueryBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -8859,6 +8804,48 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             10.5\t100
                             20.5\t200
                             """);
+        });
+    }
+
+    @Test
+    public void testCoveringQueryOverMissingSidecarFails() throws Exception {
+        // A sidecar the chain published bytes for but the reader cannot find would read every covered
+        // value as NULL. The query must fail instead, naming the way out.
+        final AtomicBoolean hideSidecar = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ name) {
+                // Arm only after the write side has published the sidecar, so the index is built
+                // normally and only the covered read finds the .pc missing.
+                if (hideSidecar.get() && name != null && Utf8s.containsAscii(name, ".pc0.")) {
+                    return false;
+                }
+                return super.exists(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_arr_sidecar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr_sidecar VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0, 3.0], 1),
+                    ('2024-01-01T01:00:00', 'A', ARRAY[4.0, 5.0], 2)
+                    """);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            hideSidecar.set(true);
+            assertExceptionNoLeakCheck(
+                    "SELECT extra, dim_length(vals, 1) len, vals[1] first FROM t_arr_sidecar WHERE sym = 'A'",
+                    -1,
+                    "covering index data is missing, rebuild the index or use the no_covering hint"
+            );
         });
     }
 
@@ -11665,6 +11652,49 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             ts\tsym
                             2024-01-01T00:00:00.000000Z\tsym_1
                             2024-01-01T01:00:00.000000Z\tsym_1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDropIndexOnCoveredColumn() throws Exception {
+        // DROP INDEX moves the column to a new name txn in native and parquet partitions alike, while the index that
+        // INCLUDEs it keeps its covered values named after the old txn.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag SYMBOL INDEX
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_drop_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 'x'),
+                    ('2024-01-01T01:00:00', 'B', 'y'),
+                    ('2024-01-02T00:00:00', 'A', 'z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_drop_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_drop_cov ALTER COLUMN tag DROP INDEX");
+            drainWalQueue();
+
+            assertQuery("SELECT \"column\", indexed FROM table_columns('t_drop_cov') WHERE \"column\" = 'tag'")
+                    .noRandomAccess()
+                    .returns("""
+                            column\tindexed
+                            tag\tfalse
+                            """);
+            assertQuery("SELECT sym, tag, ts FROM t_drop_cov WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: tag, ts")
+                    .returns("""
+                            sym\ttag\tts
+                            A\tx\t2024-01-01T00:00:00.000000Z
+                            A\tz\t2024-01-02T00:00:00.000000Z
                             """);
         });
     }
@@ -17919,6 +17949,86 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameCoveredColumn() throws Exception {
+        // RENAME moves the covered column to a new name txn, but the covering sidecars of the index that INCLUDEs it
+        // stay named after the old one, so the covering scan must still find them.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5),
+                    ('2024-01-02T00:00:00', 'A', 12.5)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_rename_cov RENAME COLUMN val TO price");
+            drainWalQueue();
+
+            assertQuery("SELECT sym, price, ts FROM t_rename_cov WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: price, ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t10.5\t2024-01-01T00:00:00.000000Z
+                            A\t11.5\t2024-01-01T02:00:00.000000Z
+                            A\t12.5\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameCoveredColumnOnParquetPartition() throws Exception {
+        // Same as testRenameCoveredColumn, but with a var-size covered column, a parquet partition, and a write
+        // after the rename that reseals only the last partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_cov_pq (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val, note),
+                        val DOUBLE,
+                        note VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_cov_pq VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 'a1'),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 'b1'),
+                    ('2024-01-01T02:00:00', 'A', 11.5, 'a2'),
+                    ('2024-01-02T00:00:00', 'A', 12.5, 'a3')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_rename_cov_pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_rename_cov_pq RENAME COLUMN note TO memo");
+            drainWalQueue();
+            execute("INSERT INTO t_rename_cov_pq VALUES ('2024-01-02T01:00:00', 'A', 13.5, 'a4')");
+            drainWalQueue();
+
+            assertQuery("SELECT sym, val, memo, ts FROM t_rename_cov_pq WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: val, memo, ts")
+                    .returns("""
+                            sym\tval\tmemo\tts
+                            A\t10.5\ta1\t2024-01-01T00:00:00.000000Z
+                            A\t11.5\ta2\t2024-01-01T02:00:00.000000Z
+                            A\t12.5\ta3\t2024-01-02T00:00:00.000000Z
+                            A\t13.5\ta4\t2024-01-02T01:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRenameIndexedColumn() throws Exception {
         // Rename a column that has INDEX TYPE POSTING
         assertMemoryLeak(() -> {
@@ -18586,7 +18696,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSidecarMissingFileFallsBackToUnavailable() throws Exception {
+    public void testSidecarMissingFileFailsCursor() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 String name = "cov_missing_sidecar";
@@ -18622,19 +18732,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
-                            assertTrue(cursor instanceof CoveringRowCursor);
-                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
-
-                            int count = 0;
-                            while (cursor.hasNext()) {
-                                long rowId = cursor.next();
-                                assertEquals(count, rowId);
-                                assertFalse("missing sidecar must surface as unavailable",
-                                        cc.isCoveredAvailable(0));
-                                count++;
-                            }
-                            assertEquals(rowCount, count);
+                        // The chain published covered bytes the file should hold, so reading the values as NULL
+                        // would be wrong: the cursor must fail instead.
+                        try (RowCursor ignore = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            Assert.fail("cursor over a missing sidecar must fail");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "covering index data is missing");
                         }
                     }
                 } finally {
@@ -18934,6 +19037,80 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             price
                             30.5
                             31.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateCoveredColumn() throws Exception {
+        // UPDATE rewrites the covered column, so every updated partition rebuilds the index that INCLUDEs it. That
+        // index's own column moves to a new name txn for the rebuild, and the index that INCLUDEs that column keeps
+        // its covered values across the move.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_upd_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        grp SYMBOL INDEX TYPE POSTING INCLUDE (sym),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_upd_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 'g1', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 'g1', 20.5),
+                    ('2024-01-02T00:00:00', 'A', 'g2', 12.5)
+                    """);
+            drainWalQueue();
+            execute("UPDATE t_upd_cov SET val = val + 100 WHERE ts < '2024-01-02'");
+            drainWalQueue();
+
+            assertQuery("SELECT sym, val, ts FROM t_upd_cov WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: val, ts")
+                    .returns("""
+                            sym\tval\tts
+                            A\t110.5\t2024-01-01T00:00:00.000000Z
+                            A\t12.5\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT grp, sym, ts FROM t_upd_cov WHERE grp = 'g1'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: grp with: sym, ts")
+                    .returns("""
+                            grp\tsym\tts
+                            g1\tA\t2024-01-01T00:00:00.000000Z
+                            g1\tB\t2024-01-01T01:00:00.000000Z
+                            """);
+
+            // Updating the indexed column itself rebuilds the index that INCLUDEs it.
+            execute("UPDATE t_upd_cov SET sym = 'C' WHERE grp = 'g2'");
+            drainWalQueue();
+            assertQuery("SELECT grp, sym, ts FROM t_upd_cov WHERE grp = 'g2'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: grp with: sym, ts")
+                    .returns("""
+                            grp\tsym\tts
+                            g2\tC\t2024-01-02T00:00:00.000000Z
+                            """);
+
+            // A later write reseals the rebuilt indexes of the updated partition.
+            execute("INSERT INTO t_upd_cov VALUES ('2024-01-01T02:00:00', 'A', 'g1', 11.5)");
+            drainWalQueue();
+            assertQuery("SELECT sym, val, ts FROM t_upd_cov WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: val, ts")
+                    .returns("""
+                            sym\tval\tts
+                            A\t110.5\t2024-01-01T00:00:00.000000Z
+                            A\t11.5\t2024-01-01T02:00:00.000000Z
                             """);
         });
     }

@@ -219,6 +219,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     private void fullFuzz(Rnd rnd) {
+        // Parquet partitions and covering indexes: a restore that rebuilds the indexes rebuilds theirs too.
+        final boolean withParquet = rnd.nextBoolean();
         fuzzer.setFuzzProbabilities(
                 0.5 * rnd.nextDouble(),
                 rnd.nextDouble(),
@@ -231,11 +233,17 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 0.01,
                 0.0,
+                withParquet ? 0.05 : 0.0,       // partitionToParquetProb
+                withParquet ? 0.05 : 0.0,       // partitionToNativeProb
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
-                0.01,
-                0
+                withParquet ? 0.0 : 0.01,       // replaceInsertProb, unsupported on parquet partitions
+                0,
+                0.0,                            // queryProb
+                withParquet ? 0.05 : 0.0,       // setParquetEncodingProb
+                withParquet ? 0.05 : 0.0,       // setTableFormatProb
+                0.1                             // addCoveringIndexProb
         );
 
         fuzzer.setFuzzCounts(
@@ -348,6 +356,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             if (testHardLinkCheckpoint) {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }
+            // A backup restore always rebuilds the indexes; a checkpoint restore does only when asked to.
+            final boolean isIndexRebuilt = rnd.nextBoolean();
+            LOG.info().$("checkpoint recovery rebuilds column indexes [rebuild=").$(isIndexRebuilt).I$();
+            node1.setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, isIndexRebuilt);
 
             String tableNameNonWal = getTestTableName() + "_non_wal";
             String tableNameWal = getTestTableName();
@@ -404,6 +416,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 // Restore snapshot here
                 checkpointRecover();
                 engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
+                // The indexes as the restore left them: the transactions after the checkpoint rewrite the partitions
+                // they touch, and would rebuild a broken index before the final comparison sees it.
+                drainWalQueue();
+                fuzzer.assertRandomIndexes(tableNameWal, tableNameWal, rnd);
                 if (afterSnapshot.size() > 0) {
                     fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
                 } else {

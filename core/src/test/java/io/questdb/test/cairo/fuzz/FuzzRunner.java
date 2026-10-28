@@ -90,13 +90,15 @@ import java.util.function.Supplier;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
-
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     protected static final StringSink sink = new StringSink();
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
+    // Columns a covering index on sym2 / sym_top may INCLUDE; sym_top's add the column-top columns.
+    private static final String[] SYM2_INCLUDE_CANDIDATES = {"c1", "c2", "c3", "rnd_str", "bool1"};
+    private static final String[] SYM_TOP_INCLUDE_CANDIDATES = {"c1", "c3", "bool1", "long_top", "str_top"};
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
@@ -823,6 +825,45 @@ public class FuzzRunner {
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
+    /**
+     * Half the time a POSTING index covers 1-3 of {@code candidates}: returns the INCLUDE clause, else null.
+     */
+    private static String randomIncludeClause(Rnd rnd, String indexTypeClause, String[] candidates) {
+        if (!indexTypeClause.startsWith("TYPE POSTING") || rnd.nextBoolean()) {
+            return null;
+        }
+        final StringSink include = new StringSink();
+        include.put(" include (");
+        final int start = rnd.nextInt(candidates.length);
+        final int count = 1 + rnd.nextInt(3);
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                include.put(", ");
+            }
+            include.put(candidates[(start + i) % candidates.length]);
+        }
+        return include.put(')').toString();
+    }
+
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants.
+     */
+    private static String randomIndexTypeClause(Rnd rnd) {
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
+    }
+
     private static void reloadPartitions(TableReader rdr1) {
         if (rdr1.isActive()) {
             LOG.info().$("reloading partitions [table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
@@ -1140,8 +1181,32 @@ public class FuzzRunner {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
 
+    /**
+     * The columns every fuzz table gets after its CREATE, a few of them with tops, and sym2's covering index when
+     * {@code sym2Include} is set: a covering index can only be added by ALTER.
+     */
+    private void addInitialColumns(String tableName, Rnd schemaRnd, String sym2IndexType, String sym2Include) throws SqlException {
+        if (sym2Include != null) {
+            engine.execute("alter table " + tableName + " alter column sym2 add index " + sym2IndexType + sym2Include, sqlExecutionContext);
+        }
+        // force few column tops
+        engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+        engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+        final String symTopIndexType = randomIndexTypeClause(schemaRnd);
+        final String symTopInclude = randomIncludeClause(schemaRnd, symTopIndexType, SYM_TOP_INCLUDE_CANDIDATES);
+        if (symTopInclude == null) {
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + symTopIndexType, sqlExecutionContext);
+        } else {
+            engine.execute("alter table " + tableName + " add column sym_top symbol", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " alter column sym_top add index " + symTopIndexType + symTopInclude, sqlExecutionContext);
+        }
+        engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+        engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+    }
+
     private TableToken createInitialTable(String tableName, ObjList<FuzzTransaction> transactions) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
+        final Rnd schemaRnd = newSchemaRnd();
 
         if (engine.getTableTokenIfExists(tableName) == null) {
             sink.clear();
@@ -1166,20 +1231,22 @@ public class FuzzRunner {
                 }
             }
 
-            sink.put("), index(sym2 ").put(randomIndexTypeClause()).put(") timestamp(ts) partition by DAY BYPASS WAL");
+            final String sym2IndexType = randomIndexTypeClause(schemaRnd);
+            final String sym2Include = randomIncludeClause(schemaRnd, sym2IndexType, SYM2_INCLUDE_CANDIDATES);
+            sink.put(")");
+            if (sym2Include == null) {
+                sink.put(", index(sym2 ").put(sym2IndexType).put(")");
+            }
+            sink.put(" timestamp(ts) partition by DAY BYPASS WAL");
             engine.execute(sink, sqlExecutionContext);
-            // force few column tops
-            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+            addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include);
         }
         return engine.verifyTableName(tableName);
     }
 
     private TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
+        final Rnd schemaRnd = newSchemaRnd();
         TableToken tempTable = engine.getTableTokenIfExists("data_temp");
 
         if (tempTable == null) {
@@ -1207,24 +1274,22 @@ public class FuzzRunner {
             } else {
                 tail = "BYPASS WAL";
             }
+            final String sym2IndexType = randomIndexTypeClause(schemaRnd);
+            final String sym2Include = randomIncludeClause(schemaRnd, sym2IndexType, SYM2_INCLUDE_CANDIDATES);
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
+                            ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
                     sqlExecutionContext
             );
-            // force few column tops
-            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+            addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include);
         }
         return engine.verifyTableName(tableName);
     }
 
     private void createInitialTable(String tableName, int rowCount, String timestampType) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
+        final Rnd schemaRnd = newSchemaRnd();
         TableToken tempTable = engine.getTableTokenIfExists("data_temp");
 
         if (tempTable == null) {
@@ -1246,19 +1311,16 @@ public class FuzzRunner {
         }
 
         if (engine.getTableTokenIfExists(tableName) == null) {
+            final String sym2IndexType = randomIndexTypeClause(schemaRnd);
+            final String sym2Include = randomIncludeClause(schemaRnd, sym2IndexType, SYM2_INCLUDE_CANDIDATES);
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY "
+                            ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY "
                             + (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL"),
                     sqlExecutionContext
             );
-            // force few column tops
-            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+            addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include);
         }
         engine.verifyTableName(tableName);
     }
@@ -1455,27 +1517,12 @@ public class FuzzRunner {
     }
 
     /**
-     * Picks an index type clause for fuzz table creation. Returns either
-     * an empty string (BITMAP — the default), or one of the POSTING
-     * variants. Uses {@link SharedRandom} so the choice tracks the existing
-     * fuzz seed.
+     * The schema choices of a run's tables. Every table of a run takes the same seed, so the expected and the actual
+     * table get the same indexes, and the seed follows the run's own, so the choices vary between runs. Kept apart
+     * from {@link SharedRandom}, which the rnd functions creating data_temp draw from only on the first table.
      */
-    private String randomIndexTypeClause() {
-        Rnd rnd = SharedRandom.RANDOM.get();
-        if (rnd == null) {
-            return "";
-        }
-        double pick = rnd.nextDouble();
-        if (pick < 0.5) {
-            return ""; // BITMAP (the default for the existing INDEX clause)
-        }
-        if (pick < 0.7) {
-            return "TYPE POSTING";
-        }
-        if (pick < 0.85) {
-            return "TYPE POSTING DELTA";
-        }
-        return "TYPE POSTING EF";
+    private Rnd newSchemaRnd() {
+        return s0 == 0 && s1 == 0 ? new Rnd() : new Rnd(s0, s1);
     }
 
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {

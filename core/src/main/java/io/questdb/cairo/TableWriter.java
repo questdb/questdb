@@ -3228,6 +3228,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Keeps the covered values of the posting indexes that INCLUDE a column readable after the column moved to a new
+     * name txn in a partition without its data changing, as DROP INDEX moves it, and UPDATE moves the column of an
+     * index it rebuilds. See {@link #linkCoveringSidecars(int, int, long, long, long)}.
+     */
+    public void linkCoveringSidecars(
+            int coveredColumnIndex,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long coveredColumnNameTxn,
+            long newCoveredColumnNameTxn
+    ) {
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            linkCoveringSidecars(path.size(), coveredColumnIndex, partitionTimestamp, coveredColumnNameTxn, newCoveredColumnNameTxn);
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
+    /**
      * Carries indexed SYMBOL files into a freshly rewritten parquet partition.
      * Indexes whose source column top is already zero are hard-linked. Indexes
      * whose top will be normalized to zero are rebuilt from the rewritten
@@ -9592,6 +9614,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         valueFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn, newColumnNameTxn));
             }
         }
+        linkCoveringSidecars(plen, columnIndex, partitionTimestamp, columnNameTxn, newColumnNameTxn);
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
@@ -10354,6 +10377,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
+    }
+
+    /**
+     * A covering sidecar file name carries the name txn of the column it covers, and readers resolve it from the
+     * column's current name txn. RENAME, DROP INDEX and UPDATE move a column to a new name txn without changing its
+     * data, UPDATE the column of an index it rebuilds, so this links every sidecar of every posting index that covers
+     * the column in the partition under the new txn.
+     * The old names stay for readers of earlier txns; a seal purge removes both once the generation is superseded.
+     * Expects {@code path} and {@code other} to point at the partition directory.
+     */
+    private void linkCoveringSidecars(
+            int plen,
+            int coveredColumnIndex,
+            long partitionTimestamp,
+            long coveredColumnNameTxn,
+            long newCoveredColumnNameTxn
+    ) {
+        for (int i = 0; i < columnCount; i++) {
+            if (i == coveredColumnIndex || metadata.getColumnType(i) <= 0 || !metadata.isColumnIndexed(i)
+                    || !IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                continue;
+            }
+            final IntList coveredColumns = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (coveredColumns == null || coveredColumns.indexOf(coveredColumnIndex, 0, coveredColumns.size()) < 0) {
+                continue;
+            }
+            final CharSequence indexColumnName = metadata.getColumnName(i);
+            final long indexColumnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+            PostingIndexUtils.scanSealedFiles(ff, path, plen, indexColumnName, new PostingIndexUtils.SealedFileVisitor() {
+                @Override
+                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long fileCoveredColumnNameTxn, long sealTxn) {
+                    if (postingColumnNameTxn != indexColumnNameTxn
+                            || fileCoveredColumnNameTxn != coveredColumnNameTxn
+                            || includeIdx >= coveredColumns.size()
+                            || coveredColumns.getQuick(includeIdx) != coveredColumnIndex) {
+                        return;
+                    }
+                    final LPSZ src = PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                    final LPSZ dst = PostingIndexUtils.coverDataFileName(other.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, newCoveredColumnNameTxn, sealTxn);
+                    try {
+                        linkFile(ff, src, dst);
+                    } catch (CairoException e) {
+                        // A seal purge may remove a superseded generation concurrently; nobody reads it then.
+                        if (ff.exists(src)) {
+                            throw e;
+                        }
+                    }
+                }
+
+                @Override
+                public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                }
+            });
+        }
+        path.trimTo(plen);
+        other.trimTo(plen);
     }
 
     /**

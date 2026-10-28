@@ -82,9 +82,9 @@ public class DropIndexOperator {
                 if (columnTop != -1) {
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
+                    final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
                     if (partitionFormat == PartitionFormat.NATIVE) {
-                        final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                         // create hard link to column data
                         // src
                         partitionDFile(path, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
@@ -98,6 +98,8 @@ public class DropIndexOperator {
                         }
                         rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
                     }
+                    // The column keeps its data under the new version, and so do the indexes that INCLUDE it.
+                    tableWriter.linkCoveringSidecars(columnIndex, pTimestamp, pVersion, columnVersion, columnDropIndexVersion);
 
                     // add to cleanup tasks, the index will be removed in due time
                     purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, indexType, columnVersion, pTimestamp, pVersion);

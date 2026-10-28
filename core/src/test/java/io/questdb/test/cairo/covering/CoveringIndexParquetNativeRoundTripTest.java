@@ -132,6 +132,55 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexOnParquetPartitionReturnsCoveredValues() throws Exception {
+        // s1 is indexed before the conversion, s2 is indexed on the parquet partition. Both covering scans must
+        // return the covered values, the auto-included designated timestamp among them.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_cov (
+                        ts TIMESTAMP,
+                        s1 SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        s2 SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pq_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 'X', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 'Y', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 'X', 3.0),
+                    ('2024-01-02T00:00:00', 'A', 'X', 4.0)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_cov ALTER COLUMN s2 ADD INDEX TYPE POSTING INCLUDE (price)");
+            drainWalQueue();
+            assertPartitionFormat("t_pq_cov", true);
+
+            final String expected = """
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    """;
+            assertQuery("SELECT ts, price FROM t_pq_cov WHERE s1 = 'A' AND ts IN '2024-01-01'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s1")
+                    .returns(expected);
+            assertQuery("SELECT ts, price FROM t_pq_cov WHERE s2 = 'X' AND ts IN '2024-01-01'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s2")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testHistoricPartitionMultiColumnRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

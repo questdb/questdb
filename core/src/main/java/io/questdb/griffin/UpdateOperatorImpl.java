@@ -67,6 +67,8 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
+    // The indexed columns whose COVERING index the partition being updated must rebuild, see rebuildIndexes().
+    private final IntList coveringIndexColumns = new IntList();
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final FilesFacade ff;
@@ -696,8 +698,87 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 affectedColumnCount,
                 minRow
         );
-        rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+        rebuildIndexes(partitionIndex, tableMetadata);
         tableWriter.markPartitionDataChanged(partitionIndex);
+    }
+
+    /**
+     * Whether the column has a COVERING posting index that INCLUDEs an updated column, while not being updated itself.
+     */
+    private boolean includesUpdatedColumn(TableRecordMetadata tableMetadata, int columnIndex) {
+        if (tableMetadata.getColumnType(columnIndex) <= 0
+                || !tableMetadata.isColumnIndexed(columnIndex)
+                || !IndexType.isPosting(tableMetadata.getColumnIndexType(columnIndex))
+                || updateColumnIndexes.indexOf(columnIndex, 0, updateColumnIndexes.size()) > -1) {
+            return false;
+        }
+        final IntList coveredColumns = tableMetadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
+        if (coveredColumns == null) {
+            return false;
+        }
+        for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
+            if (coveredColumns.indexOf(updateColumnIndexes.getQuick(i), 0, coveredColumns.size()) > -1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Moves an indexed column of the partition to a new column version without changing its data, the way the
+     * updated columns move: hard-links its data file under the new version, links the covering sidecars of the
+     * indexes that INCLUDE it, and queues the old version, index files included, for purge. Its index can then be
+     * rebuilt under the new version while readers of earlier txns keep using the old one.
+     *
+     * @return false when the column has no data in the partition, and so no index to rebuild
+     */
+    private boolean moveIndexedColumnToNewVersion(int partitionIndex, int columnIndex, TableRecordMetadata tableMetadata) {
+        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
+        if (columnTop == -1L) {
+            return false;
+        }
+        final long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
+        final String columnName = tableMetadata.getColumnName(columnIndex);
+        final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        try {
+            TableUtils.setPathForNativePartition(
+                    path.trimTo(rootLen),
+                    tableMetadata.getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            final int partitionPathLen = path.size();
+            if (!ff.exists(dFile(path, columnName, columnNameTxn))) {
+                return false;
+            }
+            tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
+            final long newColumnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+            final Path newDataFile = Path.getThreadLocal2(path.trimTo(partitionPathLen));
+            dFile(newDataFile, columnName, newColumnNameTxn);
+            // An earlier attempt at this update that rolled back can have left the link behind.
+            ff.removeQuiet(newDataFile.$());
+            if (ff.hardLink(dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn), newDataFile.$()) == -1) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot hardLink [src=").put(path)
+                        .put(", hardLink=").put(newDataFile)
+                        .put(']');
+            }
+            tableWriter.linkCoveringSidecars(columnIndex, partitionTimestamp, partitionNameTxn, columnNameTxn, newColumnNameTxn);
+            purgingOperator.add(
+                    columnIndex,
+                    columnName,
+                    ColumnType.SYMBOL,
+                    tableMetadata.getColumnIndexType(columnIndex),
+                    columnNameTxn,
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            return true;
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private void openColumns(ObjList<? extends MemoryCM> columns, int partitionIndex, boolean forWrite) {
@@ -787,12 +868,20 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         }
     }
 
-    private void rebuildIndexes(
-            long partitionTimestamp,
-            TableRecordMetadata tableMetadata,
-            TableWriter tableWriter
-    ) {
+    private void rebuildIndexes(int partitionIndex, TableRecordMetadata tableMetadata) {
+        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         int pathTrimToLen = path.size();
+        // A COVERING index holds copies of the columns it INCLUDEs, so one that INCLUDEs an updated column is rebuilt
+        // along with the updated indexed columns. Its own column moves to a new version first, as theirs did, so the
+        // rebuild does not touch the index readers of earlier txns use. Every move comes before every rebuild: an
+        // index can INCLUDE a column that moves.
+        coveringIndexColumns.clear();
+        for (int columnIndex = 0, n = tableMetadata.getColumnCount(); columnIndex < n; columnIndex++) {
+            if (includesUpdatedColumn(tableMetadata, columnIndex)
+                    && moveIndexedColumnToNewVersion(partitionIndex, columnIndex, tableMetadata)) {
+                coveringIndexColumns.add(columnIndex);
+            }
+        }
         indexBuilder.of(path.trimTo(rootLen));
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
@@ -800,6 +889,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 CharSequence colName = tableMetadata.getColumnName(columnIndex);
                 indexBuilder.reindexAfterUpdate(ff, partitionTimestamp, colName, tableWriter);
             }
+        }
+        for (int i = 0, n = coveringIndexColumns.size(); i < n; i++) {
+            indexBuilder.reindexAfterUpdate(ff, partitionTimestamp, tableMetadata.getColumnName(coveringIndexColumns.getQuick(i)), tableWriter);
         }
         indexBuilder.clear();
         path.trimTo(pathTrimToLen);
