@@ -116,37 +116,43 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                // Delta may have become active after SQL scheduled this conversion.
-                                if (txWriter.hasDeltaState()) {
-                                    LOG.error().$("skipping table type conversion, table has a delta-active partition or delta data [dirName=")
-                                            .$(dirNameSink).I$();
-                                    continue;
-                                }
-                                txWriter.resetLagValuesUnsafe();
-
-                                if (walEnabled) {
-                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
-                                        metadata.reload(metaPath, metaMem);
-                                        tableSequencerAPI.registerTable(tableId, metadata, token);
-                                    }
-
-                                    // Reset structure version in _meta and _txn files
-                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
-                                    path.trimTo(rootLen).concat(dirNameSink);
-                                    txWriter.resetStructureVersionUnsafe();
+                                // Delta state or an uploaded partition may have appeared after SQL accepted the
+                                // request, and SQL now refuses a new one. Cancel it rather than keep it for a
+                                // restart that would convert a table cold storage holds keys for.
+                                boolean isConverted = !txWriter.hasDeltaState() && !txWriter.hasUploadedPartitions();
+                                if (!isConverted) {
+                                    LOG.advisory().$("cancelled the pending table type conversion, table has delta or cold storage state [table=")
+                                            .$(token).I$();
                                 } else {
-                                    if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
-                                        removeWalPersistence(path, rootLen, ff, dirNameSink);
-                                    } else {
-                                        LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
-                                        continue;
-                                    }
-                                }
-                                metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
-                                convertedTables.add(token);
+                                    txWriter.resetLagValuesUnsafe();
 
-                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                                    metadataRW.hydrateTable(token);
+                                    if (walEnabled) {
+                                        try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
+                                            metadata.reload(metaPath, metaMem);
+                                            tableSequencerAPI.registerTable(tableId, metadata, token);
+                                        }
+
+                                        // Reset structure version in _meta and _txn files
+                                        metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                        path.trimTo(rootLen).concat(dirNameSink);
+                                        txWriter.resetStructureVersionUnsafe();
+                                    } else {
+                                        if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                            removeWalPersistence(path, rootLen, ff, dirNameSink);
+                                        } else {
+                                            // The request lapses with the table.
+                                            LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
+                                            isConverted = false;
+                                        }
+                                    }
+                                    if (isConverted) {
+                                        metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
+                                        convertedTables.add(token);
+
+                                        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                                            metadataRW.hydrateTable(token);
+                                        }
+                                    }
                                 }
                             }
 

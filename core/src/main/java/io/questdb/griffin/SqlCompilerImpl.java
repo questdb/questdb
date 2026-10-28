@@ -76,6 +76,7 @@ import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
@@ -2117,8 +2118,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw CairoException.readOnlyAccess();
         }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
+        // A SET TYPE to the table's current type converts nothing: it cancels a pending request,
+        // so no refusal stands in its way.
+        final boolean isCancel = (walFlag == TableUtils.TABLE_TYPE_WAL) == tableToken.isWal();
         try {
-            try (TableReader reader = engine.getReader(tableToken)) {
+            try (TableReader reader = isCancel ? null : engine.getReader(tableToken)) {
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }
@@ -2134,7 +2138,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // parquet and remain readable; converting back to WAL restores normal parquet
                 // ingestion.
             }
-            validateAlterTableSetType(pos, tableToken);
+            if (!isCancel) {
+                validateAlterTableSetType(pos, tableToken);
+            }
 
             if (!executionContext.isValidationOnly()) {
                 // Demote write-fence for the parse-time SET TYPE marker write. The eager check above
@@ -2155,7 +2161,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     engine.fireRoleSwitchMintObserver();
                     path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                    TableUtils.createConvertFile(ff, path, walFlag);
+                    if (isCancel) {
+                        ff.removeQuiet(path.concat(WalUtils.CONVERT_FILE_NAME).$());
+                    } else {
+                        TableUtils.createConvertFile(ff, path, walFlag);
+                    }
                 } finally {
                     lock.unlock();
                 }
@@ -5957,6 +5967,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeRebaseWal(tableToken);
+        validateRebaseWal(tableNamePosition, tableToken);
         if (!executionContext.isValidationOnly()) {
             if (targetDir == null) {
                 engine.rebaseWalTable(tableToken);
@@ -6529,6 +6540,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             IQueryModel viewModel,
             SqlExecutionContext executionContext
     ) throws SqlException {
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... REBASE WAL} before it clones the table. A no-op here:
+     * Enterprise overrides it to refuse a table with external state keyed by seqTxn, which the
+     * rebase restarts from 0.
+     */
+    protected void validateRebaseWal(int pos, TableToken tableToken) throws SqlException {
     }
 
     @FunctionalInterface

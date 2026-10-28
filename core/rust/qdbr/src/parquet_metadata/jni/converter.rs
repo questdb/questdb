@@ -39,6 +39,10 @@ use qdb_parquet_meta::convert::{
     convert_from_parquet, physical_type_to_u8, SliceBloomFilterSource, TsStatsBackfill,
 };
 use qdb_parquet_meta::error::{ParquetMetaError, ParquetMetaErrorKind};
+use qdb_parquet_meta::types::{
+    SeqTxn, FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE, HEADER_PARQUET_META_FILE_SIZE_OFF,
+};
+use qdb_parquet_meta::{ParquetMetaReader, ParquetMetaUpdateWriter};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::ManuallyDrop;
@@ -78,6 +82,81 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
             err.into_cairo_exception().throw::<i64>(env)
         }
     }
+}
+
+/// Stamps `seq_txn` as the base seqTxn of the `_pm` footer that describes `parquet_file_size`,
+/// appending a footer and committing it through the header. Throws a `CairoException` on error.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetadataWriter_setBaseSeqTxn(
+    mut env: JNIEnv,
+    _class: JClass,
+    parquet_meta_fd: i32,
+    parquet_file_size: i64,
+    seq_txn: i64,
+) {
+    let env = &mut env;
+    if parquet_file_size < 0 || seq_txn < 0 {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "invalid base seqTxn stamp [parquetFileSize={}, seqTxn={}]",
+            parquet_file_size,
+            seq_txn
+        );
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+    // Java owns the fd: ManuallyDrop keeps Rust from closing it.
+    let mut file = ManuallyDrop::new(unsafe { File::from_raw_fd_i32(parquet_meta_fd) });
+    if let Err(mut err) = set_base_seq_txn(&mut file, parquet_file_size as u64, seq_txn) {
+        err.add_context("error in ParquetMetadataWriter.setBaseSeqTxn");
+        err.into_cairo_exception().throw::<()>(env)
+    }
+}
+
+fn set_base_seq_txn(file: &mut File, parquet_file_size: u64, seq_txn: i64) -> ParquetResult<()> {
+    // 1. Resolve the footer of `parquet_file_size` below the committed size the header holds.
+    // SAFETY: Java holds the writer lock over the partition, and the map is dropped before any write.
+    let mmap = unsafe { Mmap::map(&*file) }.map_err(ParquetError::from)?;
+    let off = HEADER_PARQUET_META_FILE_SIZE_OFF;
+    if mmap.len() < off + 8 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "_pm too small to hold its committed size: {} bytes",
+            mmap.len()
+        ));
+    }
+    let committed_size = u64::from_le_bytes(mmap[off..off + 8].try_into().expect("8 bytes"));
+    let (offset, footer) =
+        ParquetMetaReader::find_footer_for_parquet_size(&mmap, committed_size, parquet_file_size)?;
+    let resolved_size =
+        offset + footer.crc_offset() as u64 + (FOOTER_CHECKSUM_SIZE + FOOTER_TRAILER_SIZE) as u64;
+    let reader = ParquetMetaReader::from_file_size(&mmap[..], resolved_size)?;
+    reader.verify_checksum()?;
+
+    // 2. A replay after the header write keeps the stamp it finds.
+    let seq_txn = SeqTxn::new(seq_txn);
+    if reader.seq_txn() == Some(seq_txn) {
+        drop(mmap);
+        file.sync_all().map_err(ParquetError::from)?;
+        return Ok(());
+    }
+
+    // 3. Append a footer with the stamp, preserving any newer footer past the resolved one.
+    let mut update = ParquetMetaUpdateWriter::new(&mmap[..], resolved_size)?;
+    update.seq_txn(seq_txn);
+    let (append_bytes, new_parquet_meta_file_size) = update.finish_appending_at(committed_size)?;
+    drop(mmap);
+    file.seek(SeekFrom::Start(committed_size))
+        .map_err(ParquetError::from)?;
+    file.write_all(&append_bytes).map_err(ParquetError::from)?;
+    file.sync_data().map_err(ParquetError::from)?;
+
+    // 4. Commit it: the header's size field points at the new footer last.
+    file.seek(SeekFrom::Start(off as u64))
+        .map_err(ParquetError::from)?;
+    file.write_all(&new_parquet_meta_file_size.to_le_bytes())
+        .map_err(ParquetError::from)?;
+    file.sync_data().map_err(ParquetError::from)?;
+    Ok(())
 }
 
 #[allow(clippy::explicit_auto_deref)]
@@ -266,4 +345,69 @@ fn read_parquet_footer_length(file: &mut File, file_size: u64) -> ParquetResult<
     let mut buf = [0u8; 4];
     file.read_exact(&mut buf).map_err(ParquetError::from)?;
     Ok(u32::from_le_bytes(buf))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qdb_parquet_meta::types::ColumnFlags;
+    use qdb_parquet_meta::{ParquetMetaWriter, RowGroupBlockBuilder};
+
+    // A `_pm` whose only footer describes a 4360-byte parquet file.
+    fn write_pm(seq_txn: i64) -> (tempfile::NamedTempFile, u64) {
+        let mut writer = ParquetMetaWriter::new();
+        writer.designated_timestamp(0);
+        writer.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut row_group = RowGroupBlockBuilder::new(1);
+        row_group.set_num_rows(10);
+        writer.add_row_group(row_group);
+        writer.parquet_footer(4096, 256);
+        writer.seq_txn(SeqTxn::new(seq_txn));
+        let (bytes, _) = writer.finish().unwrap();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&bytes).unwrap();
+        (file, 4096 + 256 + 8)
+    }
+
+    fn stamp(file: &tempfile::NamedTempFile, parquet_size: u64) -> Option<SeqTxn> {
+        let bytes = std::fs::read(file.path()).unwrap();
+        let committed = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let (offset, footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&bytes, committed, parquet_size)
+                .unwrap();
+        let size = offset + footer.crc_offset() as u64 + 8;
+        ParquetMetaReader::from_file_size(&bytes, size)
+            .unwrap()
+            .seq_txn()
+    }
+
+    #[test]
+    fn set_base_seq_txn_replaces_a_lower_or_higher_stamp() {
+        for (old, new) in [(7, 42), (42, 7)] {
+            let (pm, parquet_size) = write_pm(old);
+            let mut file = File::options()
+                .read(true)
+                .write(true)
+                .open(pm.path())
+                .unwrap();
+            set_base_seq_txn(&mut file, parquet_size, new).unwrap();
+            assert_eq!(stamp(&pm, parquet_size), Some(SeqTxn::new(new)));
+            // A replay finds its own stamp and appends nothing.
+            let len = std::fs::metadata(pm.path()).unwrap().len();
+            set_base_seq_txn(&mut file, parquet_size, new).unwrap();
+            assert_eq!(std::fs::metadata(pm.path()).unwrap().len(), len);
+        }
+    }
+
+    #[test]
+    fn set_base_seq_txn_refuses_an_unknown_parquet_size() {
+        let (pm, parquet_size) = write_pm(7);
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .open(pm.path())
+            .unwrap();
+        assert!(set_base_seq_txn(&mut file, parquet_size + 1, 9).is_err());
+        assert_eq!(stamp(&pm, parquet_size), Some(SeqTxn::new(7)));
+    }
 }

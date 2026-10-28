@@ -1318,6 +1318,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetFileSize = ff.length(path.$());
                     }
                     path.trimTo(partitionPathLen);
+                    // The footer stamp came from the table the partition was detached from. Stamp this
+                    // table's seqTxn instead, as a native ATTACH stamps _txn below. A soft link needs a
+                    // writable target, as a later seal writes this _pm too.
+                    if (parquetFileSize > -1 && tableToken.isWal()
+                            && !attachPartitionStampParquetSeqTxn(partitionPathLen, parquetFileSize, txWriter.getSeqTxn())) {
+                        return AttachDetachStatus.ATTACH_ERR_CREATE_PM_FILE;
+                    }
                     attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
                 } finally {
@@ -2013,6 +2020,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             other.trimTo(pathSize);
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedParquetFileSize, liveParquetFileSize);
+        }
+
+        if (txWriter.isPartitionSealStamped(partitionIndex)) {
+            // A seal can apply between the build and this swap. The copy holds its source's rows, so it
+            // takes the sealed source's stamp rather than the one the build read.
+            try {
+                stampCompactedParquetSeqTxn(partitionTimestamp, expectedSrcNameTxn, expectedParquetFileSize, newParquetFileSize);
+            } catch (Throwable th) {
+                other.trimTo(pathSize);
+                path.trimTo(pathSize);
+                throw th;
+            }
         }
 
         final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
@@ -6153,6 +6172,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } else if (ff.rename(path.$(), detachedPath.$()) != FILES_RENAME_OK) {
             LOG.critical().$("could not restore detached partition dir [errno=").$(ff.errno()).$(", from=").$(path).$(", to=").$(detachedPath).I$();
+        }
+    }
+
+    private boolean attachPartitionStampParquetSeqTxn(int partitionPathLen, long parquetFileSize, long seqTxn) {
+        path.trimTo(partitionPathLen).concat(PARQUET_METADATA_FILE_NAME);
+        final long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        if (parquetMetaFd < 0) {
+            LOG.error().$("could not open parquet metadata file to stamp it [path=").$(path).$(", errno=").$(ff.errno()).I$();
+            path.trimTo(partitionPathLen);
+            return false;
+        }
+        try {
+            ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(parquetMetaFd), parquetFileSize, seqTxn);
+            return true;
+        } catch (CairoException e) {
+            LOG.error().$("could not stamp parquet metadata file [path=").$(path).$(", msg=").$safe(e.getFlyweightMessage()).I$();
+            return false;
+        } finally {
+            ff.close(parquetMetaFd);
+            path.trimTo(partitionPathLen);
         }
     }
 
@@ -18569,6 +18608,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.close(squashCounterFileFd);
         } finally {
             other.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Stamps the staged compaction's {@code _pm}, at {@link #other}, with the seqTxn the source's {@code _pm}
+     * resolves to: a seal applied since the build stamped the source, not the copy the build read.
+     */
+    private void stampCompactedParquetSeqTxn(
+            long partitionTimestamp,
+            long srcNameTxn,
+            long srcParquetFileSize,
+            long newParquetFileSize
+    ) {
+        // 1. Read the source's stamp.
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        final int srcDirLen = path.size();
+        final long seqTxn;
+        openParquetMetadataOrThrow(path, srcDirLen, srcParquetFileSize);
+        try {
+            seqTxn = parquetMetaReader.getResolvedSeqTxn();
+        } finally {
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            path.trimTo(pathSize);
+        }
+        if (seqTxn < 1) {
+            return;
+        }
+
+        // 2. Write it to the staged copy.
+        final int stagedDirLen = other.size();
+        other.concat(PARQUET_METADATA_FILE_NAME);
+        final long parquetMetaFd = ff.openRW(other.$(), CairoConfiguration.O_NONE);
+        try {
+            if (parquetMetaFd < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not open staged parquet compaction metadata [path=").put(other).put(']');
+            }
+            ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(parquetMetaFd), newParquetFileSize, seqTxn);
+        } finally {
+            if (parquetMetaFd > -1) {
+                ff.close(parquetMetaFd);
+            }
+            other.trimTo(stagedDirLen);
         }
     }
 
