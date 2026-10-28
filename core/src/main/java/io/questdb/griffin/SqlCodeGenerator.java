@@ -7407,19 +7407,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (joinFilter != null && joinFilter.isConstant()) {
                                     joinFilter.init(null, executionContext);
                                     if (!joinFilter.getBool(null)) {
+                                        // An empty window still has a value for some aggregates, e.g. count() is 0.
+                                        // Spliced column k maps to groupByFunctions[k] only when every aggregate
+                                        // column assembled into a group-by function. When an aggregate folds to a
+                                        // constant, the lists no longer line up, and the shortcut keeps NULL mode.
+                                        final LongList emptyValues = groupByFunctions.size() == aggregateCols.size()
+                                                ? GroupByUtils.computeNonNullEmptyValues(groupByFunctions, valueTypes.getColumnCount())
+                                                : null;
                                         RecordCursorFactory factory;
                                         if (isLastWindowJoin) {
                                             if (columnIndex == null) {
-                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
+                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues);
                                             } else {
                                                 GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
                                                     metadata.add(new TableColumnMetadata(SqlUtil.toColumnName(aggregateCols.get(k).getAlias()), groupByFunctions.get(k).getType()));
                                                 }
-                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master));
+                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master, emptyValues));
                                             }
                                         } else {
-                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
+                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues);
                                         }
 
                                         Misc.free(slaveToFree);

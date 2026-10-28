@@ -74,7 +74,9 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -404,6 +406,48 @@ public class GroupByUtils {
             }
             throw th;
         }
+    }
+
+    /**
+     * Computes the value each function reports over an empty group, for functions whose
+     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result is parallel to
+     * {@code functions}: entry i holds {@code functions[i]}'s empty value, or
+     * {@link Numbers#LONG_NULL} when that function reports NULL over an empty group.
+     *
+     * @param functions  assembled group-by functions, with their value types already initialized
+     * @param valueCount number of map value slots the functions' value types occupy
+     * @return the per-function empty values, or null when every function reports NULL
+     */
+    @Nullable
+    public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount) {
+        final int n = functions.size();
+        boolean hasNonNullEmptyValue = false;
+        for (int i = 0; i < n; i++) {
+            if (functions.getQuick(i).hasNonNullEmptyValue()) {
+                hasNonNullEmptyValue = true;
+                break;
+            }
+        }
+        if (!hasNonNullEmptyValue) {
+            return null;
+        }
+
+        final LongList values = new LongList(n);
+        values.setAll(n, Numbers.LONG_NULL);
+        try (SimpleMapValue value = new SimpleMapValue(valueCount)) {
+            // Zero the value so that every slot, including those of functions not flagged
+            // here, starts from a known state.
+            value.clear();
+            for (int i = 0; i < n; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                if (function.hasNonNullEmptyValue()) {
+                    assert ColumnType.tagOf(function.getType()) == ColumnType.LONG;
+                    function.setEmpty(value);
+                    values.setQuick(i, function.getLong(value));
+                }
+            }
+        }
+        return values;
     }
 
     public static Function createColumnFunction(

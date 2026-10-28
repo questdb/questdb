@@ -125,6 +125,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initSharedFrom(GroupByFunction primary) {
         this.valueIndex = primary.getValueIndex();
         this.sets = ((CountDistinctStringGroupByFunction) primary).sets;

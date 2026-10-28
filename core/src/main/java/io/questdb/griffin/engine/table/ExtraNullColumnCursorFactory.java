@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -59,15 +60,30 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     private final RecordCursorFactory base;
     private final int columnSplit;
     private final ExtraNullColumnRecordCursor cursor;
+    // Per spliced column, the value getLong() reports; null means every spliced column is NULL.
+    // Immutable after construction, so every record, cursor and worker shares it read-only.
+    @Nullable
+    private final LongList emptyValues;
     private ExtraNullColumnPageFrameCursor pageFrameCursor;
     private ExtraNullColumnTablePageFrameCursor tablePageFrameCursor;
     private ExtraNullColumnTimeFrameCursor timeFrameCursor;
 
     public ExtraNullColumnCursorFactory(RecordMetadata metadata, int columnSplit, RecordCursorFactory base) {
+        this(metadata, columnSplit, base, null);
+    }
+
+    public ExtraNullColumnCursorFactory(
+            RecordMetadata metadata,
+            int columnSplit,
+            RecordCursorFactory base,
+            @Nullable LongList emptyValues
+    ) {
         super(metadata);
+        assert emptyValues == null || emptyValues.size() == metadata.getColumnCount() - columnSplit;
         this.base = base;
         this.columnSplit = columnSplit;
-        this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess());
+        this.emptyValues = emptyValues;
+        this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess(), emptyValues);
     }
 
     @Override
@@ -146,7 +162,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (timeFrameCursor == null) {
-            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex());
+            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex(), emptyValues);
         }
         return timeFrameCursor.of(baseCursor);
     }
@@ -172,7 +188,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         if (baseCursor == null) {
             return null;
         }
-        return new ExtraNullColumnConcurrentTimeFrameCursor(baseCursor, columnSplit, getMetadata().getTimestampIndex());
+        return new ExtraNullColumnConcurrentTimeFrameCursor(baseCursor, columnSplit, getMetadata().getTimestampIndex(), emptyValues);
     }
 
     @Override
@@ -187,7 +203,9 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public boolean supportsPageFrameCursor() {
-        return base.supportsPageFrameCursor();
+        // Page frames carry no memory for the spliced columns, so they can only report NULL.
+        // The empty values exist only in the records.
+        return emptyValues == null && base.supportsPageFrameCursor();
     }
 
     @Override
@@ -202,7 +220,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("ExtraNullColumnRecord");
+        sink.type(emptyValues != null ? "ExtraEmptyValueColumnRecord" : "ExtraNullColumnRecord");
         sink.child(base);
     }
 
@@ -230,12 +248,13 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         ExtraNullColumnConcurrentTimeFrameCursor(
                 ConcurrentTimeFrameCursor delegate,
                 int columnSplit,
-                int selectedTimestampIndex
+                int selectedTimestampIndex,
+                @Nullable LongList emptyValues
         ) {
             this.delegate = delegate;
             this.columnSplit = columnSplit;
             this.selectedTimestampIndex = selectedTimestampIndex;
-            this.extraNullColumnRecord = new ExtraNullColumnRecord(columnSplit);
+            this.extraNullColumnRecord = ExtraNullColumnRecordCursor.newRecord(columnSplit, emptyValues);
         }
 
         @Override
@@ -569,8 +588,9 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             // maps its own columnSplit columns, so the synthetic null columns above the
             // split need entries of their own. They belong to no reader, writer or
             // parquet column, so all three indexes are -1: columnIdToParquetIdx keys are
-            // never negative, which leaves the column undecoded and its page address 0
-            // -- NULL, matching what the record and page frame report for them.
+            // never negative, which leaves the column undecoded with page address 0. That
+            // address reads as NULL, matching the record in NULL mode. A factory with
+            // empty values reports no page-frame support (supportsPageFrameCursor()).
             columnMapping.copyFrom(baseCursor.getColumnMapping());
             assert columnMapping.getColumnCount() == columnSplit
                     : "base column mapping must cover exactly the split columns";
@@ -637,11 +657,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         private final int selectedTimestampIndex;
         private TimeFrameCursor baseCursor;
 
-        public ExtraNullColumnTimeFrameCursor(int columnSplit, boolean supportsRandomAccess, int selectedTimestampIndex) {
+        public ExtraNullColumnTimeFrameCursor(
+                int columnSplit,
+                boolean supportsRandomAccess,
+                int selectedTimestampIndex,
+                @Nullable LongList emptyValues
+        ) {
             this.selectedTimestampIndex = selectedTimestampIndex;
-            this.recordA = new ExtraNullColumnRecord(columnSplit);
+            this.recordA = ExtraNullColumnRecordCursor.newRecord(columnSplit, emptyValues);
             if (supportsRandomAccess) {
-                this.recordB = new ExtraNullColumnRecord(columnSplit);
+                this.recordB = ExtraNullColumnRecordCursor.newRecord(columnSplit, emptyValues);
             } else {
                 this.recordB = null;
             }

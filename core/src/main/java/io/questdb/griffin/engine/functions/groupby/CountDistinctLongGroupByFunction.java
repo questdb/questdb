@@ -130,6 +130,11 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }

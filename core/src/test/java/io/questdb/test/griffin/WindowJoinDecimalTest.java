@@ -63,9 +63,9 @@ public class WindowJoinDecimalTest extends AbstractCairoTest {
                 .ddl(TRADES_DDL, PRICES_DDL, TRADES_INSERT, PRICES_INSERT)
                 .expectSize()
                 .returns("d8\td16\td32\td64\td128\td256\tcnt\n" +
-                        "1.1\t2.1\t3.11\t4.11\t5.11\t6.11\tnull\n" +
-                        "1.2\t2.2\t3.22\t4.22\t5.22\t6.22\tnull\n" +
-                        "1.3\t2.3\t3.33\t4.33\t5.33\t6.33\tnull\n");
+                        "1.1\t2.1\t3.11\t4.11\t5.11\t6.11\t0\n" +
+                        "1.2\t2.2\t3.22\t4.22\t5.22\t6.22\t0\n" +
+                        "1.3\t2.3\t3.33\t4.33\t5.33\t6.33\t0\n");
     }
 
     @Test

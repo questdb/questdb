@@ -732,6 +732,678 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZero() throws Exception {
+        // An ON clause that matches no row leaves every window empty. The regular path reports each
+        // aggregate's empty value, set by GroupByFunction.setEmpty(): 0 for count(), NULL for sum().
+        // An ON clause that folds to constant false has to report the same values. A tick expression
+        // that holds no instant, such as '2024-01-06#workday' (a Saturday), folds to constant false.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND p.pts2 IN '2024-01-06#workday'",
+                    "t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0",
+                    "t.sym = p.sym AND false"
+            };
+            final String leftType = leftTableTimestampType.getTypeName();
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    for (String condition : conditions) {
+                        final String windowJoin = "FROM cz_trades t WINDOW JOIN cz_prices p ON (" + condition + ") " +
+                                "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " + prevailing;
+                        assertQuery("SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s " + windowJoin)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .supportsRandomAccess(true)
+                                .expectSize()
+                                .withPlan("""
+                                        SelectedRecord
+                                            ExtraEmptyValueColumnRecord
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: cz_trades
+                                        """)
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tc\tcp\ts
+                                        2024-01-01T09:00:00.000000Z\t0\t0\tnull
+                                        2024-01-01T09:01:00.000000Z\t0\t0\tnull
+                                        2024-01-01T09:02:00.000000Z\t0\t0\tnull
+                                        """, leftType));
+
+                        // A master column follows the aggregates, so the projection reorders the
+                        // columns. The timestamp stays first: an aggregate-first projection hits a
+                        // separate WINDOW JOIN defect, on the regular path as well, where the factory
+                        // reports the first column as the designated timestamp.
+                        assertQuery("SELECT t.ts, count() c, sum(p.price) s, t.sym " + windowJoin)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .supportsRandomAccess(true)
+                                .expectSize()
+                                .withPlan("""
+                                        SelectedRecord
+                                            ExtraEmptyValueColumnRecord
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: cz_trades
+                                        """)
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tc\ts\tsym
+                                        2024-01-01T09:00:00.000000Z\t0\tnull\ta
+                                        2024-01-01T09:01:00.000000Z\t0\tnull\ta
+                                        2024-01-01T09:02:00.000000Z\t0\tnull\tb
+                                        """, leftType));
+
+                        // The splice offers no page frames once it reports count() as 0, so the
+                        // GROUP BY over it runs serially on records.
+                        assertQuery("SELECT count() n, sum(c) sc, sum(s) ss FROM (" +
+                                "SELECT t.ts, count() c, sum(p.price) s " + windowJoin + ")")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .withPlan("""
+                                        GroupBy vectorized: false
+                                          values: [count(*),sum(c),sum(s)]
+                                            SelectedRecord
+                                                ExtraEmptyValueColumnRecord
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: cz_trades
+                                        """)
+                                .returns("""
+                                        n\tsc\tss
+                                        3\t0\tnull
+                                        """);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroAfterNullEmptyAggregate() throws Exception {
+        // sum() comes before count() in the projection, so count() is the second aggregate column.
+        // The first query keeps every master column in table order, so the WINDOW JOIN appends
+        // the aggregates without a reordering projection. In the second query the WINDOW JOIN is
+        // not the last one. The per-row false filter runs the regular path.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            // The per-row false filter comes first, so it checks the expected output before the
+            // constant-false conditions run.
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.k < 0",
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0"
+            };
+            final String range = " RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String condition : conditions) {
+                    final boolean isConstantFalse = !condition.endsWith("t.k < 0");
+                    assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, sum(p.price) s, count() c FROM cz_trades t " +
+                            "WINDOW JOIN cz_prices p ON (" + condition + ")" + range)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .supportsRandomAccess(isConstantFalse)
+                            .expectSize(isConstantFalse)
+                            .sizeMayVary(!isConstantFalse)
+                            .withPlan(isConstantFalse
+                                    ? """
+                                    ExtraEmptyValueColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
+                                    """
+                                    : null)
+                            .returns("""
+                                    sym\tk\tts2\tts\ts\tc
+                                    a\t1\t2024-01-08T10:00:00.000000Z\t%s\tnull\t0
+                                    a\t2\t2024-01-08T10:00:00.000000Z\t%s\tnull\t0
+                                    b\t3\t2024-01-08T10:00:00.000000Z\t%s\tnull\t0
+                                    """.formatted(
+                                    replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType),
+                                    replaceTimestampSuffix("2024-01-01T09:01:00.000000Z", leftType),
+                                    replaceTimestampSuffix("2024-01-01T09:02:00.000000Z", leftType)
+                            ));
+
+                    // The next WINDOW JOIN reads the splice through records, so it runs serially.
+                    assertQuery("SELECT t.ts, sum(p.price) s, count() c, sum(p1.price) s1 FROM cz_trades t " +
+                            "WINDOW JOIN cz_prices p ON (" + condition + ")" + range +
+                            " WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlanContaining(
+                                    isConstantFalse ? "Window Fast Join\n" : null,
+                                    isConstantFalse ? "ExtraEmptyValueColumnRecord" : null
+                            )
+                            .returns(replaceTimestampSuffix("""
+                                    ts\ts\tc\ts1
+                                    2024-01-01T09:00:00.000000Z\tnull\t0\t1.0
+                                    2024-01-01T09:01:00.000000Z\tnull\t0\t2.0
+                                    2024-01-01T09:02:00.000000Z\tnull\t0\t3.0
+                                    """, leftType));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroAsHorizonJoinMaster() throws Exception {
+        // A constant-false WINDOW JOIN with a designated timestamp can be the left side of a HORIZON
+        // JOIN. The splice offers no page frames, so the HORIZON JOIN reads it through records and
+        // runs serially even when parallel HORIZON JOIN is enabled.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            // The per-row false filter cannot serve as the oracle: HORIZON JOIN rejects a regular
+            // WINDOW JOIN master, so the expected rows come from the ASOF prices at offset 0.
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String condition : conditions) {
+                    assertQuery("SELECT m.sym, m.c, count() n, sum(m.c) sc, sum(m.s) ss, avg(q.price) qp " +
+                            "FROM ((SELECT t.ts, t.sym, count() c, sum(p.price) s FROM cz_trades t " +
+                            "WINDOW JOIN cz_prices p ON (" + condition + ") " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING) TIMESTAMP(ts)) m " +
+                            "HORIZON JOIN cz_prices q ON (m.sym = q.sym) LIST (0s) AS h " +
+                            "ORDER BY m.sym")
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlanContaining("Horizon Join", "ExtraEmptyValueColumnRecord")
+                            .withPlanNotContaining("Async Horizon Join", "Async JIT Horizon Join")
+                            .returns("""
+                                    sym\tc\tn\tsc\tss\tqp
+                                    a\t0\t2\t0\tnull\t1.5
+                                    b\t0\t1\t0\tnull\t3.0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroAsTimeFrameSlave() throws Exception {
+        // A constant-false WINDOW JOIN with a designated timestamp can be the right side of a WINDOW,
+        // HORIZON or ASOF JOIN, which reads it through its time-frame cursor. The serial joins below
+        // run on that cursor. Every q row exists, and its c holds 0 and its s2 holds NULL.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String[] conditions = {
+                    "p.sym = p2.sym AND p.pts2 IN '2024-01-06#workday'",
+                    "p.sym = p2.sym AND 1 = 0"
+            };
+            final String leftType = leftTableTimestampType.getTypeName();
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            for (String condition : conditions) {
+                final String windowJoin = " FROM cz_prices p WINDOW JOIN cz_prices p2 ON (" + condition + ") " +
+                        "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+                // The first projection keeps the master columns in order, the second reorders them.
+                final String[] slaves = {
+                        "((SELECT p.sym, p.price, p.pts2, p.ts, count() c, sum(p2.price) s2" + windowJoin + ") TIMESTAMP(ts))",
+                        "((SELECT p.ts, p.sym, count() c, sum(p2.price) s2" + windowJoin + ") TIMESTAMP(ts))"
+                };
+                for (String slave : slaves) {
+                    assertQuery("SELECT t.ts, count(q.c) n, sum(q.c) sc, sum(q.s2) ss FROM cz_trades t " +
+                            "WINDOW JOIN " + slave + " q ON (t.sym = q.sym) " +
+                            "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlanContaining("Window Fast Join", "ExtraEmptyValueColumnRecord")
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tn\tsc\tss
+                                    2024-01-01T09:00:00.000000Z\t1\t0\tnull
+                                    2024-01-01T09:01:00.000000Z\t2\t0\tnull
+                                    2024-01-01T09:02:00.000000Z\t1\t0\tnull
+                                    """, leftType));
+
+                    assertQuery("SELECT count(q.c) n, sum(q.c) sc, sum(q.s2) ss FROM cz_trades t " +
+                            "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) LIST (0s) AS h")
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlanContaining("Horizon Join", "ExtraEmptyValueColumnRecord")
+                            .returns("""
+                                    n\tsc\tss
+                                    3\t0\tnull
+                                    """);
+
+                    assertQuery("SELECT t.ts, q.c, q.s2 FROM cz_trades t ASOF JOIN " + slave + " q ON (sym)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlanContaining("AsOf Join Fast", "ExtraEmptyValueColumnRecord")
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tc\ts2
+                                    2024-01-01T09:00:00.000000Z\t0\tnull
+                                    2024-01-01T09:01:00.000000Z\t0\tnull
+                                    2024-01-01T09:02:00.000000Z\t0\tnull
+                                    """, leftType));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroInChain() throws Exception {
+        // A constant-false WINDOW JOIN followed by another WINDOW JOIN becomes the master of the
+        // second join, which reads it through page frames when it runs in parallel. A constant-false
+        // WINDOW JOIN that follows another one wraps the first join instead.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND p.pts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0"
+            };
+            final String leftType = leftTableTimestampType.getTypeName();
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    final boolean isInclude = prevailing.startsWith("INCLUDE");
+                    final String range = "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " + prevailing + " ";
+                    for (String condition : conditions) {
+                        // count() resolves to the first slave, p.
+                        assertQuery("SELECT t.ts, count() c, sum(p.price) s, sum(p1.price) s1 " +
+                                "FROM cz_trades t " +
+                                "WINDOW JOIN cz_prices p ON (" + condition + ") " + range +
+                                "WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym) " + range)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .inferRandomAccess()
+                                .sizeMayVary()
+                                .withPlanContaining("Window Fast Join\n", "ExtraEmptyValueColumnRecord")
+                                .returns(replaceTimestampSuffix(isInclude
+                                        ? """
+                                        ts\tc\ts\ts1
+                                        2024-01-01T09:00:00.000000Z\t0\tnull\t1.0
+                                        2024-01-01T09:01:00.000000Z\t0\tnull\t3.0
+                                        2024-01-01T09:02:00.000000Z\t0\tnull\t3.0
+                                        """
+                                        : """
+                                        ts\tc\ts\ts1
+                                        2024-01-01T09:00:00.000000Z\t0\tnull\t1.0
+                                        2024-01-01T09:01:00.000000Z\t0\tnull\t2.0
+                                        2024-01-01T09:02:00.000000Z\t0\tnull\t3.0
+                                        """, leftType));
+
+                        assertQuery("SELECT t.ts, count(p.price) cp, sum(p.price) s, count(p1.price) cp1, sum(p1.price) s1 " +
+                                "FROM cz_trades t " +
+                                "WINDOW JOIN cz_prices p ON (t.sym = p.sym) " + range +
+                                "WINDOW JOIN cz_prices p1 ON (" + condition.replace("p.", "p1.") + ") " + range)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .inferRandomAccess()
+                                .sizeMayVary()
+                                .withPlanContaining("ExtraEmptyValueColumnRecord")
+                                .returns(replaceTimestampSuffix(isInclude
+                                        ? """
+                                        ts\tcp\ts\tcp1\ts1
+                                        2024-01-01T09:00:00.000000Z\t1\t1.0\t0\tnull
+                                        2024-01-01T09:01:00.000000Z\t2\t3.0\t0\tnull
+                                        2024-01-01T09:02:00.000000Z\t1\t3.0\t0\tnull
+                                        """
+                                        : """
+                                        ts\tcp\ts\tcp1\ts1
+                                        2024-01-01T09:00:00.000000Z\t1\t1.0\t0\tnull
+                                        2024-01-01T09:01:00.000000Z\t1\t2.0\t0\tnull
+                                        2024-01-01T09:02:00.000000Z\t1\t3.0\t0\tnull
+                                        """, leftType));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroOverParquetPartition() throws Exception {
+        // A parallel GROUP BY over the WINDOW JOIN reads a parquet master partition through page
+        // frames, where the spliced columns carry no data.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE czp_trades (a LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE czp_prices (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO czp_trades VALUES
+                      (111, '2024-01-01T00:00:00.000000Z'),
+                      (222, '2024-01-01T00:01:00.000000Z'),
+                      (333, '2024-01-02T00:00:00.000000Z')""");
+            execute("INSERT INTO czp_prices VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            // Only a non-active partition converts, hence the second day.
+            execute("ALTER TABLE czp_trades CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            final String windowJoin = "FROM czp_trades t WINDOW JOIN czp_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW";
+
+            assertQuery("SELECT t.a, t.ts, count() c, sum(p.l) s " + windowJoin)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .supportsRandomAccess(true)
+                    .expectSize()
+                    .withPlanContaining("ExtraEmptyValueColumnRecord")
+                    .returns("""
+                            a\tts\tc\ts
+                            111\t2024-01-01T00:00:00.000000Z\t0\tnull
+                            222\t2024-01-01T00:01:00.000000Z\t0\tnull
+                            333\t2024-01-02T00:00:00.000000Z\t0\tnull
+                            """);
+
+            assertQuery("SELECT sum(c) sc, count(c) cc, sum(s) ss FROM (SELECT t.ts, count() c, sum(p.l) s " + windowJoin + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: false", "ExtraEmptyValueColumnRecord")
+                    .returns("""
+                            sc\tcc\tss
+                            0\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroThroughFilterAndTopK() throws Exception {
+        // A filter and a top-K over the WINDOW JOIN read the spliced count column too. Both run in
+        // parallel over page frames when the splice offers them.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            for (String condition : new String[]{"t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'", "t.sym = p.sym AND 1 = 0"}) {
+                final String windowJoin = "SELECT t.ts, t.sym, count() c, sum(p.price) s FROM cz_trades t " +
+                        "WINDOW JOIN cz_prices p ON (" + condition + ") RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW";
+                // The splice offers no page frames once it reports count() as 0, so the filter
+                // runs serially on records.
+                assertQuery("SELECT * FROM (" + windowJoin + ") WHERE c = 0")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Filter filter: c=0\n", "ExtraEmptyValueColumnRecord")
+                        .returns(replaceTimestampSuffix("""
+                                ts\tsym\tc\ts
+                                2024-01-01T09:00:00.000000Z\ta\t0\tnull
+                                2024-01-01T09:01:00.000000Z\ta\t0\tnull
+                                2024-01-01T09:02:00.000000Z\tb\t0\tnull
+                                """, leftType));
+
+                assertQuery("SELECT * FROM (" + windowJoin + ") ORDER BY ts DESC LIMIT 2")
+                        .noLeakCheck()
+                        .timestampDesc("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Encode sort light", "ExtraEmptyValueColumnRecord")
+                        .returns(replaceTimestampSuffix("""
+                                ts\tsym\tc\ts
+                                2024-01-01T09:02:00.000000Z\tb\t0\tnull
+                                2024-01-01T09:01:00.000000Z\ta\t0\tnull
+                                """, leftType));
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroThroughSort() throws Exception {
+        // A sort over the WINDOW JOIN reads count() as a sort key and re-reads every row by its row
+        // id. The per-row false filter runs the regular path.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            // The per-row false filter comes first, so it checks the expected output before the
+            // constant-false conditions run.
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.k < 0",
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String condition : conditions) {
+                    // 1 = 0 keeps the projection in the splice, the tick expression adds a SelectedRecord.
+                    final String plan;
+                    if (condition.endsWith("t.k < 0")) {
+                        plan = null;
+                    } else if (condition.endsWith("1 = 0")) {
+                        plan = """
+                                Encode sort light
+                                  keys: [sym desc, c, ts]
+                                    ExtraEmptyValueColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
+                                """;
+                    } else {
+                        plan = """
+                                Encode sort light
+                                  keys: [sym desc, c, ts]
+                                    SelectedRecord
+                                        ExtraEmptyValueColumnRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: cz_trades
+                                """;
+                    }
+                    assertQuery("SELECT * FROM (SELECT t.ts, t.sym, count() c, sum(p.price) s FROM cz_trades t " +
+                            "WINDOW JOIN cz_prices p ON (" + condition + ") RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) " +
+                            "ORDER BY sym DESC, c, ts")
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlan(plan)
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tsym\tc\ts
+                                    2024-01-01T09:02:00.000000Z\tb\t0\tnull
+                                    2024-01-01T09:00:00.000000Z\ta\t0\tnull
+                                    2024-01-01T09:01:00.000000Z\ta\t0\tnull
+                                    """, leftType));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroWithDynamicBounds() throws Exception {
+        // A window bound that reads a master column compiles the whole ON clause into the join filter.
+        // That filter folds to constant false as well.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    for (String condition : new String[]{"t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'", "t.sym = p.sym AND 1 = 0"}) {
+                        assertQuery("SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s FROM cz_trades t " +
+                                "WINDOW JOIN cz_prices p ON (" + condition + ") " +
+                                "RANGE BETWEEN t.k MINUTES PRECEDING AND CURRENT ROW " + prevailing)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .supportsRandomAccess(true)
+                                .expectSize()
+                                .withPlanContaining("ExtraEmptyValueColumnRecord")
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tc\tcp\ts
+                                        2024-01-01T09:00:00.000000Z\t0\t0\tnull
+                                        2024-01-01T09:01:00.000000Z\t0\t0\tnull
+                                        2024-01-01T09:02:00.000000Z\t0\t0\tnull
+                                        """, leftType));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterKeepsNullCountNextToFoldedAggregate() throws Exception {
+        // bool_or() and bit_or() over a constant fold to a plain constant rather than a group-by
+        // function, so group-by functions and aggregate columns no longer line up one-to-one. The
+        // correct count() here is 0, but the constant-false WINDOW JOIN then keeps its NULL mode and
+        // reports every aggregate column as NULL (false for BOOLEAN), count() included. This test
+        // pins that fallback and its plan node, not the desired value; change it when the
+        // folded-aggregate defect is fixed. The regular path fails on these projections, which is
+        // that same defect. The first two queries keep every master column in table order, the
+        // third WINDOW JOIN is not the last one.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            final String range = " RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            final String expectedTemplate = """
+                    sym\tk\tts2\tts\t%s
+                    a\t1\t2024-01-08T10:00:00.000000Z\t%s\t%s
+                    a\t2\t2024-01-08T10:00:00.000000Z\t%s\t%s
+                    b\t3\t2024-01-08T10:00:00.000000Z\t%s\t%s
+                    """;
+            final String row0Ts = replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType);
+            final String row1Ts = replaceTimestampSuffix("2024-01-01T09:01:00.000000Z", leftType);
+            final String row2Ts = replaceTimestampSuffix("2024-01-01T09:02:00.000000Z", leftType);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String condition : new String[]{"t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'", "t.sym = p.sym AND 1 = 0"}) {
+                    final String windowJoin = " FROM cz_trades t WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
+                    assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, bool_or(false) b, count() c" + windowJoin)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .supportsRandomAccess(true)
+                            .expectSize()
+                            .withPlan("""
+                                    ExtraNullColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
+                                    """)
+                            .returns(expectedTemplate.formatted("b\tc", row0Ts, "false\tnull", row1Ts, "false\tnull", row2Ts, "false\tnull"));
+
+                    assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, count() c, bit_or(5) b" + windowJoin)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .supportsRandomAccess(true)
+                            .expectSize()
+                            .withPlan("""
+                                    ExtraNullColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
+                                    """)
+                            .returns(expectedTemplate.formatted("c\tb", row0Ts, "null\tnull", row1Ts, "null\tnull", row2Ts, "null\tnull"));
+
+                    assertQuery("SELECT t.ts, bool_or(false) b, count() c, sum(p1.price) s1" + windowJoin +
+                            " WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .withPlanContaining("ExtraNullColumnRecord")
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tb\tc\ts1
+                                    2024-01-01T09:00:00.000000Z\tfalse\tnull\t1.0
+                                    2024-01-01T09:01:00.000000Z\tfalse\tnull\t2.0
+                                    2024-01-01T09:02:00.000000Z\tfalse\tnull\t3.0
+                                    """, leftType));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterKeepsNullEmptyValuesNextToCount() throws Exception {
+        // count() reports 0 over an empty window, while DECIMAL, STRING, VARCHAR and LONG256
+        // aggregates stay NULL in the same query. The per-row false filter runs the regular path.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE czn_prices (sym SYMBOL, d DECIMAL(18,2), s STRING, v VARCHAR, l256 LONG256, ts #TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO czn_prices VALUES
+                      ('a', 1.25::decimal(18,2), 'str', 'vch', '0x01', '2024-01-01T08:59:30.000000Z'),
+                      ('b', 2.50::decimal(18,2), 'str', 'vch', '0x02', '2024-01-01T09:01:30.000000Z')""");
+            final String leftType = leftTableTimestampType.getTypeName();
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String condition : new String[]{"t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'", "t.sym = p.sym AND 1 = 0", "t.sym = p.sym AND t.k < 0"}) {
+                    final String windowJoin = "SELECT t.ts, count() c, first(p.d) fd, sum(p.d) sd, first(p.s) fs, " +
+                            "length(first(p.s)) ls, first(p.v) fv, first(p.l256) fl FROM cz_trades t " +
+                            "WINDOW JOIN czn_prices p ON (" + condition + ") RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW";
+                    final boolean isConstantFalse = !condition.endsWith("t.k < 0");
+                    assertQuery(windowJoin)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .supportsRandomAccess(isConstantFalse)
+                            .expectSize(isConstantFalse)
+                            .sizeMayVary(!isConstantFalse)
+                            .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord" : null)
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tc\tfd\tsd\tfs\tls\tfv\tfl
+                                    2024-01-01T09:00:00.000000Z\t0\t\t\t\t-1\t\tnull
+                                    2024-01-01T09:01:00.000000Z\t0\t\t\t\t-1\t\tnull
+                                    2024-01-01T09:02:00.000000Z\t0\t\t\t\t-1\t\tnull
+                                    """, leftType));
+
+                    assertQuery("SELECT ts, c FROM (" + windowJoin + ") " +
+                            "WHERE fd IS NULL AND sd IS NULL AND fs IS NULL AND fv IS NULL AND fl IS NULL")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tc
+                                    2024-01-01T09:00:00.000000Z\t0
+                                    2024-01-01T09:01:00.000000Z\t0
+                                    2024-01-01T09:02:00.000000Z\t0
+                                    """, leftType));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterReportsEmptyValueOfEachAggregate() throws Exception {
+        // count(*), count(column), count_distinct() and approx_count_distinct() report 0 over an
+        // empty window, sum() and first() report NULL, as on the regular path.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0",
+                    "t.sym = p.sym AND t.k < 0"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    for (String condition : conditions) {
+                        final boolean isConstantFalse = !condition.endsWith("t.k < 0");
+                        assertQuery("SELECT t.ts, count(*) n, count(p.sym) cs, count_distinct(p.sym) cd, " +
+                                "approx_count_distinct(p.price::long) acd, sum(p.price) s, first(p.price) f " +
+                                "FROM cz_trades t WINDOW JOIN cz_prices p ON (" + condition + ") " +
+                                "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " + prevailing)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .supportsRandomAccess(isConstantFalse)
+                                .expectSize(isConstantFalse)
+                                .sizeMayVary(!isConstantFalse)
+                                .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord" : null)
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tn\tcs\tcd\tacd\ts\tf
+                                        2024-01-01T09:00:00.000000Z\t0\t0\t0\t0\tnull\tnull
+                                        2024-01-01T09:01:00.000000Z\t0\t0\t0\t0\tnull\tnull
+                                        2024-01-01T09:02:00.000000Z\t0\t0\t0\t0\tnull\tnull
+                                        """, leftType));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCountOnlyWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -4429,6 +5101,87 @@ public class WindowJoinTest extends AbstractCairoTest {
                             B\t40.0
                             C\t40.0
                             """);
+        });
+    }
+
+    @Test
+    public void testPerRowFalseJoinFilterCountsEmptyWindowAsZero() throws Exception {
+        // Controls for testConstantFalseJoinFilterCountsEmptyWindowAsZero. A join filter that is false
+        // on every row runs the regular path, which reports 0 for count() over an empty window. A
+        // constant-true filter keeps the matching rows, and a WHERE clause that folds to constant
+        // false leaves no master row.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            final String leftType = leftTableTimestampType.getTypeName();
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    final boolean isInclude = prevailing.startsWith("INCLUDE");
+                    final String range = " RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " + prevailing;
+                    for (String condition : new String[]{"t.sym = p.sym AND t.k < 0", "t.sym = p.sym AND p.price < 0"}) {
+                        final String query = "SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s " +
+                                "FROM cz_trades t WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
+                        assertWindowJoinParallelism(query, isParallel);
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .sizeMayVary()
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tc\tcp\ts
+                                        2024-01-01T09:00:00.000000Z\t0\t0\tnull
+                                        2024-01-01T09:01:00.000000Z\t0\t0\tnull
+                                        2024-01-01T09:02:00.000000Z\t0\t0\tnull
+                                        """, leftType));
+                    }
+
+                    // A window bound that reads a master column takes the general join path.
+                    final String dynamicQuery = "SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s " +
+                            "FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym AND t.k < 0) " +
+                            "RANGE BETWEEN t.k MINUTES PRECEDING AND CURRENT ROW " + prevailing;
+                    assertWindowJoinParallelism(dynamicQuery, isParallel);
+                    assertQuery(dynamicQuery)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns(replaceTimestampSuffix("""
+                                    ts\tc\tcp\ts
+                                    2024-01-01T09:00:00.000000Z\t0\t0\tnull
+                                    2024-01-01T09:01:00.000000Z\t0\t0\tnull
+                                    2024-01-01T09:02:00.000000Z\t0\t0\tnull
+                                    """, leftType));
+
+                    assertQuery("SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s " +
+                            "FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym AND 1 = 1)" + range)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns(replaceTimestampSuffix(isInclude
+                                    ? """
+                                    ts\tc\tcp\ts
+                                    2024-01-01T09:00:00.000000Z\t1\t1\t1.0
+                                    2024-01-01T09:01:00.000000Z\t2\t2\t3.0
+                                    2024-01-01T09:02:00.000000Z\t1\t1\t3.0
+                                    """
+                                    : """
+                                    ts\tc\tcp\ts
+                                    2024-01-01T09:00:00.000000Z\t1\t1\t1.0
+                                    2024-01-01T09:01:00.000000Z\t1\t1\t2.0
+                                    2024-01-01T09:02:00.000000Z\t1\t1\t3.0
+                                    """, leftType));
+
+                    assertQuery("SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s " +
+                            "FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym)" + range +
+                            " WHERE t.ts2 IN '2024-01-06#workday'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns("ts\tc\tcp\ts\n");
+                }
+            }
         });
     }
 
@@ -8704,6 +9457,29 @@ public class WindowJoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createEmptyWindowCountTables() throws SqlException {
+        // ts2 and pts2 fall on a Monday. Each master row has one slave row of its symbol in its
+        // one-minute window. INCLUDE PREVAILING adds the earlier 'a' row to the second master row.
+        executeWithRewriteTimestamp(
+                "CREATE TABLE cz_trades (sym SYMBOL, k INT, ts2 TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE cz_prices (sym SYMBOL, price DOUBLE, pts2 TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute("""
+                INSERT INTO cz_trades VALUES
+                  ('a', 1, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:00:00.000000Z'),
+                  ('a', 2, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:01:00.000000Z'),
+                  ('b', 3, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:02:00.000000Z')""");
+        execute("""
+                INSERT INTO cz_prices VALUES
+                  ('a', 1.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T08:59:30.000000Z'),
+                  ('a', 2.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:00:30.000000Z'),
+                  ('b', 3.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:01:30.000000Z')""");
     }
 
     private void prepareTable() throws SqlException {

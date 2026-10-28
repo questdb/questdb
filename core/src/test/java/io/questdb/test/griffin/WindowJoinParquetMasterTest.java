@@ -43,13 +43,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 /**
  * A WINDOW JOIN whose ON filter is constant false compiles to an
  * {@code ExtraNullColumnCursorFactory} splice over the join MASTER: the slave never
- * contributes rows, so the master scan is padded with synthetic NULL columns for the
- * window aggregates. A parquet-backed master - {@code read_parquet()} with an explicit
- * {@code TIMESTAMP(ts)} declaration - hands the splice a plain {@link PageFrameCursor},
- * not a {@link TablePageFrameCursor}, so the splice must claim only the surface its base
+ * contributes rows, so the master scan is padded with synthetic NULL columns for window
+ * aggregates whose empty value is NULL. Count-family aggregates report their empty value
+ * (0) through the splice's records, and such a splice offers no page frames. A
+ * parquet-backed master - {@code read_parquet()} with an explicit {@code TIMESTAMP(ts)}
+ * declaration - hands the splice a plain {@link PageFrameCursor}, not a
+ * {@link TablePageFrameCursor}, so the splice must claim only the surface its base
  * actually provides. A table-backed master must preserve the table cursor surface for
- * consumers that use its reader and partition controls. Page-frame consumers above the
- * splice (parallel GROUP BY, top-K) drive the plain seam end-to-end.
+ * consumers that use its reader and partition controls. The page-frame seam tests use
+ * NULL-only aggregates, and page-frame consumers above the splice (parallel GROUP BY,
+ * top-K) drive the plain seam end-to-end.
  */
 public class WindowJoinParquetMasterTest extends AbstractCairoTest {
 
@@ -63,6 +66,36 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
                     "FROM ((SELECT * FROM read_parquet('x.parquet')) TIMESTAMP(ts)) " +
                     "WINDOW JOIN prices p ON (0 = 1) " +
                     "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+
+    @Test
+    public void testConstFalseWindowJoinOverParquetMasterCountsEmptyWindowAsZero() throws Exception {
+        // count() over the empty window reports 0 on every parquet master row, directly and through
+        // the GROUP BY on top, while sum() stays NULL.
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String windowJoin = "SELECT v, ts, count() c, sum(price) w " +
+                    "FROM ((SELECT * FROM read_parquet('x.parquet')) TIMESTAMP(ts)) " +
+                    "WINDOW JOIN prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+            assertQuery(windowJoin + " LIMIT 3")
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            v\tts\tc\tw
+                            1\t1970-01-01T00:00:01.000000Z\t0\tnull
+                            2\t1970-01-01T00:00:02.000000Z\t0\tnull
+                            3\t1970-01-01T00:00:03.000000Z\t0\tnull
+                            """);
+            assertQuery("SELECT sum(v) s, count(ts) n, sum(c) sc, count(c) cc, count(w) cw FROM (" + windowJoin + ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tn\tsc\tcc\tcw
+                            55\t10\t0\t10\t0
+                            """);
+        });
+    }
 
     @Test
     public void testConstFalseWindowJoinOverParquetMasterPageFrameSurface() throws Exception {
@@ -131,6 +164,53 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
                             10\t1970-01-01T00:00:10.000000Z\tnull
                             9\t1970-01-01T00:00:09.000000Z\tnull
                             8\t1970-01-01T00:00:08.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstFalseWindowJoinOverTableMasterCountsEmptyWindowAsZero() throws Exception {
+        // Page frames carry no data for the spliced columns, so a splice that reports count() as 0
+        // must hide the table base's page-frame capability. It keeps the time-frame capability,
+        // whose records report the same values as its record cursor.
+        assertMemoryLeak(() -> {
+            createFixture();
+            execute("""
+                    CREATE TABLE table_x AS (
+                        SELECT x::int v, (x * 1_000_000)::timestamp ts FROM long_sequence(10)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String windowJoin = "SELECT v, ts, count() c, sum(price) w " +
+                    "FROM table_x " +
+                    "WINDOW JOIN prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+            try (RecordCursorFactory factory = select(windowJoin)) {
+                RecordCursorFactory splice = findFactory(factory, ExtraNullColumnCursorFactory.class);
+                Assert.assertNotNull("const-false WINDOW JOIN must compile to the ExtraNullColumn splice", splice);
+                Assert.assertFalse("the splice must not offer page frames once it reports count() as 0", splice.supportsPageFrameCursor());
+                Assert.assertTrue("the splice must keep the table base time-frame capability", splice.supportsTimeFrameCursor());
+            }
+            assertQuery(windowJoin)
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            ExtraEmptyValueColumnRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_x
+                            """)
+                    .returns("""
+                            v\tts\tc\tw
+                            1\t1970-01-01T00:00:01.000000Z\t0\tnull
+                            2\t1970-01-01T00:00:02.000000Z\t0\tnull
+                            3\t1970-01-01T00:00:03.000000Z\t0\tnull
+                            4\t1970-01-01T00:00:04.000000Z\t0\tnull
+                            5\t1970-01-01T00:00:05.000000Z\t0\tnull
+                            6\t1970-01-01T00:00:06.000000Z\t0\tnull
+                            7\t1970-01-01T00:00:07.000000Z\t0\tnull
+                            8\t1970-01-01T00:00:08.000000Z\t0\tnull
+                            9\t1970-01-01T00:00:09.000000Z\t0\tnull
+                            10\t1970-01-01T00:00:10.000000Z\t0\tnull
                             """);
         });
     }
