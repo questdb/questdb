@@ -38,7 +38,7 @@ import org.jetbrains.annotations.TestOnly;
 /**
  * Wraps a {@link PartitionFrameCursor}, translating each delegate frame's directory-cumulative {@code [rowLo, rowHi)}
  * into one or more physical, file-row-space sub-frames. A parquet partition with an index row map gets one sub-frame
- * per row group, in index rows.
+ * per run of row groups with contiguous index rows, in index rows.
  */
 public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor {
     private final CompositePartitionFrame frame = new CompositePartitionFrame();
@@ -231,17 +231,39 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     }
 
     /**
-     * Emits the part of the pending row group the range covers, in index rows, and advances past it.
+     * Emits the part of the pending run of row groups the range covers, in index rows, and advances past it. A run is
+     * the longest sequence of consecutive row groups sharing one shift (index row minus partition row): their index
+     * rows are contiguous, so one frame covers them all. Row groups an in-place update did not move share a shift, so
+     * a partition yields a few frames rather than one per row group.
      */
     private @Nullable PartitionFrame nextRowGroup() {
         final ParquetMetaFileReader metadata = pendingParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
         while (pendingCumLo < pendingCumHi && pendingPieceOrdinal >= 0 && pendingPieceOrdinal < rowGroupCount) {
-            final long rowGroupStartRow = pendingRowGroupStartRow;
-            final long rowGroupSize = metadata.getRowGroupSize(pendingPieceOrdinal);
-            final long shift = metadata.getRowGroupIndexRowLo(pendingPieceOrdinal, rowGroupStartRow) - rowGroupStartRow;
-            final long subCumLo = Math.max(pendingCumLo, rowGroupStartRow);
-            final long subCumHi = Math.min(pendingCumHi, rowGroupStartRow + rowGroupSize);
+            int rowGroup = pendingPieceOrdinal;
+            long runStartRow = pendingRowGroupStartRow;
+            long runEndRow = runStartRow + metadata.getRowGroupSize(rowGroup);
+            final long shift = metadata.getRowGroupIndexRowLo(rowGroup, runStartRow) - runStartRow;
+            if (descending) {
+                while (runStartRow > pendingCumLo && rowGroup > 0) {
+                    final long prevStartRow = runStartRow - metadata.getRowGroupSize(rowGroup - 1);
+                    if (metadata.getRowGroupIndexRowLo(rowGroup - 1, prevStartRow) - prevStartRow != shift) {
+                        break;
+                    }
+                    rowGroup--;
+                    runStartRow = prevStartRow;
+                }
+            } else {
+                while (runEndRow < pendingCumHi && rowGroup < rowGroupCount - 1) {
+                    if (metadata.getRowGroupIndexRowLo(rowGroup + 1, runEndRow) - runEndRow != shift) {
+                        break;
+                    }
+                    rowGroup++;
+                    runEndRow += metadata.getRowGroupSize(rowGroup);
+                }
+            }
+            final long subCumLo = Math.max(pendingCumLo, runStartRow);
+            final long subCumHi = Math.min(pendingCumHi, runEndRow);
             if (subCumLo >= subCumHi) {
                 break;
             }
@@ -252,14 +274,14 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
             frame.rowHi = subCumHi + shift;
             if (descending) {
                 pendingCumHi = subCumLo;
-                pendingPieceOrdinal--;
+                pendingPieceOrdinal = rowGroup - 1;
                 if (pendingPieceOrdinal >= 0) {
-                    pendingRowGroupStartRow -= metadata.getRowGroupSize(pendingPieceOrdinal);
+                    pendingRowGroupStartRow = runStartRow - metadata.getRowGroupSize(pendingPieceOrdinal);
                 }
             } else {
                 pendingCumLo = subCumHi;
-                pendingPieceOrdinal++;
-                pendingRowGroupStartRow += rowGroupSize;
+                pendingPieceOrdinal = rowGroup + 1;
+                pendingRowGroupStartRow = runEndRow;
             }
             if (pendingCumLo >= pendingCumHi) {
                 clearPending();

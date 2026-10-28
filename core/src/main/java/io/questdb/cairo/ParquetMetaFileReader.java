@@ -349,7 +349,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.checksumVerified = false;
     }
 
+    /**
+     * Appends to {@code out} the index row ranges {@code [lo, hi)} that partition rows {@code [rowLo, rowHi)} map to,
+     * merging row groups whose index rows are contiguous.
+     */
     public void collectIndexRowRanges(long rowLo, long rowHi, LongList out) {
+        final int outLo = out.size();
         long rowGroupStartRow = 0;
         for (int i = 0; i < rowGroupCount && rowGroupStartRow < rowHi; i++) {
             final long rowGroupEndRow = rowGroupStartRow + getRowGroupSize(i);
@@ -357,7 +362,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             final long hi = Math.min(rowHi, rowGroupEndRow);
             if (lo < hi) {
                 final long shift = getRowGroupIndexRowLo(i, rowGroupStartRow) - rowGroupStartRow;
-                out.add(lo + shift, hi + shift);
+                final int n = out.size();
+                if (n > outLo && out.getQuick(n - 1) == lo + shift) {
+                    // Contiguous in index rows with the previous range: extend it.
+                    out.setQuick(n - 1, hi + shift);
+                } else {
+                    out.add(lo + shift, hi + shift);
+                }
             }
             rowGroupStartRow = rowGroupEndRow;
         }
