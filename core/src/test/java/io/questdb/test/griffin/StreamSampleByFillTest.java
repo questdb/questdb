@@ -81,15 +81,15 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
                     + "ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
             final QueryAssertion assertion = timestampType.equals("timestamp_ns")
                     ? assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").noRandomAccess()
-                            .withPlanNotContaining("Stream Group By")
+                    .withPlanNotContaining("Stream Group By")
                     : query(context, sql).withPlanNotContaining("sort", "Sort");
             assertion.returns(precision("""
-                            ts\tmax
-                            2024-10-26T23:00:00.000000Z\t1.0
-                            2024-10-27T00:00:00.000000Z\t1.0
-                            2024-10-27T01:00:00.000000Z\t1.0
-                            2024-10-27T02:00:00.000000Z\t3.0
-                            """));
+                    ts\tmax
+                    2024-10-26T23:00:00.000000Z\t1.0
+                    2024-10-27T00:00:00.000000Z\t1.0
+                    2024-10-27T01:00:00.000000Z\t1.0
+                    2024-10-27T02:00:00.000000Z\t3.0
+                    """));
         });
     }
 

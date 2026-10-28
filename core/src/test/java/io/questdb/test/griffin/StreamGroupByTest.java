@@ -229,12 +229,12 @@ public class StreamGroupByTest extends AbstractCairoTest {
                         + values + " FROM $table WHERE b < 0 OR flag ORDER BY bucket, sym");
                 assertQuery(sql.replace("$table", "trades")).withEngine(engine).withContext(context)
                         .noLeakCheck().timestamp("bucket").noRandomAccess().returns("""
-                        bucket\tn\tbytes\tflags\tapprox\tlow\thigh\ttotal
-                        1970-01-01T00:00:00.000000Z\t512\t256\t2\t256\t256\t256\t-256
-                        1970-01-01T00:00:00.512000Z\t512\t256\t2\t256\t256\t256\t-256
-                        1970-01-01T00:00:01.024000Z\t512\t256\t2\t256\t256\t256\t-256
-                        1970-01-01T00:00:01.536000Z\t512\t256\t2\t256\t256\t256\t-256
-                        """);
+                                bucket\tn\tbytes\tflags\tapprox\tlow\thigh\ttotal
+                                1970-01-01T00:00:00.000000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-01T00:00:00.512000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-01T00:00:01.024000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-01T00:00:01.536000Z\t512\t256\t2\t256\t256\t256\t-256
+                                """);
             }
         });
     }
@@ -264,13 +264,13 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 }
                 assertQuery(sql).withEngine(engine).withContext(context)
                         .noLeakCheck().timestamp("ts").noRandomAccess().returns("""
-                        ts\tn\tbytes\tflags\tapprox
-                        1970-01-01T00:00:00.000000Z\t1\t1\t1\t1
-                        1970-01-01T00:00:01.000000Z\t1\t1\t1\t1
-                        1970-01-01T00:00:02.000000Z\t1\t1\t1\t1
-                        1970-01-01T00:00:03.000000Z\t3\t3\t2\t3
-                        1970-01-01T00:00:04.000000Z\t1\t1\t1\t1
-                        """);
+                                ts\tn\tbytes\tflags\tapprox
+                                1970-01-01T00:00:00.000000Z\t1\t1\t1\t1
+                                1970-01-01T00:00:01.000000Z\t1\t1\t1\t1
+                                1970-01-01T00:00:02.000000Z\t1\t1\t1\t1
+                                1970-01-01T00:00:03.000000Z\t3\t3\t2\t3
+                                1970-01-01T00:00:04.000000Z\t1\t1\t1\t1
+                                """);
             }
         });
     }
