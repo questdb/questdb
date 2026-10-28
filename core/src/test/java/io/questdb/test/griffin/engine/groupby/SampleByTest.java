@@ -9844,6 +9844,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT count(), dateadd('h', 1, ts) x FROM t SAMPLE BY 1d LIMIT 1, 3")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("Encode sort light lo: 1 hi: 3")
                     .returns("""
                             count\tx
                             24\t2024-01-29T01:00:00.000000Z
@@ -9853,10 +9854,21 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts2")
                     .expectSize()
+                    .withPlanContaining("Long Top K lo: 2")
                     .returns("""
                             ts\tts2\tcount
                             2024-01-28T00:00:00.000000Z\t2024-01-28T00:00:00.000000Z\t24
                             2024-01-29T00:00:00.000000Z\t2024-01-29T00:00:00.000000Z\t24
+                            """);
+            assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT 1, 3")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .withPlanContaining("Encode sort light lo: 1 hi: 3")
+                    .returns("""
+                            ts\tts2\tcount
+                            2024-01-29T00:00:00.000000Z\t2024-01-29T00:00:00.000000Z\t24
+                            2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t24
                             """);
             assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT -2")
                     .noLeakCheck()
