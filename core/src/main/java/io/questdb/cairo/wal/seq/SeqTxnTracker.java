@@ -74,8 +74,9 @@ public class SeqTxnTracker {
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
-    // Published by TableSequencerImpl under its lock, before the seqTxn of the
-    // structure txn that changed it; see getStructureVersion().
+    // Published by TableSequencerImpl under its lock, after the txn log entry and
+    // before its own notifyOnCommit(); CheckWalTransactionsJob can advance seqTxn
+    // ahead of it. See getStructureVersion().
     private volatile long structureVersion = -1;
     // -1 suspended
     // 0 unknown

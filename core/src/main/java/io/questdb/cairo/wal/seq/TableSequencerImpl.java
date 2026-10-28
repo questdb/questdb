@@ -402,8 +402,9 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
-                // Before the seqTxn advance below: no reader may see this txn's
-                // seqTxn while the published structure version is still the old one.
+                // Published before notifyOnCommit() below advances the tracker's
+                // seqTxn. CheckWalTransactionsJob reads the log without this lock and
+                // can advance seqTxn first; no reader pairs the two values.
                 seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
 
                 // The tracker follows the log for every txn, suspended or not, as nextTxn()
