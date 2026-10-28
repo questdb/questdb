@@ -432,6 +432,15 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     // commit frame that closes the group, so any ack at a LOWER
                     // sequence than the last one covered a deferred frame while
                     // the group was still open. That is the property under test.
+                    if (expectAckBeforeCommit) {
+                        // Wait for that ack before close() sends the commit frame.
+                        // Otherwise all frames may arrive in one receive pass, whose
+                        // single cumulative ack then covers the commit frame too.
+                        Assert.assertTrue(
+                                "the force-committed deferred frames were never acked while the group was open",
+                                sender.awaitAckedFsn(DEFERRED_FRAME_COUNT - 1, RELAY_PROBE_TIMEOUT_MS)
+                        );
+                    }
                 }
                 tee.close();
                 serverFrames = tee.serverBinaryFrames();
@@ -456,9 +465,8 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
 
             // Both arms require the group-closing ack, so its presence never
             // discriminates. What discriminates is whether anything was acked
-            // BEFORE it -- comparing sequences rather than counting frames keeps
-            // this independent of the ack batch threshold and of how many
-            // sequences the handshake consumes.
+            // BEFORE it, so the assertions compare sequences rather than count
+            // frames.
             Assert.assertTrue("the server sent no OK ack at all; acks seen: " + observed, okAckCount > 0);
             // The client sends DEFERRED_FRAME_COUNT deferred frames at sequences
             // 0..n-1, then close() sends the group-closing commit frame at n.
