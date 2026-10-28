@@ -6620,6 +6620,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // cannot provide yet. WAL apply skips the ALTER on an instance that has one at apply time.
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.isPartitionDeltaActive(i) || txWriter.isPartitionRemotelyServed(i)) {
+                if (walApplySeqTxn > 0) {
+                    // WAL apply tolerates this failure and skips the ALTER, so say so at ERROR.
+                    LOG.error().$("index not created on this instance [table=").$(tableToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", seqTxn=").$(walApplySeqTxn)
+                            .$(", reason=table has a delta-active or remotely served partition]")
+                            .$();
+                }
                 throw CairoException.invalidMetadataRecoverable(
                         "cannot create index, table has a delta-active or remotely served partition",
                         columnName
