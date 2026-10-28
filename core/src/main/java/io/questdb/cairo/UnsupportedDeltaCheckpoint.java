@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -37,17 +38,30 @@ import io.questdb.std.str.Utf8s;
  */
 public final class UnsupportedDeltaCheckpoint implements DeltaCheckpoint {
     private final FindVisitor catalogVisitor = this::checkCatalog;
+    private final CairoConfiguration configuration;
     private final DirectUtf8StringZ nameSink = new DirectUtf8StringZ();
     private final FindVisitor partitionVisitor = this::checkPartition;
     private FilesFacade ff;
+    private TableReaderMetadata metadata;
     private Path table;
     private int tableLen;
+    private TxReader txn;
+
+    public UnsupportedDeltaCheckpoint(CairoConfiguration configuration) {
+        this.configuration = configuration;
+    }
 
     @Override
     public void capture(TableReader reader, Path checkpoint, SqlExecutionCircuitBreaker circuitBreaker) {
         if (reader.hasAnyDelta()) {
             throw CairoException.nonCritical().put("Delta checkpoint capture is not supported");
         }
+    }
+
+    @Override
+    public void close() {
+        metadata = Misc.free(metadata);
+        txn = Misc.free(txn);
     }
 
     @Override
@@ -58,7 +72,9 @@ public final class UnsupportedDeltaCheckpoint implements DeltaCheckpoint {
         try {
             ff.iterateDir(checkpoint.$(), catalogVisitor);
             // Delta written after the capture lives in partition directories, e.g. 2020-01-01.5/_delta.
-            ff.iterateDir(table.$(), partitionVisitor);
+            if (hasDeltaState(checkpoint)) {
+                ff.iterateDir(table.trimTo(tableLen).$(), partitionVisitor);
+            }
         } finally {
             table.trimTo(tableLen);
             this.table = null;
@@ -75,6 +91,36 @@ public final class UnsupportedDeltaCheckpoint implements DeltaCheckpoint {
     private void checkPartition(long name, int type) {
         if (Files.notDots(name) && ff.exists(table.trimTo(tableLen).concat(name).concat(DIRECTORY_NAME).$())) {
             throw CairoException.nonCritical().put("Delta checkpoint recovery is not supported");
+        }
+    }
+
+    /**
+     * Whether the checkpoint or the live copy of the table flags Delta state. Only then can a partition
+     * directory hold Delta files. A view has no partitions.
+     */
+    private boolean hasDeltaState(Path checkpoint) {
+        final int checkpointLen = checkpoint.size();
+        try {
+            if (!ff.exists(checkpoint.concat(TableUtils.META_FILE_NAME).$())) {
+                return false;
+            }
+            if (metadata == null) {
+                metadata = new TableReaderMetadata(configuration);
+            }
+            if (txn == null) {
+                txn = new TxReader(ff);
+            }
+            metadata.loadMetadata(checkpoint.$());
+            final int timestampType = metadata.getTimestampType();
+            final int partitionBy = metadata.getPartitionBy();
+            return DeltaCheckpoint.hasDeltaState(ff, txn, checkpoint.trimTo(checkpointLen).concat(TableUtils.TXN_FILE_NAME).$(), timestampType, partitionBy)
+                    || DeltaCheckpoint.hasDeltaState(ff, txn, table.trimTo(tableLen).concat(TableUtils.TXN_FILE_NAME).$(), timestampType, partitionBy);
+        } finally {
+            checkpoint.trimTo(checkpointLen);
+            table.trimTo(tableLen);
+            if (metadata != null) {
+                metadata.clear();
+            }
         }
     }
 }
