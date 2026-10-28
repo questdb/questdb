@@ -88,7 +88,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
-    public void testPreparedSingletonMalformedValueRestoresBatchSavepoint() throws Exception {
+    public void testJoiningFrameMalformedValueKeepsBatchRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared_strings (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -116,26 +116,127 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     }
                     state.prepareMessage();
                     Assert.assertTrue(state.isOk());
-                    if (pass == 1) {
-                        Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                        state.armCommitBatchSavepoints(true);
-                    }
-                    state.processPreparedMessage();
                     if (pass == 0) {
+                        state.processPreparedMessage();
                         Assert.assertTrue(state.isOk());
-                        state.addToCommitBatch(0);
+                        Assert.assertTrue(state.tryOpenCommitBatch(0));
                         state.clearMessageState();
                     } else {
+                        Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                        state.processPreparedJoiningMessage();
                         Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
-                        Assert.assertTrue(state.rollbackToCommitBatchSavepoints());
+                        // The appender cancelled the malformed block: the batch's row is all
+                        // the writer holds uncommitted.
+                        Assert.assertTrue(state.isCommitBatchIntact());
                         state.clearErrorForBatchSalvage();
-                        state.commit();
-                        Assert.assertTrue(state.isOk());
+                        Assert.assertTrue(state.commitCommitBatch());
+                        Assert.assertEquals(0, state.getHighestProcessedSequence());
                     }
                 }
             }
             drainWalQueue();
             assertQuery("SELECT val FROM prepared_strings").expectSize().returns("val\nprefix\n");
+        });
+    }
+
+    @Test
+    public void testArrayColumnFramesJoinCommitBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE arrays (arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int frame = 0; frame < 3; frame++) {
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer("arrays")) {
+                        table.getOrCreateColumn("arr", QwpConstants.TYPE_DOUBLE_ARRAY, true).addDoubleArray(new double[]{frame, frame + 0.5});
+                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L + frame);
+                        table.nextRow();
+                        int length = encoder.encode(table);
+                        long address = encoder.getBuffer().getBufferPtr();
+                        state.addData(address, address + length);
+                    }
+                    state.prepareMessage();
+                    Assert.assertTrue(state.isOk());
+                    if (frame == 0) {
+                        state.processPreparedMessage();
+                        Assert.assertTrue(state.tryOpenCommitBatch(frame));
+                    } else {
+                        // Phase 1 re-validates array dimensions on every block, but an
+                        // array column that exists settles the schema like any other.
+                        Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                        state.processPreparedJoiningMessage();
+                        Assert.assertTrue(state.getErrorText(), state.isOk());
+                        Assert.assertTrue(state.addToCommitBatch(frame));
+                    }
+                    state.clearMessageState();
+                }
+                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertEquals(2, state.getHighestProcessedSequence());
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM arrays").noRandomAccess().expectSize().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testCommitBatchCapIsTheQwpMaxUncommittedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // The table's own maxUncommittedRows is 1; the cap the appender commits at, and
+            // the batch must stay below, is the connection's qwp.max.uncommitted.rows.
+            execute("CREATE TABLE capped (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=1");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                @Override
+                public long getQwpMaxUncommittedRows() {
+                    return 3;
+                }
+            };
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareLongBlocks(state, 1, "capped");
+                state.processPreparedMessage();
+                Assert.assertTrue(state.tryOpenCommitBatch(0));
+                state.clearMessageState();
+                prepareLongBlocks(state, 1, "capped");
+                Assert.assertTrue("1 + 1 rows stay below the cap of 3", state.isPreparedMessageJoinableToCommitBatch());
+                state.processPreparedJoiningMessage();
+                Assert.assertTrue(state.addToCommitBatch(1));
+                state.clearMessageState();
+                prepareLongBlocks(state, 1, "capped");
+                Assert.assertFalse("2 + 1 rows would reach the cap", state.isPreparedMessageJoinableToCommitBatch());
+                state.clearMessageState();
+                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertEquals(1, state.getHighestProcessedSequence());
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM capped").noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testFrameAddingColumnIsCommitBatchBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE evolving (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareLongBlocks(state, 1, "evolving");
+                state.processPreparedMessage();
+                Assert.assertTrue(state.tryOpenCommitBatch(0));
+                state.clearMessageState();
+                prepareEvolvedBlock(state, "evolving");
+                Assert.assertFalse("a schema the writer has not settled cannot join", state.isPreparedMessageJoinableToCommitBatch());
+                // Even appended directly, a joining frame cannot create the column.
+                state.processPreparedJoiningMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                Assert.assertTrue("the refused block left the batch's rows alone", state.isCommitBatchIntact());
+                state.clearErrorForBatchSalvage();
+                Assert.assertTrue(state.commitCommitBatch());
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM evolving").noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT \"column\" FROM table_columns('evolving')")
+                    .noRandomAccess().returns("column\nval\nts\n");
         });
     }
 
@@ -148,9 +249,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 for (int pass = 0; pass < 2; pass++) {
                     prepareLongBlocks(state, 1, "prepared", "prepared");
-                    Assert.assertFalse(state.isFrameJoinableToCommitBatch());
                     state.processPreparedMessage();
                     Assert.assertTrue(state.isOk());
+                    Assert.assertFalse("a two-block frame cannot open a commit batch", state.tryOpenCommitBatch(pass));
                     state.processPreparedMessage(); // the prepared first cursor cannot be consumed twice
                     state.commit();
                     Assert.assertTrue(state.isOk());
@@ -178,125 +279,133 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
+                // Empty and rowless frames never open a batch.
                 prepareLongBlocks(state, 0);
-                Assert.assertFalse(state.isFrameJoinableToCommitBatch());
                 state.processPreparedMessage();
                 Assert.assertTrue(state.isOk());
-                state.clearMessageState();
-                prepareLongBlocks(state, 0, "prepared");
-                Assert.assertTrue(state.isFrameJoinableToCommitBatch());
-                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
-                state.processPreparedMessage();
-                state.addToCommitBatch(0);
-                state.clearMessageState();
-                prepareLongBlocks(state, 1, "prepared");
-                Assert.assertFalse("a rowless anonymous batch cannot authorize a lookup", state.isPreparedMessageJoinableToCommitBatch());
-                state.resetCommitBatch();
-                state.processPreparedMessage();
-                state.addToCommitBatch(1);
-                state.clearMessageState();
-                prepareLongBlocks(state, 0, "prepared");
-                Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                state.processPreparedMessage();
-                state.clearMessageState();
-                prepareLongBlocks(state, 0, "prepared", "prepared");
-                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
-                Assert.assertFalse(state.isFrameJoinableToCommitBatch());
-                state.commitCommitBatchTable();
-                state.resetCommitBatch();
-                state.processPreparedMessage();
-                Assert.assertTrue(state.isOk());
+                Assert.assertFalse(state.tryOpenCommitBatch(0));
                 state.commit();
+                state.clearMessageState();
+                prepareLongBlocks(state, 0, "prepared");
+                state.processPreparedMessage();
+                Assert.assertFalse(state.tryOpenCommitBatch(1));
+                state.commit();
+                state.clearMessageState();
+                // A row-bearing singleton opens one.
+                prepareLongBlocks(state, 1, "prepared");
+                state.processPreparedMessage();
+                Assert.assertTrue(state.tryOpenCommitBatch(2));
+                state.clearMessageState();
+                // Rowless and two-block frames cannot join it.
+                prepareLongBlocks(state, 0, "prepared");
+                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                state.clearMessageState();
+                prepareLongBlocks(state, 1, "prepared", "prepared");
+                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                state.clearMessageState();
+                // Another table cannot join it.
+                execute("CREATE TABLE other (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                prepareLongBlocks(state, 1, "other");
+                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                state.clearMessageState();
+                // A row-bearing singleton with the settled schema joins it.
+                prepareLongBlocks(state, 1, "prepared");
+                Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                state.processPreparedJoiningMessage();
+                Assert.assertTrue(state.isOk());
+                Assert.assertTrue(state.addToCommitBatch(3));
+                state.clearMessageState();
+                Assert.assertTrue(state.commitCommitBatch());
+                Assert.assertEquals(3, state.getHighestProcessedSequence());
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n2\n");
         });
     }
 
     @Test
-    public void testPreparedSingletonReplacementBeforePrecheckRefusesBatch() throws Exception {
-        assertPreparedReplacement(false, false, true);
+    public void testPreparedSingletonDropAfterAdmissionLosesBatch() throws Exception {
+        assertBatchLostToReplacement(true, true);
     }
 
     @Test
-    public void testPreparedSingletonDropBeforePrecheckRefusesBatch() throws Exception {
-        assertPreparedReplacement(true, false, true);
+    public void testPreparedSingletonDropBeforeAdmissionCutsBatch() throws Exception {
+        assertBatchLostToReplacement(true, false);
     }
 
     @Test
-    public void testPreparedSingletonReplacementAfterPrecheckRefusesFailedSalvage() throws Exception {
-        assertPreparedReplacement(false, true, true);
+    public void testPreparedSingletonReplacementAfterAdmissionLosesBatch() throws Exception {
+        assertBatchLostToReplacement(false, true);
     }
 
     @Test
-    public void testPreparedSingletonDropAfterPrecheckRefusesDiscard() throws Exception {
-        assertPreparedReplacement(true, true, true);
+    public void testPreparedSingletonReplacementBeforeAdmissionCutsBatch() throws Exception {
+        assertBatchLostToReplacement(false, false);
     }
 
-    @Test
-    public void testPreparedSingletonReplacementAfterPrecheckReportsSalvageFirst() throws Exception {
-        assertPreparedReplacement(false, true, false);
-    }
-
-    private void assertPreparedReplacement(boolean isDrop, boolean isAfterPrecheck, boolean isRefused) throws Exception {
+    /**
+     * The batch's table is dropped, or renamed with its name reused, while a batch is
+     * pending. Before admission the next frame is cut from the batch; after admission
+     * it joins and appends to the old writer. Either way the batch's own commit is
+     * refused (dropped table, or the sequencer's token check), nothing of it is
+     * committed or reported, and the client replays the batch by name.
+     */
+    private void assertBatchLostToReplacement(boolean isDrop, boolean isAfterAdmission) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            AtomicBoolean isCommitRefused = new AtomicBoolean();
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
-                state.of(1, new AllowAllSecurityContext() {
-                    @Override
-                    public void authorizeInsert(TableToken tableToken) {
-                        if (isCommitRefused.get()) {
-                            throw CairoException.authorization().put("refused prepared prefix");
-                        }
-                    }
-                });
+                state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
                 prepareLongBlocks(state, 1, "prepared");
                 state.processPreparedMessage();
-                Assert.assertTrue(state.isOk());
-                state.addToCommitBatch(0);
+                Assert.assertTrue(state.tryOpenCommitBatch(0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared");
-                if (isAfterPrecheck) {
+                if (isAfterAdmission) {
                     Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
                 }
                 execute(isDrop ? "DROP TABLE prepared" : "RENAME TABLE prepared TO prepared_old");
                 execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 long replacementTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
-                isCommitRefused.set(isRefused);
-                if (!isAfterPrecheck) {
+                if (isAfterAdmission) {
+                    state.processPreparedJoiningMessage();
+                    Assert.assertTrue(state.isOk());
+                    state.addToCommitBatch(1);
+                } else {
                     Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
-                    state.commitCommitBatchTable();
-                } else {
-                    state.armCommitBatchSavepoints(true);
-                    state.processPreparedMessage();
                 }
-                if (isRefused) {
-                    Assert.assertFalse(state.isOk());
-                    Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
-                } else {
-                    Assert.assertTrue(state.isOk());
-                    Assert.assertFalse(state.isFrameJoinableToCommitBatch());
-                    Assert.assertTrue("salvage reports before replacement commit", state.getPendingAckSeqTxns().get("prepared_old") > 0);
-                    Assert.assertTrue(state.getPendingAckSeqTxns().keyIndex("prepared") >= 0);
-                    state.commitCommitBatchTable(); // no longer owns the salvaged writer
-                    state.resetCommitBatch();
-                    state.commit();
-                    Assert.assertTrue(state.isOk());
-                    Assert.assertTrue(state.getPendingAckSeqTxns().get("prepared") > replacementTxn);
-                }
+                Assert.assertFalse(state.commitCommitBatch());
+                Assert.assertFalse(state.isOk());
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(-1, state.getHighestProcessedSequence());
+                state.abandonCommitBatch();
+                Assert.assertTrue(state.hasUnresolvedSequence());
+                state.clear();
                 state.onDisconnected();
-                Assert.assertEquals(replacementTxn + (isRefused ? 0 : 1),
-                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
+                Assert.assertEquals(replacementTxn, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n" + (isRefused ? 0 : 1) + "\n");
+            assertQuery("SELECT count() FROM prepared").noRandomAccess().expectSize().returns("count\n0\n");
             if (!isDrop) {
-                assertQuery("SELECT count() FROM prepared_old").noRandomAccess().expectSize().returns("count\n" + (isRefused ? 0 : 1) + "\n");
+                assertQuery("SELECT count() FROM prepared_old").noRandomAccess().expectSize().returns("count\n0\n");
             }
         });
+    }
+
+    private static void prepareEvolvedBlock(QwpIngressProcessorState state, String name) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(name)) {
+            table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
+            table.getOrCreateColumn("extra", QwpConstants.TYPE_LONG, false).addLong(8);
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(2_000_000L);
+            table.nextRow();
+            int length = encoder.encode(table);
+            long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
     }
 
     private static void prepareLongBlocks(QwpIngressProcessorState state, int rows, String... names) {

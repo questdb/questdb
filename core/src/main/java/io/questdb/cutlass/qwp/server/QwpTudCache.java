@@ -77,10 +77,6 @@ public class QwpTudCache implements QuietCloseable {
     private final long maxUncommittedRows;
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
-    // Set when a lookup evicted an entry and discarded its uncommitted rows. With
-    // a QWP commit batch pending those rows belong to earlier frames, which then
-    // cannot be acknowledged. See rollbackToSavepoints.
-    private boolean hasDiscardedBufferedRows;
     private final Telemetry<TelemetryTask> telemetry;
     private volatile int cachedTableCount;
     // Optional callback mirroring commitAll(consumer)'s: invoked after a
@@ -90,9 +86,8 @@ public class QwpTudCache implements QuietCloseable {
     // salvaged txn; UDP receivers leave it null (no ack channel to update).
     // QwpWalAppender's internal threshold commit (appendToWalColumnar ->
     // tud.commitIfMaxUncommittedRowsCountReached()) also has no direct consumer
-    // hook; the commit entry points, and reportCommitted() for a QWP commit
-    // batch, reconcile that advance through reportCommittedTxn() before
-    // acknowledging the frame.
+    // hook; the commit entry points reconcile that advance through
+    // reportCommittedTxn() before acknowledging the frame.
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
@@ -208,111 +203,6 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Restores the writers the current frame touched to the savepoints
-     * {@link #setSavepoint} took at their first touch in it, keeping the rows of
-     * earlier frames; writers it did not touch keep everything. Returns false
-     * when earlier frames' rows cannot be kept: the cache is distressed, a
-     * restore failed or was refused, or this frame's lookups evicted an entry and
-     * discarded its buffered rows (see evictStaleTud).
-     */
-    public boolean rollbackToSavepoints(long epoch) {
-        if (isDistressed || hasDiscardedBufferedRows) {
-            return false;
-        }
-        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.getQuick(i));
-            if (tud.isDropped() || tud.getSavepointEpoch() != epoch) {
-                continue;
-            }
-            try {
-                if (tud.getWriter() instanceof WalWriter walWriter) {
-                    if (!walWriter.rollbackToSavepoint()) {
-                        LOG.error().$("no usable savepoint, commit batch lost [table=").$(keys.getQuick(i)).I$();
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            } catch (Throwable th) {
-                LOG.error().$("could not roll back to savepoint [table=").$(keys.getQuick(i)).$(", e=").$(th).I$();
-                isDistressed = true;
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Starts a frame that follows a pending commit batch: forgets an earlier
-     * frame's discard, so {@link #rollbackToSavepoints} judges this frame alone.
-     */
-    public void resetDiscardedBufferedRows() {
-        hasDiscardedBufferedRows = false;
-    }
-
-    /**
-     * Marks a savepoint at the end of this writer's open transaction the first
-     * time frame {@code epoch} touches it, before the frame appends anything.
-     */
-    public void setSavepoint(WalTableUpdateDetails tud, long epoch) {
-        if (tud.getSavepointEpoch() != epoch) {
-            if (tud.getWriter() instanceof WalWriter walWriter) {
-                walWriter.setSavepoint();
-            }
-            tud.setSavepointEpoch(epoch);
-        }
-    }
-
-    /**
-     * Commits one cached table, with {@link #commitAll}'s semantics for that
-     * entry: a dropped table is evicted, and if it held rows the call refuses
-     * to acknowledge them. A table no longer cached was evicted by a lookup
-     * that salvaged its rows (a discarding eviction fails that lookup), so
-     * there is nothing left to commit.
-     */
-    public void commitTable(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
-        final Utf8Sequence tableName = tud.getTableNameUtf8();
-        final int keyIndex = tableUpdateDetails.keyIndex(tableName);
-        if (keyIndex > -1 || tableUpdateDetails.valueAt(keyIndex) != tud) {
-            return;
-        }
-        final boolean hasBufferedRows = !tud.isFirstRow();
-        try {
-            if (!tud.isDropped()) {
-                tud.commit(false);
-                advanceStructureCheckGate(tud);
-                reportCommittedTxn(tud, consumer);
-            }
-        } catch (CommitFailedException e) {
-            if (!e.isTableDropped()) {
-                throw e.getReason();
-            }
-            tud.setIsDropped();
-        }
-        if (tud.isDropped()) {
-            final CairoException discarded = hasBufferedRows
-                    ? CairoException.nonCritical().put("dropped table discarded buffered rows, cannot acknowledge: ").put(tableName)
-                    : null;
-            tableUpdateDetails.removeAt(keyIndex);
-            cachedTableCount = tableUpdateDetails.size();
-            Misc.free(tud);
-            if (discarded != null) {
-                throw discarded;
-            }
-        }
-    }
-
-    /**
-     * Reports a commit this cache did not make -- the appender's own commit at the
-     * max-uncommitted-rows cap -- to {@link #committedTxnConsumer}, as a commit
-     * through this cache would.
-     */
-    public void reportCommitted(WalTableUpdateDetails tud) {
-        reportCommittedTxn(tud, committedTxnConsumer);
-    }
-
-    /**
      * Commits all cached tables. Aborts on the first non-dropped-table commit
      * failure, leaving the remaining tables uncommitted. Suitable for callers
      * that propagate the error to the client (e.g. HTTP/WebSocket).
@@ -384,6 +274,41 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
+     * Commits a QWP commit batch: the rows that consecutive frames appended to
+     * {@code tud}'s writer without committing. The batch is committed only when
+     * {@code tud} is still this cache's entry for its name and its writer holds exactly
+     * {@code expectedRows} uncommitted rows, the rows the batch appended; otherwise it
+     * throws without committing. A batch whose rows another path committed, discarded
+     * or replaced can therefore never be acknowledged as committed through here.
+     * <p>
+     * Reports the commit's seqTxn to {@code consumer} like {@link #commitAll}. A
+     * dropped table throws; the caller rolls everything back and refuses the batch.
+     */
+    public void commitBatch(WalTableUpdateDetails tud, long expectedRows, CommittedTxnConsumer consumer) throws Throwable {
+        if (!isCachedEntry(tud) || tud.isDropped() || tud.getWriter() == null
+                || tud.getWriter().getUncommittedRowCount() != expectedRows) {
+            throw CairoException.critical(0)
+                    .put("commit batch rows are not intact, cannot acknowledge [table=")
+                    .put(tud.getTableNameUtf8())
+                    .put(", expectedRows=").put(expectedRows)
+                    .put(']');
+        }
+        try {
+            tud.commit(false);
+        } catch (CommitFailedException e) {
+            if (!e.isTableDropped()) {
+                throw e.getReason();
+            }
+            tud.setIsDropped();
+            throw CairoException.nonCritical()
+                    .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                    .put(tud.getTableNameUtf8());
+        }
+        advanceStructureCheckGate(tud);
+        reportCommittedTxn(tud, consumer);
+    }
+
+    /**
      * Whether ANY live table in this cache still holds rows appended but not committed.
      * <p>
      * This is the fact behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
@@ -401,6 +326,18 @@ public class QwpTudCache implements QuietCloseable {
             }
         }
         return false;
+    }
+
+    /**
+     * True when {@code tud} is this cache's current entry for its table name.
+     */
+    public boolean isCachedEntry(WalTableUpdateDetails tud) {
+        final int keyIndex = tableUpdateDetails.keyIndex(tud.getTableNameUtf8());
+        return keyIndex < 0 && tableUpdateDetails.valueAt(keyIndex) == tud;
+    }
+
+    public boolean isDistressed() {
+        return isDistressed;
     }
 
     /**
@@ -653,7 +590,6 @@ public class QwpTudCache implements QuietCloseable {
                     // the QWP layer refuses the frame (the deferred-ack clamp
                     // holds; the client replays). The next lookup acquires a
                     // fresh writer from the pool.
-                    hasDiscardedBufferedRows |= !tud.isFirstRow();
                     tableUpdateDetails.removeAt(key);
                     cachedTableCount = tableUpdateDetails.size();
                     Misc.free(tud, th);
@@ -1049,7 +985,6 @@ public class QwpTudCache implements QuietCloseable {
         // rejects instead of acknowledging them; the UDP receiver has no ack and
         // simply drops the datagram.
         if (hadBufferedRows && !isSalvaged) {
-            hasDiscardedBufferedRows = true;
             throw CairoException.nonCritical()
                     .put(isRenamed ? "renamed" : "dropped")
                     .put(" table discarded buffered rows, cannot acknowledge: ")

@@ -288,6 +288,60 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
      * rows again until the client's poison detector halts the sender.
      */
     @Test
+    public void testBadValueInCommitBatchIsNackedAfterEarlierFramesAreAcked() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TestServerMain server = startWithEnvVariables()) {
+                server.execute("CREATE TABLE u (id UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final List<SenderError> errors = new CopyOnWriteArrayList<>();
+                // The tee hands the server the connection's first three frames in one write.
+                // They share one schema, so the second and third join the first's commit
+                // batch, and the third fails on its own value while joining.
+                try (AckTee tee = new AckTee(HTTP_PORT, 0, 3)) {
+                    final Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + tee.localPort())
+                            .autoFlushRows(0)
+                            .autoFlushBytes(0)
+                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
+                            .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MILLIS)
+                            .errorHandler(errors::add)
+                            .build();
+                    try {
+                        sender.table("u").stringColumn("id", "11111111-1111-1111-1111-111111111111").at(1_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        sender.table("u").stringColumn("id", "22222222-2222-2222-2222-222222222222").at(2_000_000L, ChronoUnit.MICROS);
+                        final long secondFsn = sender.flushAndGetSequence();
+                        sender.table("u").stringColumn("id", "not-a-uuid").at(3_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.assertTrue(
+                                "the frames before the bad one must be acked; errors: " + errors,
+                                sender.awaitAckedFsn(secondFsn, RELAY_PROBE_TIMEOUT_MS)
+                        );
+                        TestUtils.assertEventually(() -> {
+                            final SenderError terminal = ((QwpWebSocketSender) sender).getLastTerminalError();
+                            Assert.assertNotNull("the bad frame must latch a terminal error; errors: " + errors, terminal);
+                            Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, terminal.getCategory());
+                        });
+                    } finally {
+                        try {
+                            sender.close();
+                        } catch (Throwable ignore) {
+                            // close rethrows the latched terminal error
+                        }
+                    }
+                    tee.close();
+                    Assert.assertTrue("the three frames never reached the server in one write", tee.hasCoalescedFrames);
+                }
+                TestUtils.assertEventually(() -> server.assertSql(
+                        "SELECT count() FROM wal_tables() WHERE writerTxn < sequencerTxn", "count\n0\n"));
+                server.assertSql("SELECT id FROM u",
+                        "id\n11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222\n");
+                // One commit for both: the second frame joined the first's batch.
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'u'", "sequencerTxn\n1\n");
+            }
+        });
+    }
+
+    @Test
     public void testReplayAfterReconnectDoesNotDuplicateBoundaryCommittedRows() throws Exception {
         assertMemoryLeak(() -> {
             try (TestServerMain server = startWithEnvVariables(

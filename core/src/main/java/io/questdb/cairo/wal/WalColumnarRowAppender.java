@@ -105,6 +105,11 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         // Handle pending segment roll, similar to what newRow() does.
         // This is needed when columns are added while rollSegmentOnNextRow is true,
         // since addColumn defers opening column files until the segment is rolled.
+        // The roll opens an empty segment without copying rows, so it must never
+        // find uncommitted rows: the flag is set only after a commit and by
+        // rollUncommittedToNewSegment with nothing uncommitted. QWP commit batching
+        // keeps rows uncommitted across blocks and relies on this.
+        assert !walWriter.rollSegmentOnNextRow || walWriter.getUncommittedRowCount() == 0;
         try {
             if (walWriter.rollSegmentOnNextRow) {
                 walWriter.rollSegment();

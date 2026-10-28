@@ -144,6 +144,59 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A client CLOSE behind a commit batch: the batch commits before the CLOSE is
+     * handled, the commit fails, and its NACK hits backpressure. The CLOSE must still
+     * be in the receive buffer, unconsumed and masked, so the resume pass answers it.
+     */
+    @Test
+    public void testClientCloseBehindFailedBatchCommitIsHandledAfterBlockedNack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] data = encodedBoundaryFrame("boundary_a");
+            byte[] close = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+            byte[] wire = new byte[data.length + close.length];
+            System.arraycopy(data, 0, wire, 0, data.length);
+            System.arraycopy(close, 0, wire, data.length, close.length);
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                state.of(-1, new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken token) {
+                        throw CairoException.authorization().put("refused batch commit");
+                    }
+                });
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the batch's NACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals(0, state.getDeferredErrorSequence());
+                    Assert.assertEquals("the CLOSE must stay buffered behind the blocked NACK", close.length, state.getRecvBufferLen());
+                }
+                try {
+                    processor.resumeSend(context);
+                    Assert.fail("the buffered CLOSE must be handled after the parked NACK");
+                } catch (ServerDisconnectException expected) {
+                    // handleClose completes the handshake and tears the connection down
+                }
+                Assert.assertEquals("the parked NACK, then the CLOSE response", 2, socket.sendCallCount);
+                Assert.assertEquals("the last frame sent is a CLOSE", (byte) 0x88, Unsafe.getByte(send));
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").expectSize().returns("v\n");
+        });
+    }
+
     @Test
     public void testBoundarySuccessConsumesStandaloneFrameBeforeBlockedAck() throws Exception {
         assertMemoryLeak(() -> {

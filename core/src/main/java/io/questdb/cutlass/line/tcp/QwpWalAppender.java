@@ -84,6 +84,15 @@ public class QwpWalAppender implements QuietCloseable {
     private ObjList<QwpColumnDef> resolvedSchema;
     private int resolvedTimestampColumnInBlock;
     private TableWriterAPI resolvedWriter;
+    // The last schema Phase 1 mapped entirely onto existing writer columns -- no
+    // column created, none deferred -- with the writer and metadata version it was
+    // mapped at. Unlike the Phase 1 cache above it also covers array columns, whose
+    // per-block dimension check still runs. Phase 1 on a settled schema through the
+    // same writer at an unchanged metadata version cannot create a column, which
+    // the QWP commit batch relies on (see isSchemaSettled).
+    private long settledMetadataVersion = -1;
+    private ObjList<QwpColumnDef> settledSchema;
+    private TableWriterAPI settledWriter;
     private int[] columnTypeMap;   // QuestDB column types
     private byte[] qwpTypes;       // QWP type codes for conversion
 
@@ -159,9 +168,24 @@ public class QwpWalAppender implements QuietCloseable {
             QwpTableBlockCursor tableBlock,
             TableUpdateDetails tud
     ) throws CommitFailedException, QwpParseException {
+        appendToWalStreaming(securityContext, tableBlock, tud, true);
+    }
+
+    /**
+     * {@link #appendToWalStreaming(SecurityContext, QwpTableBlockCursor, TableUpdateDetails)}
+     * with column creation optionally refused. With {@code isColumnCreationAllowed} false,
+     * a block that names a column the writer does not have throws a critical
+     * {@link CairoException} before any row is appended, instead of altering the table.
+     */
+    public void appendToWalStreaming(
+            SecurityContext securityContext,
+            QwpTableBlockCursor tableBlock,
+            TableUpdateDetails tud,
+            boolean isColumnCreationAllowed
+    ) throws CommitFailedException, QwpParseException {
         for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
-                appendToWalStreaming0(securityContext, tableBlock, tud);
+                appendToWalStreaming0(securityContext, tableBlock, tud, isColumnCreationAllowed);
                 return;
             } catch (MetadataChangedException e) {
                 if (retryCount == maxMetadataChangeRetries) {
@@ -175,6 +199,18 @@ public class QwpWalAppender implements QuietCloseable {
     @Override
     public void close() {
         // No resources to clean up - columnar path uses WalColumnarRowAppender's own resources
+    }
+
+    /**
+     * True when Phase 1 last mapped exactly this schema object onto existing columns of
+     * this writer, and the writer's metadata version has not changed since. Phase 1 for
+     * such a block cannot create a column: every name it resolves still resolves.
+     */
+    public boolean isSchemaSettled(ObjList<QwpColumnDef> schema, TableWriterAPI writer) {
+        return schema != null
+                && schema == settledSchema
+                && writer == settledWriter
+                && writer.getMetadataVersion() == settledMetadataVersion;
     }
 
     /**
@@ -932,7 +968,8 @@ public class QwpWalAppender implements QuietCloseable {
     private void appendToWalStreaming0(
             SecurityContext securityContext,
             QwpTableBlockCursor tableBlock,
-            TableUpdateDetails tud
+            TableUpdateDetails tud,
+            boolean isColumnCreationAllowed
     ) throws CommitFailedException, MetadataChangedException, QwpParseException {
         int columnCount = tableBlock.getColumnCount();
         int rowCount = tableBlock.getRowCount();
@@ -966,9 +1003,11 @@ public class QwpWalAppender implements QuietCloseable {
             return;
         }
         resolvedSchema = null;
+        settledSchema = null;
         // Not cached: array columns resolve against each block's data, and a
         // deferred missing column (-1) is created later.
         boolean isCacheable = schema != null;
+        boolean isSettled = schema != null;
 
         // Phase 1: Resolve column indices and create missing columns
         int timestampColumnInBlock = -1;
@@ -1001,6 +1040,14 @@ public class QwpWalAppender implements QuietCloseable {
                 columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
 
                 if (columnWriterIndex < 0) {
+                    if (!isColumnCreationAllowed) {
+                        throw CairoException.critical(0)
+                                .put("column creation is not allowed in this append [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
                         final int newColumnType;
                         if (colType == TYPE_DOUBLE_ARRAY) {
@@ -1053,6 +1100,7 @@ public class QwpWalAppender implements QuietCloseable {
             columnIndexMap[i] = columnWriterIndex;
             columnTypeMap[i] = columnType;
             isCacheable &= colType != TYPE_DOUBLE_ARRAY && columnWriterIndex >= 0;
+            isSettled &= columnWriterIndex >= 0;
         }
 
         // A concurrent ALTER TABLE (e.g., ALTER COLUMN TYPE) can change the
@@ -1066,6 +1114,11 @@ public class QwpWalAppender implements QuietCloseable {
             resolvedWriter = writer;
             resolvedMetadataVersion = metadataVersion;
             resolvedTimestampColumnInBlock = timestampColumnInBlock;
+        }
+        if (isSettled) {
+            settledSchema = schema;
+            settledWriter = writer;
+            settledMetadataVersion = metadataVersion;
         }
 
         // Phase 2: Write data - always use columnar path

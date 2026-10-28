@@ -124,6 +124,10 @@ public class TableSequencerImpl implements TableSequencer {
             // The txn log is the recovery authority; open it before _meta so a damaged _meta can be rebuilt.
             tableTransactionLog.open(path);
             openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
+            // Covers both a newly created table (the files were created above) and
+            // an existing one: readers comparing a writer's version against the
+            // tracker see the sequencer's version from the first open on.
+            seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
@@ -400,6 +404,9 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+                // Before the seqTxn advance below: no reader may see this txn's
+                // seqTxn while the published structure version is still the old one.
+                seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
 
                 // The tracker follows the log for every txn, suspended or not, the way
                 // nextTxn() already does for data txns. QwpTudCache gates its structure
@@ -482,6 +489,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         reconcileMetadataWithCommittedLog(tableTransactionLog.getMaxMetadataVersion());
+        seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)

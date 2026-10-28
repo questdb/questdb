@@ -61,6 +61,16 @@ public class QwpMessageHeader {
     }
 
     /**
+     * True when the message at {@code address} carries FLAG_DEFER_COMMIT: its rows
+     * join the client's open transaction instead of committing. The one definition
+     * of the flag test, for both the processor state and the commit-batch
+     * pre-check, which must never disagree.
+     */
+    public static boolean isDeferCommit(long address, int length) {
+        return length >= HEADER_SIZE && (Unsafe.getByte(address + HEADER_OFFSET_FLAGS) & FLAG_DEFER_COMMIT) != 0;
+    }
+
+    /**
      * Returns true only for the exact v1 durable-ack poll control frame.
      * Keeping the marker structural prevents a table-less poll from entering
      * the normal commit path and closing a user's deferred-commit group.
@@ -71,16 +81,6 @@ public class QwpMessageHeader {
      * payload it never processed, and a store-and-forward client would trim
      * the matching record.
      */
-    /**
-     * True when the message at {@code address} carries FLAG_DEFER_COMMIT: its rows
-     * join the client's open transaction instead of committing. The one definition
-     * of the flag test, for both the processor state and the commit-batch
-     * pre-check, which must never disagree.
-     */
-    public static boolean isDeferCommit(long address, int length) {
-        return length >= HEADER_SIZE && (Unsafe.getByte(address + HEADER_OFFSET_FLAGS) & FLAG_DEFER_COMMIT) != 0;
-    }
-
     public static boolean isDurableAckPoll(long address, int length) {
         return length == HEADER_SIZE
                 && Unsafe.getInt(address + HEADER_OFFSET_MAGIC) == MAGIC_MESSAGE

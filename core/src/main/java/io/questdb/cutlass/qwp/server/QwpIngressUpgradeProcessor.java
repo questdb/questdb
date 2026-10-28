@@ -992,19 +992,33 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Commit batching: consecutive plain (non-deferred) frames already in the
-     * receive buffer share one WAL commit, made when the receive pass drains. A
-     * commit is a sequencer txn, a txn-log record, an ack-watermark step and an
-     * apply-job unit of work; at one row per message it was ~45% of the ingress
-     * fiber. The receive pass bounds a batch, and the appender's
-     * max-uncommitted-rows cap bounds the rows it holds uncommitted, so a batch
-     * takes no bounds of its own: a cap of 256 frames kept a server that fell
-     * behind committing 256 one-row frames at a time while the backlog stood.
+     * Commit batching: consecutive plain single-block frames for one table, already
+     * in the receive buffer, share one WAL commit, made when the receive pass drains
+     * or at the next frame that cannot join. A commit is a sequencer txn, a txn-log
+     * record, an ack-watermark step and an apply-job unit of work; at one row per
+     * message it was ~45% of the ingress fiber. The receive pass bounds a batch, and
+     * a batch stays below the max-uncommitted-rows cap, so it takes no bound of its
+     * own: a cap of 256 frames kept a server that fell behind committing 256 one-row
+     * frames at a time while the backlog stood.
+     * <p>
+     * While a batch is pending nothing but its commit may touch its writer: a frame
+     * joins only when appending it cannot commit, discard or restructure anything
+     * (see {@code QwpIngressProcessorState.isPreparedMessageJoinableToCommitBatch}),
+     * and the batch is acknowledged only after a positive check that its writer still
+     * holds exactly its rows. A frame that is deferred or a durable-ack poll can never
+     * join and commits the batch before anything else.
      */
     private static boolean isCommitBatchCandidate(long payload, int length) {
         return length >= QwpConstants.HEADER_SIZE
                 && !QwpMessageHeader.isDeferCommit(payload, length)
                 && !QwpMessageHeader.isDurableAckPoll(payload, length);
+    }
+
+    private static void logCommitBatchFailed(HttpConnectionContext context, long firstSeq, long seq, CharSequence errorMessage) {
+        LOG.error().$("WebSocket commit batch failed [fd=").$(context.getFd())
+                .$(", firstSeq=").$(firstSeq)
+                .$(", seq=").$(seq)
+                .$(", error=").$safe(errorMessage).I$();
     }
 
     private static byte[] precomputeBadRequestResponse(String reason) {
@@ -1638,187 +1652,169 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
         boolean roleChangeClose = false;
+        // The sequence an error response names: this frame, except when a commit
+        // batch is lost and the client must replay it from its first frame.
+        long responseSeq = seq;
 
         boolean deferCommit = false;
         boolean closesDeferredGroup = false;
         boolean deferredFrameFullyCommitted = false;
-        // The commit batch this frame follows, if any. Its rows sit uncommitted in
-        // the writers; whatever this frame does, they end up committed (and the
-        // watermark may pass them) or lost (and the watermark is pinned below them).
-        boolean isBatchPending = state.isCommitBatchPending();
-        final long batchFirstSeq = state.getFirstCommitBatchSequence();
-        final long batchLastSeq = state.getLastCommitBatchSequence();
+        // True when this frame's rows joined or opened the commit batch: no ack
+        // until the batch commits.
         boolean isBatched = false;
-        // Set when a commit that covered the batch failed: nothing from
-        // batchFirstSeq on is committed, so that frame -- the one the client
-        // replays first -- is the one to NACK, and a deterministic failure keeps
-        // striking it. This frame is refused behind it.
-        boolean isBatchCommitFailed = false;
+        // Deferred frames and durable-ack polls committed the batch at the top of
+        // this method, so a batch pending here can only meet a plain frame.
+        final boolean isBatchPending = state.isCommitBatchPending();
+        // Everything inside this try only decides: it updates the watermark, the
+        // unresolved sequence and the batch, and records the response. Frames go out
+        // after the finally. The catch below turns any throwable into INTERNAL_ERROR,
+        // so a send that blocked in here would replace this frame's own status.
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
             deferCommit = state.isDeferCommit();
+            assert !isBatchPending || !deferCommit;
 
+            // Decodes the message and checks the live read-only gate.
             state.prepareMessage();
-            if (state.isOk() && isBatchPending && !state.isPreparedMessageJoinableToCommitBatch()) {
-                // Resolve the prefix before any current-frame cache lookup: both
-                // cache eviction and the appender's row cap can commit writers.
-                // Do not send here while the prepared cursor is still live.
-                state.commitCommitBatchTable();
-                if (state.isOk()) {
-                    state.resetCommitBatch();
-                    state.setHighestProcessedSequence(batchLastSeq);
-                    isBatchPending = false;
-                } else {
-                    isBatchCommitFailed = true;
-                }
-            }
-            // A prepare/append failure drops only this frame's rows from the
-            // batch that remains after the boundary, preserving its prefix.
-            state.armCommitBatchSavepoints(isBatchPending);
-            if (!isBatchCommitFailed) {
-                state.processPreparedMessage();
-            }
-            final boolean isProcessed = state.isOk();
-            if (isBatchPending && state.isCommitBatchCommittedBehind()) {
-                // The appender committed the batch's table on its own (the
-                // max-uncommitted-rows cap): the batch's rows are in the WAL. Ack
-                // them as one commit per frame would have; a later failure must not
-                // pin the watermark below durable rows, or the client's replay
-                // duplicates them. This frame then goes on as if no batch were open.
-                // The ack that moves the watermark past the batch must carry that
-                // commit's seqTxn: nothing else reports it, and a durable-ack client
-                // releases frames acked without one as already uploaded.
-                state.reportCommitBatchCommittedBehind();
-                state.resetCommitBatch();
-                state.setHighestProcessedSequence(batchLastSeq);
-                isBatchPending = false;
-            }
 
-            if (state.isOk() && !deferCommit) {
-                // Capture BEFORE commit(): a successful commitAll() clears the
-                // uncommitted-deferred-rows flag, and this frame's ack must then
-                // flush eagerly -- the group's deferred frames were never
-                // individually acked, so the client's store-and-forward slots
-                // (and, in durable-ack mode, seqTxn tracking) all hinge on the
-                // ack that covers this group-closing sequence.
-                // A rowless deferred frame also opens a group that this frame
-                // closes. This frame must commit through commit(), which clears
-                // the rowless marker, instead of joining a commit batch: the
-                // batch's boundary commits bypass commit() and would leave the
-                // ack watermark pinned below rows already in the WAL, so the
-                // client's replay would duplicate them.
-                closesDeferredGroup = state.hasUncommittedDeferredRows() || state.hasWithheldRowlessDeferredFrame();
-                if (isBatchPending && !state.isFrameJoinableToCommitBatch()) {
-                    // A singleton lookup can replace the batch's cached writer
-                    // only after successful salvage and seqTxn reporting. Retain
-                    // the identity split for that late-replacement path.
-                    state.commitCommitBatchTable();
+            boolean isNormalPath = true;
+            if (isBatchPending) {
+                final long batchFirstSeq = state.getFirstCommitBatchSequence();
+                if (state.isOk() && state.isPreparedMessageJoinableToCommitBatch()) {
+                    // A joining frame: a pure append to the batch writer, no lookup and
+                    // no column creation, so nothing else can touch the batch's rows.
+                    isNormalPath = false;
+                    state.processPreparedJoiningMessage();
                     if (state.isOk()) {
-                        state.resetCommitBatch();
-                        state.setHighestProcessedSequence(batchLastSeq);
-                    } else {
-                        isBatchCommitFailed = true;
-                    }
-                }
-                if (state.isOk()) {
-                    // A frame whose own table was committed during it has rows in
-                    // the WAL already: it commits and acks on its own, so no later
-                    // batch failure can NACK it.
-                    if (state.isFrameJoinableToCommitBatch()
-                            && !closesDeferredGroup
-                            && !state.isRoleChangeClosePending()
-                            && !state.isFrameCommittedBehind()) {
-                        state.addToCommitBatch(seq);
-                        isBatched = true;
-                    } else {
-                        // A batch still pending here holds this frame's table only.
-                        final boolean isBatchCovered = state.isCommitBatchPending();
-                        state.commit();
-                        if (isBatchCovered) {
-                            if (state.isOk()) {
-                                state.resetCommitBatch();
-                                state.setHighestProcessedSequence(batchLastSeq);
-                            } else {
-                                isBatchCommitFailed = true;
-                            }
+                        if (state.addToCommitBatch(seq)) {
+                            isBatched = true;
+                        } else {
+                            // The frame appended fine but the batch's rows are no longer
+                            // what its writer holds: nothing of the batch may be acked.
+                            LOG.error().$("WebSocket commit batch lost after a joining frame [fd=").$(context.getFd())
+                                    .$(", firstSeq=").$(batchFirstSeq)
+                                    .$(", seq=").$(seq).I$();
+                            responseStatus = STATUS_INTERNAL_ERROR;
+                            errorMessage = "commit batch lost";
+                            state.abandonCommitBatch();
                         }
                     }
-                }
-            }
-            if (state.isOk() && deferCommit) {
-                // Capture BEFORE the refresh below, for the same reason the
-                // non-deferred arm captures before commit(): if earlier deferred
-                // frames are still withheld, an ack that finally covers them
-                // must flush eagerly rather than wait for unrelated traffic.
-                closesDeferredGroup = state.hasUncommittedDeferredRows();
-                state.commitIfMaxUncommittedRowsReached();
-                if (state.isOk()) {
-                    // The force-commit above fires per-table at the
-                    // max-uncommitted-rows cap, so it may have covered
-                    // everything, something, or nothing. Ask what is actually
-                    // uncommitted instead of assuming the worst -- and require
-                    // that THIS frame's own rows are what became durable. Both
-                    // terms are load-bearing; see refreshDeferredAckCoverage.
-                    deferredFrameFullyCommitted = state.refreshDeferredAckCoverage();
-                }
-            }
-            // Read AFTER the commit calls: processMessage's read-only gate AND the
-            // commit path's authorization-refusal containment (rejectCairoError)
-            // can both flag the role-change close; reading before commit() would
-            // miss the latter and send a client-visible error status instead of
-            // the graceful reconnect-eligible close.
-            roleChangeClose = state.isRoleChangeClosePending();
-            // commit() swallows exceptions internally
-            if (state.isOk()) {
-                if (deferCommit) {
-                    LOG.debug().$("WebSocket deferred commit [fd=").$(context.getFd())
-                            .$(", seq=").$(seq).I$();
-                } else {
-                    LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
-                            .$(", seq=").$(seq).I$();
-                }
-            } else {
-                errorMessage = state.getErrorText();
-                LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
-                        .$(", error=").$safe(errorMessage).I$();
-                responseStatus = responseStatusOf(state);
-            }
-            if (isBatchPending && !isProcessed && !isBatchCommitFailed) {
-                // This frame failed before any commit: keep the batch's rows,
-                // drop this frame's, commit the batch -- the wire then carries
-                // exactly what one-commit-per-frame would: an ack through the
-                // frame before this one, then this frame's error.
-                if (state.rollbackToCommitBatchSavepoints()) {
-                    state.clearErrorForBatchSalvage();
-                    state.commit();
-                    roleChangeClose |= state.isRoleChangeClosePending();
-                    if (state.isOk() && !state.isRoleChangeClosePending()) {
-                        state.resetCommitBatch();
-                        state.setHighestProcessedSequence(batchLastSeq);
-                    } else {
-                        // The batch's own commit failed, not this frame: report
-                        // that at the batch's first frame.
-                        isBatchCommitFailed = true;
+                } else if (state.isOk()) {
+                    // A boundary: commit the batch before this frame touches the engine,
+                    // then process the frame the normal way.
+                    if (!state.commitCommitBatch()) {
+                        // Batch lost at its own commit. This frame is not processed:
+                        // the finally's clear() discards it and the client replays it
+                        // with the batch.
+                        isNormalPath = false;
+                        roleChangeClose = state.isRoleChangeClosePending();
                         errorMessage = state.getErrorText();
-                        responseStatus = state.isOk() ? STATUS_INTERNAL_ERROR : responseStatusOf(state);
+                        responseStatus = responseStatusOf(state);
+                        responseSeq = batchFirstSeq;
+                        logCommitBatchFailed(context, batchFirstSeq, seq, errorMessage);
+                        state.abandonCommitBatch();
+                    }
+                }
+                if (!state.isOk() && state.isCommitBatchPending()) {
+                    // This frame failed with the batch still pending: refused by the live
+                    // gate, malformed, or failed while joining (the appender cancelled its
+                    // block). Commit the batch if it is intact, then answer this frame as
+                    // master would; otherwise the batch is lost.
+                    isNormalPath = false;
+                    final byte frameStatus = responseStatusOf(state);
+                    final String frameError = state.getErrorText();
+                    final boolean isFrameRoleChangeClose = state.isRoleChangeClosePending();
+                    if (state.isCommitBatchIntact()) {
+                        state.clearErrorForBatchSalvage();
+                        if (state.commitCommitBatch()) {
+                            // The watermark is past the batch; this frame gets its own answer.
+                            roleChangeClose = isFrameRoleChangeClose;
+                            errorMessage = frameError;
+                            responseStatus = frameStatus;
+                        } else {
+                            roleChangeClose = state.isRoleChangeClosePending();
+                            errorMessage = state.getErrorText();
+                            responseStatus = responseStatusOf(state);
+                            responseSeq = batchFirstSeq;
+                            logCommitBatchFailed(context, batchFirstSeq, seq, errorMessage);
+                            state.abandonCommitBatch();
+                        }
+                    } else {
+                        // This frame's failure left the batch not intact. Strike this frame,
+                        // retriably: the client replays from its acked watermark, below the
+                        // batch, and the replay normally finds the batch intact and then
+                        // answers this frame with its own status.
+                        LOG.error().$("WebSocket commit batch lost with a failed frame [fd=").$(context.getFd())
+                                .$(", firstSeq=").$(batchFirstSeq)
+                                .$(", failedSeq=").$(seq)
+                                .$(", error=").$safe(frameError).I$();
+                        roleChangeClose = isFrameRoleChangeClose;
+                        errorMessage = frameError;
+                        responseStatus = STATUS_INTERNAL_ERROR;
+                        state.abandonCommitBatch();
+                    }
+                }
+            }
+
+            if (isNormalPath) {
+                state.processPreparedMessage();
+
+                if (state.isOk() && !deferCommit) {
+                    // Capture BEFORE commit(): a successful commitAll() clears the
+                    // uncommitted-deferred-rows flag, and this frame's ack must then
+                    // flush eagerly -- the group's deferred frames were never
+                    // individually acked, so the client's store-and-forward slots
+                    // (and, in durable-ack mode, seqTxn tracking) all hinge on the
+                    // ack that covers this group-closing sequence. A rowless
+                    // deferred frame also opens a group that this frame closes; such
+                    // a frame commits through commit(), which clears the rowless
+                    // marker, and never opens a commit batch.
+                    closesDeferredGroup = state.hasUncommittedDeferredRows() || state.hasWithheldRowlessDeferredFrame();
+                    if (!closesDeferredGroup && state.tryOpenCommitBatch(seq)) {
+                        isBatched = true;
+                    } else {
+                        state.commit();
+                    }
+                }
+                if (state.isOk() && deferCommit) {
+                    // Capture BEFORE the refresh below, for the same reason the
+                    // non-deferred arm captures before commit(): if earlier deferred
+                    // frames are still withheld, an ack that finally covers them
+                    // must flush eagerly rather than wait for unrelated traffic.
+                    closesDeferredGroup = state.hasUncommittedDeferredRows();
+                    state.commitIfMaxUncommittedRowsReached();
+                    if (state.isOk()) {
+                        // The force-commit above fires per-table at the
+                        // max-uncommitted-rows cap, so it may have covered
+                        // everything, something, or nothing. Ask what is actually
+                        // uncommitted instead of assuming the worst -- and require
+                        // that THIS frame's own rows are what became durable. Both
+                        // terms are load-bearing; see refreshDeferredAckCoverage.
+                        deferredFrameFullyCommitted = state.refreshDeferredAckCoverage();
+                    }
+                }
+                // Read AFTER the commit calls: processMessage's read-only gate AND the
+                // commit path's authorization-refusal containment (rejectCairoError)
+                // can both flag the role-change close; reading before commit() would
+                // miss the latter and send a client-visible error status instead of
+                // the graceful reconnect-eligible close.
+                roleChangeClose = state.isRoleChangeClosePending();
+                if (state.isOk()) {
+                    if (deferCommit) {
+                        LOG.debug().$("WebSocket deferred commit [fd=").$(context.getFd())
+                                .$(", seq=").$(seq).I$();
+                    } else {
+                        LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
+                                .$(", seq=").$(seq).I$();
                     }
                 } else {
-                    // This frame's processing destroyed the batch's rows: NACK this
-                    // frame, the culprit, and pin the watermark below the batch.
-                    LOG.error().$("WebSocket commit batch lost with a failed frame [fd=").$(context.getFd())
-                            .$(", firstSeq=").$(batchFirstSeq)
-                            .$(", failedSeq=").$(seq).I$();
-                    state.markSequenceUnresolved(batchFirstSeq);
+                    errorMessage = state.getErrorText();
+                    LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
+                            .$(", error=").$safe(errorMessage).I$();
+                    responseStatus = responseStatusOf(state);
                 }
-            }
-            if (isBatchCommitFailed) {
-                LOG.error().$("WebSocket commit batch failed [fd=").$(context.getFd())
-                        .$(", firstSeq=").$(batchFirstSeq)
-                        .$(", seq=").$(seq)
-                        .$(", error=").$safe(errorMessage).I$();
-                state.markSequenceUnresolved(batchFirstSeq);
             }
         } catch (Throwable e) {
             LOG.error().$("WebSocket ILP processing error [fd=").$(context.getFd())
@@ -1827,15 +1823,22 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             responseStatus = STATUS_INTERNAL_ERROR;
             errorMessage = e.getMessage();
-            if (isBatchPending && state.isCommitBatchPending()) {
-                state.markSequenceUnresolved(batchFirstSeq);
+            roleChangeClose = false;
+            isBatched = false;
+            if (state.isCommitBatchPending()) {
+                // Nothing of the batch can be vouched for: refuse it from its first frame.
+                responseSeq = state.getFirstCommitBatchSequence();
+                state.abandonCommitBatch();
             }
         } finally {
             if ((deferCommit || isBatched) && state.isOk()) {
-                // Preserve WAL state for the next message in the deferred batch
+                // Preserve WAL state for the next message in the deferred group or
+                // the commit batch.
                 state.clearMessageState();
             } else {
-                // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
+                // Reset state for next message (but preserve connectionSymbolDict for
+                // delta encoding). Rolls back whatever is uncommitted, including a
+                // commit batch abandoned above.
                 state.clear();
             }
         }
@@ -1859,8 +1862,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         // Send response using cumulative ACK strategy
         if (responseStatus == STATUS_OK && isBatched) {
-            // Withheld until the batch commits: at the end of this receive pass,
-            // at the batch bounds, or before a frame that cannot join it.
+            // Withheld until the batch commits: at the end of this receive pass, at
+            // the next boundary frame, or before a control frame.
             return;
         }
         if (responseStatus == STATUS_OK) {
@@ -1906,36 +1909,33 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
             }
         } else {
-            rejectFrame(context, state, isBatchCommitFailed ? batchFirstSeq : seq, responseStatus, errorMessage);
+            rejectFrame(context, state, responseSeq, responseStatus, errorMessage);
         }
     }
 
     /**
-     * Commits the pending commit batch and advances the watermark over it. On
-     * failure its rows are gone: pins the watermark below them, then reports the
-     * failure against the batch's first frame -- nothing from it on is committed,
-     * and it is the frame the client replays first, so a deterministic failure
-     * keeps striking it -- or closes for a role change, and returns false.
+     * Commits the pending commit batch outside {@link #handleBinaryMessage}'s frame
+     * processing -- at the end of a receive pass, before a control frame, before a
+     * frame that can never join a batch, before a fatal close -- and sends the
+     * failure response itself. On success the watermark is past the batch. On
+     * failure the batch's rows are rolled back, the watermark is pinned below its
+     * first frame, and the failure goes out against that frame (the frame the client
+     * replays first, so a deterministic failure keeps striking it), or as the
+     * role-change close; returns false.
      */
     private boolean commitPendingBatch(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final long firstSeq = state.getFirstCommitBatchSequence();
-        final long lastSeq = state.getLastCommitBatchSequence();
-        state.commit();
-        if (state.isOk() && !state.isRoleChangeClosePending()) {
-            state.resetCommitBatch();
-            state.setHighestProcessedSequence(lastSeq);
+        if (state.commitCommitBatch()) {
             return true;
         }
-        state.markSequenceUnresolved(firstSeq);
+        // Capture before clear(), which resets both.
         final boolean isRoleChangeClose = state.isRoleChangeClosePending();
         final String errorMessage = state.getErrorText();
-        final byte status = state.isOk() ? STATUS_INTERNAL_ERROR : responseStatusOf(state);
-        LOG.error().$("WebSocket commit batch failed [fd=").$(context.getFd())
-                .$(", firstSeq=").$(firstSeq)
-                .$(", lastSeq=").$(lastSeq)
-                .$(", error=").$safe(errorMessage).I$();
-        // Rolls back what the failed commit left and forgets the batch.
+        final byte status = responseStatusOf(state);
+        logCommitBatchFailed(context, firstSeq, firstSeq, errorMessage);
+        state.abandonCommitBatch();
+        // Rolls the batch's rows back and frees the distressed cache.
         state.clear();
         if (isRoleChangeClose) {
             roleChangeCloseWithUploadGrace(context, state, errorMessage);
@@ -2500,8 +2500,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
 
                 // Frame parsed successfully
-                boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
                 int opcode = frameParser.getOpcode();
+                if ((opcode != WebSocketOpcode.BINARY || !frameParser.isFin()) && state.isCommitBatchPending()) {
+                    // Anything but a complete data frame -- a control frame (a CLOSE's
+                    // final acks precede the echo), or a fragment refused with a fatal
+                    // CLOSE that flushes acks -- sees every earlier data frame
+                    // committed. Commit BEFORE unmasking the frame and advancing past
+                    // it: if the commit fails and its error send blocks, the frame
+                    // stays buffered, still masked, and the resume pass parses and
+                    // handles it once the batch is resolved.
+                    commitPendingBatch(context, state);
+                }
+                boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
                 long payloadPtr = pos + frameParser.getHeaderSize();
                 int payloadLen = (int) frameParser.getPayloadLength();
 
@@ -2524,13 +2534,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // throws (e.g. ACK backpressure), the committed frame won't be replayed.
                 pos += consumed;
 
-                if ((opcode != WebSocketOpcode.BINARY || !frameParser.isFin()) && state.isCommitBatchPending()) {
-                    // Anything but a complete data frame -- a control frame (a
-                    // CLOSE's final acks precede the echo), or a fragment refused
-                    // with a fatal CLOSE that flushes acks -- sees every earlier
-                    // data frame committed.
-                    commitPendingBatch(context, state);
-                }
                 handleWebSocketFrame(context, state, opcode, frameParser.isFin(), payloadPtr, payloadLen);
                 hasProcessedFrame = true;
                 if (opcode == WebSocketOpcode.PING) {
@@ -2575,8 +2578,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // watermark below them meanwhile.
                 LOG.info().$("WebSocket commit batch abandoned by a disconnect [fd=").$(context.getFd())
                         .$(", firstSeq=").$(state.getFirstCommitBatchSequence()).I$();
-                state.markSequenceUnresolved(state.getFirstCommitBatchSequence());
-                state.resetCommitBatch();
+                state.abandonCommitBatch();
             }
             // Every teardown this method can reach -- handleWebSocketFrame's
             // CLOSE arm and the entry expiry poll both go through
@@ -2599,8 +2601,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // commit. Pin the watermark below them; the client replays them.
                 LOG.critical().$("WebSocket commit batch left pending by the frame loop [fd=").$(context.getFd())
                         .$(", firstSeq=").$(state.getFirstCommitBatchSequence()).I$();
-                state.markSequenceUnresolved(state.getFirstCommitBatchSequence());
-                state.resetCommitBatch();
+                state.abandonCommitBatch();
             }
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind

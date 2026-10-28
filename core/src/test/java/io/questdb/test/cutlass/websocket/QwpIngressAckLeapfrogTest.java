@@ -52,12 +52,17 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -169,8 +174,8 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowlessSingletonKeepsSameTableBatch() throws Exception {
-        assertConservativeBoundaryTransactions(1, 2,
+    public void testRowlessSingletonSeparatesCommitBatches() throws Exception {
+        assertConservativeBoundaryTransactions(2, 2,
                 clientEncodedFrame(1, "a"), clientEncodedFrame(0, "a"), clientEncodedFrame(1, "a"));
     }
 
@@ -214,7 +219,7 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDurableAckCarriesSingletonCapCommitBeforeLaterFailure() throws Exception {
+    public void testDurableAckCarriesCommitBeforeCapBoundaryFailure() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration) {
                 @Override
@@ -234,12 +239,17 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100, 1_000_000)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200, 2_000_000)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300, 3_000_000)));
+            // With a cap of 2 no batch can reach the cap: frame 1 cannot join frame 0's
+            // batch, so frame 0 commits on its own (the one allowed commit) and frame 1
+            // opens a new batch; frame 2 cannot join it either, and frame 1's commit is
+            // denied. The wire matches one commit per frame.
             drainWalQueue();
-            assertQuery("SELECT v FROM b").expectSize().returns("v\n100\n200\n");
-            Assert.assertEquals(1, maxCumulativeOkAck(sent));
-            Assert.assertEquals(before + 1, okAckSeqTxn(sent, 1, "b"));
-            Assert.assertTrue(hasErrorResponseForSeq(sent, 2));
+            assertQuery("SELECT v FROM b").expectSize().returns("v\n100\n");
+            Assert.assertEquals(0, maxCumulativeOkAck(sent));
+            Assert.assertEquals(before + 1, okAckSeqTxn(sent, 0, "b"));
+            Assert.assertTrue(hasErrorResponseForSeq(sent, 1));
             Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
         });
     }
 
@@ -605,41 +615,317 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
-     * If a frame's table lookup evicts a stale entry and discards its
-     * uncommitted rows, those rows belong to the frames before it in the commit
-     * batch. None of those frames may be acked; the client replays them.
+     * Random frame sequences through the real handler in one receive pass, with random
+     * faults: refused INSERTs, read-only flips (transient or persistent), a small
+     * max-uncommitted-rows cap, durable acks, deferred groups, malformed and
+     * schema-mismatched frames and PINGs. Every iteration checks the ack contract
+     * against the tables' contents, with A the highest cumulative OK ack:
+     * <ul>
+     * <li>I1: every row of every frame at or below A is committed;</li>
+     * <li>I2: no row of a frame above A is committed (the client replays from A + 1),
+     * and no row is committed twice.</li>
+     * </ul>
+     * Iterations whose only faults are the frames' own data errors also check I3:
+     * the frames before the first bad frame are committed and acked, and the bad
+     * frame is NACKed with its own status, as one commit per frame would leave it.
      */
     @Test
-    public void testEvictionThatDiscardsBatchRowsAcksNothing() throws Exception {
+    public void testCommitBatchAckContractFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final int iterations = 150;
+            // The hook engine below shares the root but cannot create tables: create them first.
+            for (int iteration = 0; iteration < iterations; iteration++) {
+                execute("CREATE TABLE fa" + iteration + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE fb" + iteration + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            final AtomicLong readOnlyCalls = new AtomicLong();
+            final AtomicLong readOnlyFromCall = new AtomicLong(-1);
+            final AtomicBoolean isReadOnlyTransient = new AtomicBoolean();
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    final long call = readOnlyCalls.incrementAndGet();
+                    final long from = readOnlyFromCall.get();
+                    return from > 0 && (isReadOnlyTransient.get() ? call == from : call >= from);
+                }
+            }) {
+                for (int iteration = 0; iteration < iterations; iteration++) {
+                    runCommitBatchFuzzIteration(rnd, hookEngine, iteration, readOnlyCalls, readOnlyFromCall, isReadOnlyTransient);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRenameWindowMidBatchAcksNothing() throws Exception {
+        assertRenameWindowMidBatchAcksNothing(false);
+    }
+
+    @Test
+    public void testRenameWindowMidBatchWithRefusedInsertAcksNothing() throws Exception {
+        assertRenameWindowMidBatchAcksNothing(true);
+    }
+
+    private void runCommitBatchFuzzIteration(
+            Rnd rnd,
+            CairoEngine hookEngine,
+            int iteration,
+            AtomicLong readOnlyCalls,
+            AtomicLong readOnlyFromCall,
+            AtomicBoolean isReadOnlyTransient
+    ) throws Exception {
+        final String[] tables = {"fa" + iteration, "fb" + iteration};
+        final boolean isDataErrorsOnly = rnd.nextInt(3) == 0;
+        final boolean isDurable = rnd.nextBoolean();
+        final long cap = rnd.nextInt(3) == 0 ? 1 + rnd.nextInt(4) : 1_000_000;
+        readOnlyCalls.set(0);
+        readOnlyFromCall.set(!isDataErrorsOnly && rnd.nextInt(3) == 0 ? 1 + rnd.nextInt(30) : -1);
+        isReadOnlyTransient.set(rnd.nextBoolean());
+        final int refusedInsertCall = !isDataErrorsOnly && rnd.nextInt(3) == 0 ? 1 + rnd.nextInt(6) : -1;
+        final boolean isRefusalPersistent = rnd.nextBoolean();
+        final boolean isCommitFaulty = refusedInsertCall > 0 || readOnlyFromCall.get() > 0;
+        final AtomicInteger insertCalls = new AtomicInteger();
+        final SecurityContext securityContext = new AllowAllSecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                final int call = insertCalls.incrementAndGet();
+                if (refusedInsertCall > 0 && (isRefusalPersistent ? call >= refusedInsertCall : call == refusedInsertCall)) {
+                    throw CairoException.authorization().put("fuzz: insert refused");
+                }
+            }
+        };
+
+        // Frame values are seq * 10 + row, so a committed value names its frame.
+        final StringBuilder kinds = new StringBuilder();
+        final ObjList<byte[]> wireFrames = new ObjList<>();
+        final ObjList<LongList> frameValues = new ObjList<>();
+        final LongList frameErrorStatus = new LongList();
+        final int frameCount = 2 + rnd.nextInt(10);
+        int seq = 0;
+        for (int f = 0; f < frameCount; f++) {
+            int kind = rnd.nextInt(isDataErrorsOnly ? 8 : 11);
+            if ((cap < 1_000_000 && kind == 4) || (kind == 8 && (cap < 1_000_000 || isCommitFaulty))) {
+                // Outside the commit batch's contract, and the same on master: a frame
+                // of more than one block, or a deferred group, can be split by the
+                // appender's own commit at a small cap, and commitAll commits a group's
+                // tables one by one; a later commit of the same frame or group that then
+                // fails NACKs rows already in the WAL.
+                kind = 0;
+            }
+            final String table = tables[rnd.nextInt(2)];
+            final long v = seq * 10L;
+            final long ts = 1_000_000L + seq * 1_000L;
+            final LongList values = new LongList();
+            long errorStatus = -1;
+            final byte[] message;
+            kinds.append(kind).append(table.charAt(1)).append(' ');
+            if (kind == 10) {
+                // PING: a control frame, no sequence
+                wireFrames.add(createMaskedFrame(WebSocketOpcode.PING, new byte[0]));
+                continue;
+            } else if (kind <= 3) {
+                message = oneRowMessage(table, v, ts);
+                values.add(v);
+            } else if (kind == 4) {
+                message = twoBlockMessage(table, new long[]{v, ts}, new long[]{v + 1, ts + 1});
+                values.add(v);
+                values.add(v + 1);
+            } else if (kind == 5) {
+                message = Arrays.copyOf(oneRowMessage(table, v, ts), QwpConstants.HEADER_SIZE + 8);
+                errorStatus = QwpConstants.STATUS_PARSE_ERROR;
+            } else if (kind == 6) {
+                message = oneRowVarcharMessage(table, "x", ts);
+                errorStatus = QwpConstants.STATUS_SCHEMA_MISMATCH;
+            } else if (kind == 7) {
+                message = oneRowMessage(table, v, ts);
+                values.add(v);
+            } else if (kind == 8) {
+                message = deferred(oneRowMessage(table, v, ts));
+                values.add(v);
+            } else {
+                message = rowlessDeferredMessage();
+            }
+            wireFrames.add(createMaskedFrame(WebSocketOpcode.BINARY, message));
+            frameValues.add(values);
+            frameErrorStatus.add(errorStatus);
+            seq++;
+        }
+        final int lastSeq = seq - 1;
+        final byte[][] frames = new byte[wireFrames.size()][];
+        for (int i = 0, n = wireFrames.size(); i < n; i++) {
+            frames[i] = wireFrames.getQuick(i);
+        }
+
+        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+            private final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
+                @Override
+                public long getQwpMaxUncommittedRows() {
+                    return cap;
+                }
+            };
+
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return lineConfig;
+            }
+        };
+        final ObjList<byte[]> sent = new ObjList<>();
+        try {
+            ingestInOnePass(hookEngine, new QwpIngressUpgradeProcessor(hookEngine, httpConfig), httpConfig,
+                    securityContext, isDurable, sent, frames);
+        } catch (ServerDisconnectException ignore) {
+            // a role-change CLOSE tells the dispatcher to drop the fd
+        }
+        drainWalQueue(hookEngine);
+
+        final String context = "iteration=" + iteration + ", frames=" + frameCount + ", dataErrorsOnly=" + isDataErrorsOnly
+                + ", durable=" + isDurable + ", cap=" + cap + ", readOnlyFrom=" + readOnlyFromCall.get()
+                + ", readOnlyTransient=" + isReadOnlyTransient.get() + ", refusedInsert=" + refusedInsertCall
+                + ", refusalPersistent=" + isRefusalPersistent + ", kinds=" + kinds;
+        final long acked = maxCumulativeOkAck(sent);
+        final LongList committed = new LongList();
+        for (String table : tables) {
+            try (
+                    TableReader reader = hookEngine.getReader(table);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                while (cursor.hasNext()) {
+                    committed.add(cursor.getRecord().getLong(0));
+                }
+            }
+        }
+        committed.sort();
+        for (int i = 0, n = committed.size(); i < n; i++) {
+            final long value = committed.getQuick(i);
+            Assert.assertTrue("I2: a row committed twice [" + context + ", value=" + value + "]",
+                    i == 0 || committed.getQuick(i - 1) != value);
+            Assert.assertTrue("I2: a row of a frame above the ack is committed [" + context + ", value=" + value
+                    + ", acked=" + acked + "]", value / 10 <= acked);
+        }
+        for (int s = 0; s <= acked; s++) {
+            final LongList values = frameValues.getQuick(s);
+            for (int i = 0, n = values.size(); i < n; i++) {
+                Assert.assertTrue("I1: an acked frame's row is not committed [" + context + ", seq=" + s + "]",
+                        committed.binarySearch(values.getQuick(i), Vect.BIN_SEARCH_SCAN_UP) >= 0);
+            }
+        }
+        if (isDataErrorsOnly) {
+            int firstError = -1;
+            for (int s = 0; s <= lastSeq && firstError < 0; s++) {
+                if (frameErrorStatus.getQuick(s) >= 0) {
+                    firstError = s;
+                }
+            }
+            Assert.assertEquals("I3: frames before the first bad frame are acked [" + context + "]",
+                    firstError < 0 ? lastSeq : firstError - 1, acked);
+            for (int s = 0; s < (firstError < 0 ? lastSeq + 1 : firstError); s++) {
+                Assert.assertFalse("I3: a good frame before the bad one is NACKed [" + context + ", seq=" + s + "]",
+                        hasErrorResponseForSeq(sent, s));
+            }
+            if (firstError >= 0) {
+                Assert.assertEquals("I3: the bad frame gets its own status [" + context + "]",
+                        frameErrorStatus.getQuick(firstError), errorStatusForSeq(sent, firstError));
+            }
+        }
+    }
+
+    private static long errorStatusForSeq(ObjList<byte[]> frames, long seq) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] != QwpConstants.STATUS_OK && readLeLong(f, 3) == seq) {
+                return f[2];
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Like {@link #oneRowMessage(String, long, long)} but declares {@code v} as VARCHAR,
+     * which a LONG column rejects as SCHEMA_MISMATCH.
+     */
+    private static byte[] oneRowVarcharMessage(String table, String value, long tsMicros) {
+        byte[] name = table.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] utf8 = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] payload = new byte[1 + name.length + 7 + 1 + 8 + utf8.length + 1 + 8];
+        int i = 0;
+        payload[i++] = (byte) name.length;
+        System.arraycopy(name, 0, payload, i, name.length);
+        i += name.length;
+        payload[i++] = 1; // rowCount
+        payload[i++] = 2; // columnCount
+        payload[i++] = 1; // column name length
+        payload[i++] = 'v';
+        payload[i++] = QwpConstants.TYPE_VARCHAR;
+        payload[i++] = 0; // empty name = designated timestamp
+        payload[i++] = QwpConstants.TYPE_TIMESTAMP;
+        payload[i++] = 0; // no null bitmap
+        i = writeLeInt(payload, i, 0);
+        i = writeLeInt(payload, i, utf8.length);
+        System.arraycopy(utf8, 0, payload, i, utf8.length);
+        i += utf8.length;
+        payload[i++] = 0; // no null bitmap
+        writeLeLong(payload, i, tsMicros);
+
+        byte[] message = new byte[QwpConstants.HEADER_SIZE + payload.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = QwpConstants.VERSION;
+        message[5] = 0;
+        message[6] = 1;
+        message[7] = 0;
+        message[8] = (byte) payload.length;
+        System.arraycopy(payload, 0, message, QwpConstants.HEADER_SIZE, payload.length);
+        return message;
+    }
+
+    /**
+     * A RENAME TABLE lands while a commit batch is pending, frozen in the window where
+     * the sequencer already logged it but the name registry still maps the old name
+     * (CairoEngine.rename publishes the sequencer txn first). The next frame is a batch
+     * boundary: the rename moved the table's structure version. The batch's own commit
+     * is then refused -- by the sequencer's token check, or by an INSERT refusal that
+     * lands with the rename -- so nothing of the batch may be acked; the client replays
+     * it by name.
+     */
+    private void assertRenameWindowMidBatchAcksNothing(boolean isInsertRefused) throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
-            final AtomicLong frames = new AtomicLong();
-            try (CairoEngine droppingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                // Each frame checks the role at preparation and again before
-                // append. Drop after the third frame's identity precheck, at its
-                // append gate, so the cache must discard the buffered prefix.
-                @Override
-                public TableToken getTableTokenByDirName(CharSequence dirName) {
-                    return frames.get() >= 6 ? null : super.getTableTokenByDirName(dirName);
-                }
-
-                @Override
-                public TableToken getTableTokenIfExists(CharSequence tableName) {
-                    return frames.get() >= 6 ? null : super.getTableTokenIfExists(tableName);
-                }
-
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicBoolean isDenied = new AtomicBoolean();
+            final AtomicLong renameTxn = new AtomicLong(-1);
+            final QwpIngressProcessorState[] stateRef = new QwpIngressProcessorState[1];
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
                 @Override
                 public boolean isReadOnlyMode() {
-                    frames.incrementAndGet();
+                    // The first gate check with a batch pending is frame 1's preparation.
+                    if (!isFrozen.get() && stateRef[0] != null && stateRef[0].isCommitBatchPending()) {
+                        isFrozen.set(true);
+                        try (WalWriter w = getWalWriter(verifyTableName("tab"))) {
+                            renameTxn.set(w.renameTable("tab", "tab_new", AllowAllSecurityContext.INSTANCE));
+                        }
+                        isDenied.set(isInsertRefused);
+                    }
                     return false;
                 }
             }) {
-                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(droppingEngine, httpConfig);
+                final TableToken token = hookEngine.verifyTableName("tab");
+                final long txnBefore = hookEngine.getTableSequencerAPI().lastTxn(token);
+                final SecurityContext securityContext = new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken tableToken) {
+                        if (isDenied.get()) {
+                            throw CairoException.authorization().put("test: insert denied on ").put(tableToken.getTableName());
+                        }
+                    }
+                };
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(hookEngine, httpConfig);
                 byte[] wire = concat(
                         createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L))
                 );
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
                 long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -649,19 +935,25 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     QwpIngressProcessorState state = new QwpIngressProcessorState(
                             RECV_BUFFER_SIZE,
                             httpConfig.getSendBufferSize(),
-                            droppingEngine,
+                            hookEngine,
                             httpConfig.getLineHttpProcessorConfiguration()
                     );
-                    state.of(-1, AllowAllSecurityContext.INSTANCE);
+                    state.of(-1, securityContext);
+                    stateRef[0] = state;
                     getLV().set(context, state);
                     drive(processor, context, nf, wire.length);
                 } finally {
                     Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
-                Assert.assertTrue("test setup: the third frame must be refused", hasErrorResponseForSeq(rawSocket.sentFrames, 2));
-                Assert.assertEquals("frames whose rows the eviction discarded must not be acked",
-                        -1, maxCumulativeOkAck(rawSocket.sentFrames));
+                Assert.assertTrue("test setup: the rename window must have been frozen", isFrozen.get());
+                Assert.assertEquals("test setup: the rename is the only txn", txnBefore + 1, renameTxn.get());
+                Assert.assertEquals("no data txn: the batch's commit was refused",
+                        renameTxn.get(), hookEngine.getTableSequencerAPI().lastTxn(token));
+                Assert.assertEquals("nothing committed may be acked", -1, maxCumulativeOkAck(rawSocket.sentFrames));
+                Assert.assertTrue("the batch is refused at its first frame", hasErrorResponseForSeq(rawSocket.sentFrames, 0));
+                Assert.assertFalse("the boundary frame is dropped and replayed with the batch",
+                        hasErrorResponseForSeq(rawSocket.sentFrames, 1));
             }
         });
     }
@@ -775,13 +1067,14 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
      * deterministic failure keeps striking the same frame.
      */
     /**
-     * The appender commits a writer on its own once the table's uncommitted rows
-     * reach maxUncommittedRows. Inside a commit batch that commit makes the batch's
-     * frames durable; a later failure in the same receive pass must not pin the
-     * watermark below them, or the client's replay duplicates their rows.
+     * The appender commits a writer on its own once its uncommitted rows reach
+     * maxUncommittedRows. A commit batch never lets that happen: a frame whose rows
+     * would reach the cap is a boundary, so the batch commits first. With a cap of 2
+     * and every commit after the first denied, the wire matches one commit per frame:
+     * frame 0 committed and acked, frame 1 NACKed, frame 2 refused behind it.
      */
     @Test
-    public void testForcedCommitInsideBatchIsAckedBeforeLaterFailure() throws Exception {
+    public void testBatchCommitsBeforeReachingCap() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
                 private final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
@@ -797,10 +1090,9 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 }
             };
             execute("create table b (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final long before = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
 
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            // seq=1 reaches the cap: the appender commits seq=0 and seq=1. The commit of
-            // seq=2 at the end of the pass is the one denied.
             ObjList<byte[]> sent = ingestInOnePass(
                     processor,
                     httpConfig,
@@ -811,10 +1103,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             );
 
             drainWalQueue();
-            assertQuery("select v from b").noLeakCheck().expectSize().returns("v\n100\n200\n");
-            Assert.assertEquals("the force-committed frames must be acked", 1, maxCumulativeOkAck(sent));
-            Assert.assertTrue("the failed commit must be NACKed at the frame it covered", hasErrorResponseForSeq(sent, 2));
-            Assert.assertFalse("a NACK at seq=0 would replay committed rows", hasErrorResponseForSeq(sent, 0));
+            assertQuery("select v from b").noLeakCheck().expectSize().returns("v\n100\n");
+            Assert.assertEquals("only frame 0 committed", 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")) - before);
+            Assert.assertEquals("the committed frame must be acked", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the denied commit must be NACKed at its batch's first frame", hasErrorResponseForSeq(sent, 1));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse("a frame behind the refused batch gets no response", hasErrorResponseForSeq(sent, 2));
         });
     }
 
@@ -1370,10 +1664,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
                 @Override
                 public boolean isReadOnlyMode() {
-                    // seq=0 and seq=1 pass prepare/append gates (calls 1..4).
-                    // seq=2's preparation sees the demote (call 5); recovery
-                    // commit checks see it reverted, so the prefix commits.
-                    return readOnlyChecks.incrementAndGet() == 5;
+                    // seq=0 checks at preparation and before its lookup (calls 1, 2)
+                    // and opens the batch; seq=1 joins it, checked only at
+                    // preparation (call 3). seq=2's preparation sees the demote
+                    // (call 4); the batch commit's checks see it reverted, so the
+                    // prefix commits.
+                    return readOnlyChecks.incrementAndGet() == 4;
                 }
             }) {
                 QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
@@ -1394,8 +1690,8 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     // the role-change CLOSE tells the dispatcher to drop the fd
                 }
 
-                Assert.assertTrue("test setup: the recovery commit must have re-checked the gate after the refusal",
-                        readOnlyChecks.get() >= 6);
+                Assert.assertTrue("test setup: the batch commit must have re-checked the gate after the refusal",
+                        readOnlyChecks.get() >= 5);
                 drainWalQueue(demotableEngine);
                 try (TableReader reader = demotableEngine.getReader("tab")) {
                     Assert.assertEquals("the batch commits once the demote reverts", 2, reader.size());
@@ -1428,8 +1724,8 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
                 @Override
                 public boolean isReadOnlyMode() {
-                    // the demote lands at seq=2's gate check and stays
-                    return readOnlyChecks.incrementAndGet() >= 5;
+                    // the demote lands at seq=2's gate check (call 4) and stays
+                    return readOnlyChecks.incrementAndGet() >= 4;
                 }
             }) {
                 QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
@@ -1450,8 +1746,8 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                     // the role-change CLOSE tells the dispatcher to drop the fd
                 }
 
-                Assert.assertTrue("test setup: the recovery commit must have re-checked the gate after the refusal",
-                        readOnlyChecks.get() >= 6);
+                Assert.assertTrue("test setup: the batch commit must have re-checked the gate after the refusal",
+                        readOnlyChecks.get() >= 5);
                 drainWalQueue(demotableEngine);
                 try (TableReader reader = demotableEngine.getReader("tab")) {
                     Assert.assertEquals("a refused recovery commit leaves nothing in the table", 0, reader.size());

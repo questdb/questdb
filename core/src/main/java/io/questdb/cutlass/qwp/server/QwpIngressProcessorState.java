@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
@@ -265,38 +265,33 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
-    // Commit batch: consecutive plain (non-deferred) frames from one receive pass
-    // whose rows are appended but committed together, as one WAL txn, when the
-    // pass drains. Their sequences are withheld from the cumulative-ack
-    // watermark until that commit. See the upgrade processor's
-    // handleBinaryMessage. Reset by clear(), which rolls the rows back.
+    // Commit batch: consecutive plain single-block frames for one WAL table, from one
+    // receive pass, whose rows are appended to commitBatchTud's writer and committed
+    // together, as one WAL txn. Their sequences stay out of the cumulative-ack
+    // watermark until that commit. The upgrade processor's handleBinaryMessage owns
+    // the rules. Reset by clear(), which rolls the rows back.
     //
-    // The one table the commit batch's rows are in, null while it holds only
-    // rowless frames. A batch never spans tables: see isFrameJoinableToCommitBatch.
+    // While a batch is pending nothing but the batch commit touches the batch's
+    // writer: a joining frame skips the table lookup and cannot create columns, so
+    // it only appends its block or cancels it. The batch is intact while the writer
+    // holds exactly commitBatchRows uncommitted rows, the rows the batch appended;
+    // that positive check, not a report from every path that might commit or discard
+    // rows, decides whether the batch may be acknowledged.
+    private long commitBatchRows;
+    // The table's sequencer txn tracker, fetched at the batch's first join.
+    private SeqTxnTracker commitBatchTracker;
     private WalTableUpdateDetails commitBatchTud;
-    // commitBatchTud's writer and its data txn count when the batch last grew; a
-    // different count on the same writer means a commit the batch did not make
-    // (see isCommitBatchCommittedBehind).
-    private long commitBatchDataTxns;
     private WalWriter commitBatchWriter;
-    private int commitBatchFrames;
     private long firstCommitBatchSequence = -1;
-    // The table the current frame appended rows to, null if none; and whether it
-    // appended to more than one. Set by processMessage.
+    // The table the current frame appended rows to, null if none. Set by
+    // processPreparedMessage and processPreparedJoiningMessage.
     private WalTableUpdateDetails frameRowTud;
-    // frameRowTud's writer and its data txn count before the frame's first append
-    // to it (see isFrameCommittedBehind).
-    private long frameRowDataTxns;
-    private WalWriter frameRowWriter;
-    private boolean isFrameMultiTable;
     private boolean isPreparedSingleBlock;
-    private QwpMessageCursor preparedMessageCursor;
-    private QwpTableBlockCursor preparedTableBlock;
     private long lastCommitBatchSequence = -1;
-    // Non-zero while a frame that follows a pending commit batch is processed:
-    // tags the savepoints that frame takes (see processMessage). Unique per frame.
-    private long savepointEpoch;
-    private long savepointEpochCounter;
+    private QwpMessageCursor preparedMessageCursor;
+    // Row count of the prepared message's only table block; 0 unless single-block.
+    private int preparedRowCount;
+    private QwpTableBlockCursor preparedTableBlock;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
@@ -459,133 +454,32 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Adds a frame whose rows are appended but not yet committed to the commit
-     * batch; its sequence stays out of the ack watermark until the batch commits.
+     * Abandons the commit batch whose rows cannot be acknowledged: pins the
+     * cumulative-ack watermark below its first frame, so the client replays the whole
+     * batch, and distresses the table cache, so the next {@link #clear()} frees every
+     * writer and rolls the batch's rows back. The caller owes that {@code clear()} and
+     * the response; capture the error and the role-change flag first, because
+     * {@code clear()} resets both.
      */
-    public void addToCommitBatch(long seq) {
-        // The batch-commit paths that bypass commit() rely on this: only commit() closes a deferred group.
-        assert firstRowlessDeferredSequence == -1 && !uncommittedDeferredRows : "commit batch must not form while a deferred group is open";
-        if (commitBatchFrames == 0) {
-            firstCommitBatchSequence = seq;
-        }
+    public void abandonCommitBatch() {
+        markSequenceUnresolved(firstCommitBatchSequence);
+        tudCache.setDistressed();
+        resetCommitBatch();
+    }
+
+    /**
+     * Adds the frame just appended by {@link #processPreparedJoiningMessage()} to the
+     * commit batch and reports whether the batch is still intact. A false return
+     * means the batch's rows cannot be acknowledged; see {@link #abandonCommitBatch()}.
+     */
+    public boolean addToCommitBatch(long seq) {
+        commitBatchRows += preparedRowCount;
         lastCommitBatchSequence = seq;
-        if (frameRowTud != null) {
-            commitBatchTud = frameRowTud;
-            commitBatchWriter = frameRowWriter;
-            commitBatchDataTxns = frameRowWriter != null ? frameRowWriter.getDataTxnCount() : -1;
-        }
-        commitBatchFrames++;
-    }
-
-    public long getFirstCommitBatchSequence() {
-        return firstCommitBatchSequence;
-    }
-
-    public long getLastCommitBatchSequence() {
-        return lastCommitBatchSequence;
-    }
-
-    public boolean isCommitBatchPending() {
-        return commitBatchFrames > 0;
+        return isCommitBatchIntact();
     }
 
     /**
-     * Forgets the commit batch: its rows were committed by a commit that covered
-     * them, or rolled back. The caller owns the watermark consequences.
-     */
-    public void resetCommitBatch() {
-        commitBatchFrames = 0;
-        firstCommitBatchSequence = -1;
-        lastCommitBatchSequence = -1;
-        commitBatchTud = null;
-        commitBatchWriter = null;
-    }
-
-    /**
-     * Commits only the commit batch's table. A commit batch never spans tables:
-     * commitAll commits table by table, so a failure part way would leave some
-     * tables' rows committed under frames the client must replay -- duplicating
-     * them on every retry. One writer's commit is all or nothing.
-     */
-    public void commitCommitBatchTable() {
-        if (commitBatchTud == null) {
-            return;
-        }
-        try {
-            tudCache.commitTable(commitBatchTud, committedTxnConsumer);
-        } catch (Throwable th) {
-            tudCache.setDistressed();
-            LOG.error().$('[').$(fd).$("] commit batch error: ").$(th).$();
-            rejectCommitError(th);
-        }
-    }
-
-    /**
-     * True when the current frame may share a commit with the pending batch: it
-     * wrote to at most one table, and that table is the batch's (or either holds
-     * no rows).
-     */
-    /**
-     * True when the commit batch's table was committed since the batch last grew:
-     * the appender commits a writer on its own at the max-uncommitted-rows cap, so
-     * the batch's rows can be in the WAL before the batch commits. Counts only a
-     * commit by the same writer, so an evicted or replaced writer never reads as one.
-     */
-    public boolean isCommitBatchCommittedBehind() {
-        return commitBatchWriter != null
-                && commitBatchTud.getWriter() == commitBatchWriter
-                && commitBatchWriter.getDataTxnCount() != commitBatchDataTxns;
-    }
-
-    /**
-     * Records the seqTxn of the commit {@link #isCommitBatchCommittedBehind()} saw,
-     * which the appender made without reporting it. Call before
-     * {@link #resetCommitBatch()} drops the batch's table.
-     */
-    public void reportCommitBatchCommittedBehind() {
-        tudCache.reportCommitted(commitBatchTud);
-    }
-
-    /**
-     * True when the current frame's table was committed after the frame began
-     * appending to it, so some or all of the frame's rows are already in the WAL.
-     */
-    public boolean isFrameCommittedBehind() {
-        return frameRowTud != null
-                && frameRowWriter != null
-                && frameRowTud.getWriter() == frameRowWriter
-                && frameRowWriter.getDataTxnCount() != frameRowDataTxns;
-    }
-
-    public boolean isFrameJoinableToCommitBatch() {
-        return isPreparedSingleBlock && !isFrameMultiTable
-                && (frameRowTud == null || commitBatchTud == null || frameRowTud == commitBatchTud);
-    }
-
-    /**
-     * Restores every writer to the savepoint {@link #setCommitBatchSavepoints()}
-     * marked before the current frame, keeping the commit batch's rows and
-     * dropping only this frame's. False when that is impossible (distressed
-     * writers); the batch's rows are then lost and must not be acknowledged.
-     */
-    public boolean rollbackToCommitBatchSavepoints() {
-        return tudCache.rollbackToSavepoints(savepointEpoch);
-    }
-
-    /**
-     * Called before every frame. With a commit batch pending, this frame takes a
-     * savepoint in each writer at its first touch, so a failure can drop only
-     * this frame's rows; otherwise none are taken.
-     */
-    public void armCommitBatchSavepoints(boolean isBatchPending) {
-        savepointEpoch = isBatchPending ? ++savepointEpochCounter : 0;
-        if (isBatchPending) {
-            tudCache.resetDiscardedBufferedRows();
-        }
-    }
-
-    /**
-     * Clears this frame's error so a following {@link #commit()} reports its own.
+     * Clears this frame's error so the following batch commit reports its own.
      * Used only to commit the batch the frame failed after.
      * <p>
      * The role-change flag is part of that error: the read-only gate sets it with
@@ -599,6 +493,143 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         error.clear();
         currentStatus = Status.OK;
         roleChangeClosePending = false;
+    }
+
+    /**
+     * Commits the commit batch and, on success, advances the cumulative-ack watermark
+     * over it. The commit runs only while the batch is intact; on any failure this
+     * state is in error, with {@code roleChangeClosePending} set for a read-only
+     * refusal, the batch is still pending, and the caller takes the batch-lost path
+     * ({@link #abandonCommitBatch()}).
+     */
+    public boolean commitCommitBatch() {
+        if (!isCommitBatchIntact()) {
+            LOG.error().$('[').$(fd).$("] commit batch rows are not intact [firstSeq=").$(firstCommitBatchSequence)
+                    .$(", lastSeq=").$(lastCommitBatchSequence).I$();
+            reject(Status.INTERNAL_ERROR, "commit batch rows are not intact, cannot acknowledge", fd);
+            return false;
+        }
+        try {
+            tudCache.commitBatch(commitBatchTud, commitBatchRows, committedTxnConsumer);
+        } catch (Throwable th) {
+            tudCache.setDistressed();
+            LOG.error().$('[').$(fd).$("] commit batch error: ").$(th).$();
+            rejectCommitError(th);
+            return false;
+        }
+        final long lastSeq = lastCommitBatchSequence;
+        resetCommitBatch();
+        setHighestProcessedSequence(lastSeq);
+        return true;
+    }
+
+    public long getFirstCommitBatchSequence() {
+        return firstCommitBatchSequence;
+    }
+
+    public long getLastCommitBatchSequence() {
+        return lastCommitBatchSequence;
+    }
+
+    public boolean isCommitBatchPending() {
+        return firstCommitBatchSequence != -1;
+    }
+
+    /**
+     * True when the commit batch's rows are exactly what its writer holds
+     * uncommitted: the writer is still the cache's entry for the table, healthy, not
+     * mid columnar write, and holds {@code commitBatchRows} uncommitted rows. Any path
+     * that committed, discarded or replaced the rows makes this false.
+     */
+    public boolean isCommitBatchIntact() {
+        return isCommitBatchWriterIntact() && tudCache.isCachedEntry(commitBatchTud);
+    }
+
+    /**
+     * Admission of the prepared message to the pending commit batch. True only when
+     * appending it can touch nothing but the batch writer's uncommitted rows: a
+     * single plain block with rows, for the batch's table; the batch intact; the
+     * table's structure unchanged since the writer last synced (another connection's
+     * ALTER or RENAME, or a DROP, cuts the batch here); the block's schema settled on
+     * the writer, so appending it cannot create a column; and the rows staying below
+     * the writer's max-uncommitted-rows commit, so the appender cannot commit them.
+     * A message that is not admitted is a batch boundary. Checks identity only: it
+     * acquires, refreshes and evicts nothing.
+     */
+    public boolean isPreparedMessageJoinableToCommitBatch() {
+        if (!isCommitBatchPending() || !isOk() || isDeferCommit() || !isPreparedSingleBlock || preparedRowCount <= 0
+                || !Utf8s.equalsIgnoreCaseAscii(commitBatchTud.getTableNameUtf8(), preparedTableBlock.getTableNameUtf8())
+                || !isCommitBatchWriterIntact()) {
+            return false;
+        }
+        if (commitBatchTracker == null) {
+            commitBatchTracker = engine.getTableSequencerAPI().getTxnTracker(commitBatchTud.getTableToken());
+        }
+        return commitBatchTracker.getStructureVersion() == commitBatchWriter.getMetadataVersion()
+                && !commitBatchTracker.isDropped()
+                && walAppender.isSchemaSettled(preparedTableBlock.getSchema(), commitBatchWriter)
+                && commitBatchRows + preparedRowCount < commitBatchTud.getMetaMaxUncommittedRows();
+    }
+
+    /**
+     * Appends the prepared message, which {@link #isPreparedMessageJoinableToCommitBatch()}
+     * admitted, to the commit batch's writer: no table lookup, no column creation. A
+     * failure cancels the block's rows (the appender's columnar write rollback) and
+     * leaves this state in error; the batch's rows stay as they were.
+     */
+    public void processPreparedJoiningMessage() {
+        if (!isOk() || preparedTableBlock == null) {
+            return;
+        }
+        final QwpTableBlockCursor tableBlock = preparedTableBlock;
+        preparedTableBlock = null;
+        final long lastSeqTxn = commitBatchWriter.getLastSeqTxn();
+        try {
+            walAppender.appendToWalStreaming(securityContext, tableBlock, commitBatchTud, false);
+            messageAppendedRows = true;
+            frameRowTud = commitBatchTud;
+        } catch (Throwable e) {
+            rejectMessageError(e);
+        }
+        assert commitBatchWriter.getLastSeqTxn() == lastSeqTxn : "a joining frame committed or altered the batch writer";
+    }
+
+    /**
+     * Forgets the commit batch: its rows were committed, or are being rolled back.
+     * The caller owns the watermark consequences.
+     */
+    public void resetCommitBatch() {
+        commitBatchRows = 0;
+        commitBatchTracker = null;
+        commitBatchTud = null;
+        commitBatchWriter = null;
+        firstCommitBatchSequence = -1;
+        lastCommitBatchSequence = -1;
+    }
+
+    /**
+     * Opens a commit batch with the plain frame just processed on the normal path,
+     * instead of committing it, when its rows can start one: a single block with
+     * rows, no deferred group to close, no role-change close pending, and the
+     * frame's rows being exactly what its writer holds uncommitted. That last check
+     * also turns away a frame the appender already committed at the
+     * max-uncommitted-rows cap, which leaves nothing uncommitted.
+     */
+    public boolean tryOpenCommitBatch(long seq) {
+        assert !isCommitBatchPending();
+        if (!isOk() || roleChangeClosePending || isDeferCommit() || !isPreparedSingleBlock || preparedRowCount <= 0
+                || frameRowTud == null || uncommittedDeferredRows || firstRowlessDeferredSequence != -1
+                || !(frameRowTud.getWriter() instanceof WalWriter walWriter)
+                || walWriter.getUncommittedRowCount() != preparedRowCount) {
+            return false;
+        }
+        commitBatchTud = frameRowTud;
+        commitBatchWriter = walWriter;
+        commitBatchRows = preparedRowCount;
+        commitBatchTracker = null;
+        firstCommitBatchSequence = seq;
+        lastCommitBatchSequence = seq;
+        return true;
     }
 
     public void commit() {
@@ -1439,8 +1470,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public void prepareMessage() {
         clearPreparedMessage();
         frameRowTud = null;
-        frameRowWriter = null;
-        isFrameMultiTable = false;
         messageAppendedRows = false;
         if (bufferPosition == 0 || !isOk()) {
             return;
@@ -1478,6 +1507,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
             preparedTableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
             isPreparedSingleBlock = preparedTableBlock != null && !preparedMessageCursor.hasNextTable();
+            preparedRowCount = isPreparedSingleBlock ? preparedTableBlock.getRowCount() : 0;
         } catch (Throwable e) {
             rejectMessageError(e);
         }
@@ -1517,45 +1547,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 // Read BEFORE the append: the cursor is consumed by it, and a
                 // metadata-change retry resets row iteration.
                 final boolean blockHasRows = tableBlock.getRowCount() > 0;
-                if (savepointEpoch != 0) {
-                    tudCache.setSavepoint(tud, savepointEpoch);
-                }
-                final boolean isFirstRowBlock = blockHasRows && frameRowTud == null;
-                if (isFirstRowBlock) {
-                    // Before the append: the appender may commit this writer at the
-                    // max-uncommitted-rows cap, and isFrameCommittedBehind must see it.
-                    frameRowWriter = tud.getWriter() instanceof WalWriter walWriter ? walWriter : null;
-                    frameRowDataTxns = frameRowWriter != null ? frameRowWriter.getDataTxnCount() : -1;
-                }
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
-                messageAppendedRows |= blockHasRows;
                 if (blockHasRows) {
-                    if (isFirstRowBlock) {
-                        frameRowTud = tud;
-                    } else if (frameRowTud != tud) {
-                        isFrameMultiTable = true;
-                    }
+                    messageAppendedRows = true;
+                    frameRowTud = tud;
                 }
                 tableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
             }
         } catch (Throwable e) {
             rejectMessageError(e);
         }
-    }
-
-    /** Checks identity without acquiring, refreshing or evicting a cached writer. */
-    public boolean isPreparedMessageJoinableToCommitBatch() {
-        if (!isPreparedSingleBlock || preparedTableBlock == null || commitBatchTud == null
-                || commitBatchTud.isDropped() || commitBatchTud.isWriterInError()
-                || commitBatchWriter == null || commitBatchTud.getWriter() != commitBatchWriter
-                || !Utf8s.equalsIgnoreCaseAscii(commitBatchTud.getTableNameUtf8(), preparedTableBlock.getTableNameUtf8())) {
-            return false;
-        }
-        final TableToken token = commitBatchTud.getTableToken();
-        // A later replacement still passes through the cache's salvage-or-refuse
-        // contract. A singleton cannot have appended any foreign block before it.
-        return engine.getTableTokenIfExists(token.getTableName()) == token
-                && engine.getTableTokenByDirName(token.getDirName()) == token;
     }
 
     /**
@@ -1747,6 +1748,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
+    // The intact checks that need no hash lookup: cheap enough for every joining frame.
+    // Nothing evicts a cache entry while a batch is pending (joining frames skip the
+    // lookup), so admission leaves the cache-entry check to isCommitBatchIntact().
+    private boolean isCommitBatchWriterIntact() {
+        return !tudCache.isDistressed()
+                && !commitBatchTud.isDropped()
+                && !commitBatchTud.isWriterInError()
+                && commitBatchTud.getWriter() == commitBatchWriter
+                && !commitBatchWriter.isDistressed()
+                && !commitBatchWriter.isInColumnarWrite()
+                && commitBatchWriter.getUncommittedRowCount() == commitBatchRows;
+    }
+
     private boolean isLiveWriteAllowed() {
         // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
         // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
@@ -1792,6 +1806,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         preparedMessageCursor = null;
         preparedTableBlock = null;
         isPreparedSingleBlock = false;
+        preparedRowCount = 0;
     }
 
     private void rejectMessageError(Throwable th) {
