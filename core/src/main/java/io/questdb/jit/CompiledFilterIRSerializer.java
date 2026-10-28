@@ -4980,6 +4980,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         final LongList intervals = predicateContext.inIntervals;
+        // parseTickExprAndIntersect() appends to the list. An `=` or `!=` holds several INs under
+        // one predicate root, so each IN starts from an empty list.
+        intervals.clear();
         IntervalUtils.parseTickExprAndIntersect(
                 driver,
                 executionContext.getCairoEngine().getConfiguration(),
@@ -5002,10 +5005,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // the only day, a Saturday. InTimestampTimestampFunctionFactory returns the constant
             // false then, and the function parser folds the tree around it, so a filter that folds
             // to a constant never reaches the JIT. One that does not, such as
-            // `tm IN '2024-01-06#workday' OR k = 2`, still holds the IN here. The parent OR, AND or
-            // NOT pops one value per operand, and a lone predicate with no value stores every row,
-            // so push a comparison that is false on every row. It compares two immediates at I8,
-            // the width of every temporal key, and reads no column.
+            // `tm IN '2024-01-06#workday' OR k = 2`, still holds the IN here. The parent OR, AND,
+            // NOT or comparison (`=`, `!=`) pops one value per operand, and a lone predicate with no
+            // value stores every row, so push a comparison that is false on every row. It compares
+            // two immediates at I8, the width of every temporal key, and reads no column.
             putNeverMatchingInPairing(I8_TYPE);
             return;
         }

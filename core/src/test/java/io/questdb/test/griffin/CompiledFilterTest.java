@@ -813,6 +813,67 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInIntervalComparisonCountsEachInAgainstThreshold() throws Exception {
+        // The IN list threshold (10 by default) caps the interval count of each IN. Two INs of six
+        // intervals each under one comparison stay within it, so the JIT compiles the filter.
+        assertMemoryLeak(() -> {
+            createTwoTemporalKeysTable();
+            for (String c : new String[]{"d", "t", "n"}) {
+                assertFilterWithAndWithoutJit(
+                        "(" + c + "1 IN ('2024-01-10T10:00;1m;1d;6')) = (" + c + "2 IN ('2024-02-01T10:00;1m;1d;6'))",
+                        keys(4, 5),
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testInIntervalComparisonOfTwoKeys() throws Exception {
+        // `=` and `!=` hold both INs in one predicate. The JIT used to compile the second IN it
+        // serialized, the left one, with the intervals of both.
+        assertMemoryLeak(() -> {
+            createTwoTemporalKeysTable();
+            for (String c : new String[]{"d", "t", "n"}) {
+                final String a = c + "1";
+                final String b = c + "2";
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') = (" + b + " IN '2024-02')", keys(2, 4, 5), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') != (" + b + " IN '2024-02')", keys(1, 3), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') <> (" + b + " IN '2024-02')", keys(1, 3), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN ('2024-01')) = (" + b + " IN ('2024-02'))", keys(2, 4, 5), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN ('2024-01')) != (" + b + " IN ('2024-02'))", keys(1, 3), true);
+                assertFilterWithAndWithoutJit("(" + b + " IN '2024-02-02') = (" + b + " IN '2024-02-06')", keys(1, 4, 5), true);
+                assertFilterWithAndWithoutJit("(" + b + " IN ('2024-02-02')) != (" + b + " IN ('2024-02-06'))", keys(2, 3), true);
+                // 2024-01-06 is a Saturday, so the left IN holds no interval and matches no row.
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01-06#workday') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+            }
+        });
+    }
+
+    @Test
+    public void testInIntervalOverTwoKeysMatchesJava() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoTemporalKeysTable();
+            // $today is 2024-02-06
+            setCurrentMicros(Micros.toMicros(2024, 2, 6, 1, 0));
+            for (String c : new String[]{"d", "t", "n"}) {
+                final String a = c + "1";
+                final String b = c + "2";
+                assertFilterWithAndWithoutJit(a + " IN '2024-01'", keys(1, 2), true);
+                assertFilterWithAndWithoutJit(b + " IN ('2024-02')", keys(2, 3), true);
+                // AND and OR are not predicate roots, and the optimiser pushes NOT down to each IN, so each IN is a predicate of its own.
+                assertFilterWithAndWithoutJit(a + " IN '2024-01' AND " + b + " IN '2024-02'", keys(2), true);
+                assertFilterWithAndWithoutJit(a + " IN ('2024-01') OR " + b + " IN ('2024-02')", keys(1, 2, 3), true);
+                assertFilterWithAndWithoutJit("NOT (" + a + " IN '2024-01' AND " + b + " IN '2024-02')", keys(1, 3, 4, 5), true);
+                assertFilterWithAndWithoutJit(a + " IN '2024-01-06#workday' OR " + b + " IN '2024-02'", keys(2, 3), true);
+                // A date variable compiles its own intervals.
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') = (" + b + " IN '$today')", keys(4, 5), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN '$today') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+            }
+        });
+    }
+
+    @Test
     public void testInShortCircuitDoesNotLeakColumnCacheAfterEndSc() throws Exception {
         assertMemoryLeak(() -> {
             // Multi-value IN() in a scalar AND chain emits BEGIN_SC, EQ pairs
@@ -2764,6 +2825,24 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 (3, '2024-01-03T00:00:00.000Z', '2024-01-03T00:00:00.000000Z', '2024-01-03T00:00:00.000000000Z', '2024-01-01T02:00:00.000000Z'),
                 (4, NULL, NULL, NULL, '2024-01-01T03:00:00.000000Z'),
                 (5, '2024-01-01T23:59:59.999Z', '2024-01-01T23:59:59.999999Z', '2024-01-01T23:59:59.999999999Z', '2024-01-01T04:00:00.000000Z')
+                """);
+    }
+
+    // Two keys of each temporal type, k1 and k2 for k in d (DATE), t (TIMESTAMP) and n (TIMESTAMP_NS).
+    // Row 4 has a NULL second key, and row 5 two NULL keys.
+    private void createTwoTemporalKeysTable() throws SqlException {
+        execute("CREATE TABLE x (k INT, d1 DATE, d2 DATE, t1 TIMESTAMP, t2 TIMESTAMP, n1 TIMESTAMP_NS, n2 TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x VALUES
+                (1, '2024-01-10T10:00:00.000Z', '2024-01-12T10:00:00.000Z', '2024-01-10T10:00:00.000000Z', '2024-01-12T10:00:00.000000Z',
+                    '2024-01-10T10:00:00.000000000Z', '2024-01-12T10:00:00.000000000Z', '2024-01-10T10:00:00.000000Z'),
+                (2, '2024-01-30T10:00:00.000Z', '2024-02-02T10:00:00.000Z', '2024-01-30T10:00:00.000000Z', '2024-02-02T10:00:00.000000Z',
+                    '2024-01-30T10:00:00.000000000Z', '2024-02-02T10:00:00.000000000Z', '2024-01-30T10:00:00.000000Z'),
+                (3, '2024-02-05T10:00:00.000Z', '2024-02-06T10:00:00.000Z', '2024-02-05T10:00:00.000000Z', '2024-02-06T10:00:00.000000Z',
+                    '2024-02-05T10:00:00.000000000Z', '2024-02-06T10:00:00.000000000Z', '2024-02-05T10:00:00.000000Z'),
+                (4, '2024-02-27T10:00:00.000Z', NULL, '2024-02-27T10:00:00.000000Z', NULL,
+                    '2024-02-27T10:00:00.000000000Z', NULL, '2024-02-27T10:00:00.000000Z'),
+                (5, NULL, NULL, NULL, NULL, NULL, NULL, '2024-02-28T10:00:00.000000Z')
                 """);
     }
 
