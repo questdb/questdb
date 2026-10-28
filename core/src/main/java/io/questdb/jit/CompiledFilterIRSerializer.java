@@ -1483,6 +1483,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    // A quoted string or NULL: the right-hand constants that InTimestampTimestampFunctionFactory reads
+    // as an interval expression. It reads an unquoted integer such as 2024 as a point, which the tick
+    // expression parser would read as a year.
+    private static boolean isIntervalExpressionConstant(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT
+                && (Chars.isQuoted(node.token) || SqlKeywords.isNullKeyword(node.token));
+    }
+
     private static boolean isNullConstant(ExpressionNode node) {
         return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
@@ -5462,12 +5470,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     serializeIn();
                 }
                 return;
-            } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
-                // No cap on a constant expression: this form has always compiled any interval
-                // count, and the threshold would move counts just above it to the slower Java
-                // filter. A date-variable expression never ran on the JIT correctly, so the
-                // threshold caps its interval bound, as in the parenthesised form.
-                serializeInTimestampRange(position, Integer.MAX_VALUE);
+            } else if (type == ExpressionNode.SET_OPERATION
+                    && isIntervalExpressionConstant(predicateContext.inOperationNode.rhs)
+                    && isInTimestampPredicate()) {
+                // Only a quoted string or NULL takes this path: the Java filter reads an unquoted
+                // integer as a point, so any other right-hand side falls through to the Java filter.
+                // For a TIMESTAMP or TIMESTAMP_NS key this form has always compiled any interval
+                // count, and a cap would move counts just above the threshold to the slower Java
+                // filter. A DATE key ran on the Java filter before, and its binary search outpaces
+                // the range checks past a few dozen intervals, so the IN list threshold caps a DATE
+                // key's interval count, as in the parenthesised form. The threshold caps the bound
+                // of a date-variable expression for every key type.
+                final int maxIntervalCount = ColumnType.tagOf(predicateContext.columnType) == ColumnType.DATE
+                        ? executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()
+                        : Integer.MAX_VALUE;
+                serializeInTimestampRange(position, maxIntervalCount);
                 return;
             }
         }

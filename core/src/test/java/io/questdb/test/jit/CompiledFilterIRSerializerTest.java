@@ -1148,6 +1148,30 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testDateInIntervalCountThreshold() throws Exception {
+        // The IN list threshold (10 by default) caps the interval count of an unparenthesised IN
+        // over a DATE key, as it caps the parenthesised form's.
+        serialize("adate IN '2020-01-01T10:00;1h;1d;10'");
+        assertIRStackBalanced();
+        assertMemoryLeak(() -> {
+            // The shared IR buffer holds one page, too small for the range checks of 11 intervals.
+            try (MemoryCARW ir = Vm.getCARWInstance(2_048, 16, MemoryTag.NATIVE_JIT)) {
+                try {
+                    serialize(ir, "adate IN '2020-01-01T10:00;1h;1d;11'", false, false, true);
+                    Assert.fail("JIT must decline 11 intervals");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "exceeded JIT IN list threshold [threshold=10, intervals=11]");
+                }
+                // A TIMESTAMP or TIMESTAMP_NS key compiles any interval count in this form.
+                for (String c : new String[]{"atimestamp", "atimestampns"}) {
+                    serialize(ir, c + " IN '2020-01-01T10:00;1h;1d;11'", false, false, true);
+                    serialize(ir, c + " IN '2020-01-01T10:00;1h;1d;40'", false, false, true);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDateInLiteral() throws Exception {
         // InTimestampTimestampFunctionFactory compares a DATE key in microseconds: d matches when
         // d * 1000 lies in the interval.
@@ -2450,6 +2474,27 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(string_header astring)(i64 -1L)(<>)(ret)");
         serialize("null = astring");
         assertIR("(string_header astring)(i64 -1L)(=)(ret)");
+    }
+
+    @Test
+    public void testTemporalInUnquotedIntegerDeclinesJit() throws Exception {
+        // InTimestampTimestampFunctionFactory reads an unquoted integer as a point, while the tick
+        // expression parser reads four digits as a year. Only a quoted string or NULL is an
+        // interval expression.
+        for (String c : new String[]{"adate", "atimestamp", "atimestampns"}) {
+            for (String element : new String[]{"2024", "1970", "0", "2024_000"}) {
+                try {
+                    serialize(c + " IN " + element);
+                    Assert.fail("JIT must decline " + c + " IN " + element);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid operator: in");
+                }
+            }
+            serialize(c + " IN '2024'");
+            assertIRStackBalanced();
+            serialize(c + " IN NULL");
+            assertIR("(i64 -9223372036854775808L)(i64 " + c + ")(=)(ret)");
+        }
     }
 
     @Test
@@ -4717,26 +4762,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
      * walk rejects the whole opcode class instead; pin a short-circuit shape with
      * {@link #assertIR}.
      */
-    // Initializes the bind variable functions of the last serialized filter at the given clock, as
-    // the JIT factories do on every cursor open, and checks the bounds they hold.
-    private void assertTickBounds(long nowMicros, long... expectedBounds) throws SqlException {
-        setCurrentMicros(nowMicros);
-        Assert.assertEquals(expectedBounds.length, bindVarFunctions.size());
-        Function.init(bindVarFunctions, null, sqlExecutionContext, null);
-        for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
-            Assert.assertEquals("bound " + i, expectedBounds[i], bindVarFunctions.getQuick(i).getLong(null));
-        }
-    }
-
-    private void assertTickBoundBindVariables(int expectedCount) {
-        Assert.assertEquals(expectedCount, bindVarFunctions.size());
-        for (int i = 0; i < expectedCount; i++) {
-            final Function function = bindVarFunctions.getQuick(i);
-            Assert.assertTrue(function instanceof CompiledFilterTickBoundBindVariable);
-            Assert.assertEquals(ColumnType.LONG, function.getType());
-        }
-    }
-
     private void assertIRStackBalanced() {
         long offset = 0;
         int depth = 0;
@@ -4785,6 +4810,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
         Assert.assertTrue("IR carries no (ret)", hasReturn);
         Assert.assertEquals("IR leaves an unbalanced value stack", 1, depth);
+    }
+
+    // Initializes the bind variable functions of the last serialized filter at the given clock, as
+    // the JIT factories do on every cursor open, and checks the bounds they hold.
+    private void assertTickBounds(long nowMicros, long... expectedBounds) throws SqlException {
+        setCurrentMicros(nowMicros);
+        Assert.assertEquals(expectedBounds.length, bindVarFunctions.size());
+        Function.init(bindVarFunctions, null, sqlExecutionContext, null);
+        for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+            Assert.assertEquals("bound " + i, expectedBounds[i], bindVarFunctions.getQuick(i).getLong(null));
+        }
+    }
+
+    private void assertTickBoundBindVariables(int expectedCount) {
+        Assert.assertEquals(expectedCount, bindVarFunctions.size());
+        for (int i = 0; i < expectedCount; i++) {
+            final Function function = bindVarFunctions.getQuick(i);
+            Assert.assertTrue(function instanceof CompiledFilterTickBoundBindVariable);
+            Assert.assertEquals(ColumnType.LONG, function.getType());
+        }
     }
 
     private void assertOrderingComparisonRejected(String column, String typeName) throws Exception {

@@ -34,6 +34,8 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
@@ -591,6 +593,55 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicDayFilterIntersectionWithNoIntervalsClosesAdoptedFunction() throws Exception {
+        // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval. The intersection
+        // with it empties the model and closes the function the builder already adopted.
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+
+        final String intervals = "2024-01-06#workday";
+        builder.intersectIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertTrue(builder.isEmptySet());
+        Assert.assertEquals(1, adopted.closeCount);
+
+        builder.clear();
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
+    public void testDynamicDayFilterUnionReservationFailureIsAtomic() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        builder.failNextReservation = true;
+
+        // 2018-01-01 is a Monday, so January 2018 holds 23 workdays, one union interval each
+        final String intervals = "2018-01#workday";
+        try {
+            builder.unionIntervals(intervals, 0, intervals.length(), 0);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        // the reservation requests one slot per resolved interval
+        Assert.assertEquals(23, builder.lastReservedIntervalCount);
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        builder.unionIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertEquals(dynamicSize + 23, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 23 * 4, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
     public void testDynamicIntervalsDoNotAllocateErrorPositions() {
         // With no cursor functions the copy must be null, not an empty IntList: null is the
         // "no cursor bounds" sentinel RuntimeIntervalModel.getCursorFunctionPosition() handles,
@@ -990,6 +1041,47 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTickStringWithoutFilterAfterDynamicIntervalKeepsDynamicEncoding() throws Exception {
+        // A string without '#' keeps one dynamic slot per bracket value, even where the static parser
+        // would merge the adjacent days into one interval.
+        final String intervals = "2018-01-[10,11]";
+        for (short operation : new short[]{IntervalOperation.INTERSECT, IntervalOperation.SUBTRACT, IntervalOperation.UNION}) {
+            ReservationFailingBuilder builder = newFailingBuilder();
+            CloseCountingFunction adopted = new CloseCountingFunction();
+            builder.intersectRuntimeTimestamp(adopted, 11);
+            final int staticSize = builder.staticIntervalsSize();
+            switch (operation) {
+                case IntervalOperation.INTERSECT -> builder.intersectIntervals(intervals, 0, intervals.length(), 0);
+                case IntervalOperation.SUBTRACT -> builder.subtractIntervals(intervals, 0, intervals.length(), 0);
+                default -> builder.unionIntervals(intervals, 0, intervals.length(), 0);
+            }
+            final LongList encoded = builder.staticIntervals();
+            Assert.assertEquals("operation " + operation, staticSize + 2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, encoded.size());
+            final short first = IntervalUtils.getEncodedOperation(encoded, staticSize);
+            final short second = IntervalUtils.getEncodedOperation(encoded, staticSize + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+            switch (operation) {
+                case IntervalOperation.INTERSECT -> {
+                    // the first value intersects, and the second joins it as a union
+                    Assert.assertEquals(IntervalOperation.INTERSECT, first);
+                    Assert.assertEquals(IntervalOperation.UNION, second);
+                }
+                case IntervalOperation.SUBTRACT -> {
+                    Assert.assertEquals(IntervalOperation.SUBTRACT, first);
+                    Assert.assertEquals(IntervalOperation.SUBTRACT, second);
+                }
+                default -> {
+                    Assert.assertEquals(IntervalOperation.UNION, first);
+                    Assert.assertEquals(IntervalOperation.UNION, second);
+                }
+            }
+            RuntimeIntrinsicIntervalModel model = builder.build();
+            builder.clear();
+            Misc.free(model);
+            Assert.assertEquals(1, adopted.closeCount);
+        }
+    }
+
+    @Test
     public void testWindowJoinMergeIgnoresDynamicMasterIntervals() throws Exception {
         final IntrinsicModel master = new IntrinsicModel();
         master.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -1270,6 +1362,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
      */
     private static class ReservationFailingBuilder extends RuntimeIntervalModelBuilder {
         boolean failNextReservation;
+        int lastReservedIntervalCount = -1;
         private final RuntimeException reservationFailure = new RuntimeException("injected allocation failure");
 
         int dynamicRangeSize() {
@@ -1278,11 +1371,16 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
 
         @Override
         protected void reserveEncodedIntervals(int intervalCount, int cursorFunctionCount) {
+            lastReservedIntervalCount = intervalCount;
             if (failNextReservation) {
                 failNextReservation = false;
                 throw reservationFailure;
             }
             super.reserveEncodedIntervals(intervalCount, cursorFunctionCount);
+        }
+
+        LongList staticIntervals() {
+            return copyStaticIntervals();
         }
 
         int staticIntervalsSize() {
