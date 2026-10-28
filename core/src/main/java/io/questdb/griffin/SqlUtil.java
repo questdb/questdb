@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -77,6 +78,8 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
+
 import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
@@ -88,6 +91,88 @@ public class SqlUtil {
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
+
+    public static boolean containsWithin(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        stack.clear();
+        if (node != null) {
+            stack.push(node);
+        }
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode next = stack.pop();
+                if (next.token != null && SqlKeywords.isWithinKeyword(next.token)) {
+                    return true;
+                }
+                if (next.lhs != null) {
+                    stack.push(next.lhs);
+                }
+                if (next.rhs != null) {
+                    stack.push(next.rhs);
+                }
+                for (int i = 0, n = next.args.size(); i < n; i++) {
+                    stack.push(next.args.getQuick(i));
+                }
+            }
+            return false;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static ExpressionNode getEqualsOrColumn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        if (node == null || node.paramCount != 2 || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
+            return null;
+        }
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                ExpressionNode key = getEqualsKey(leaf);
+                if (key == null || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
+                    return null;
+                }
+                column = key;
+            }
+            return column;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static void rewriteEqualsOrToIn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        assert node.args.size() == 0;
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                column = getEqualsKey(leaf);
+                assert column != null;
+                node.args.add(column == leaf.lhs ? leaf.rhs : leaf.lhs);
+            }
+        } finally {
+            stack.clear();
+        }
+        node.args.add(column);
+        node.paramCount = node.args.size();
+        node.type = ExpressionNode.FUNCTION;
+        node.token = "in";
+        node.lhs = null;
+        node.rhs = null;
+    }
 
     public static void addSelectStar(
             IQueryModel model,
@@ -240,12 +325,17 @@ public class SqlUtil {
                 }
             }
 
-            // Process tables directly referenced
+            // Process tables directly referenced, a SHOW statement's object included, and the tables that
+            // table-name functions in the FROM clause name
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                String tableName = unquote(tableNameExpr.token).toString();
-                if (!depMap.contains(tableName)) {
-                    depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+            if (tableNameExpr != null) {
+                if (tableNameExpr.type == ExpressionNode.LITERAL) {
+                    String tableName = unquote(tableNameExpr.token).toString();
+                    if (!depMap.contains(tableName)) {
+                        depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+                    }
+                } else {
+                    collectTableNameFunctionReference(engine, tableNameExpr, depMap);
                 }
             }
 
@@ -993,6 +1083,65 @@ public class SqlUtil {
     }
 
     /**
+     * Returns the validated percentile at the given logical index of a one-dimensional
+     * percentile list. The list may be a slice or sub-array of a larger array, so this
+     * method reads through the list's stride and offset rather than its backing buffer.
+     *
+     * @param percentiles   the percentile list, checked by {@link #getPercentileCount}
+     * @param index         the logical index, below {@link #getPercentileCount}
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double getPercentile(ArrayView percentiles, int index, int percentilePos) {
+        return validatePercentile(percentiles.getDouble(index * percentiles.getStride(0)), percentilePos);
+    }
+
+    /**
+     * Returns the number of percentiles in a percentile list. A NULL list fails, as a NULL
+     * percentile does in {@link #validatePercentile}. The list must be one-dimensional: the
+     * result array of the percentile functions is always one-dimensional, so flattening a
+     * deeper list would silently lose its shape.
+     *
+     * @param percentiles   the percentile list
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the number of percentiles
+     */
+    public static int getPercentileCount(ArrayView percentiles, int percentilePos) {
+        if (percentiles.isNull()) {
+            throw CairoException.nonCritical().position(percentilePos).put("percentile array must not be NULL");
+        }
+        if (percentiles.getDimCount() != 1) {
+            throw CairoException.nonCritical().position(percentilePos).put("array is not one-dimensional");
+        }
+        return percentiles.getDimLen(0);
+    }
+
+    /**
+     * Returns the index of the percentile_disc() value in a sorted list of {@code size} values.
+     * The SQL standard defines the value as the first one whose cumulative distribution reaches
+     * the percentile; the k-th value's cumulative distribution is {@code k / size}, which this
+     * method computes in double precision, as cume_dist() does. Rounding
+     * {@code percentile * size} up alone gets it wrong when the product rounds past a whole
+     * number: {@code 0.07 * 100} is 7.000000000000001, yet the 7th of 100 values already has
+     * the cumulative distribution {@code 7 / 100 == 0.07}.
+     *
+     * @param percentile the percentile, within [0, 1]
+     * @param size       the number of values, at least 1
+     * @return the 0-based index of the percentile_disc() value
+     */
+    public static long getPercentileDiscIndex(double percentile, long size) {
+        // the product carries one rounding error, which moves its ceiling by one at most
+        long k = Math.max(1, (long) Math.ceil(percentile * size));
+        while (k > 1 && (double) (k - 1) / size >= percentile) {
+            k--;
+        }
+        while (k < size && (double) k / size < percentile) {
+            k++;
+        }
+        return k - 1;
+    }
+
+    /**
      * Extracts the interval/stride expression from a timestamp_floor or
      * timestamp_floor_utc function call, handling 2/3/5-param overloads.
      */
@@ -1001,17 +1150,6 @@ public class SqlUtil {
             return ast.args.getQuick(ast.paramCount - 1);
         }
         return ast.lhs;
-    }
-
-    /**
-     * Extracts the timestamp column expression from a timestamp_floor or
-     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
-     */
-    public static ExpressionNode getTimestampFloorTimestampArg(ExpressionNode ast) {
-        if (ast.paramCount == 3 || ast.paramCount == 5) {
-            return ast.args.getQuick(ast.paramCount - 2);
-        }
-        return ast.rhs;
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -1600,6 +1738,29 @@ public class SqlUtil {
         }
     }
 
+    /**
+     * Interpolates between two adjacent sorted values the way percentile_cont() does:
+     * {@code lo + (hi - lo) * fraction}. The difference {@code hi - lo} overflows to infinity
+     * when {@code lo} and {@code hi} are huge and of opposite signs, although the result lies
+     * between them. Halving both values and doubling the result is exact at that magnitude, so
+     * the method then runs the same arithmetic on the halves.
+     *
+     * @param lo       the lower value, finite
+     * @param hi       the upper value, finite and not less than {@code lo}
+     * @param fraction the position between the two values, within [0, 1]
+     * @return the interpolated value, within [lo, hi]
+     */
+    public static double interpolatePercentile(double lo, double hi, double fraction) {
+        final double delta = hi - lo;
+        if (Numbers.isFinite(delta)) {
+            return lo + delta * fraction;
+        }
+        final double halfLo = lo * 0.5;
+        final double result = (halfLo + (hi * 0.5 - halfLo) * fraction) * 2;
+        // keeps rounding at the edge of the double range from pushing the result past hi
+        return Math.max(lo, Math.min(hi, result));
+    }
+
     public static boolean isNotPlainSelectModel(IQueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
@@ -1950,6 +2111,24 @@ public class SqlUtil {
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
+    /**
+     * Checks that a percentile lies within [0, 1], as the SQL standard requires of
+     * percentile_disc() and percentile_cont(), and returns it. NULL, NaN, infinities and
+     * negative values fail; negative zero passes as zero.
+     *
+     * @param percentile    the percentile
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double validatePercentile(double percentile, int percentilePos) {
+        // Numbers.isNull() is true for NaN and both infinities
+        if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
+            throw CairoException.nonCritical().position(percentilePos)
+                    .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+        }
+        return percentile;
+    }
+
     // tableName and columnName have to be string objects,
     // they will be used in the view definition
     private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
@@ -1973,6 +2152,9 @@ public class SqlUtil {
         if (expr.queryModel != null) {
             collectTableAndColumnReferences(engine, expr.queryModel, depMap);
         }
+
+        // a table-name function in an expression, e.g. SELECT table_partitions('t')
+        collectTableNameFunctionReference(engine, expr, depMap);
 
         // Handle column literals (e.g., table.column or column)
         if (expr.type == ExpressionNode.LITERAL) {
@@ -2022,6 +2204,41 @@ public class SqlUtil {
                 collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
             }
         }
+    }
+
+    // A table-name function, such as table_columns('t'), reads the metadata of the object its constant
+    // argument names. The object is recorded as a dependency of the view with no columns: a reader of the
+    // view may read its metadata through the view, see SqlExecutionContext.TableFunctionView.isDependency(),
+    // but none of its data. The argument is recorded as the view's definition writes it, so a caller that
+    // later overrides an OVERRIDABLE variable of the view does not change it.
+    private static void collectTableNameFunctionReference(
+            @NotNull CairoEngine engine,
+            @NotNull ExpressionNode node,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        if (node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 1
+                && node.rhs != null
+                && node.rhs.type == ExpressionNode.CONSTANT
+                && engine.getFunctionFactoryCache().isTableNameFunction(node.token)) {
+            final String tableName = unquote(node.rhs.token).toString();
+            if (!depMap.contains(tableName)) {
+                depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+            }
+        }
+    }
+
+    private static ExpressionNode getEqualsKey(ExpressionNode node) {
+        if (node.paramCount != 2 || !Chars.equals(node.token, "=") || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        ExpressionNode key = node.lhs.type == ExpressionNode.LITERAL ? node.lhs : node.rhs;
+        ExpressionNode value = key == node.lhs ? node.rhs : node.lhs;
+        if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
+                || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))) {
+            return null;
+        }
+        return key;
     }
 
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {

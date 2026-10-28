@@ -59,6 +59,9 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        // The pool lists every table with a pooled reader, including those the principal may not see,
+        // so it is an admin-only diagnostic. Authorized per execution, since compiled factories are shared.
+        executionContext.getSecurityContext().authorizeSystemAdmin();
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor(cairoEngine.getConfiguration().getPoolSegmentSize());
         cairoEngine.getReaderPoolEntries(readerPoolCursor);

@@ -49,6 +49,8 @@ int32_t minInt_Vanilla(int32_t *pi, int64_t count);
 
 int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
 
+int64_t minMaxCountInt_Vanilla(int32_t *pi, int64_t count, int32_t *minMax);
+
 int64_t countLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t sumLong_Vanilla(int64_t *pl, int64_t count);

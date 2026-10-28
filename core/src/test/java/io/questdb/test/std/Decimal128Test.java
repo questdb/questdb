@@ -2099,6 +2099,32 @@ public class Decimal128Test {
         Assert.assertEquals(5.0, accumulator.toDouble(), 0.01);
     }
 
+    @Test
+    public void testZeroOperandRejectsOutOfRangeValue() {
+        // Adding or subtracting zero must not let an out-of-range accumulator through unchecked.
+        // The first value comes from a CI fuzz failure: its magnitude is close to 2^127.
+        // of() skips range validation, the same way Rnd.nextDecimal128() builds its values.
+        Decimal128 value = new Decimal128();
+        value.of(-9_223_372_035_656_489_587L, -8_707_179_752_654_087_226L, 0);
+        assertZeroOperandRejects(value);
+        value = new Decimal128();
+        value.of(Long.MAX_VALUE, -1L, 0);
+        assertZeroOperandRejects(value);
+    }
+
+    private static void assertZeroOperandRejects(Decimal128 value) {
+        Assert.assertTrue(value.hasOverflowed());
+        for (int zeroScale = 0; zeroScale <= 3; zeroScale += 3) {
+            final Decimal128 zero = new Decimal128(0, 0, zeroScale);
+            Assert.assertThrows(NumericException.class, () -> Decimal128.add(value, zero, new Decimal128()));
+            Assert.assertThrows(NumericException.class, () -> {
+                Decimal128 sink = new Decimal128();
+                sink.copyFrom(value);
+                sink.subtract(zero);
+            });
+        }
+    }
+
     private void printTable(String name, long[][] table) {
         long l = table[0].length;
         System.err.printf("    private static final long[][] %s = new long[][]{\n", name);

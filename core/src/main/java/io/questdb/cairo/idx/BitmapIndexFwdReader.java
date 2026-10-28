@@ -149,7 +149,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         long valueCount;
         long firstValueBlockOffset;
         long lastValueBlockOffset;
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long deadline = DEADLINE_UNARMED;
         while (true) {
             valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
@@ -164,7 +164,9 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 }
             }
 
-            if (clock.getTicks() > deadline) {
+            if (deadline == DEADLINE_UNARMED) {
+                deadline = clock.getTicks() + spinLockTimeoutMs;
+            } else if (clock.getTicks() > deadline) {
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
                 throw CairoException.critical(0).put(INDEX_CORRUPT);
             }
@@ -394,7 +396,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 long valueCount;
                 long valueBlockOffset;
                 long lastValueBlockOffset;
-                final long deadline = clock.getTicks() + spinLockTimeoutMs;
+                long deadline = DEADLINE_UNARMED;
                 while (true) {
                     valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
@@ -409,7 +411,9 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                         }
                     }
 
-                    if (clock.getTicks() > deadline) {
+                    if (deadline == DEADLINE_UNARMED) {
+                        deadline = clock.getTicks() + spinLockTimeoutMs;
+                    } else if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
                         throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }

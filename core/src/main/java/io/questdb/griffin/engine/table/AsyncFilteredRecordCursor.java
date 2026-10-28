@@ -142,6 +142,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         }
+
+        if (!allFramesActive) {
+            throw buildInterruptionException();
+        }
     }
 
     @Override
