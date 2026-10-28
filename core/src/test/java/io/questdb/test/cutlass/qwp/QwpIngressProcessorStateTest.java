@@ -84,6 +84,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
@@ -176,6 +177,55 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM arrays").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testArrayDimensionalityChangeOnWarmConnectionRejected() throws Exception {
+        // Array dimensions travel in the column data, not the schema section, so a 2-D
+        // frame after a 1-D one reuses the cached schema and would hit the Phase-1 cache;
+        // only Phase 1 checks dimensions. Covers the standalone and the joining path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE arrays (arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{1.0, 2.0}), 1_000_000L);
+                state.processPreparedMessage();
+                state.commit();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.clear();
+                prepareArrayBlock(state, column -> column.addDoubleArray(new double[][]{{3.0, 4.0}, {5.0, 6.0}}), 2_000_000L);
+                state.processPreparedMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                TestUtils.assertContains(state.getErrorText(), "array dimensionality mismatch");
+                state.clear();
+
+                prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{7.0, 8.0}), 3_000_000L);
+                state.processPreparedMessage();
+                Assert.assertTrue(state.tryOpenCommitBatch(2));
+                state.clearMessageState();
+                prepareArrayBlock(state, column -> column.addDoubleArray(new double[][]{{9.0, 10.0}, {11.0, 12.0}}), 4_000_000L);
+                Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                state.processPreparedJoiningMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                TestUtils.assertContains(state.getErrorText(), "array dimensionality mismatch");
+                Assert.assertTrue(state.isCommitBatchIntact());
+                state.clearErrorForBatchSalvage();
+                Assert.assertTrue(state.commitBatch());
+                Assert.assertEquals(2, state.getHighestProcessedSequence());
+            }
+            drainWalQueue();
+            assertQuery("SELECT arr, ts FROM arrays")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            arr\tts
+                            [1.0,2.0]\t1970-01-01T00:00:01.000000Z
+                            [7.0,8.0]\t1970-01-01T00:00:03.000000Z
+                            """);
         });
     }
 
@@ -6080,6 +6130,24 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
             table.getOrCreateColumn("extra", QwpConstants.TYPE_LONG, false).addLong(8);
             table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(2_000_000L);
+            table.nextRow();
+            int length = encoder.encode(table);
+            long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
+    private static void prepareArrayBlock(
+            QwpIngressProcessorState state,
+            Consumer<QwpTableBuffer.ColumnBuffer> addValue,
+            long timestampMicros
+    ) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer("arrays")) {
+            addValue.accept(table.getOrCreateColumn("arr", QwpConstants.TYPE_DOUBLE_ARRAY, true));
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(timestampMicros);
             table.nextRow();
             int length = encoder.encode(table);
             long address = encoder.getBuffer().getBufferPtr();
