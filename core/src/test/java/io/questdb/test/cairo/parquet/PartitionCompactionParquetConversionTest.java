@@ -27,6 +27,7 @@ package io.questdb.test.cairo.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
@@ -63,6 +64,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class PartitionCompactionParquetConversionTest extends AbstractCairoTest {
     private static final long DAY = parse("2020-01-01T00:00:00.000000Z");
+    private static final String[] INDEX_CLAUSES = {
+            "INDEX",
+            "INDEX TYPE POSTING",
+            "INDEX TYPE POSTING DELTA",
+            "INDEX TYPE POSTING EF",
+            "INDEX TYPE POSTING INCLUDE (i, v)"
+    };
     private static final int LATE_ROWS = 200;
 
     @Override
@@ -157,25 +165,18 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             }
         };
         assertMemoryLeak(linkCountingFf, () -> {
-            final String[] indexClauses = {
-                    "INDEX",
-                    "INDEX TYPE POSTING",
-                    "INDEX TYPE POSTING DELTA",
-                    "INDEX TYPE POSTING EF",
-                    "INDEX TYPE POSTING INCLUDE (i, v)"
-            };
-            for (int t = 0; t < indexClauses.length; t++) {
+            for (int t = 0; t < INDEX_CLAUSES.length; t++) {
                 for (boolean isWal : new boolean[]{true, false}) {
                     final String tableName = "pl" + t + (isWal ? "w" : "n");
-                    createTableWithIndexedColumnTops(tableName, isWal, indexClauses[t]);
+                    createTableWithIndexedColumnTops(tableName, isWal, INDEX_CLAUSES[t]);
                     execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
                     noTopLinks.set(0);
                     topLinks.set(0);
                     absentLinks.set(0);
                     assertAlterConversionMatchesOracle(tableName, isWal, "");
-                    Assert.assertTrue("the index of a column with no top must be linked [" + indexClauses[t] + ']', noTopLinks.get() > 0);
-                    Assert.assertEquals("the index of a column with a top must be built [" + indexClauses[t] + ']', 0, topLinks.get());
-                    Assert.assertEquals("the index of a column the day predates must be built [" + indexClauses[t] + ']', 0, absentLinks.get());
+                    Assert.assertTrue("the index of a column with no top must be linked [" + INDEX_CLAUSES[t] + ']', noTopLinks.get() > 0);
+                    Assert.assertEquals("the index of a column with a top must be built [" + INDEX_CLAUSES[t] + ']', 0, topLinks.get());
+                    Assert.assertEquals("the index of a column the day predates must be built [" + INDEX_CLAUSES[t] + ']', 0, absentLinks.get());
                     for (String filter : new String[]{
                             "top_s = 't1'", "top_s = 't2'", "top_s IS NULL", "absent_s = 'a1'", "absent_s IS NULL"
                     }) {
@@ -284,6 +285,45 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testConversionThatFailsToLinkAnIndexLeavesThePlainDayNative() throws Exception {
+        final AtomicBoolean isLinkFailing = new AtomicBoolean(true);
+        final FilesFacade linkFailingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (isLinkFailing.get() && isDayIndexFile(src, "s")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(linkFailingFf, () -> {
+            createTable("jf", true);
+            execute("CREATE TABLE jf_oracle AS (SELECT * FROM jf) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final TableToken token = engine.verifyTableName("jf");
+            final long nameTxnBefore = dayNameTxn("jf");
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader("jf")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("a failed swap must leave the day native", tx.isPartitionParquet(tx.getPartitionIndex(DAY)));
+            }
+            Assert.assertEquals("the day's name txn", nameTxnBefore, dayNameTxn("jf"));
+            Assert.assertEquals("a failed swap must remove its staging directory", 1, countDayDirectories(token));
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM jf_oracle", "SELECT * FROM jf", LOG);
+
+            isLinkFailing.set(false);
+            assertConversionMatchesOracle("jf", true);
+        });
+    }
+
+    @Test
     public void testConvertsACompositeDay() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
@@ -301,6 +341,77 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             createTable("cp", true);
             assertFolders("cp", 1, false);
             assertConversion("cp", true);
+        });
+    }
+
+    /**
+     * One plain folder whose indexed columns have no top keeps its row ids, so the swap links its indexes rather
+     * than the job decoding the new parquet file to rebuild them.
+     */
+    @Test
+    public void testConvertsAPlainDayLinkingTheIndexes() throws Exception {
+        final AtomicInteger links = new AtomicInteger();
+        final FilesFacade linkCountingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (isDayIndexFile(src, "s")) {
+                    links.incrementAndGet();
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(linkCountingFf, () -> {
+            for (int t = 0; t < INDEX_CLAUSES.length; t++) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String tableName = "jl" + t + (isWal ? "w" : "n");
+                    createTableWithIndexedColumn(tableName, isWal, INDEX_CLAUSES[t]);
+                    execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    links.set(0);
+                    assertConversionMatchesOracle(tableName, isWal);
+                    Assert.assertTrue("the index of a column with no top must be linked [" + INDEX_CLAUSES[t] + ']', links.get() > 0);
+                }
+            }
+        });
+    }
+
+    /**
+     * One indexed column with a top, or one the day predates, has no index the parquet file's row ids match, so the
+     * job builds every index of the day from the parquet file and the swap links none.
+     */
+    @Test
+    public void testConvertsAPlainDayRebuildingTheIndexesWhenAnIndexedColumnHasATop() throws Exception {
+        final AtomicInteger links = new AtomicInteger();
+        final FilesFacade linkCountingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (isDayIndexFile(src, "s") || isDayIndexFile(src, "top_s") || isDayIndexFile(src, "absent_s")) {
+                    links.incrementAndGet();
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(linkCountingFf, () -> {
+            for (int t = 0; t < INDEX_CLAUSES.length; t++) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String tableName = "jt" + t + (isWal ? "w" : "n");
+                    createTableWithIndexedColumnTops(tableName, isWal, INDEX_CLAUSES[t]);
+                    execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    links.set(0);
+                    assertConversionMatchesOracle(tableName, isWal);
+                    Assert.assertEquals("no index may be linked [" + INDEX_CLAUSES[t] + ']', 0, links.get());
+                    for (String filter : new String[]{
+                            "top_s = 't1'", "top_s = 't2'", "top_s IS NULL", "absent_s = 'a1'", "absent_s IS NULL"
+                    }) {
+                        TestUtils.assertSqlCursors(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT * FROM " + tableName + "_oracle WHERE " + filter,
+                                "SELECT * FROM " + tableName + " WHERE " + filter,
+                                LOG
+                        );
+                    }
+                }
+            }
         });
     }
 
@@ -402,6 +513,64 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     /**
+     * An UPDATE of the indexed column rewrites its index under a new column name txn and keeps the day's name txn,
+     * generation and row count. The swap has to decline on the column version: linking the live index next to the
+     * pre-UPDATE parquet file would point its keys at the wrong rows.
+     */
+    @Test
+    public void testDiscardsTheSwapWhenAnUpdateOfTheIndexedColumnCommitsDuringTheBuild() throws Exception {
+        final AtomicBoolean isUpdateArmed = new AtomicBoolean(false);
+        final AtomicInteger updateCount = new AtomicInteger();
+        final FilesFacade updatingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                final int result = super.mkdirs(path, mode);
+                if (Utf8s.containsAscii(path, TableUtils.MERGING_DIR_MARKER) && isUpdateArmed.compareAndSet(true, false)) {
+                    // The conversion already holds its reader snapshot.
+                    try {
+                        execute("UPDATE ju SET s = 'k3' WHERE ts IN '2020-01-01' AND s = 'k1'");
+                        drainWalQueue();
+                        updateCount.incrementAndGet();
+                    } catch (Exception e) {
+                        throw new AssertionError("UPDATE failed during the conversion build", e);
+                    }
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(updatingFf, () -> {
+            createTable("ju", true);
+            execute("CREATE TABLE ju_oracle AS (SELECT * FROM ju) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("UPDATE ju_oracle SET s = 'k3' WHERE ts IN '2020-01-01' AND s = 'k1'");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final TableToken token = engine.verifyTableName("ju");
+            final long nameTxnBefore = dayNameTxn("ju");
+            isUpdateArmed.set(true);
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                job.run();
+            }
+            Assert.assertEquals("the conversion must reach the UPDATE interleaving", 1, updateCount.get());
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader("ju")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("a stale swap must leave the day native", tx.isPartitionParquet(tx.getPartitionIndex(DAY)));
+            }
+            Assert.assertEquals("the UPDATE must keep the day's name txn", nameTxnBefore, dayNameTxn("ju"));
+            assertNoStagingDirectory(token);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM ju_oracle", "SELECT * FROM ju", LOG);
+
+            assertConversionMatchesOracle("ju", true);
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM ju_oracle WHERE s = 'k3'", "SELECT * FROM ju WHERE s = 'k3'", LOG
+            );
+        });
+    }
+
+    /**
      * The conversion never touches the active logical partition, nor one already in parquet.
      */
     @Test
@@ -445,6 +614,27 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             });
             execute(lateRowsInsert("ra_oracle", "2020-01-01T23:30:00.000000Z"));
             assertConvertedMatchesOracle("ra");
+        });
+    }
+
+    /**
+     * A new index type moves the metadata version, so the swap refuses to link the index files the build did not see.
+     */
+    @Test
+    public void testRequestRebuildsAfterANonWalSwapRefusedForAnIndexTypeChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("ri", false);
+            execute("CREATE TABLE ri_oracle AS (SELECT * FROM ri) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertNextRequestRebuildsAfterARefusedSwap("ri", writer -> {
+                writer.dropIndex("s");
+                writer.addIndex("s", configuration.getIndexValueBlockSize(), IndexType.POSTING);
+            }, _ -> {
+            });
+            assertConvertedMatchesOracle("ri");
+            try (TableReader reader = engine.getReader("ri")) {
+                final int columnIndex = reader.getMetadata().getColumnIndex("s");
+                Assert.assertEquals("the day must carry the new index type", IndexType.POSTING, reader.getMetadata().getColumnIndexType(columnIndex));
+            }
         });
     }
 
@@ -794,6 +984,19 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                 " rnd_varchar(1, 40, 1) v, rnd_str(1, 30, 1) str, rnd_double(2) d, rnd_double_array(1, 1) arr," +
                 " timestamp_sequence('2020-01-01T11:06:40', 25 * 1_000_000L) ts, x late FROM long_sequence(1760)");
         drainWalQueue();
+        execute("INSERT INTO " + tableName + " (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60 * 1_000_000L) ts" +
+                " FROM long_sequence(50)");
+        drainWalQueue();
+    }
+
+    /**
+     * One indexed symbol, {@code s}, with no top in 2020-01-01, and an active 2020-01-03.
+     */
+    private void createTableWithIndexedColumn(String tableName, boolean isWal, String indexClause) throws Exception {
+        execute("CREATE TABLE " + tableName + " (i INT, s SYMBOL " + indexClause + ", v VARCHAR, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " SELECT x::INT i, rnd_symbol('k1', 'k2', NULL) s, rnd_varchar(1, 40, 1) v," +
+                " timestamp_sequence('2020-01-01', 10 * 1_000_000L) ts FROM long_sequence(4000)");
         execute("INSERT INTO " + tableName + " (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60 * 1_000_000L) ts" +
                 " FROM long_sequence(50)");
         drainWalQueue();

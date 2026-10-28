@@ -344,6 +344,31 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Whether the swap can link the conversion's indexes from the source folder rather than this job building them off
+     * the new parquet file. That file numbers its rows in folder order and has no index row map, so the native index
+     * files describe it exactly when the run is one plain folder at the logical partition start and no indexed column
+     * has a top there: the swap zeroes every top, and a top's NULL rows are in no native index file.
+     */
+    private static boolean isIndexLinkableAtSwap(TableReader reader, int lo, int hi, long logicalPartitionTimestamp) {
+        final TxReader txFile = reader.getTxFile();
+        if (hi - lo != 1
+                || txFile.isPartitionComposite(lo)
+                || txFile.getPartitionTimestampByIndex(lo) != logicalPartitionTimestamp) {
+            return false;
+        }
+        final TableMetadata metadata = reader.getMetadata();
+        final ColumnVersionReader cvr = reader.getColumnVersionReader();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))
+                    && metadata.isColumnIndexed(i)
+                    && cvr.getColumnTop(logicalPartitionTimestamp, metadata.getWriterIndex(i)) != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Whether the folder at {@code partitionIndex} is a parquet folder this job rebuilds at all: not REMOTE, with a
      * committed file size, and the whole of its logical partition.
      * <p>
@@ -763,8 +788,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 folders.size() / LONGS_PER_SCANNED_FOLDER
         );
 
+        final boolean isIndexLinkedAtSwap = isIndexLinkableAtSwap(reader, lo, hi, logicalPartitionTimestamp);
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
-        command.ofParquetConversion(tableToken, tableToken.getTableId(), logicalPartitionTimestamp, swapFolders, reader.getMetadataVersion(), liveRows);
+        command.ofParquetConversion(
+                tableToken,
+                tableToken.getTableId(),
+                logicalPartitionTimestamp,
+                swapFolders,
+                reader.getMetadataVersion(),
+                liveRows,
+                isIndexLinkedAtSwap
+        );
         boolean built = false;
         try {
             if (ff.exists(other.$())) {
@@ -795,15 +829,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         .put(']');
             }
             command.setParquetFileSize(parquetFileSize);
-            getParquetIndexBuilder().buildIndexes(
-                    other,
-                    parquetFileSize,
-                    reader.getMetadata(),
-                    cvr,
-                    logicalPartitionTimestamp,
-                    liveRows,
-                    reader.getTxn()
-            );
+            if (!isIndexLinkedAtSwap) {
+                getParquetIndexBuilder().buildIndexes(
+                        other,
+                        parquetFileSize,
+                        reader.getMetadata(),
+                        cvr,
+                        logicalPartitionTimestamp,
+                        liveRows,
+                        reader.getTxn()
+                );
+            }
             built = true;
         } finally {
             if (!built) {

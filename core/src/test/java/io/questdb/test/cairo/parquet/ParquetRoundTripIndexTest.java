@@ -32,13 +32,14 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * Native partition with a symbol index -> CONVERT TO PARQUET -> in-place O3 update -> CONVERT TO
- * NATIVE. The rebuilt native partition's index must agree with its symbol column.
+ * NATIVE. In every phase the partition's index must agree with its symbol column.
  */
 public class ParquetRoundTripIndexTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
@@ -78,12 +79,20 @@ public class ParquetRoundTripIndexTest extends AbstractCairoTest {
         });
     }
 
-    private static void verify(TableToken token, String label) {
+    private static void putRow(TableWriter w, long ts, long x) {
+        TableWriter.Row row = w.newRow(ts);
+        row.putSym(1, "S" + (x % 7));
+        row.putLong(2, x);
+        row.append();
+    }
+
+    private void verify(TableToken token, String label) throws Exception {
         try (TableReader reader = engine.getReader(token)) {
             final int p = 0;
             final long rows = reader.openPartition(p);
             if (reader.getTxFile().isPartitionParquet(p)) {
-                return; // parquet columns are not mapped as native memory; checked after conversion back
+                verifyParquet(label);
+                return;
             }
             final int symCol = reader.getMetadata().getColumnIndex("s");
             final MemoryCR symMem = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(p), symCol));
@@ -108,10 +117,25 @@ public class ParquetRoundTripIndexTest extends AbstractCairoTest {
         }
     }
 
-    private static void putRow(TableWriter w, long ts, long x) {
-        TableWriter.Row row = w.newRow(ts);
-        row.putSym(1, "S" + (x % 7));
-        row.putLong(2, x);
-        row.append();
+    // Parquet columns are not mapped as native memory, so each index scan is compared with a full scan of the column.
+    private void verifyParquet(String label) throws Exception {
+        final StringSink expected = new StringSink();
+        for (int key = 0; key < 7; key++) {
+            for (int dir = 1; dir <= 2; dir++) {
+                final String order = dir == 1 ? "" : " ORDER BY ts DESC";
+                final String truthSql = "SELECT s, x, ts FROM t WHERE s::STRING = 'S" + key + "' AND ts IN '1970-01-01'" + order;
+                assertQuery(truthSql).noLeakCheck().assertsPlanNotContaining("Index ");
+                expected.clear();
+                printSql(truthSql, expected);
+                Assert.assertNotEquals(label + ": no rows for key " + key, "s\tx\tts\n", expected.toString());
+                final String sql = "SELECT s, x, ts FROM t WHERE s = 'S" + key + "' AND ts IN '1970-01-01'" + order;
+                assertQuery(sql).noLeakCheck().assertsPlanContaining(dir == 1 ? "Index forward scan on: s" : "Index backward scan on: s");
+                if (dir == 1) {
+                    assertQuery(sql).noLeakCheck().timestamp("ts").returns(expected);
+                } else {
+                    assertQuery(sql).noLeakCheck().timestampDesc("ts").returns(expected);
+                }
+            }
+        }
     }
 }

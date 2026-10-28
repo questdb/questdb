@@ -4337,6 +4337,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * READ ONLY source folders are merged like any other. The merged folder is READ ONLY when any source folder
      * is, set in the same {@code _txn} commit that swaps it in, so the freeze is never lost.
      * A non-negative {@code parquetFileSize} marks a parquet conversion.
+     * <p>
+     * {@code isIndexLinkedAtSwap} marks a conversion whose staging directory holds no index files. The re-check
+     * above proves the source folder still holds exactly the rows the parquet file was written from, so its own
+     * index files describe that file too, as long as it is still one plain folder at the logical partition start
+     * and no indexed column has a top there. They are linked into the staging directory before it is renamed; a
+     * conversion that no longer fits that shape is stale.
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if stale or the open transaction may write to it
      */
@@ -4348,6 +4354,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long expectedMetadataVersion,
             long liveRows,
             long parquetFileSize,
+            boolean isIndexLinkedAtSwap,
             ColumnTopRecorder columnTops
     ) {
         final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
@@ -4388,6 +4395,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     || (firstIndex > 0
                     && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(firstIndex - 1)) == logicalPartitionTimestamp);
         }
+        if (!stale && isIndexLinkedAtSwap) {
+            stale = !isParquetConversion
+                    || folderCount != 1
+                    || folders.getQuick(0) != logicalPartitionTimestamp
+                    || txWriter.isPartitionComposite(firstIndex)
+                    || hasIndexedSymbolColumnTop(logicalPartitionTimestamp);
+        }
 
         other.trimTo(pathSize);
         setPathForNativePartition(other, timestampType, partitionBy, logicalPartitionTimestamp, expectedSrcNameTxn);
@@ -4407,6 +4421,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             other.trimTo(pathSize);
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedWriterTxn, -1L);
+        }
+
+        if (isIndexLinkedAtSwap) {
+            linkSourceIndexFilesIntoMergeStaging(logicalPartitionTimestamp, expectedSrcNameTxn, folderCount);
         }
 
         final long newNameTxn = txWriter.getTxn();
@@ -9604,6 +9622,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    private boolean hasIndexedSymbolColumnTop(long partitionTimestamp) {
+        for (int i = 0; i < columnCount; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))
+                    && metadata.isColumnIndexed(i)
+                    && columnVersionWriter.getColumnTop(partitionTimestamp, i) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasO3RowInLogicalPartition(long logicalPartitionTimestamp) {
         if (!hasO3()) {
             return false;
@@ -10457,6 +10486,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // .pv links are handled separately above.
             }
         });
+    }
+
+    /**
+     * Links the index files of the plain source folder {@code <partition>.<srcNameTxn>} into the merge staging
+     * directory {@code other} names on entry, and leaves {@code other} naming it again on return. A failed link
+     * removes the staging directory, partial links included, before rethrowing: the source folder stays live.
+     */
+    private void linkSourceIndexFilesIntoMergeStaging(long partitionTimestamp, long srcNameTxn, int folderCount) {
+        final int stagingDirLen = other.size();
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        try {
+            linkPartitionIndexFiles(partitionTimestamp, srcNameTxn, path.size(), stagingDirLen);
+        } catch (Throwable th) {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+            other.put(TableUtils.MERGING_DIR_MARKER).put(folderCount);
+            if (ff.exists(other.$()) && !ff.rmdir(other, false)) {
+                LOG.error().$("could not remove staged logical partition merge [path=").$(other).I$();
+            }
+            other.trimTo(pathSize);
+            throw th;
+        }
+        // linkPartitionIndexFiles trims both paths back to the table root.
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        other.put(TableUtils.MERGING_DIR_MARKER).put(folderCount);
     }
 
     private void lock() {

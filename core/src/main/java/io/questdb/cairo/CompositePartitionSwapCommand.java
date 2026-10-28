@@ -40,7 +40,9 @@ import io.questdb.tasks.TableWriterTask;
  *     {@code liveRows} and the recorded tops go unused.</li>
  *     <li>MERGE ({@link #ofMerge}): the whole LOGICAL partition - the main directory plus every MOVE-TAIL split -
  *     copied into one staging directory, which replaces the run of {@code _txn} entries it was built from.</li>
- *     <li>PARQUET CONVERSION ({@link #ofParquetConversion}): a MERGE into one parquet file, maybe of one folder.</li>
+ *     <li>PARQUET CONVERSION ({@link #ofParquetConversion}): a MERGE into one parquet file, maybe of one folder. A lone
+ *     plain folder whose indexed columns have no top keeps its row ids, so the writer links its index files into the
+ *     staging directory instead of the job building them.</li>
  *     <li>PARQUET GENERATION ({@link #ofParquetGeneration}): a parquet copy beside a plain native folder.</li>
  * </ul>
  * All five are the same errand - rebuild this partition off a reader - so they share one command and one lock reason.
@@ -65,6 +67,8 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
     private volatile boolean isApplied;
+    // PARQUET CONVERSION only: the job left the indexes out of the staging directory for the swap to link.
+    private boolean isIndexLinkedAtSwap;
     private boolean isMakePlain;
     private boolean isMerge;
     private boolean isParquetGeneration;
@@ -98,6 +102,7 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
                         expectedMetadataVersion,
                         liveRows,
                         parquetFileSize,
+                        isIndexLinkedAtSwap,
                         columnTops
                 );
             } else if (isMakePlain) {
@@ -236,6 +241,7 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
         this.seqTxn = -1L;
         this.folders.clear();
         this.columnTops.clear();
+        this.isIndexLinkedAtSwap = false;
         this.isApplied = false;
     }
 
@@ -278,6 +284,9 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
 
     /**
      * {@link #ofMerge} into one parquet file; the build calls {@link #setParquetFileSize} before publishing.
+     *
+     * @param isIndexLinkedAtSwap the staging directory holds no index files: the writer links the source folder's
+     *                            own, or declines the swap as stale when it can no longer prove they match
      */
     public void ofParquetConversion(
             TableToken tableToken,
@@ -285,11 +294,13 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
             long logicalPartitionTimestamp,
             LongList folders,
             long expectedMetadataVersion,
-            long liveRows
+            long liveRows,
+            boolean isIndexLinkedAtSwap
     ) {
         assert folders.size() >= LONGS_PER_FOLDER : "a conversion needs a folder";
         ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
         this.parquetFileSize = 0;
+        this.isIndexLinkedAtSwap = isIndexLinkedAtSwap;
     }
 
     public void ofParquetGeneration(
