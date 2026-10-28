@@ -306,9 +306,11 @@ final class CorrelatedChainRewriter {
 
     /**
      * Rewrites the chain above the block source: outer columns read the mapped columns, aggregates group by
-     * them, windows partition by them, a LIMIT and LATEST ON rank per them and the projection exposes them.
+     * them, windows partition by them, a LIMIT and LATEST ON rank per them and the projection exposes them. Unless
+     * the step restores them, a keyless aggregate restores its values over no rows, see
+     * {@link ScalarCompensation#compensateBlock}.
      */
-    LogicalPlan rewriteChain(LogicalPlan source, int chainBase, int base, boolean isUncompensated) throws SqlException {
+    LogicalPlan rewriteChain(LogicalPlan source, int chainBase, int base, boolean isUncompensated, boolean isBranch) throws SqlException {
         LogicalPlan input = source;
         for (int i = chain.size() - 1; i >= chainBase; i--) {
             final LogicalPlan node = chain.getQuick(i);
@@ -326,7 +328,7 @@ final class CorrelatedChainRewriter {
             final ProjectPlan scalar = isUncompensated || i != chainBase ? null : compensation.compensableScalar(input);
             if (node instanceof LimitPlan limit) {
                 if (scalar != null || compensation.isCompensated(input)) {
-                    final LogicalPlan compensated = scalar != null ? compensation.compensateBlock(scalar, base) : input;
+                    final LogicalPlan compensated = scalar != null ? compensation.compensateBlock(scalar, base, isBranch) : input;
                     ctx.remapMapped(limit, base);
                     input = compensation.limitGuardFilter(limit, compensated);
                     continue;
@@ -341,7 +343,7 @@ final class CorrelatedChainRewriter {
             ctx.remapMapped(node, base);
             input = rewriteChainNode((UnaryPlan) node, input, base);
             if (!isUncompensated && i == chainBase && compensation.compensableScalar(input) != null) {
-                input = compensation.compensateBlock((ProjectPlan) input, base);
+                input = compensation.compensateBlock((ProjectPlan) input, base, isBranch);
             }
         }
         return input;

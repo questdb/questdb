@@ -449,7 +449,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
                 return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, producerLo,
-                        executionContext, LogicalPlans.hasUpdateScan(input), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL, null, false);
+                        executionContext, filter.hasUpdateScan(), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL, null, false);
             }
             case ProjectPlan project -> {
                 return projectionGenerator.generateProjection(frame, project, base, executionContext);
@@ -600,7 +600,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try {
                 final Function function = functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
                 target.of(predicate, input.getOutput(), function, filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL
-                        && FilterFactoryGenerator.isJitApplicable(LogicalPlans.hasUpdateScan(input), executionContext));
+                        && FilterFactoryGenerator.isJitApplicable(filter.hasUpdateScan(), executionContext));
                 if (input instanceof FunctionSourcePlan source) {
                     scanGenerator.configurePushdown(frame, source, leaf, predicate, executionContext);
                 }

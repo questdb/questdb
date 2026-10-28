@@ -32,7 +32,6 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
@@ -141,9 +140,9 @@ public final class SqlOptimiser implements Mutable {
         final ColumnReads columnReads = new ColumnReads();
         joinOrdering = new JoinOrdering(context, columnReads, filters, new JoinOrderSolver(context, planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
                 tmpOrder, tmpPending, temporaries.readyInputs, temporaries.joinChildren, temporaries.joinChildrenPool, temporaries.joinTypes,
-                temporaries.joinDependencies), tmpConjuncts);
+                temporaries.joinDependencies, temporaries.longs), tmpConjuncts);
         passes.add(new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpColumnMap, tmpSlaveKeys, tmpValues,
-                tmpConjuncts));
+                tmpPairs, tmpConjuncts));
         passes.add(new JoinNesting(context, planNodes.joins, planNodes.joinInputs, filters));
         // Window calls merge before pruning drops the columns a merge leaves unread.
         windowCallMerge = new WindowCallMerge(context, tmpPlans, tmpPlanPath, tmpIndexes, substitution, tmpOrder, tmpPairs, tmpColumnMap);

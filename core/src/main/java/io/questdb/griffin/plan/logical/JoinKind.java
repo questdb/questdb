@@ -66,6 +66,13 @@ public enum JoinKind {
     }
 
     /**
+     * True when the step is a LEFT, RIGHT or FULL outer join.
+     */
+    public boolean isOuter() {
+        return this == LEFT_OUTER || this == RIGHT_OUTER || this == FULL_OUTER;
+    }
+
+    /**
      * True when the step matches rows by its ON condition alone: CROSS, INNER and the outer joins.
      */
     public boolean isRelational() {

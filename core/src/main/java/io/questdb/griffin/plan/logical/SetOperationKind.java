@@ -35,6 +35,14 @@ public enum SetOperationKind {
     INTERSECT,
     INTERSECT_ALL;
 
+    /**
+     * True when the operation hashes every row of its right input and releases that input before it reads its left
+     * input: EXCEPT and INTERSECT.
+     */
+    public boolean isRightReleasedFirst() {
+        return !isUnion();
+    }
+
     public boolean isUnion() {
         return this == UNION || this == UNION_ALL;
     }

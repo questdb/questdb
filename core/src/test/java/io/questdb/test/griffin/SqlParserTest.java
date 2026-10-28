@@ -16997,7 +16997,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5m',ts,null,coalesce($0::string,'00:00'),null)]
+                                      keyFunctions: [timestamp_floor_utc('5m',ts,null,$0::string,null)]
                                       values: [avg(price)]
                                       filter: null
                                         PageFrame

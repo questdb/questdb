@@ -114,12 +114,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
     private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
-    // Whether initTimeFrameCursors() has initialized the slave filters and the key checks, which clear() closes
-    private boolean isSlaveFilterInitialized;
-    private @Nullable Function ownerKeyCheck;
-    private @Nullable Function ownerSlaveFilter;
-    private @Nullable ObjList<Function> perWorkerKeyChecks;
-    private @Nullable ObjList<Function> perWorkerSlaveFilters;
+    private final ClonedFunction keyCheck;
+    private final ClonedFunction slaveFilter;
+    // Whether initTimeFrameCursors() has initialized the slave filter and the key check, which clear() closes
+    private boolean isSlaveInitialized;
 
     protected BaseAsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -146,10 +144,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
 
         // Adopt the worker function views before configuration or allocation can fail. The
         // factory's transfer holder retains everything that this constructor has not adopted yet.
-        this.ownerSlaveFilter = resources.takeSlaveFilter();
-        this.perWorkerSlaveFilters = resources.takePerWorkerSlaveFilters();
-        this.ownerKeyCheck = resources.takeKeyCheck();
-        this.perWorkerKeyChecks = resources.takePerWorkerKeyChecks();
+        this.slaveFilter = new ClonedFunction();
+        this.keyCheck = new ClonedFunction();
+        slaveFilter.setFunction(resources.takeSlaveFilter());
+        slaveFilter.setPerWorkerFunctions(resources.takePerWorkerSlaveFilters());
+        keyCheck.setFunction(resources.takeKeyCheck());
+        keyCheck.setPerWorkerFunctions(resources.takePerWorkerKeyChecks());
         this.ownerGroupByFunctions = ownerGroupByFunctions;
         this.perWorkerGroupByFunctions = resources.takePerWorkerGroupByFunctions();
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
@@ -208,9 +208,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                     bwdScanAbsoluteThreshold,
                     bwdScanMinGap,
                     bwdScanSwitchFactor,
-                    ownerSlaveFilter,
+                    slaveFilter.getFunction(),
                     asOfJoinKeyTypes,
-                    ownerKeyCheck
+                    keyCheck.getFunction()
             );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
@@ -223,9 +223,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                         bwdScanAbsoluteThreshold,
                         bwdScanMinGap,
                         bwdScanSwitchFactor,
-                        perWorkerSlaveFilters == null ? ownerSlaveFilter : perWorkerSlaveFilters.getQuick(i),
+                        slaveFilter.get(i),
                         asOfJoinKeyTypes,
-                        perWorkerKeyChecks == null ? ownerKeyCheck : perWorkerKeyChecks.getQuick(i)
+                        keyCheck.get(i)
                 ));
             }
 
@@ -344,12 +344,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         } catch (Throwable th) {
             cleanupFailure = th;
         }
-        if (isSlaveFilterInitialized) {
-            isSlaveFilterInitialized = false;
-            cleanupFailure = Function.cursorClosed(cleanupFailure, ownerSlaveFilter);
-            cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerSlaveFilters);
-            cleanupFailure = Function.cursorClosed(cleanupFailure, ownerKeyCheck);
-            cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerKeyChecks);
+        if (isSlaveInitialized) {
+            isSlaveInitialized = false;
+            cleanupFailure = slaveFilter.cursorClosed(cleanupFailure);
+            cleanupFailure = keyCheck.cursorClosed(cleanupFailure);
         }
         cleanupFailure = Function.cursorClosed(cleanupFailure, ownerGroupByFunctions);
         cleanupFailure = PerWorkerFunctionList.cursorClosedPerWorker(cleanupFailure, perWorkerGroupByFunctions);
@@ -388,18 +386,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         // Horizon timestamp iterators
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerHorizonIterator);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerHorizonIterators);
-        final Function ownerSlaveFilter = this.ownerSlaveFilter;
-        this.ownerSlaveFilter = null;
-        final ObjList<Function> perWorkerSlaveFilters = this.perWorkerSlaveFilters;
-        this.perWorkerSlaveFilters = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveFilter);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveFilters);
-        final Function ownerKeyCheck = this.ownerKeyCheck;
-        this.ownerKeyCheck = null;
-        final ObjList<Function> perWorkerKeyChecks = this.perWorkerKeyChecks;
-        this.perWorkerKeyChecks = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerKeyCheck);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerKeyChecks);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, keyCheck);
         // Filter and memory pool resources
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         // Symbol translating records
@@ -459,7 +447,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
      * The predicate over the master row that a slave row can match it, or null when the join looks up every key.
      */
     public @Nullable Function getKeyCheck() {
-        return ownerKeyCheck;
+        return keyCheck.getFunction();
     }
 
     public RecordSink getMasterAsOfJoinSink(int slotId) {
@@ -517,7 +505,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     }
 
     public @Nullable Function getSlaveFilter() {
-        return ownerSlaveFilter;
+        return slaveFilter.getFunction();
     }
 
     /**
@@ -567,31 +555,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             TablePageFrameCursor slavePageFrameCursor,
             ConcurrentTimeFrameState sharedState
     ) throws SqlException {
-        isSlaveFilterInitialized = true;
-        if (ownerSlaveFilter != null) {
-            ownerSlaveFilter.init(slavePageFrameCursor, executionContext);
-        }
-        if (perWorkerSlaveFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerSlaveFilters, slavePageFrameCursor, executionContext, ownerSlaveFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
-        if (ownerKeyCheck != null) {
-            ownerKeyCheck.init(masterSymbolTableSource, executionContext);
-        }
-        if (perWorkerKeyChecks != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerKeyChecks, masterSymbolTableSource, executionContext, ownerKeyCheck);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        isSlaveInitialized = true;
+        slaveFilter.init(slavePageFrameCursor, executionContext);
+        keyCheck.init(masterSymbolTableSource, executionContext);
         // Initialize owner cursor
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
@@ -681,19 +647,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     }
 
     public void toTop() {
-        if (isSlaveFilterInitialized) {
-            if (ownerSlaveFilter != null) {
-                ownerSlaveFilter.toTop();
-            }
-            if (perWorkerSlaveFilters != null) {
-                GroupByUtils.toTop(perWorkerSlaveFilters);
-            }
-            if (ownerKeyCheck != null) {
-                ownerKeyCheck.toTop();
-            }
-            if (perWorkerKeyChecks != null) {
-                GroupByUtils.toTop(perWorkerKeyChecks);
-            }
+        if (isSlaveInitialized) {
+            slaveFilter.toTop();
+            keyCheck.toTop();
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {

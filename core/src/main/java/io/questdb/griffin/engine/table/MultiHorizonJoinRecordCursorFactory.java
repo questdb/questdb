@@ -182,12 +182,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.child(masterFactory);
         for (int i = 0, n = slaveStates.size(); i < n; i++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(i);
-            if (state.getKeyCheck() != null) {
-                sink.attr("keyCheck").val(state.getKeyCheck(), masterFactory);
-            }
-            if (state.getFilter() != null) {
-                sink.attr("slave filter").val(state.getFilter(), state.getFactory());
-            }
+            sink.optAttr("keyCheck", state.getKeyCheck(), masterFactory);
+            sink.optAttr("slave filter", state.getFilter(), state.getFactory());
             sink.child(state.getFactory());
         }
     }
@@ -243,7 +239,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         private final ObjList<SymbolTranslatingRecord> symbolTranslatingRecords;
         private final ObjList<HorizonJoinTimeFrameHelper> timeFrameHelpers;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private int initializedSlaveFilterCount;
+        private int initializedSlaveCount;
         private boolean isDataMapBuilt;
         private boolean isOpen;
         private MapRecordCursor mapCursor;
@@ -386,8 +382,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 } catch (Throwable th) {
                     cleanupFailure = th;
                 }
-                final int count = initializedSlaveFilterCount;
-                initializedSlaveFilterCount = 0;
+                final int count = initializedSlaveCount;
+                initializedSlaveCount = 0;
                 for (int s = 0; s < count; s++) {
                     cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
                 }
@@ -461,11 +457,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Consult the breaker before iterating, so an empty master still observes cancellation.
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             for (int s = 0; s < slaveCount; s++) {
-                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
-                if (slaveFilter != null) {
-                    slaveFilter.toTop();
-                }
-                slaveStates.getQuick(s).toTopKeyCheck();
+                slaveStates.getQuick(s).toTop();
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
                     asOfJoinMaps.getQuick(s).clear();
@@ -560,12 +552,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             // Initialize each slave's time frame helper and symbol translating record
             for (int s = 0; s < slaveCount; s++) {
-                initializedSlaveFilterCount = s + 1;
-                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
-                if (slaveFilter != null) {
-                    slaveFilter.init(slaveCursors.getQuick(s), executionContext);
-                }
-                slaveStates.getQuick(s).initKeyCheck(masterCursor, executionContext);
+                initializedSlaveCount = s + 1;
+                slaveStates.getQuick(s).init(masterCursor, slaveCursors.getQuick(s), executionContext);
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s), executionContext.getMemoryTracker());
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
                 final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);

@@ -26,6 +26,7 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SetOperationCasts;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -115,7 +116,7 @@ final class ColumnPruning implements OptimiserPass {
     }
 
     @Override
-    public LogicalPlan apply(LogicalPlan plan) {
+    public LogicalPlan apply(LogicalPlan plan) throws SqlException {
         prune(plan);
         return plan;
     }
@@ -246,13 +247,13 @@ final class ColumnPruning implements OptimiserPass {
         tmpExpressions.clear();
     }
 
-    private void prune(LogicalPlan root) {
+    private void prune(LogicalPlan root) throws SqlException {
         pruneAncestors.clear();
         columnReads.of(root, requiredColumnIds);
         pruneColumns(root);
     }
 
-    private void pruneColumns(LogicalPlan plan) {
+    private void pruneColumns(LogicalPlan plan) throws SqlException {
         pruneAncestors.add(plan);
         try {
             pruneColumns0(plan);
@@ -261,7 +262,7 @@ final class ColumnPruning implements OptimiserPass {
         }
     }
 
-    private void pruneColumns0(LogicalPlan plan) {
+    private void pruneColumns0(LogicalPlan plan) throws SqlException {
         final int timestampId = plan.getOutput().getTimestampColumnId();
         switch (plan) {
             case ScanPlan scan -> {
@@ -577,7 +578,7 @@ final class ColumnPruning implements OptimiserPass {
         // pruneOutput consumes this selection before recursion reuses either scratch set.
     }
 
-    private void pruneUnionAll(SetOperationPlan plan) {
+    private void pruneUnionAll(SetOperationPlan plan) throws SqlException {
         retainedColumnIndexes.clear();
         retainedColumns.clear();
         final OutputSchema output = plan.getOutput();
@@ -615,7 +616,7 @@ final class ColumnPruning implements OptimiserPass {
         }
         plan.retainColumns(retainedColumnIndexes, remappedSymbolColumns);
         output.retain(retainedColumnIndexes);
-        plan.setCastRequired(SetOperationCasts.isCastRequired(plan));
+        SetOperationCasts.recordCasts(plan);
     }
 
     /**
@@ -730,7 +731,7 @@ final class ColumnPruning implements OptimiserPass {
     /**
      * Replaces a window that computes no column a consumer reads with its input, which prunes in the window's place.
      */
-    private void removeWindow(WindowPlan window) {
+    private void removeWindow(WindowPlan window) throws SqlException {
         final LogicalPlan input = window.getChild();
         final int depth = pruneAncestors.size();
         final LogicalPlan parent = pruneAncestors.getQuick(depth - 2);

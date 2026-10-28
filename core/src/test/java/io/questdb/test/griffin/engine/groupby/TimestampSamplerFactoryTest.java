@@ -115,6 +115,22 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testIntervalBeyondIntForIntSamplers() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        for (char unit : new char[]{'w', 'M', 'y'}) {
+            Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE, unit, 7));
+            try {
+                TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE + 1L, unit, 7);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(7, e.getPosition());
+                TestUtils.assertEquals("invalid sample value [value=2147483648]", e.getFlyweightMessage());
+            }
+        }
+        Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE + 1L, 's', 7));
+    }
+
+    @Test
     public void testLongQualifier() {
         try {
             TimestampSamplerFactory.getInstance(timestampType.getDriver(), "1sa", 130);

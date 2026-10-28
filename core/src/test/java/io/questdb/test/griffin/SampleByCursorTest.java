@@ -748,14 +748,14 @@ public class SampleByCursorTest extends AbstractCairoTest {
             final SampleByPlan pooled = new SampleByPlan();
             pooled.setTimestampColumnId(42);
             pooled.setTimestampRequired(false);
-            pooled.setPeriod("1h", null, 3, 'h', 4);
+            pooled.setPeriod("1h", 0, 3, 'h', 4);
             pooled.setFrom(new ConstantExpression().ofTimestamp(1, ColumnType.TIMESTAMP_MICRO, 5));
             pooled.getFillModes().add(FillMode.VALUE);
             pooled.clear();
             Assert.assertEquals(-1, pooled.getTimestampColumnId());
             Assert.assertTrue(pooled.isTimestampRequired());
             Assert.assertNull(pooled.getPeriodToken());
-            Assert.assertNull(pooled.getPeriod());
+            Assert.assertEquals(0, pooled.getStride());
             Assert.assertNull(pooled.getFrom());
             Assert.assertEquals(0, pooled.getFillModes().size());
         });

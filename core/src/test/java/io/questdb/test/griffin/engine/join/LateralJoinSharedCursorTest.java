@@ -1864,9 +1864,12 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
             createSharedDomainTables();
             assertQuery("""
                     SELECT o.id, l.v FROM o JOIN LATERAL (
-                        SELECT a.id v FROM a WHERE a.x = o.x
-                        UNION ALL
-                        SELECT b.id v FROM b WHERE b.id > o.id
+                        SELECT t.v FROM (
+                            SELECT a.id v FROM a WHERE a.x = o.x
+                            UNION ALL
+                            SELECT b.id v FROM b WHERE b.id > o.id
+                        ) t
+                        JOIN (SELECT b.id w FROM b WHERE b.x <= o.x AND b.id > o.id) u ON u.w = t.v
                     ) l ORDER BY 1, 2
                     """)
                     .noLeakCheck()
@@ -1881,9 +1884,10 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: o
                                         Hash
-                                            Union All
-                                                SelectedRecord
-                                                    Cross Join
+                                            SelectedRecord
+                                                Hash Join
+                                                  condition: u.w=t.v and __qdb_outer_ref__0_x=__qdb_outer_ref__0_x and __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                    Union All
                                                         SelectedRecord
                                                             Hash Join Light
                                                               condition: __qdb_outer_ref__0_x=x
@@ -1891,42 +1895,51 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                                                     Row forward scan
                                                                     Frame forward scan on: a
                                                                 Hash
-                                                                    GroupBy vectorized: true workers: 1
-                                                                      keys: [x]
-                                                                      values: [count(*)]
+                                                                    Async Group By workers: 1
+                                                                      keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                                      filter: null
                                                                         PageFrame
                                                                             Row forward scan
                                                                             Frame forward scan on: o
                                                         SelectedRecord
-                                                            (Shared)
-                                                                GroupBy vectorized: true workers: 1
-                                                                  keys: [id]
-                                                                  values: [count(*)]
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: o
-                                                SelectedRecord
-                                                    Cross Join
+                                                            Hash Join Light
+                                                              condition: __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                                SelectedRecord
+                                                                    Filter filter: __qdb_outer_ref__0_1.__qdb_outer_ref__0_id<id
+                                                                        Cross Join
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: b
+                                                                            GroupBy vectorized: true workers: 1
+                                                                              keys: [id]
+                                                                              values: [count(*)]
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: o
+                                                                Hash
+                                                                    SelectedRecord
+                                                                        (Shared)
+                                                                            Async Group By workers: 1
+                                                                              keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                                              filter: null
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: o
+                                                    Hash
                                                         SelectedRecord
-                                                            Filter filter: __qdb_outer_ref__0_1.__qdb_outer_ref__0_id<id
+                                                            Filter filter: (__qdb_outer_ref__0_3.__qdb_outer_ref__0_x>=x and __qdb_outer_ref__0_3.__qdb_outer_ref__0_id<id)
                                                                 Cross Join
                                                                     PageFrame
                                                                         Row forward scan
                                                                         Frame forward scan on: b
-                                                                    GroupBy vectorized: true workers: 1
-                                                                      keys: [id]
-                                                                      values: [count(*)]
-                                                                        PageFrame
-                                                                            Row forward scan
-                                                                            Frame forward scan on: o
-                                                        SelectedRecord
-                                                            (Shared)
-                                                                GroupBy vectorized: true workers: 1
-                                                                  keys: [x]
-                                                                  values: [count(*)]
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: o
+                                                                    SelectedRecord
+                                                                        (Shared)
+                                                                            Async Group By workers: 1
+                                                                              keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                                              filter: null
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: o
                             """ : """
                             Encode sort
                               keys: [id, v]
@@ -1937,9 +1950,10 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: o
                                         Hash
-                                            Union All
-                                                SelectedRecord
-                                                    Cross Join
+                                            SelectedRecord
+                                                Hash Join
+                                                  condition: u.w=t.v and __qdb_outer_ref__0_x=__qdb_outer_ref__0_x and __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                    Union All
                                                         SelectedRecord
                                                             Hash Join Light
                                                               condition: __qdb_outer_ref__0_x=x
@@ -1948,57 +1962,54 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                                                     Frame forward scan on: a
                                                                 Hash
                                                                     GroupBy vectorized: false
-                                                                      keys: [__qdb_outer_ref__0_x]
+                                                                      keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
                                                                         PageFrame
                                                                             Row forward scan
                                                                             Frame forward scan on: o
                                                         SelectedRecord
-                                                            (Shared)
-                                                                GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_id]
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: o
-                                                SelectedRecord
-                                                    Cross Join
+                                                            Hash Join Light
+                                                              condition: __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                                SelectedRecord
+                                                                    Filter filter: __qdb_outer_ref__0_1.__qdb_outer_ref__0_id<id
+                                                                        Cross Join
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: b
+                                                                            GroupBy vectorized: false
+                                                                              keys: [__qdb_outer_ref__0_id]
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: o
+                                                                Hash
+                                                                    SelectedRecord
+                                                                        (Shared)
+                                                                            GroupBy vectorized: false
+                                                                              keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: o
+                                                    Hash
                                                         SelectedRecord
-                                                            Filter filter: __qdb_outer_ref__0_1.__qdb_outer_ref__0_id<id
+                                                            Filter filter: (__qdb_outer_ref__0_3.__qdb_outer_ref__0_x>=x and __qdb_outer_ref__0_3.__qdb_outer_ref__0_id<id)
                                                                 Cross Join
                                                                     PageFrame
                                                                         Row forward scan
                                                                         Frame forward scan on: b
-                                                                    GroupBy vectorized: false
-                                                                      keys: [__qdb_outer_ref__0_id]
-                                                                        PageFrame
-                                                                            Row forward scan
-                                                                            Frame forward scan on: o
-                                                        SelectedRecord
-                                                            (Shared)
-                                                                GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_x]
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: o
+                                                                    SelectedRecord
+                                                                        (Shared)
+                                                                            GroupBy vectorized: false
+                                                                              keys: [__qdb_outer_ref__0_x,__qdb_outer_ref__0_id]
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: o
                             """)
                     .returns("""
                             id\tv
-                            1\t0
-                            1\t10
-                            1\t20
                             1\t21
-                            1\t22
                             1\t23
-                            1\t24
-                            2\t12
-                            2\t20
                             2\t21
-                            2\t22
                             2\t23
-                            2\t24
-                            3\t11
-                            3\t20
                             3\t21
-                            3\t22
                             3\t23
                             3\t24
                             """);

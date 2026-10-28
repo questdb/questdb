@@ -800,13 +800,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     new SimpleTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'w' ->
                 // weeks
-                    new WeekTimestampMicrosSampler((int) interval);
+                    new WeekTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
             case 'M' ->
                 // months
-                    new MonthTimestampMicrosSampler((int) interval);
+                    new MonthTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
             case 'y' ->
                 // years
-                    new YearTimestampMicrosSampler((int) interval);
+                    new YearTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
             default -> throw SqlException.$(position, "unsupported interval qualifier");
         };
     }

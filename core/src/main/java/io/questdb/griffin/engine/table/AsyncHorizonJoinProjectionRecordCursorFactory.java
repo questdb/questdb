@@ -29,7 +29,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -241,20 +240,11 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsetCount);
         final AsyncHorizonJoinProjectionAtom atom = frameSequence.getAtom();
-        final Function filter = atom.getFilter(-1);
-        if (filter != null) {
-            sink.attr("filter").val(filter, masterFactory);
-        }
+        sink.optAttr("filter", atom.getFilter(-1), masterFactory);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
-            final Function keyCheck = slaveStates.getQuick(i).getKeyCheck();
-            if (keyCheck != null) {
-                sink.attr("keyCheck").val(keyCheck, masterFactory);
-            }
-            final Function slaveFilter = slaveStates.getQuick(i).getFilter();
-            if (slaveFilter != null) {
-                sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
-            }
+            sink.optAttr("keyCheck", slaveStates.getQuick(i).getKeyCheck(), masterFactory);
+            sink.optAttr("slave filter", slaveStates.getQuick(i).getFilter(), slaveFactories.getQuick(i));
             sink.child(slaveFactories.getQuick(i));
         }
     }

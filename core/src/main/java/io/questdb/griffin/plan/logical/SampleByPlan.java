@@ -40,11 +40,11 @@ public final class SampleByPlan extends GroupingPlan {
     private boolean isJoinInput;
     private boolean isTimestampRequired = true;
     private BoundExpression offset;
-    private BoundExpression period;
     private int periodPosition;
     private CharSequence periodToken;
     private char periodUnit;
     private int periodUnitPosition;
+    private long stride;
     private int timestampColumnId = -1;
     private BoundExpression timezone;
     private BoundExpression to;
@@ -60,11 +60,11 @@ public final class SampleByPlan extends GroupingPlan {
         isJoinInput = false;
         isTimestampRequired = true;
         offset = null;
-        period = null;
         periodPosition = 0;
         periodToken = null;
         periodUnit = 0;
         periodUnitPosition = 0;
+        stride = 0;
         timestampColumnId = -1;
         timezone = null;
         to = null;
@@ -108,14 +108,14 @@ public final class SampleByPlan extends GroupingPlan {
         return offset == null ? 0 : offset.getPosition();
     }
 
-    public BoundExpression getPeriod() {
-        return period;
-    }
-
     public int getPeriodPosition() {
         return periodPosition;
     }
 
+    /**
+     * The period as written, such as {@code 15m}; null when a constant expression states the period's
+     * {@link #getStride() stride}.
+     */
     public CharSequence getPeriodToken() {
         return periodToken;
     }
@@ -126,6 +126,14 @@ public final class SampleByPlan extends GroupingPlan {
 
     public int getPeriodUnitPosition() {
         return periodUnitPosition;
+    }
+
+    /**
+     * The number of {@link #getPeriodUnit() units} in a period a constant expression states, which the binder
+     * validated; 0 when the {@link #getPeriodToken() period token} spells the period.
+     */
+    public long getStride() {
+        return stride;
     }
 
     public int getTimestampColumnId() {
@@ -188,9 +196,9 @@ public final class SampleByPlan extends GroupingPlan {
         this.offset = offset;
     }
 
-    public void setPeriod(CharSequence token, BoundExpression period, int position, char unit, int unitPosition) {
+    public void setPeriod(CharSequence token, long stride, int position, char unit, int unitPosition) {
         this.periodToken = token;
-        this.period = period;
+        this.stride = stride;
         this.periodPosition = position;
         this.periodUnit = unit;
         this.periodUnitPosition = unitPosition;
@@ -219,7 +227,6 @@ public final class SampleByPlan extends GroupingPlan {
         from = PlanReads.expression(from, visitor);
         to = PlanReads.expression(to, visitor);
         offset = PlanReads.expression(offset, visitor);
-        period = PlanReads.expression(period, visitor);
         timezone = PlanReads.expression(timezone, visitor);
         timestampColumnId = PlanReads.columnId(timestampColumnId, -1, visitor);
     }

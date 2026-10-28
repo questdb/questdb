@@ -148,9 +148,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Light");
         sink.attr("condition").val(joinContext);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }

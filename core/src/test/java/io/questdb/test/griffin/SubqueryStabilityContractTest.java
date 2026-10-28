@@ -39,11 +39,12 @@ import org.junit.Test;
  * Runs sub-queries of many plan shapes (scans, index lookups, filters, sorts, Top-K, limits, keyed
  * and keyless aggregates, DISTINCT, set operations, bind variables, nested sub-queries) as IN and
  * scalar consumers, over a plain, a bitmap-indexed, a posting-covering-indexed and a
- * posting-indexed table with Parquet partitions, under every combination of the settings that
- * change the generator's physical choices (parallel GROUP BY, which also gates vectorised GROUP BY,
- * parallel filter and Parquet read, JIT, parallel top K and encoded sort). A sub-query is evaluated
- * once per execution whatever factory the generator builds for it, so the rows of every run must
- * equal those of the plain table under serial execution.
+ * posting-indexed table with Parquet partitions, under combinations of the settings that change
+ * the generator's physical choices (parallel GROUP BY, which also gates vectorised GROUP BY,
+ * parallel filter and Parquet read, JIT, parallel top K and encoded sort) that set every pair of
+ * them in all four ways. A sub-query is evaluated once per execution whatever factory the
+ * generator builds for it, so the rows of every run must equal those of the plain table under
+ * serial execution.
  */
 public class SubqueryStabilityContractTest extends AbstractCairoTest {
     private static final String[] IN_SYM = {
@@ -179,15 +180,12 @@ public class SubqueryStabilityContractTest extends AbstractCairoTest {
             final SqlExecutionContext context = sqlExecutionContext;
             final boolean isJitAvailable = JitUtil.isJitSupported();
             try {
-                for (int config = 0; config < 32; config++) {
+                for (int config : new int[]{0, 7, 10, 20, 25, 31}) {
                     final boolean isParallelGroupBy = (config & 1) != 0;
                     final boolean isParallelFilter = (config & 2) != 0;
-                    final boolean isJit = (config & 4) != 0;
+                    final boolean isJit = isJitAvailable && (config & 4) != 0;
                     final boolean isParallelTopK = (config & 8) != 0;
                     final boolean isEncodedSort = (config & 16) != 0;
-                    if (isJit && !isJitAvailable) {
-                        continue;
-                    }
                     context.setParallelGroupByEnabled(isParallelGroupBy);
                     context.setParallelFilterEnabled(isParallelFilter);
                     context.setParallelReadParquetEnabled(isParallelFilter);

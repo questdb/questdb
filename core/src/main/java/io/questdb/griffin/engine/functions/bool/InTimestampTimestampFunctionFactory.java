@@ -51,7 +51,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 
@@ -195,12 +194,13 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             case ColumnType.LONG, ColumnType.INT -> values.add(func.getTimestamp(rec));
             case ColumnType.STRING, ColumnType.SYMBOL -> {
                 final CharSequence text = func.getStrA(rec);
-                addValue(values, IntervalUtils.parseTimestampText(driver, text, func.getType(), position),
-                        IntervalUtils.timestampTextType(driver, text), driver);
+                final int textTimestampType = IntervalUtils.timestampTextType(driver, text);
+                addValue(values, IntervalUtils.parseTimestampText(driver, textTimestampType, text, func.getType(), position), textTimestampType, driver);
             }
             case ColumnType.VARCHAR -> {
                 final Utf8Sequence text = func.getVarcharA(rec);
-                addValue(values, IntervalUtils.parseTimestampText(driver, text, position), textType(text, driver), driver);
+                final int textTimestampType = IntervalUtils.timestampTextType(driver, text);
+                addValue(values, IntervalUtils.parseTimestampText(driver, textTimestampType, text, position), textTimestampType, driver);
             }
             default -> values.add(Numbers.LONG_NULL);
         }
@@ -228,12 +228,13 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec) == ts;
             case ColumnType.STRING, ColumnType.SYMBOL -> {
                 final CharSequence text = func.getStrA(rec);
-                yield isValueEqual(IntervalUtils.parseTimestampText(driver, text, func.getType(), position),
-                        IntervalUtils.timestampTextType(driver, text), ts, driver);
+                final int textTimestampType = IntervalUtils.timestampTextType(driver, text);
+                yield isValueEqual(IntervalUtils.parseTimestampText(driver, textTimestampType, text, func.getType(), position), textTimestampType, ts, driver);
             }
             case ColumnType.VARCHAR -> {
                 final Utf8Sequence text = func.getVarcharA(rec);
-                yield isValueEqual(IntervalUtils.parseTimestampText(driver, text, position), textType(text, driver), ts, driver);
+                final int textTimestampType = IntervalUtils.timestampTextType(driver, text);
+                yield isValueEqual(IntervalUtils.parseTimestampText(driver, textTimestampType, text, position), textTimestampType, ts, driver);
             }
             default -> ts == Numbers.LONG_NULL;
         };
@@ -343,10 +344,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         res.clear();
         res.add(intervals);
         return true;
-    }
-
-    private static int textType(@Nullable Utf8Sequence text, TimestampDriver driver) {
-        return IntervalUtils.timestampTextType(driver, text == null ? null : text.asAsciiCharSequence());
     }
 
     private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {

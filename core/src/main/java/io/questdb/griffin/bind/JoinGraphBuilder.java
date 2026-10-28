@@ -60,7 +60,7 @@ public final class JoinGraphBuilder implements Mutable {
     private final IntList inCounts;
     private final ObjList<JoinKind> joinTypes;
     private final IntHashSet markedIndexes;
-    private final LongList reachableInputs = new LongList();
+    private final LongList reachableInputs;
     private final IntSortedList ready;
     private final IntList semanticEdges;
     private final ObjList<JoinEquality> sourceFilters = new ObjList<>();
@@ -71,13 +71,14 @@ public final class JoinGraphBuilder implements Mutable {
     private JoinPlan join;
 
     /**
-     * Borrows {@code markedIndexes} as a temporary of one call, and the other lists and the pool of child sets as
-     * temporaries of one collection.
+     * Borrows {@code markedIndexes} and {@code reachableInputs} as temporaries of one call, and the other lists and the
+     * pool of child sets as temporaries of one collection.
      */
     public JoinGraphBuilder(PlanNodePools planNodes, CompilerTemporaries temporaries) {
         this.dependencyPool = planNodes.joinDependencies;
         this.equalityPool = planNodes.joinEqualities;
         this.markedIndexes = temporaries.ids;
+        this.reachableInputs = temporaries.longs;
         this.inCounts = temporaries.masterKeys;
         this.semanticEdges = temporaries.slaveKeys;
         this.ready = temporaries.readyInputs;
@@ -91,7 +92,6 @@ public final class JoinGraphBuilder implements Mutable {
     public void clear() {
         constrainedInputs.clear();
         impliedKeys.clear();
-        reachableInputs.clear();
         sourceFilters.clear();
         dependencies = null;
         graph = null;
@@ -457,10 +457,9 @@ public final class JoinGraphBuilder implements Mutable {
     }
 
     /**
-     * Drops each ordering constraint that a path of other ordering constraints implies, unless both of its inputs are
-     * INNER or CROSS, whose constraints the join order search tests one by one. The order the constraints admit stays
-     * the same, and the optimiser applies them in time linear in their count: a RIGHT or FULL join constrains every
-     * input before it, and a chain of such joins would constrain each input once per later join.
+     * Drops each ordering constraint that a path of other ordering constraints implies. The order the constraints
+     * admit stays the same, and the optimiser applies them in time linear in their count: a RIGHT or FULL join
+     * constrains every input before it, and a chain of such joins would constrain each input once per later join.
      */
     private void reduceOrderingConstraints() {
         final IntList constraints = graph.getOrderingConstraints();
@@ -504,8 +503,7 @@ public final class JoinGraphBuilder implements Mutable {
             final boolean isImplied = (reachableInputs.getQuick(parent * words + (child >>> 6)) & bit) != 0;
             final int word = descendantsBase + parent * words + (child >>> 6);
             final long descendantWord = reachableInputs.getQuick(word);
-            if ((!isImplied || !joinTypes.getQuick(parent).isBarrier() && !joinTypes.getQuick(child).isBarrier())
-                    && (descendantWord & bit) != 0) {
+            if (!isImplied && (descendantWord & bit) != 0) {
                 reachableInputs.setQuick(word, descendantWord & ~bit);
                 constraints.setQuick(kept++, parent);
                 constraints.setQuick(kept++, child);
@@ -568,14 +566,13 @@ public final class JoinGraphBuilder implements Mutable {
      * Stages the equality that {@code stepKey} and {@code masterKey}, two keys of the INNER or CROSS input
      * {@code slave} on one of its columns, imply between the LEFT, RIGHT or FULL input {@code stepKey} reads and the
      * earlier input {@code masterKey} reads, see {@link JoinEquality#getReplacedKey}: no input between the outer input
-     * and {@code slave} NULL-extends its master, and both columns have one type whose join key matches exactly the
-     * values {@code =} pairs, see {@link LogicalPlans#isKeyMatchType}.
+     * and {@code slave} NULL-extends its master, and join keys on the two columns match exactly the values {@code =}
+     * between them pairs, see {@link LogicalPlans#isKeyMatchType}.
      */
     private void stageImpliedKey(JoinEquality stepKey, JoinEquality masterKey, int slave) {
         final int step = stepKey.getOtherSource(slave);
         final int master = masterKey.getOtherSource(slave);
-        final JoinKind type = joinTypes.getQuick(step);
-        if (master >= step || type != JoinKind.LEFT_OUTER && type != JoinKind.RIGHT_OUTER && type != JoinKind.FULL_OUTER) {
+        if (master >= step || !joinTypes.getQuick(step).isOuter()) {
             return;
         }
         for (int i = step + 1; i < slave; i++) {
@@ -583,8 +580,7 @@ public final class JoinGraphBuilder implements Mutable {
                 return;
             }
         }
-        final int stepType = sourceColumnType(step, stepKey.getColumnId(step));
-        if (sourceColumnType(master, masterKey.getColumnId(master)) == stepType && LogicalPlans.isKeyMatchType(stepType, stepType)) {
+        if (LogicalPlans.isKeyMatchType(sourceColumnType(master, masterKey.getColumnId(master)), sourceColumnType(step, stepKey.getColumnId(step)))) {
             impliedKeys.add(equalityPool.next().ofImplied(stepKey, masterKey, slave));
         }
     }

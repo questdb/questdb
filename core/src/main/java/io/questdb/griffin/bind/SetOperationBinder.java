@@ -65,14 +65,11 @@ final class SetOperationBinder {
             throw SqlException.$(plan.getRightPosition(), "queries have different number of columns");
         }
         final boolean isUnion = plan.getOperation().isUnion();
-        final boolean isCastRequired = SetOperationCasts.isCastRequired(plan);
-        plan.setCastRequired(isCastRequired);
+        SetOperationCasts.recordCasts(plan);
         targetTypes.clear();
-        plan.getCastTypes().clear();
         plan.getSymbolColumns().clear();
         for (int i = 0, n = left.getColumnCount(); i < n; i++) {
-            int type = SetOperationCasts.getCastType(plan, i, isCastRequired);
-            plan.getCastTypes().add(type);
+            int type = plan.getCastTypes().getQuick(i);
             if (isUnion && SetOperationCasts.isSymbolColumn(plan.getLeft(), i) && SetOperationCasts.isSymbolColumn(plan.getRight(), i)) {
                 plan.getSymbolColumns().add(i);
                 if (plan.isSymbolRestorationRequired()) {
@@ -81,7 +78,7 @@ final class SetOperationBinder {
             }
             targetTypes.add(type);
         }
-        if (isCastRequired) {
+        if (plan.isCastRequired()) {
             validateCasts(left, targetTypes, plan.getPosition());
             validateCasts(right, targetTypes, plan.getRightPosition());
         }

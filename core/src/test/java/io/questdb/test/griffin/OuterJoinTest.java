@@ -530,52 +530,25 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyMixedTextTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String[] types : new String[][]{{"SYMBOL", "VARCHAR"}, {"VARCHAR", "SYMBOL"}}) {
+                createImpliedKeyRows(types[0], types[1], "STRING");
+                assertImpliedKeyNullExtension();
+                execute("DROP TABLE ik_a");
+                execute("DROP TABLE ik_a2");
+                execute("DROP TABLE ik_b");
+                execute("DROP TABLE ik_b2");
+                execute("DROP TABLE ik_c");
+            }
+        });
+    }
+
+    @Test
     public void testImpliedKeyNullExtensionInBothHashJoinFactories() throws Exception {
         assertMemoryLeak(() -> {
             createImpliedKeyRows();
-            final String query = "SELECT a.id, b.id, c.id FROM %s a %s JOIN %s b ON b.x > %d JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3";
-            for (boolean isFullFat : new boolean[]{false, true}) {
-                final String light = isFullFat ? "" : " Light";
-                assertRows(query.formatted("ik_a", "LEFT", "ik_b", 1), isFullFat, "Hash Left Outer Join" + light + "\n", """
-                        id\tid1\tid2
-                        1\t13\t20
-                        2\t10\t21
-                        4\t13\t20
-                        """);
-                assertRows(query.formatted("ik_a", "LEFT", "ik_b2", 1), isFullFat, null, """
-                        id\tid1\tid2
-                        2\t10\t21
-                        """);
-                assertRows(query.formatted("ik_a", "LEFT", "ik_b", 100), isFullFat, null, """
-                        id\tid1\tid2
-                        1\tnull\t20
-                        4\tnull\t20
-                        """);
-                assertRows(query.formatted("ik_a", "RIGHT", "ik_b", 1), isFullFat, "Hash Right Outer Join" + light + "\n", """
-                        id\tid1\tid2
-                        null\t11\t20
-                        1\t13\t20
-                        2\t10\t21
-                        4\t13\t20
-                        """);
-                assertRows(query.formatted("ik_a2", "RIGHT", "ik_b", 1), isFullFat, null, """
-                        id\tid1\tid2
-                        null\t11\t20
-                        2\t10\t21
-                        """);
-                assertRows(query.formatted("ik_a", "FULL", "ik_b", 1), isFullFat, "Hash Full Outer Join" + light + "\n", """
-                        id\tid1\tid2
-                        null\t11\t20
-                        1\t13\t20
-                        2\t10\t21
-                        4\t13\t20
-                        """);
-                assertRows(query.formatted("ik_a", "FULL", "ik_b2", 1), isFullFat, null, """
-                        id\tid1\tid2
-                        null\t11\t20
-                        2\t10\t21
-                        """);
-            }
+            assertImpliedKeyNullExtension();
         });
     }
 
@@ -1468,6 +1441,56 @@ public class OuterJoinTest extends AbstractCairoTest {
         });
     }
 
+    private static String keyLiteral(String type, int value) {
+        return "INT".equals(type) ? Integer.toString(value) : "'" + value + "'";
+    }
+
+    private void assertImpliedKeyNullExtension() throws Exception {
+        final String query = "SELECT a.id, b.id, c.id FROM %s a %s JOIN %s b ON b.x > %d JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3";
+        for (boolean isFullFat : new boolean[]{false, true}) {
+            final String light = isFullFat ? "" : " Light";
+            assertRows(query.formatted("ik_a", "LEFT", "ik_b", 1), isFullFat, "Hash Left Outer Join" + light + "\n", """
+                    id\tid1\tid2
+                    1\t13\t20
+                    2\t10\t21
+                    4\t13\t20
+                    """);
+            assertRows(query.formatted("ik_a", "LEFT", "ik_b2", 1), isFullFat, null, """
+                    id\tid1\tid2
+                    2\t10\t21
+                    """);
+            assertRows(query.formatted("ik_a", "LEFT", "ik_b", 100), isFullFat, null, """
+                    id\tid1\tid2
+                    1\tnull\t20
+                    4\tnull\t20
+                    """);
+            assertRows(query.formatted("ik_a", "RIGHT", "ik_b", 1), isFullFat, "Hash Right Outer Join" + light + "\n", """
+                    id\tid1\tid2
+                    null\t11\t20
+                    1\t13\t20
+                    2\t10\t21
+                    4\t13\t20
+                    """);
+            assertRows(query.formatted("ik_a2", "RIGHT", "ik_b", 1), isFullFat, null, """
+                    id\tid1\tid2
+                    null\t11\t20
+                    2\t10\t21
+                    """);
+            assertRows(query.formatted("ik_a", "FULL", "ik_b", 1), isFullFat, "Hash Full Outer Join" + light + "\n", """
+                    id\tid1\tid2
+                    null\t11\t20
+                    1\t13\t20
+                    2\t10\t21
+                    4\t13\t20
+                    """);
+            assertRows(query.formatted("ik_a", "FULL", "ik_b2", 1), isFullFat, null, """
+                    id\tid1\tid2
+                    null\t11\t20
+                    2\t10\t21
+                    """);
+        }
+    }
+
     private void assertResidualOuterJoin(
             String join,
             boolean isFullFat,
@@ -1552,16 +1575,24 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     private void createImpliedKeyRows() throws Exception {
-        execute("CREATE TABLE ik_a (id INT, x INT, w INT)");
-        execute("CREATE TABLE ik_a2 (id INT, x INT, w INT)");
-        execute("CREATE TABLE ik_b (id INT, x INT, k INT, u INT)");
-        execute("CREATE TABLE ik_b2 (id INT, x INT, k INT, u INT)");
-        execute("CREATE TABLE ik_c (id INT, k INT)");
-        execute("INSERT INTO ik_a VALUES (1, 1, NULL), (2, 1, 5), (3, 1, 7), (4, NULL, NULL)");
-        execute("INSERT INTO ik_a2 VALUES (2, 1, 5), (3, 1, 7)");
-        execute("INSERT INTO ik_b VALUES (10, 2, 5, 3), (11, 0, NULL, 3), (12, 3, 9, NULL), (13, 3, NULL, 1)");
-        execute("INSERT INTO ik_b2 VALUES (10, 2, 5, 3), (11, 0, NULL, 3), (12, 3, 9, NULL)");
-        execute("INSERT INTO ik_c VALUES (20, NULL), (21, 5), (22, 9)");
+        createImpliedKeyRows("INT", "INT", "INT");
+    }
+
+    private void createImpliedKeyRows(String masterType, String stepType, String slaveType) throws Exception {
+        execute("CREATE TABLE ik_a (id INT, x INT, w %s)".formatted(masterType));
+        execute("CREATE TABLE ik_a2 (id INT, x INT, w %s)".formatted(masterType));
+        execute("CREATE TABLE ik_b (id INT, x INT, k %s, u INT)".formatted(stepType));
+        execute("CREATE TABLE ik_b2 (id INT, x INT, k %s, u INT)".formatted(stepType));
+        execute("CREATE TABLE ik_c (id INT, k %s)".formatted(slaveType));
+        final String five = keyLiteral(masterType, 5);
+        final String seven = keyLiteral(masterType, 7);
+        execute("INSERT INTO ik_a VALUES (1, 1, NULL), (2, 1, %s), (3, 1, %s), (4, NULL, NULL)".formatted(five, seven));
+        execute("INSERT INTO ik_a2 VALUES (2, 1, %s), (3, 1, %s)".formatted(five, seven));
+        final String stepFive = keyLiteral(stepType, 5);
+        final String stepNine = keyLiteral(stepType, 9);
+        execute("INSERT INTO ik_b VALUES (10, 2, %s, 3), (11, 0, NULL, 3), (12, 3, %s, NULL), (13, 3, NULL, 1)".formatted(stepFive, stepNine));
+        execute("INSERT INTO ik_b2 VALUES (10, 2, %s, 3), (11, 0, NULL, 3), (12, 3, %s, NULL)".formatted(stepFive, stepNine));
+        execute("INSERT INTO ik_c VALUES (20, NULL), (21, %s), (22, %s)".formatted(keyLiteral(slaveType, 5), keyLiteral(slaveType, 9)));
     }
 
     private void createInnerOnRows() throws Exception {

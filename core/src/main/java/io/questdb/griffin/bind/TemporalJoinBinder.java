@@ -191,7 +191,7 @@ final class TemporalJoinBinder {
 
     private static boolean isHorizonGroupByMatch(ExpressionNode key, QueryColumn column) {
         return isSameIgnoringQualifier(key, column.getAst())
-                || FunctionBinder.qualifierEnd(key, null) < 0 && isAliasOf(column.getAlias(), key.token);
+                || FunctionBinder.qualifierEnd(key, null) < 0 && isNameSpelling(column.getAlias(), key.token);
     }
 
     private static boolean isHorizonOffsetModel(QueryModel model) {
@@ -210,8 +210,8 @@ final class TemporalJoinBinder {
             return ExpressionNode.compareNodesExact(a, b);
         }
         if (a.type == ExpressionNode.LITERAL) {
-            return Chars.equalsIgnoreCase(a.token, b.token) || Chars.equalsIgnoreCase(unqualified(a.token), b.token)
-                    || Chars.equalsIgnoreCase(a.token, unqualified(b.token));
+            return Chars.equalsIgnoreCase(a.token, b.token) || Chars.equalsIgnoreCase(unqualified(a), b.token)
+                    || Chars.equalsIgnoreCase(a.token, unqualified(b));
         }
         if (a.type == ExpressionNode.FUNCTION ? !Chars.equalsIgnoreCase(a.token, b.token) : !Chars.equals(a.token, b.token)) {
             return false;

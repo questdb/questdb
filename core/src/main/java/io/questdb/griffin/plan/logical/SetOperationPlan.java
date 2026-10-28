@@ -127,7 +127,7 @@ public final class SetOperationPlan extends LogicalPlan {
 
     /**
      * True when the operation casts the columns of both branches to {@link #getCastTypes()}, see
-     * {@link io.questdb.griffin.SetOperationCasts#isCastRequired}.
+     * {@link io.questdb.griffin.SetOperationCasts#recordCasts}.
      */
     public boolean isCastRequired() {
         return isCastRequired;
@@ -179,19 +179,17 @@ public final class SetOperationPlan extends LogicalPlan {
     }
 
     /**
-     * Reindexes symbol restoration and cast types after retaining original output ordinals, in ascending order;
-     * {@code remappedSymbolColumns} is a temporary list.
+     * Reindexes symbol restoration after retaining original output ordinals, in ascending order;
+     * {@code remappedSymbolColumns} is a temporary list. The caller records the cast facts of the retained columns
+     * again, see {@link io.questdb.griffin.SetOperationCasts#recordCasts}.
      */
     public void retainColumns(IntList retainedColumnIndexes, IntList remappedSymbolColumns) {
         remappedSymbolColumns.clear();
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
-            final int index = retainedColumnIndexes.getQuick(i);
-            if (symbolColumns.binarySearchUniqueList(index) >= 0) {
+            if (symbolColumns.binarySearchUniqueList(retainedColumnIndexes.getQuick(i)) >= 0) {
                 remappedSymbolColumns.add(i);
             }
-            castTypes.setQuick(i, castTypes.getQuick(index));
         }
-        castTypes.setPos(retainedColumnIndexes.size());
         symbolColumns.clear();
         symbolColumns.addAll(remappedSymbolColumns);
     }

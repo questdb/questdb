@@ -165,9 +165,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join");
         sink.attr("condition").val(joinContext);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

@@ -142,16 +142,18 @@ final class CorrelationKeys implements Mutable {
                 return false;
             }
         }
-        return canInputCarry(steps, position, outerId, !hasMasterNullingStep);
+        return canInputCarry(source, position, outerId);
     }
 
     /**
-     * True when the column of the input at {@code position} of the steps can carry the outer column: each step the
-     * join orders before that input reads the outer column neither as it joins, in its post-join filter nor as a
-     * deferred input that maps it, or, when {@code isDeferredMoveAllowed}, is a deferred input that can join after
-     * the input, which {@link #keyDeferredInputs} then orders it after.
+     * True when the column of the input at {@code position} of the join's ordered steps can carry the outer column:
+     * each step the join orders before that input reads the outer column neither as it joins, in its post-join
+     * filter nor as a deferred input that maps it, or, when the join has no step that null-extends its master, is a
+     * deferred input that can join after the input, which {@link #keyDeferredInputs} then orders it after.
      */
-    private boolean canInputCarry(ObjList<JoinInput> steps, int position, int outerId, boolean isDeferredMoveAllowed) {
+    private boolean canInputCarry(JoinPlan join, int position, int outerId) {
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        final boolean isDeferredMoveAllowed = LogicalPlans.lastMasterNullingStep(join) < 0;
         readOuterIds.clear();
         readOuterIds.add(outerId);
         for (int i = 0; i < position; i++) {
@@ -349,7 +351,7 @@ final class CorrelationKeys implements Mutable {
             final int columnId = mapping.columnIdAt(i);
             final int outerId = mapping.outerIdAt(i);
             final int position = stepIndex(steps, columnId);
-            if (!canInputCarry(steps, position, outerId, true)) {
+            if (!canInputCarry(join, position, outerId)) {
                 deferredInputs.add(steps.getQuick(position));
                 deferredOuterIds.add(outerId);
                 deferredColumnIds.add(columnId);

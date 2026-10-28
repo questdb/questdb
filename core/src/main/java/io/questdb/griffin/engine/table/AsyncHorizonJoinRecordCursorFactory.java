@@ -231,19 +231,10 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
-        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
-        if (filter != null) {
-            sink.attr("filter").val(filter, masterFactory);
-        }
+        sink.optAttr("filter", frameSequence.getAtom().getFilterContext().getFilter(-1), masterFactory);
         sink.child(masterFactory);
-        final Function keyCheck = frameSequence.getAtom().getKeyCheck();
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
-        final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
-        if (slaveFilter != null) {
-            sink.attr("slave filter").val(slaveFilter, slaveFactory);
-        }
+        sink.optAttr("keyCheck", frameSequence.getAtom().getKeyCheck(), masterFactory);
+        sink.optAttr("slave filter", frameSequence.getAtom().getSlaveFilter(), slaveFactory);
         sink.child(slaveFactory);
     }
 

@@ -25,10 +25,13 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.TestOnly;
 
@@ -227,8 +230,7 @@ public final class SetOperationCasts {
 
     /**
      * True when the set operation casts its branches: they differ in a column's type, or a UNION reads a SYMBOL
-     * column. The binder records it on the plan, and so does each pass that changes the branch columns, see
-     * {@link SetOperationPlan#isCastRequired()}.
+     * column, see {@link #recordCasts}.
      */
     public static boolean isCastRequired(SetOperationPlan plan) {
         final OutputSchema left = plan.getLeft().getOutput();
@@ -244,12 +246,40 @@ public final class SetOperationCasts {
 
     /**
      * Whether the branch reads column {@code index} as SYMBOL: the column is SYMBOL, or the branch is a UNION that
-     * continues into the next UNION of its chain and carries as STRING a column all its branches read as SYMBOL.
+     * continues into the next UNION of its chain and carries as STRING a column all its branches read as SYMBOL,
+     * under any projections that pass the column through unchanged.
      */
     public static boolean isSymbolColumn(LogicalPlan branch, int index) {
-        return ColumnType.isSymbol(branch.getOutput().getColumnType(index))
-                || branch instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
-                && operation.getSymbolColumns().contains(index);
+        if (ColumnType.isSymbol(branch.getOutput().getColumnType(index))) {
+            return true;
+        }
+        LogicalPlan plan = branch;
+        int columnId = branch.getOutput().getColumnId(index);
+        while (plan instanceof ProjectPlan project) {
+            final ColumnExpression passed = LogicalPlans.passedColumn(project, columnId);
+            if (passed == null || passed.isCast()) {
+                return false;
+            }
+            columnId = passed.getColumnId();
+            plan = project.getChild();
+        }
+        return plan instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
+                && operation.getSymbolColumns().contains(operation.getOutput().getColumnIndexById(columnId));
+    }
+
+    /**
+     * Records on the plan, from its branches, whether it casts them, see {@link #isCastRequired}, and the type it casts
+     * each column to, see {@link #getCastType}. The binder records them, and so does each pass that changes the branch
+     * columns.
+     */
+    public static void recordCasts(SetOperationPlan plan) throws SqlException {
+        final boolean isCastRequired = isCastRequired(plan);
+        plan.setCastRequired(isCastRequired);
+        final IntList castTypes = plan.getCastTypes();
+        castTypes.clear();
+        for (int i = 0, n = plan.getLeft().getOutput().getColumnCount(); i < n; i++) {
+            castTypes.add(getCastType(plan, i, isCastRequired));
+        }
     }
 
     /**

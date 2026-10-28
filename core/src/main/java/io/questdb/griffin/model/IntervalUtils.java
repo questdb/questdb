@@ -698,11 +698,25 @@ public final class IntervalUtils {
     }
 
     /**
+     * Whether text compared with values of the driver's precision spells a timestamp, at the precision
+     * {@link #timestampTextType} gives it, rather than intervals.
+     */
+    public static boolean isTimestampText(TimestampDriver timestampDriver, CharSequence text) {
+        try {
+            parseTimestampText(timestampTextType(timestampDriver, text), text);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    /**
      * The first value at the driver's precision that is not before a timestamp literal, which may be
      * finer than the driver.
      */
     public static long parseCeilLiteral(TimestampDriver timestampDriver, CharSequence literal) throws NumericException {
-        return timestampDriver.ceilFrom(parseTimestampText(timestampDriver, literal), timestampTextType(timestampDriver, literal));
+        final int textTimestampType = timestampTextType(timestampDriver, literal);
+        return timestampDriver.ceilFrom(parseTimestampText(textTimestampType, literal), textTimestampType);
     }
 
     /**
@@ -710,7 +724,8 @@ public final class IntervalUtils {
      * finer than the driver.
      */
     public static long parseFloorLiteral(TimestampDriver timestampDriver, CharSequence literal) throws NumericException {
-        return timestampDriver.floorFrom(parseTimestampText(timestampDriver, literal), timestampTextType(timestampDriver, literal));
+        final int textTimestampType = timestampTextType(timestampDriver, literal);
+        return timestampDriver.floorFrom(parseTimestampText(textTimestampType, literal), textTimestampType);
     }
 
     /**
@@ -1344,37 +1359,41 @@ public final class IntervalUtils {
     }
 
     /**
-     * The value of text compared with values of the driver's precision, at the precision the text spells,
-     * {@link #timestampTextType}; NULL for NULL text.
+     * The value of text compared with values of another precision, at the precision the text spells; NULL for NULL
+     * text.
      *
+     * @param textTimestampType the precision the text spells, {@link #timestampTextType}
      * @throws NumericException when the text spells no timestamp
      */
-    public static long parseTimestampText(TimestampDriver timestampDriver, @Nullable CharSequence text) throws NumericException {
-        return text == null ? Numbers.LONG_NULL : ColumnType.getTimestampDriver(timestampTextType(timestampDriver, text)).parseFloorLiteral(text);
+    public static long parseTimestampText(int textTimestampType, @Nullable CharSequence text) throws NumericException {
+        return ColumnType.getTimestampDriver(textTimestampType).parseFloorLiteral(text);
     }
 
     /**
-     * {@link #parseTimestampText(TimestampDriver, CharSequence)} for text a comparison reads at runtime. Text that
-     * spells no timestamp fails with {@code inconvertible value}, from {@code textType} to the driver's type, at
-     * {@code position}.
+     * {@link #parseTimestampText(int, CharSequence)} for text a comparison with values of the driver's precision reads
+     * at runtime. Text that spells no timestamp fails with {@code inconvertible value}, from {@code fromType}, the
+     * text's SQL type, to the driver's type, at {@code position}.
      */
-    public static long parseTimestampText(TimestampDriver timestampDriver, @Nullable CharSequence text, int textType, int position) {
+    public static long parseTimestampText(
+            TimestampDriver timestampDriver,
+            int textTimestampType,
+            @Nullable CharSequence text,
+            int fromType,
+            int position
+    ) {
         try {
-            return parseTimestampText(timestampDriver, text);
+            return parseTimestampText(textTimestampType, text);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(text, textType, timestampDriver.getTimestampType()).position(position);
+            throw ImplicitCastException.inconvertibleValue(text, fromType, timestampDriver.getTimestampType()).position(position);
         }
     }
 
     /**
-     * {@link #parseTimestampText(TimestampDriver, CharSequence, int, int)} for VARCHAR text.
+     * {@link #parseTimestampText(TimestampDriver, int, CharSequence, int, int)} for VARCHAR text.
      */
-    public static long parseTimestampText(TimestampDriver timestampDriver, @Nullable Utf8Sequence text, int position) {
-        if (text == null) {
-            return Numbers.LONG_NULL;
-        }
+    public static long parseTimestampText(TimestampDriver timestampDriver, int textTimestampType, @Nullable Utf8Sequence text, int position) {
         try {
-            return ColumnType.getTimestampDriver(timestampTextType(timestampDriver, text.asAsciiCharSequence())).parseFloorLiteral(text);
+            return ColumnType.getTimestampDriver(textTimestampType).parseFloorLiteral(text);
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(text, ColumnType.VARCHAR, timestampDriver.getTimestampType()).position(position);
         }
@@ -1433,6 +1452,13 @@ public final class IntervalUtils {
         return text == null || ColumnType.isTimestampNano(timestampDriver.getTimestampType())
                 ? timestampDriver.getTimestampType()
                 : FunctionResolver.getAdaptiveTimestampType(text, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    /**
+     * {@link #timestampTextType(TimestampDriver, CharSequence)} for VARCHAR text.
+     */
+    public static int timestampTextType(TimestampDriver timestampDriver, @Nullable Utf8Sequence text) {
+        return timestampTextType(timestampDriver, text == null ? null : text.asAsciiCharSequence());
     }
 
     /**

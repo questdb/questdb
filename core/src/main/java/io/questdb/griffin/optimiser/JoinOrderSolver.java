@@ -41,6 +41,7 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -61,6 +62,10 @@ final class JoinOrderSolver implements Mutable {
     private final ObjectPool<JoinDependency> dependencyPool;
     private final IntList inCounts;
     private final ObjList<JoinKind> joinTypes;
+    /**
+     * For each input, a bit set of the inputs that a path of ordering constraints orders after it.
+     */
+    private final LongList laterInputs;
     private final IntHashSet markedIndexes;
     private final ObjList<JoinEquality> movedKeys = new ObjList<>();
     private final IntList pendingSources;
@@ -101,7 +106,8 @@ final class JoinOrderSolver implements Mutable {
             ObjList<IntHashSet> children,
             ObjectPool<IntHashSet> childrenPool,
             ObjList<JoinKind> joinTypes,
-            ObjList<JoinDependency> stagedDependencies
+            ObjList<JoinDependency> stagedDependencies,
+            LongList laterInputs
     ) {
         this.context = context;
         this.dependencyPool = planNodes.joinDependencies;
@@ -118,6 +124,7 @@ final class JoinOrderSolver implements Mutable {
         this.childrenPool = childrenPool;
         this.joinTypes = joinTypes;
         this.stagedDependencies = stagedDependencies;
+        this.laterInputs = laterInputs;
     }
 
     @Override
@@ -151,6 +158,7 @@ final class JoinOrderSolver implements Mutable {
                 dependencies.add(null);
             }
             join.setLeadingCrossJoinFixed(isFirstInputFixed && !hasLeadingJoinDependency(join));
+            indexOrderingConstraints();
             linkDependencies();
             for (int i = 0, n = dependencies.size(); i < n; i++) {
                 final JoinDependency dependency = dependencies.getQuick(i);
@@ -329,16 +337,6 @@ final class JoinOrderSolver implements Mutable {
         return false;
     }
 
-    private boolean hasOrderingConstraint(int parent, int child) {
-        final IntList constraints = graph.getOrderingConstraints();
-        for (int i = 0, n = constraints.size(); i < n; i += 2) {
-            if (constraints.getQuick(i) == parent && constraints.getQuick(i + 1) == child) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private boolean hasOtherDependencyPath(JoinDependency source, int target) {
         pendingSources.clear();
         markedIndexes.clear();
@@ -370,6 +368,57 @@ final class JoinOrderSolver implements Mutable {
     }
 
     /**
+     * Indexes the ordering constraints of the graph into {@link #laterInputs}: links them into the child sets, which
+     * {@link #linkDependencies} relinks, sorts the inputs topologically by them, and adds to each input, from the last
+     * one back, its children and the inputs they order after them.
+     */
+    private void indexOrderingConstraints() {
+        final IntList constraints = graph.getOrderingConstraints();
+        final int count = dependencies.size();
+        final int words = (count + 63) >>> 6;
+        laterInputs.setAll(count * words, 0);
+        inCounts.setAll(count, 0);
+        for (int i = 0, n = constraints.size(); i < n; i += 2) {
+            if (link(constraints.getQuick(i), constraints.getQuick(i + 1))) {
+                inCounts.increment(constraints.getQuick(i + 1));
+            }
+        }
+        candidateOrder.clear();
+        ready.clear();
+        for (int i = 0; i < count; i++) {
+            if (inCounts.getQuick(i) == 0) {
+                ready.add(i);
+            }
+        }
+        while (ready.notEmpty()) {
+            final int source = ready.poll();
+            candidateOrder.add(source);
+            final IntHashSet sourceChildren = children.getQuick(source);
+            for (int i = 0, n = sourceChildren.size(); i < n; i++) {
+                final int child = sourceChildren.get(i);
+                final int inCount = inCounts.getQuick(child) - 1;
+                inCounts.setQuick(child, inCount);
+                if (inCount == 0) {
+                    ready.add(child);
+                }
+            }
+        }
+        for (int i = candidateOrder.size() - 1; i >= 0; i--) {
+            final int source = candidateOrder.getQuick(i);
+            final IntHashSet sourceChildren = children.getQuick(source);
+            final int row = source * words;
+            for (int k = 0, n = sourceChildren.size(); k < n; k++) {
+                final int child = sourceChildren.get(k);
+                final int childRow = child * words;
+                laterInputs.setQuick(row + (child >>> 6), laterInputs.getQuick(row + (child >>> 6)) | 1L << child);
+                for (int w = 0; w < words; w++) {
+                    laterInputs.setQuick(row + w, laterInputs.getQuick(row + w) | laterInputs.getQuick(childRow + w));
+                }
+            }
+        }
+    }
+
+    /**
      * True when neither a key nor an ordering constraint orders the step after another input, while a key or an
      * ordering constraint orders another input after it: such a step would otherwise lead the order without a master.
      */
@@ -386,6 +435,14 @@ final class JoinOrderSolver implements Mutable {
             isAwaited |= constraints.getQuick(i) == source;
         }
         return isAwaited;
+    }
+
+    /**
+     * True when a path of ordering constraints orders {@code parent} before {@code child}, see {@link #laterInputs}.
+     */
+    private boolean isConstrainedBefore(int parent, int child) {
+        final int words = (dependencies.size() + 63) >>> 6;
+        return (laterInputs.getQuick(parent * words + (child >>> 6)) & 1L << child) != 0;
     }
 
     /**
@@ -701,7 +758,7 @@ final class JoinOrderSolver implements Mutable {
     private void swap(int target, int source) {
         final JoinDependency from = dependencies.getQuick(source);
         if (target == 0 || joinTypes.getQuick(target).isBarrier() || from == null || !from.getParents().contains(target)
-                || hasOrderingConstraint(target, source)) {
+                || isConstrainedBefore(target, source)) {
             return;
         }
         stagedIndexes.clear();

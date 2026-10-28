@@ -841,13 +841,13 @@ public class NanosTimestampDriver implements TimestampDriver {
                     new SimpleTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'w' ->
                 // weeks
-                    new WeekTimestampNanosSampler((int) interval);
+                    new WeekTimestampNanosSampler(TimestampDriver.intSamplerInterval(interval, position));
             case 'M' ->
                 // months
-                    new MonthTimestampNanosSampler((int) interval);
+                    new MonthTimestampNanosSampler(TimestampDriver.intSamplerInterval(interval, position));
             case 'y' ->
                 // years
-                    new YearTimestampNanosSampler((int) interval);
+                    new YearTimestampNanosSampler(TimestampDriver.intSamplerInterval(interval, position));
             default -> throw SqlException.$(position, "unsupported interval qualifier");
         };
     }

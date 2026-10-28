@@ -31,12 +31,14 @@ import java.util.Objects;
 public final class FilterPlan extends ForwardingPlan {
     public static final ObjectFactory<FilterPlan> FACTORY = FilterPlan::new;
     private Algorithm algorithm;
+    private boolean hasUpdateScan;
     private BoundExpression predicate;
 
     @Override
     public void clear() {
         super.clear();
         algorithm = null;
+        hasUpdateScan = false;
         predicate = null;
     }
 
@@ -52,6 +54,14 @@ public final class FilterPlan extends ForwardingPlan {
         return predicate;
     }
 
+    /**
+     * Whether the input of the filter reads the target of an UPDATE, see {@link ScanPlan#isUpdate}, which operator
+     * planning records.
+     */
+    public boolean hasUpdateScan() {
+        return hasUpdateScan;
+    }
+
     public FilterPlan of(LogicalPlan input, BoundExpression predicate, int position) {
         configure(input, position);
         this.predicate = Objects.requireNonNull(predicate);
@@ -61,6 +71,10 @@ public final class FilterPlan extends ForwardingPlan {
 
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
+    }
+
+    public void setUpdateScan(boolean hasUpdateScan) {
+        this.hasUpdateScan = hasUpdateScan;
     }
 
     @Override

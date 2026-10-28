@@ -543,15 +543,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return ColumnType.isNull(columnType) || ColumnType.isConvertibleFrom(columnType, timestampType);
     }
 
-    private static boolean isTimestampText(TimestampDriver driver, CharSequence text) {
-        try {
-            IntervalUtils.parseTimestampText(driver, text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
-
     private static CharSequence literalText(BoundExpression expression) {
         return expression instanceof ConstantExpression constant ? constant.getText() : null;
     }
@@ -1785,7 +1776,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final Function constant = args.getQuick(index);
         final CharSequence text = literalText(arguments.getQuick(index));
         if (text != null) {
-            final long value = IntervalUtils.parseTimestampText(driver, text);
+            final long value = IntervalUtils.parseTimestampText(type, text);
             if (ColumnType.isTimestampNano(type) && ColumnType.isTimestampMicro(constant.getType())
                     && Math.floorDiv(value, 1_000) != constant.getTimestamp(null)) {
                 return ColumnType.getTimestampDriver(type).from(constant.getTimestamp(null), constant.getType());
@@ -2045,7 +2036,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             final Function element = args.getQuick(i);
             final BoundExpression argument = arguments.getQuick(i);
             final CharSequence text = element.isConstant() && isCaseText(element.getType()) ? literalText(argument) : null;
-            if (text != null && !isTimestampText(driver, text)) {
+            if (text != null && !IntervalUtils.isTimestampText(driver, text)) {
                 final CharSequence seq = intervalSpelling(argument, text);
                 final int lo = seq == text ? 0 : 1;
                 if (!InTimestampTimestampFunctionFactory.parseIntervalElement(driver, executionContext.getCairoEngine().getConfiguration(),

@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -50,7 +49,9 @@ import org.jetbrains.annotations.Nullable;
  */
 public class HorizonJoinSlaveState implements QuietCloseable {
     private final @Nullable ColumnTypes asOfJoinKeyTypes;
+    private final ClonedFunction filter = new ClonedFunction();
     private final boolean isKeyed;
+    private final ClonedFunction keyCheck = new ClonedFunction();
     private final @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate;
     private final int masterColumnCount;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
@@ -59,10 +60,6 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private final long slaveTsScale;
     private RecordCursorFactory factory;
-    private @Nullable Function filter;
-    private @Nullable Function keyCheck;
-    private @Nullable ObjList<Function> perWorkerFilters;
-    private @Nullable ObjList<Function> perWorkerKeyChecks;
 
     public HorizonJoinSlaveState(
             RecordCursorFactory factory,
@@ -92,19 +89,9 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     public void close() {
         final RecordCursorFactory factory = this.factory;
         this.factory = null;
-        final Function filter = this.filter;
-        this.filter = null;
-        final ObjList<Function> perWorkerFilters = this.perWorkerFilters;
-        this.perWorkerFilters = null;
-        final Function keyCheck = this.keyCheck;
-        this.keyCheck = null;
-        final ObjList<Function> perWorkerKeyChecks = this.perWorkerKeyChecks;
-        this.perWorkerKeyChecks = null;
         Throwable cleanupFailure = Misc.freeBestEffort(null, factory);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, keyCheck);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerKeyChecks);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -112,10 +99,8 @@ public class HorizonJoinSlaveState implements QuietCloseable {
      * Notifies the filter, the key check and their worker clones that the cursor has closed.
      */
     Throwable cursorClosed(Throwable cleanupFailure) {
-        cleanupFailure = Function.cursorClosed(cleanupFailure, filter);
-        cleanupFailure = Function.cursorClosed(cleanupFailure, perWorkerFilters);
-        cleanupFailure = Function.cursorClosed(cleanupFailure, keyCheck);
-        return Function.cursorClosed(cleanupFailure, perWorkerKeyChecks);
+        cleanupFailure = filter.cursorClosed(cleanupFailure);
+        return keyCheck.cursorClosed(cleanupFailure);
     }
 
     void detachFactory() {
@@ -131,7 +116,15 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     }
 
     public @Nullable Function getFilter() {
-        return filter;
+        return filter.getFunction();
+    }
+
+    /**
+     * The filter the worker in {@code slotId} evaluates: its clone, or the filter itself for the owner thread, slot
+     * -1, and when the filter has no clones.
+     */
+    public @Nullable Function getFilter(int slotId) {
+        return filter.get(slotId);
     }
 
     /**
@@ -139,7 +132,15 @@ public class HorizonJoinSlaveState implements QuietCloseable {
      * key of this slave.
      */
     public @Nullable Function getKeyCheck() {
-        return keyCheck;
+        return keyCheck.getFunction();
+    }
+
+    /**
+     * The key check the worker in {@code slotId} evaluates: its clone, or the key check itself for the owner thread,
+     * slot -1, and when the key check has no clones.
+     */
+    public @Nullable Function getKeyCheck(int slotId) {
+        return keyCheck.get(slotId);
     }
 
     public int getMasterColumnCount() {
@@ -154,14 +155,6 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         return masterTsScale;
     }
 
-    public @Nullable ObjList<Function> getPerWorkerFilters() {
-        return perWorkerFilters;
-    }
-
-    public @Nullable ObjList<Function> getPerWorkerKeyChecks() {
-        return perWorkerKeyChecks;
-    }
-
     public int @Nullable [] getSlaveSymbolKeyColumnIndices() {
         return slaveSymbolKeyColumnIndices;
     }
@@ -171,22 +164,16 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     }
 
     /**
-     * Initializes the key check over the master's symbol tables, and its worker clones over clones of them. The caller
-     * notifies them through {@link #cursorClosed}.
+     * Initializes the filter over the slave's symbol tables and the key check over the master's, and their worker
+     * clones over clones of them. The caller notifies them through {@link #cursorClosed}.
      */
-    public void initKeyCheck(SymbolTableSource masterSymbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        if (keyCheck != null) {
-            keyCheck.init(masterSymbolTableSource, executionContext);
-        }
-        if (perWorkerKeyChecks != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerKeyChecks, masterSymbolTableSource, executionContext, keyCheck);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+    public void init(
+            SymbolTableSource masterSymbolTableSource,
+            SymbolTableSource slaveSymbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        filter.init(slaveSymbolTableSource, executionContext);
+        keyCheck.init(masterSymbolTableSource, executionContext);
     }
 
     public boolean isKeyed() {
@@ -210,30 +197,26 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     }
 
     public void setFilter(@Nullable Function filter) {
-        this.filter = filter;
+        this.filter.setFunction(filter);
     }
 
     public void setKeyCheck(@Nullable Function keyCheck) {
-        this.keyCheck = keyCheck;
+        this.keyCheck.setFunction(keyCheck);
     }
 
     public void setPerWorkerFilters(@Nullable ObjList<Function> perWorkerFilters) {
-        this.perWorkerFilters = perWorkerFilters;
+        filter.setPerWorkerFunctions(perWorkerFilters);
     }
 
     public void setPerWorkerKeyChecks(@Nullable ObjList<Function> perWorkerKeyChecks) {
-        this.perWorkerKeyChecks = perWorkerKeyChecks;
+        keyCheck.setPerWorkerFunctions(perWorkerKeyChecks);
     }
 
     /**
-     * Rewinds the key check and its worker clones.
+     * Rewinds the filter, the key check and their worker clones.
      */
-    public void toTopKeyCheck() {
-        if (keyCheck != null) {
-            keyCheck.toTop();
-        }
-        if (perWorkerKeyChecks != null) {
-            GroupByUtils.toTop(perWorkerKeyChecks);
-        }
+    public void toTop() {
+        filter.toTop();
+        keyCheck.toTop();
     }
 }

@@ -88,6 +88,8 @@ final class DecorrelationContext implements Mutable {
     private JoinPlan master;
     private final PlanVisitor masterOuterCollector = this::collectNodeMasterOuterIds;
     private int masterLimit;
+    private int outerIdBase;
+    private IntList outerIdSink;
     private int outerRefSequence = -1;
     private IntList readIds;
     private final ExpressionVisitor columnIdReads = expression -> expression instanceof ColumnExpression column
@@ -170,6 +172,23 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
+     * True when the visitor stops on an expression the step reads as it joins: in its ON condition, key filter or
+     * UNNEST arguments.
+     */
+    private static boolean readsAtJoin(JoinInput step, ExpressionVisitor visitor) {
+        if (reads(step.getOnResidual(), visitor) || reads(step.getKeyFilter(), visitor)) {
+            return true;
+        }
+        final UnnestSpec unnest = step.getUnnest();
+        for (int i = 0, n = unnest != null ? unnest.getExpressions().size() : 0; i < n; i++) {
+            if (reads(unnest.getExpressions().getQuick(i), visitor)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Lays out {@code output} as the columns of {@code input} in input order, adding the missing ones hidden, followed
      * by the columns the node itself defines; the designated timestamp keeps its column.
      */
@@ -246,8 +265,8 @@ final class DecorrelationContext implements Mutable {
         outerColumnReads.collect(plan, tmpColumnIds);
         for (int i = base, n = tmpColumnIds.size(); i < n; i++) {
             final int outerId = tmpColumnIds.getQuick(i);
-            if (masterInput(outerId) > -1 && !masterOuterIds.contains(outerId)) {
-                masterOuterIds.add(outerId);
+            if (masterInput(outerId) > -1 && outerIdSink.indexOf(outerId, outerIdBase, outerIdSink.size()) < 0) {
+                outerIdSink.add(outerId);
             }
         }
         tmpColumnIds.setPos(base);
@@ -360,7 +379,21 @@ final class DecorrelationContext implements Mutable {
      * Collects the outer columns of the master that the body reads, see {@link #masterOuterIds()}.
      */
     void collectMasterOuterIds(LogicalPlan body) {
-        body.walkTopDown(masterOuterCollector);
+        collectMasterOuterIds(body, masterOuterIds, 0);
+    }
+
+    /**
+     * Adds to {@code sink} each outer column of the master that the plan reads and {@code sink} does not hold from
+     * {@code base} on.
+     */
+    void collectMasterOuterIds(LogicalPlan plan, IntList sink, int base) {
+        outerIdSink = sink;
+        outerIdBase = base;
+        try {
+            plan.walkTopDown(masterOuterCollector);
+        } finally {
+            outerIdSink = null;
+        }
     }
 
     ColumnExpression column(OutputSchema output, int columnId, int position) {
@@ -608,16 +641,8 @@ final class DecorrelationContext implements Mutable {
                 return true;
             }
         }
-        if (readsAnyColumn(step.getOnResidual(), output) || readsAnyColumn(step.getKeyFilter(), output)) {
-            return true;
-        }
-        final UnnestSpec unnest = step.getUnnest();
-        for (int i = 0, n = unnest != null ? unnest.getExpressions().size() : 0; i < n; i++) {
-            if (readsAnyColumn(unnest.getExpressions().getQuick(i), output)) {
-                return true;
-            }
-        }
-        return false;
+        readOutput = output;
+        return readsAtJoin(step, outputColumnReads);
     }
 
     /**
@@ -633,16 +658,8 @@ final class DecorrelationContext implements Mutable {
      * arguments.
      */
     boolean readsAnyOuter(JoinInput step, IntList outerIds) {
-        if (readsAnyOuter(step.getOnResidual(), outerIds) || readsAnyOuter(step.getKeyFilter(), outerIds)) {
-            return true;
-        }
-        final UnnestSpec unnest = step.getUnnest();
-        for (int i = 0, n = unnest != null ? unnest.getExpressions().size() : 0; i < n; i++) {
-            if (readsAnyOuter(unnest.getExpressions().getQuick(i), outerIds)) {
-                return true;
-            }
-        }
-        return false;
+        readIds = outerIds;
+        return readsAtJoin(step, outerIdReads);
     }
 
     /**

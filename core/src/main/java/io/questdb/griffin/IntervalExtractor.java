@@ -985,15 +985,10 @@ public final class IntervalExtractor implements Mutable {
      */
     private CharSequence intervalElement(ConstantExpression constant) {
         final CharSequence text = constant.getText();
-        if (text == null) {
+        if (text == null || IntervalUtils.isTimestampText(ColumnType.getTimestampDriver(timestampType), text)) {
             return null;
         }
-        try {
-            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(text);
-            return null;
-        } catch (NumericException e) {
-            return isStringLiteral(constant) ? quote(text) : text;
-        }
+        return isStringLiteral(constant) ? quote(text) : text;
     }
 
     private boolean isScalarBound(BoundExpression expression) {

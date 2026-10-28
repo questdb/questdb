@@ -88,6 +88,7 @@ import static io.questdb.griffin.bind.BindContext.*;
 
 final class SampleByBinder {
     private static final String FROM_BOUND_ERROR = "from lower bound must be a constant expression convertible to a TIMESTAMP";
+    private static final String OFFSET_ERROR = "offset must be a constant expression of STRING or CHAR type";
     private static final String TO_BOUND_ERROR = "to upper bound must be a constant expression convertible to a TIMESTAMP";
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
@@ -296,6 +297,31 @@ final class SampleByBinder {
         return expression;
     }
 
+    /**
+     * The OFFSET a SAMPLE BY cursor or fill reads, which must be a constant or runtime-constant expression of a type
+     * convertible to STRING: the node {@link #sampleByOffset} returns, and, for an offset other than a literal,
+     * {@code coalesce(offset, '00:00')}, which reads a NULL offset as the default when the cursor opens, so that a NULL
+     * offset aligns the buckets as an omitted one does. Binds the offset once; an offset {@code coalesce} cannot take
+     * is bound alone to report its own error or the OFFSET error.
+     */
+    private BoundExpression bindSampleByOffset(ExpressionNode offset, SqlExecutionContext executionContext) throws SqlException {
+        if (offset == null || offset.type == ExpressionNode.CONSTANT) {
+            final BoundExpression bound = bindSampleByParameter(offset, ColumnType.STRING, executionContext);
+            validateRuntimeConstant(bound, ColumnType.STRING, OFFSET_ERROR);
+            return bound;
+        }
+        final BoundExpression bound;
+        try {
+            bound = bindSampleByParameter(ctx.binaryNode(ExpressionNode.FUNCTION, "coalesce", 0, offset, SqlParser.ZERO_OFFSET, offset.position),
+                    ColumnType.STRING, executionContext);
+        } catch (SqlException e) {
+            validateRuntimeConstant(bindSampleByParameter(offset, ColumnType.STRING, executionContext), ColumnType.STRING, OFFSET_ERROR);
+            throw e;
+        }
+        validateRuntimeConstant(bound, ColumnType.STRING, OFFSET_ERROR);
+        return bound;
+    }
+
     private BoundExpression bindSampleByParameter(ExpressionNode expression, int type, SqlExecutionContext executionContext) throws SqlException {
         if (expression == null) {
             return null;
@@ -354,31 +380,22 @@ final class SampleByBinder {
     }
 
     /**
-     * The OFFSET node the SAMPLE BY binds: none without an OFFSET, the default for a NULL literal, a constant literal as
-     * written, and any other offset as {@code coalesce(offset::string, '00:00')}, which reads a NULL offset as the
-     * default when the cursor opens. A NULL offset aligns the buckets as an omitted one does.
+     * The OFFSET node the SAMPLE BY binds, see {@link #bindSampleByOffset}: none without an OFFSET, the default for a
+     * NULL literal, and any other offset as written.
      */
     private ExpressionNode sampleByOffset(QueryModel source) {
         final ExpressionNode offset = source.getSampleByOffset();
-        if (offset == null || offset == SqlParser.ZERO_OFFSET) {
-            return offset;
-        }
-        if (offset.type == ExpressionNode.CONSTANT) {
-            return SqlKeywords.isNullKeyword(offset.token) ? SqlParser.ZERO_OFFSET : offset;
-        }
-        final int position = offset.position;
-        final ExpressionNode text = ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, offset,
-                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "string", 0, position), position);
-        return ctx.binaryNode(ExpressionNode.FUNCTION, "coalesce", 0, text, SqlParser.ZERO_OFFSET, position);
+        return offset != null && offset.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(offset.token)
+                ? SqlParser.ZERO_OFFSET : offset;
     }
 
     /**
      * The SAMPLE BY period as a stride literal; a constant period expression contributes its value.
      */
     private CharSequence sampleByPeriod(QueryModel source, GroupingPlan aggregate) {
-        if (aggregate instanceof SampleByPlan sampleBy && sampleBy.getPeriod() instanceof ConstantExpression period) {
+        if (aggregate instanceof SampleByPlan sampleBy && sampleBy.getPeriodToken() == null) {
             final CharacterStoreEntry entry = ctx.characterStore.newEntry();
-            entry.put(period.getLongValue()).put(sampleBy.getPeriodUnit());
+            entry.put(sampleBy.getStride()).put(sampleBy.getPeriodUnit());
             return entry.toImmutable();
         }
         return source.getSampleBy().token;
@@ -662,7 +679,7 @@ final class SampleByBinder {
         }
         final ExpressionNode offset = sampleByOffset(source);
         if ((timezone == null || isSubDay && from != null || !isSubDay) && offset != null && offset != SqlParser.ZERO_OFFSET) {
-            plan.setOffset(bindSampleByParameter(offset, ColumnType.STRING, executionContext));
+            plan.setOffset(bindSampleByOffset(offset, executionContext));
         }
         final int aggregateCount = aggregate.getAggregates().size();
         final boolean isBroadcast = fillCount < aggregateCount;
@@ -695,10 +712,8 @@ final class SampleByBinder {
                     token = expression.rhs.token;
                     sourcePosition = expression.rhs.position;
                     int sourceIndex = -1;
-                    final int lo = SqlUtil.isQuoteProtectedAlias(token) ? 1 : 0;
-                    final int hi = lo == 0 ? token.length() : token.length() - 1;
                     for (int k = 0, n = output.getColumnCount(); k < n; k++) {
-                        if (Chars.equalsIgnoreCase(output.getColumnName(k), token, lo, hi)) {
+                        if (isNameSpelling(token, output.getColumnName(k))) {
                             sourceIndex = k;
                             break;
                         }
@@ -766,15 +781,14 @@ final class SampleByBinder {
         plan.setJoinInput(source.getJoinModels().size() > 1);
         plan.setFillInput(isFillPlanned(source));
         plan.setTimezone(bindSampleByParameter(source.getSampleByTimezoneName(), ColumnType.STRING, executionContext));
-        plan.setOffset(bindSampleByParameter(sampleByOffset(source), ColumnType.STRING, executionContext));
         validateRuntimeConstant(plan.getTimezone(), ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
-        validateRuntimeConstant(plan.getOffset(), ColumnType.STRING, "offset must be a constant expression of STRING or CHAR type");
+        plan.setOffset(bindSampleByOffset(sampleByOffset(source), executionContext));
         plan.setFrom(bindSampleByBound(source.getSampleByFrom(), timestampType, FROM_BOUND_ERROR, executionContext));
         plan.setTo(bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext));
         final ExpressionNode unit = source.getSampleByUnit();
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
-            plan.setPeriod(sampleBy.token, null, sampleBy.position,
+            plan.setPeriod(sampleBy.token, 0, sampleBy.position,
                     sampleBy.token.isEmpty() ? (char) 0 : sampleBy.token.charAt(sampleBy.token.length() - 1), sampleBy.position);
             TimestampSamplerFactory.getInstance(driver, sampleBy.token, sampleBy.position);
         } else {
@@ -785,7 +799,7 @@ final class SampleByBinder {
             }
             final long stride = period.getDataType() == ColumnType.INT ? Numbers.intToLong((int) period.getLongValue()) : period.getLongValue();
             TimestampSamplerFactory.getSampleByInstance(driver, stride, unit.token.charAt(0), sampleBy.position);
-            plan.setPeriod(null, period, sampleBy.position, unit.token.charAt(0), unit.position);
+            plan.setPeriod(null, stride, sampleBy.position, unit.token.charAt(0), unit.position);
         }
         return plan;
     }
@@ -807,11 +821,19 @@ final class SampleByBinder {
             validateRuntimeConstant(ctx.functionBinder.bindStandalone(timezone, executionContext), ColumnType.STRING,
                     "timezone must be a constant expression of STRING or CHAR type");
         }
+        final ExpressionNode offset = sampleByOffset(source);
+        if (offset != null) {
+            // timestamp_floor_utc rejects an offset that is not constant or does not parse
+            final BoundExpression bound = ctx.functionBinder.bind(offset, input, sourceAlias(source), ColumnType.STRING, executionContext);
+            if (bound.getDataType() != ColumnType.UNDEFINED && !ColumnType.isConvertibleFrom(bound.getDataType(), ColumnType.STRING)) {
+                throw SqlException.$(bound.getPosition(), OFFSET_ERROR);
+            }
+        }
         final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);
         floor.paramCount = 5;
         floor.args.add(timezone != null && !(isSubDay && from != null) ? timezone : sampleByNull());
-        floor.args.add(sampleByOffset(source));
+        floor.args.add(offset);
         floor.args.add(from == null ? sampleByNull() : isSubDay && timezone != null ? sampleByToUtc(from, timezone) : from);
         floor.args.add(sampleByTimestamp(input, sampleBy.position));
         final CharacterStoreEntry interval = ctx.characterStore.newEntry();

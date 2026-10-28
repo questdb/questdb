@@ -331,7 +331,7 @@ public final class SqlBinder implements Mutable {
         if (index < 0) {
             index = scope.cursorSources.size();
             scope.cursorSources.add(node);
-            scope.cursorNames.add(unqualified(name != null ? name : node.token));
+            scope.cursorNames.add(parsedColumnName(name != null ? name : node.token));
         }
         scope.cursorNodes.add(node);
         scope.cursorSourceIndexes.add(index);
@@ -625,7 +625,7 @@ public final class SqlBinder implements Mutable {
                 bindScope.preferredTimestampColumnId = project.getOutput().getColumnId(last);
             }
             if (!isHorizonJoin && hasComputedProjection && index >= 0 && index == output.getTimestampIndex()
-                    && !Chars.equals(unqualified(expression.token), output.getColumnName(index))) {
+                    && !Chars.equals(parsedColumnName(expression.token), output.getColumnName(index))) {
                 // Ordinary computed SELECTs preserve designation only under the source spelling.
                 // Horizon streams resolve timestamp identity independently of its spelling.
                 bindScope.nonTimestampReferenceIds.add(project.getOutput().getColumnId(last));

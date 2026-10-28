@@ -115,7 +115,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     private final ObjList<Record> ownerMatchedSlaveRecords;
     private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
     private final ObjList<HorizonJoinSlaveState> slaveStates;
-    private int initializedSlaveFilterCount;
+    private int initializedSlaveCount;
 
     protected BaseAsyncMultiHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -221,9 +221,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                             bwdScanAbsoluteThreshold,
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
-                            state.getPerWorkerFilters() == null ? state.getFilter() : state.getPerWorkerFilters().getQuick(w),
+                            state.getFilter(w),
                             state.getAsOfJoinKeyTypes(),
-                            state.getPerWorkerKeyChecks() == null ? state.getKeyCheck() : state.getPerWorkerKeyChecks().getQuick(w)
+                            state.getKeyCheck(w)
                     ));
                 }
             }
@@ -383,8 +383,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         } catch (Throwable th) {
             cleanupFailure = th;
         }
-        final int count = initializedSlaveFilterCount;
-        initializedSlaveFilterCount = 0;
+        final int count = initializedSlaveCount;
+        initializedSlaveCount = 0;
         for (int s = 0; s < count; s++) {
             cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
         }
@@ -618,22 +618,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             TablePageFrameCursor slavePageFrameCursor,
             ConcurrentTimeFrameState sharedState
     ) throws SqlException {
-        initializedSlaveFilterCount = slaveIndex + 1;
-        final HorizonJoinSlaveState state = slaveStates.getQuick(slaveIndex);
-        final Function slaveFilter = state.getFilter();
-        if (slaveFilter != null) {
-            slaveFilter.init(slavePageFrameCursor, executionContext);
-        }
-        if (state.getPerWorkerFilters() != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(state.getPerWorkerFilters(), slavePageFrameCursor, executionContext, slaveFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
-        state.initKeyCheck(masterSymbolTableSource, executionContext);
+        initializedSlaveCount = slaveIndex + 1;
+        slaveStates.getQuick(slaveIndex).init(masterSymbolTableSource, slavePageFrameCursor, executionContext);
         // Initialize owner cursor for this slave. Each owner and per-worker pool is sized to the
         // configured budget, so a fan-out over a parquet slave would multiply peak RSS by the pool
         // count (here workerCount * slaveCount); MONOTONIC caps each effective budget to a quarter.
@@ -724,15 +710,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     }
 
     public void toTop() {
-        for (int s = 0; s < initializedSlaveFilterCount; s++) {
-            final HorizonJoinSlaveState state = slaveStates.getQuick(s);
-            if (state.getFilter() != null) {
-                state.getFilter().toTop();
-            }
-            if (state.getPerWorkerFilters() != null) {
-                GroupByUtils.toTop(state.getPerWorkerFilters());
-            }
-            state.toTopKeyCheck();
+        for (int s = 0; s < initializedSlaveCount; s++) {
+            slaveStates.getQuick(s).toTop();
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {

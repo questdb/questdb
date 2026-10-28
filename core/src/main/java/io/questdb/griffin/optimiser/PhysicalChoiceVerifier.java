@@ -513,6 +513,9 @@ final class PhysicalChoiceVerifier {
     }
 
     static String filter(FilterPlan filter, boolean isPlanned) {
+        if (isPlanned && filter.hasUpdateScan() != LogicalPlans.hasUpdateScan(filter.getChild())) {
+            return PlanVerifier.FILTER_UPDATE_SCAN;
+        }
         final boolean hasChoice = !PlanToFactoryRules.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
         final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
         if (algorithm == null) {
@@ -560,7 +563,7 @@ final class PhysicalChoiceVerifier {
                 joinType == JoinKind.ASOF || joinType == JoinKind.LT, step.getKeyCheck())) {
             return PlanVerifier.JOIN_KEY_LOOKUP;
         }
-        if ((step.getNullKeyCheck() != null) != (step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL)) {
+        if ((step.getNullKeyCheck() != null) != PlanToFactoryRules.isMasterNullKeyChecked(step)) {
             return PlanVerifier.JOIN_NULL_KEY_CHECK;
         }
         if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {

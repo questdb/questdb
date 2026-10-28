@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -139,12 +138,8 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         sink.child(masterFactory);
         for (int s = 0, n = slaveStates.size(); s < n; s++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(s);
-            if (state.getKeyCheck() != null) {
-                sink.attr("keyCheck").val(state.getKeyCheck(), masterFactory);
-            }
-            if (state.getFilter() != null) {
-                sink.attr("slave filter").val(state.getFilter(), state.getFactory());
-            }
+            sink.optAttr("keyCheck", state.getKeyCheck(), masterFactory);
+            sink.optAttr("slave filter", state.getFilter(), state.getFactory());
             sink.child(state.getFactory());
         }
     }
@@ -208,7 +203,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         private long batchRowCount;
         private SqlExecutionCircuitBreaker circuitBreaker;
         // Slaves whose filter and key check of() has initialized, and close() has yet to close
-        private int initializedSlaveFilterCount;
+        private int initializedSlaveCount;
         private boolean isMasterExhausted;
         private RecordCursor masterCursor;
         private Record masterRecord;
@@ -283,8 +278,8 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
             failure = Misc.freeBestEffort(failure, timestamps);
             failure = Misc.freeBestEffort(failure, slots);
             failure = Misc.freeBestEffort(failure, horizonIterator);
-            final int count = initializedSlaveFilterCount;
-            initializedSlaveFilterCount = 0;
+            final int count = initializedSlaveCount;
+            initializedSlaveCount = 0;
             for (int s = 0; s < count; s++) {
                 failure = slaveStates.getQuick(s).cursorClosed(failure);
             }
@@ -352,12 +347,8 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         @Override
         public void toTop() {
             masterCursor.toTop();
-            for (int s = 0; s < initializedSlaveFilterCount; s++) {
-                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
-                if (slaveFilter != null) {
-                    slaveFilter.toTop();
-                }
-                slaveStates.getQuick(s).toTopKeyCheck();
+            for (int s = 0; s < initializedSlaveCount; s++) {
+                slaveStates.getQuick(s).toTop();
             }
             batchRowCount = 0;
             rowPosition = 0;
@@ -425,12 +416,8 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                 final TimeFrameCursor slaveCursor = slaveCursors.getQuick(s);
                 slaveSymbolTableSources.setQuick(s, slaveCursor);
                 // Count the slave first, so that close() also closes a filter whose init() throws.
-                initializedSlaveFilterCount = s + 1;
-                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
-                if (slaveFilter != null) {
-                    slaveFilter.init(slaveCursor, executionContext);
-                }
-                slaveStates.getQuick(s).initKeyCheck(masterCursor, executionContext);
+                initializedSlaveCount = s + 1;
+                slaveStates.getQuick(s).init(masterCursor, slaveCursor, executionContext);
                 matcher.of(s, slaveCursor, masterCursor, slaveCursor, executionContext.getMemoryTracker());
             }
             symbolTableSource.of(masterCursor, slaveSymbolTableSources);

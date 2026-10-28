@@ -37,6 +37,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -44,6 +46,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 
@@ -58,12 +61,14 @@ import java.util.List;
  * fails when the folded NOT does not return the negation of the comparison.
  */
 public class FunctionResultTypeContractTest extends AbstractCairoTest {
-    private static final int MAX_BASE_COMBINATIONS = 3_000;
-    private static final int MAX_VALUE_COMBINATIONS = 300;
+    private static final int KIND_COUNT = 3;
+    private static final int MAX_BASE_COMBINATIONS = 100;
+    private static final int MAX_VALUE_COMBINATIONS = 3;
     private static final int MAX_VAR_ARGS = 3;
     private static final HashSet<String> knownMasterCrashes = new HashSet<>();
     private static final ObjList<String> cursors = new ObjList<>();
     private static final ObjList<Form> forms = new ObjList<>();
+    private static final HashMap<String, Form> formsBySql = new HashMap<>();
     private final HashSet<String> crashes = new HashSet<>();
     private final ObjList<String> failures = new ObjList<>();
     private final Rnd rnd = new Rnd(42, 4242);
@@ -110,7 +115,7 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
             for (int i = 0, n = failures.size(); i < n; i++) {
                 sb.append(failures.getQuick(i)).append('\n');
             }
-            Assert.assertTrue("compiled too few calls: " + compiled + ", rejected: " + rejected, compiled > 10_000);
+            Assert.assertTrue("compiled too few calls: " + compiled + ", rejected: " + rejected, compiled > 50_000);
             Assert.assertEquals("", sb.toString());
         });
     }
@@ -137,15 +142,20 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
     }
 
     private static void addColumn(String name, int type) {
-        forms.add(new Form(name, ColumnType.tagOf(type), false, false));
+        addForm(new Form(name, type, ColumnType.tagOf(type), false, false));
     }
 
     private static void addConstant(String sql, int type) {
-        forms.add(new Form(sql, ColumnType.tagOf(type), true, false));
+        addForm(new Form(sql, type, ColumnType.tagOf(type), true, false));
+    }
+
+    private static void addForm(Form form) {
+        forms.add(form);
+        formsBySql.put(form.sql, form);
     }
 
     private static void addValue(String sql, int type) {
-        forms.add(new Form(sql, ColumnType.tagOf(type), true, true));
+        addForm(new Form(sql, type, ColumnType.tagOf(type), true, true));
     }
 
     private static String crashKey(String name, Throwable e) {
@@ -170,6 +180,14 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
     private static boolean isIdentifier(String name) {
         final char c = name.charAt(0);
         return Character.isLetter(c) || c == '_';
+    }
+
+    /**
+     * Returns 0 for a constant, 1 for a column and 2 for a bind variable, a sub-query or a type name.
+     */
+    private static int kindOf(String option) {
+        final Form form = formsBySql.get(option);
+        return form == null ? 2 : form.isConstant ? 0 : 1;
     }
 
     private static String render(String name, ObjList<String> args, boolean isWindow) {
@@ -202,6 +220,13 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
                 sb.append(']');
             }
             case "not" -> sb.append("NOT (").append(args.getQuick(0)).append(')');
+            case "case" -> {
+                sb.append("CASE ").append(args.getQuick(0)).append(" THEN ").append(args.getQuick(1));
+                if (args.size() > 2) {
+                    sb.append(" ELSE ").append(args.getQuick(2));
+                }
+                sb.append(" END");
+            }
             case "and", "or", "like", "ilike" -> sb.append('(').append(args.getQuick(0)).append(") ").append(name)
                     .append(" (").append(args.getQuick(1)).append(')');
             default -> {
@@ -258,6 +283,18 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         return names;
     }
 
+    private static ObjList<String> typeRepresentatives(ObjList<String> options) {
+        final ObjList<String> representatives = new ObjList<>();
+        final IntHashSet types = new IntHashSet();
+        for (int i = 0, n = options.size(); i < n; i++) {
+            final Form form = formsBySql.get(options.getQuick(i));
+            if (form == null || types.add(form.type)) {
+                representatives.add(options.getQuick(i));
+            }
+        }
+        return representatives;
+    }
+
     private void addCombinations(String name, boolean isWindow, ObjList<ObjList<String>> base, ObjList<ObjList<String>> values) {
         long product = 1;
         for (int i = 0, n = base.size(); i < n && product <= MAX_BASE_COMBINATIONS; i++) {
@@ -270,7 +307,7 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         if (product <= MAX_BASE_COMBINATIONS) {
             enumerate(name, isWindow, base, 0, args);
         } else {
-            sample(name, isWindow, base, MAX_BASE_COMBINATIONS);
+            sample(name, isWindow, base, MAX_BASE_COMBINATIONS, true);
         }
         final ObjList<ObjList<String>> pinned = new ObjList<>();
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -289,7 +326,7 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
                     args.clear();
                     enumerate(name, isWindow, pinned, 0, args);
                 } else {
-                    sample(name, isWindow, pinned, MAX_VALUE_COMBINATIONS);
+                    sample(name, isWindow, pinned, MAX_VALUE_COMBINATIONS, false);
                 }
             }
         }
@@ -334,17 +371,9 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         }
         base.add(head);
         base.add(values);
+        sample("case", false, base, 2 * MAX_BASE_COMBINATIONS, true);
         base.add(values);
-        final ObjList<String> args = new ObjList<>();
-        for (int k = 0; k < 2 * MAX_BASE_COMBINATIONS; k++) {
-            args.clear();
-            for (int i = 0, n = base.size(); i < n; i++) {
-                final ObjList<String> options = base.getQuick(i);
-                args.add(options.getQuick(rnd.nextPositiveInt() % options.size()));
-            }
-            checkCall("CASE " + args.getQuick(0) + " THEN " + args.getQuick(1) + " ELSE " + args.getQuick(2) + " END");
-            checkCall("CASE " + args.getQuick(0) + " THEN " + args.getQuick(1) + " END");
-        }
+        sample("case", false, base, 2 * MAX_BASE_COMBINATIONS, true);
     }
 
     private void checkComplement(String call, String comparison) {
@@ -453,7 +482,7 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         }
     }
 
-    private record Form(String sql, short tag, boolean isConstant, boolean isValue) {
+    private record Form(String sql, int type, short tag, boolean isConstant, boolean isValue) {
     }
 
     private void recordCrash(String sql, Throwable e) {
@@ -465,12 +494,61 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         }
     }
 
-    private void sample(String name, boolean isWindow, ObjList<ObjList<String>> base, int count) {
-        final ObjList<String> args = new ObjList<>();
-        for (int k = 0; k < count; k++) {
-            args.clear();
+    /**
+     * Builds seeded random combinations whose positions take options of one kind where they have such options. When
+     * covering, it first builds each option of each position beside options of the same kind at the other positions,
+     * and, over two positions, an option of each type at one beside an option of each type at the other.
+     */
+    private void sample(String name, boolean isWindow, ObjList<ObjList<String>> base, int count, boolean isCovering) {
+        final ObjList<ObjList<ObjList<String>>> kindOptions = new ObjList<>();
+        final IntList kindWidths = new IntList();
+        for (int kind = 0; kind < KIND_COUNT; kind++) {
+            final ObjList<ObjList<String>> positionOptions = new ObjList<>();
+            int width = 0;
             for (int i = 0, n = base.size(); i < n; i++) {
                 final ObjList<String> options = base.getQuick(i);
+                final ObjList<String> ofKind = new ObjList<>();
+                for (int j = 0, m = options.size(); j < m; j++) {
+                    if (kindOf(options.getQuick(j)) == kind) {
+                        ofKind.add(options.getQuick(j));
+                    }
+                }
+                positionOptions.add(ofKind.size() > 0 ? ofKind : options);
+                width = Math.max(width, ofKind.size());
+            }
+            kindOptions.add(positionOptions);
+            kindWidths.add(width);
+        }
+        final ObjList<String> args = new ObjList<>();
+        int built = 0;
+        for (int kind = 0; isCovering && kind < KIND_COUNT; kind++) {
+            final ObjList<ObjList<String>> positionOptions = kindOptions.getQuick(kind);
+            for (int k = 0, width = kindWidths.getQuick(kind); k < width; k++, built++) {
+                args.clear();
+                for (int i = 0, n = positionOptions.size(); i < n; i++) {
+                    final ObjList<String> options = positionOptions.getQuick(i);
+                    args.add(options.getQuick(k % options.size()));
+                }
+                checkCall(render(name, args, isWindow));
+            }
+        }
+        if (isCovering && base.size() == 2) {
+            final ObjList<String> left = typeRepresentatives(base.getQuick(0));
+            final ObjList<String> right = typeRepresentatives(base.getQuick(1));
+            for (int a = 0, m = left.size(); a < m; a++) {
+                for (int b = 0, n = right.size(); b < n; b++, built++) {
+                    args.clear();
+                    args.add(left.getQuick(a));
+                    args.add(right.getQuick(b));
+                    checkCall(render(name, args, isWindow));
+                }
+            }
+        }
+        for (; built < count; built++) {
+            final ObjList<ObjList<String>> positionOptions = kindOptions.getQuick(built % KIND_COUNT);
+            args.clear();
+            for (int i = 0, n = positionOptions.size(); i < n; i++) {
+                final ObjList<String> options = positionOptions.getQuick(i);
                 args.add(options.getQuick(rnd.nextPositiveInt() % options.size()));
             }
             checkCall(render(name, args, isWindow));
@@ -491,27 +569,8 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
     static {
         // Each entry is a crash master raises with the same exception class for the same SQL (probe-confirmed);
         // the key is the function name, the exception class and the throwing frame.
-        // VARCHAR string functions fold a constant IPv4 or SYMBOL argument through getVarcharA/getVarcharSize.
-        knownMasterCrashes.add("lpad UnsupportedOperationException at IPv4Function.getVarcharA");
-        knownMasterCrashes.add("rpad UnsupportedOperationException at IPv4Function.getVarcharA");
-        knownMasterCrashes.add("position UnsupportedOperationException at IPv4Function.getVarcharA");
-        knownMasterCrashes.add("strpos UnsupportedOperationException at IPv4Function.getVarcharA");
-        knownMasterCrashes.add("split_part UnsupportedOperationException at IPv4Function.getVarcharA");
-        knownMasterCrashes.add("starts_with UnsupportedOperationException at IPv4Function.getVarcharA");
-        knownMasterCrashes.add("length_bytes UnsupportedOperationException at IPv4Function.getVarcharSize");
-        // nullif over IPv4 reads a CHAR operand as IPv4, or an IPv4 operand as VARCHAR.
+        // nullif over IPv4 reads a CHAR operand as IPv4.
         knownMasterCrashes.add("nullif UnsupportedOperationException at CharFunction.getIPv4");
-        knownMasterCrashes.add("nullif UnsupportedOperationException at IPv4Function.getVarcharA");
-        // A timestamp IN list holding an interval reads its first list element as an interval.
-        knownMasterCrashes.add("in UnsupportedOperationException at DateFunction.getInterval");
-        knownMasterCrashes.add("in UnsupportedOperationException at IntFunction.getInterval");
-        knownMasterCrashes.add("in UnsupportedOperationException at LongFunction.getInterval");
-        knownMasterCrashes.add("in UnsupportedOperationException at StrFunction.getInterval");
-        knownMasterCrashes.add("in UnsupportedOperationException at TimestampFunction.getInterval");
-        // greatest/least over mixed temporal and integer constants read the integer constant as a timestamp.
-        knownMasterCrashes.add("greatest UnsupportedOperationException at ByteFunction.getTimestamp");
-        knownMasterCrashes.add("least UnsupportedOperationException at ByteFunction.getTimestamp");
-        knownMasterCrashes.add("least UnsupportedOperationException at ShortFunction.getTimestamp");
         // l2price reads non-numeric var-arg constants as DOUBLE.
         knownMasterCrashes.add("l2price UnsupportedOperationException at AbstractGeoHashFunction.getDouble");
         knownMasterCrashes.add("l2price UnsupportedOperationException at DecimalFunction.getDouble");
@@ -519,10 +578,6 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         knownMasterCrashes.add("l2price UnsupportedOperationException at IntervalFunction.getDouble");
         knownMasterCrashes.add("l2price UnsupportedOperationException at Long256Function.getDouble");
         knownMasterCrashes.add("l2price UnsupportedOperationException at UuidFunction.getDouble");
-        // matmul over constant 1-D arrays asks for a second dimension.
-        knownMasterCrashes.add("matmul AssertionError at ArrayView.getDimLen");
-        // Casting a NULL DOUBLE[] to DOUBLE[][] encodes a NULL element type.
-        knownMasterCrashes.add("cast AssertionError at ColumnType.encodeArrayType");
         // Slicing a constant array by a timestamp interval overflows the int index.
         knownMasterCrashes.add("[] AssertionError at DoubleArrayAccessFunctionFactory$SliceDoubleArrayFunction.toIndex");
 

@@ -31,7 +31,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -99,8 +98,6 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
             for (int s = 0; s < slaveCount; s++) {
                 final HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 masterTsScales[s] = state.getMasterTsScale();
-                final ObjList<Function> perWorkerFilters = state.getPerWorkerFilters();
-                final ObjList<Function> perWorkerKeyChecks = state.getPerWorkerKeyChecks();
                 helpers.add(new HorizonJoinTimeFrameHelper(
                         configuration,
                         configuration.getSqlAsOfJoinLookAhead(),
@@ -108,9 +105,9 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                         configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
                         configuration.getSqlHorizonJoinBwdScanMinGap(),
                         configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
-                        workerIndex == -1 || perWorkerFilters == null ? state.getFilter() : perWorkerFilters.getQuick(workerIndex),
+                        state.getFilter(workerIndex),
                         state.getAsOfJoinKeyTypes(),
-                        workerIndex == -1 || perWorkerKeyChecks == null ? state.getKeyCheck() : perWorkerKeyChecks.getQuick(workerIndex),
+                        state.getKeyCheck(workerIndex),
                         true
                 ));
                 if (state.isKeyed()) {

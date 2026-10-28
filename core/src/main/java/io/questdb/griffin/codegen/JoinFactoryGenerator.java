@@ -810,7 +810,7 @@ final class JoinFactoryGenerator {
             final ArrayColumnTypes valueTypes = frame.valueTypes;
             final int[] masterSymbolKeyCols = joinKeys.masterSymbolKeys;
             final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
-            assert nullKeyCheck == null || filter != null : "outer join NULL-extended by its ON residual has none";
+            assert step.getNullExtension() == JoinInput.NullExtension.BY_KEYS || filter != null : "outer join NULL-extended by its ON residual has none";
 
             final int modelJoinType = SqlCodeGenerator.queryModelJoinType(joinType);
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
@@ -860,6 +860,7 @@ final class JoinFactoryGenerator {
                             modelJoinType,
                             masterSymbolKeyCols,
                             slaveSymbolKeyCols,
+                            step.getNullExtension(),
                             nullKeyCheck
                     );
                 }
@@ -930,6 +931,7 @@ final class JoinFactoryGenerator {
                         modelJoinType,
                         masterSymbolKeyCols,
                         slaveSymbolKeyCols,
+                        step.getNullExtension(),
                         nullKeyCheck
                 );
             }
@@ -1114,8 +1116,6 @@ final class JoinFactoryGenerator {
             if (joinType.isTemporal() || joinType == JoinKind.UNNEST) {
                 throw new IllegalStateException("unsupported logical join type");
             }
-            final boolean isOuter = joinType == JoinKind.LEFT_OUTER || joinType == JoinKind.RIGHT_OUTER
-                    || joinType == JoinKind.FULL_OUTER;
             final int keyCount = step.getKeys().size();
             if ((joinType == JoinKind.CROSS || joinType == JoinKind.OUTER_CROSS) && (keyCount != 0 || step.getOnResidual() != null)) {
                 throw new IllegalStateException("CROSS join has a join condition");
@@ -1130,7 +1130,7 @@ final class JoinFactoryGenerator {
             final BoundExpression onResidual = step.getOnResidual();
             if (onResidual != null) {
                 final Function onFilter = functionInstantiator.instantiate(onResidual, step.getOutput(), metadata, executionContext);
-                if (isOuter && !isMarkout) {
+                if (joinType.isOuter() && !isMarkout) {
                     // Outer residual ON is owned by the join and must run before unmatched rows are NULL-extended.
                     joinFilter = onFilter;
                 } else if (postJoinFilter == null) {

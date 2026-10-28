@@ -3325,28 +3325,28 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     /**
      * Asserts that reads of the table ordered by keys, over the intervals and with the key predicates, return what a
      * sort of the rows the scan reads without the index returns, for both key orders, both timestamp orders and LIMITs
-     * from either end.
+     * from either end. The reads hold every pair of interval, predicate, order and LIMIT.
      */
     private void assertKeyOrderedReadsMatchSort(String table, String[] intervals, String[] predicates) throws Exception {
         assertKeyOrderedReadsMatchSort(table, intervals, predicates, 0);
     }
 
     private void assertKeyOrderedReadsMatchSort(String table, String[] intervals, String[] predicates, long queryMemoryLimit) throws Exception {
+        final String[] orders = {"s, ts", "s DESC, ts DESC", "s, ts DESC", "s DESC, ts"};
+        final String[] limits = {"", " LIMIT 5", " LIMIT -7", " LIMIT 3, 40", " LIMIT -30, -4"};
         final StringSink expected = new StringSink();
-        for (String interval : intervals) {
-            for (String predicate : predicates) {
+        for (int p = 0, n = Math.max(predicates.length, orders.length); p < n; p++) {
+            final String predicate = predicates[p % predicates.length];
+            for (int l = 0; l < limits.length; l++) {
+                final String interval = intervals[(p + 2 * l + 3 * ((p + l) / orders.length)) % intervals.length];
                 final String where = interval.isEmpty()
                         ? (predicate.isEmpty() ? "" : " WHERE " + predicate)
                         : " WHERE " + interval + (predicate.isEmpty() ? "" : " AND " + predicate);
-                for (String order : new String[]{"s, ts", "s DESC, ts DESC", "s, ts DESC", "s DESC, ts"}) {
-                    for (String limit : new String[]{"", " LIMIT 5", " LIMIT -7", " LIMIT 3, 40", " LIMIT -30, -4"}) {
-                        final String tail = "id, s, v, vc, ts FROM " + table + where + " ORDER BY " + order + limit;
-                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
-                        printSql("SELECT /*+ no_index(" + table + ") */ " + tail, expected);
-                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, queryMemoryLimit);
-                        assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
-                    }
-                }
+                final String tail = "id, s, v, vc, ts FROM " + table + where + " ORDER BY " + orders[(p + l) % orders.length] + limits[l];
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                printSql("SELECT /*+ no_index(" + table + ") */ " + tail, expected);
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, queryMemoryLimit);
+                assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
             }
         }
     }

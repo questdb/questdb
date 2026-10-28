@@ -101,7 +101,8 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.*;
  * or own body precedes that projection, so the body then restores them itself. In the
  * body of a LEFT LATERAL, a count joined without a condition joins LEFT to the column its outer columns map to
  * and the body's projection restores its values. A WHERE or ON that drops the empty row needs no restoring.
- * Any other keyless aggregate restores its empty values with a LEFT join from its own domain.
+ * Any other keyless aggregate restores its empty values with a LEFT join from its own domain, which for a
+ * set-operation branch covers every outer column the operation reads.
  */
 final class Decorrelation implements OptimiserPass {
     private static final String SOURCE_CORRELATION = "outer column reference in this source is not supported in a LATERAL sub-query";
@@ -259,23 +260,23 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
-     * Projects a set-operation branch so it ends with one column for each outer column of,
-     * in that order; the branch's mapping lies in two ranges of the mapping stack.
+     * Projects a set-operation branch so it ends with one column for each outer column of
+     * {@link DecorrelationDomains#outerIds}, in that order: the first column the mapping between {@code lo} and
+     * {@code hi} maps it to.
      */
-    private ProjectPlan alignBranch(LogicalPlan branch, int lo, int hi, int extraLo, int extraHi, int position) {
+    private ProjectPlan alignBranch(LogicalPlan branch, int lo, int hi, int position) {
         final ProjectPlan project = planNodes.projects.next().of(branch, position);
         final OutputSchema input = branch.getOutput();
         for (int i = 0, n = input.getColumnCount(); i < n; i++) {
             final int columnId = input.getColumnId(i);
-            if (mapping.mappedIndex(columnId, lo, hi) < 0 && mapping.mappedIndex(columnId, extraLo, extraHi) < 0) {
+            if (mapping.mappedIndex(columnId, lo, hi) < 0) {
                 project.getExpressions().add(planNodes.columns.next().of(columnId, input.getColumnType(i), position));
                 project.getOutput().add(context.newColumnId(), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), input.isVisible(i));
             }
         }
         for (int k = 0, m = domains.outerIds().size(); k < m; k++) {
             final int outerId = domains.outerIds().getQuick(k);
-            final int columnId = mapping.mappedColumn(outerId, lo, hi) > -1 ? mapping.mappedColumn(outerId, lo, hi) : mapping.mappedColumn(outerId, extraLo, extraHi);
-            ctx.exposeColumn(project, input, columnId, ctx.outerRefName(outerId), position);
+            ctx.exposeColumn(project, input, mapping.mappedColumn(outerId, lo, hi), ctx.outerRefName(outerId), position);
         }
         return project;
     }
@@ -361,8 +362,8 @@ final class Decorrelation implements OptimiserPass {
                 }
                 tmpColumnIds.setPos(keyedBase);
             }
-            final boolean isUncompensated = isBranch || isBodyTop && !isBodyReadLater(ctx.master(), ctx.master().getInputs().getQuick(ctx.stepIndex()));
-            return rewriter.rewriteChain(source, chainBase, base, isUncompensated);
+            final boolean isUncompensated = isBodyTop && !isBodyReadLater(ctx.master(), ctx.master().getInputs().getQuick(ctx.stepIndex()));
+            return rewriter.rewriteChain(source, chainBase, base, isUncompensated, isBranch);
         } finally {
             chain.setPos(chainBase);
             chainOuterIds.setPos(chainOuterBase);
@@ -394,32 +395,44 @@ final class Decorrelation implements OptimiserPass {
         return join;
     }
 
+    /**
+     * Decorrelates each branch of the set operation and joins it, when it lacks an outer column the operation reads, to
+     * the domain of those columns, keyed on its own, see {@link DecorrelationDomains#joinMissing}: the left branch before
+     * the right one, which then reads that domain. Both end with one column per outer column, which the operation's
+     * output carries hidden. When the operation releases its right branch before it reads the left one, see
+     * {@link io.questdb.griffin.plan.logical.SetOperationKind#isRightReleasedFirst}, the domains the right branch builds
+     * serve only that branch.
+     */
     private LogicalPlan decorrelateSetOperation(SetOperationPlan operation, int base) throws SqlException {
-        final int leftBase = mapping.mark();
-        operation.replaceInput(0, decorrelateBranch(operation.getLeft(), leftBase));
-        final int rightBase = mapping.mark();
-        operation.replaceInput(1, decorrelateBranch(operation.getRight(), rightBase));
-        final int rightEnd = mapping.mark();
-        operation.replaceInput(0, domains.crossMissing(operation.getLeft(), rightBase, rightEnd, leftBase, rightBase, operation.getPosition()));
-        final int rightExtraBase = mapping.mark();
-        operation.replaceInput(1, domains.crossMissing(operation.getRight(), leftBase, rightBase, rightBase, rightEnd, operation.getRightPosition()));
-        final int extraEnd = mapping.mark();
-        domains.coverMappedMaster(leftBase, extraEnd);
-        operation.replaceInput(0, alignBranch(operation.getLeft(), leftBase, rightBase, rightEnd, rightExtraBase, operation.getPosition()));
-        operation.replaceInput(1, alignBranch(operation.getRight(), rightBase, rightEnd, rightExtraBase, extraEnd, operation.getRightPosition()));
-        mapping.reset(base);
-        final OutputSchema output = operation.getOutput();
-        final OutputSchema leftOutput = operation.getLeft().getOutput();
-        final boolean isCastRequired = SetOperationCasts.isCastRequired(operation);
-        operation.setCastRequired(isCastRequired);
-        for (int i = output.getColumnCount(), k = 0, n = leftOutput.getColumnCount(); i < n; i++, k++) {
-            final int columnId = context.newColumnId();
-            final int type = SetOperationCasts.getCastType(operation, i, isCastRequired);
-            output.add(columnId, leftOutput.getColumnName(i), type, false);
-            operation.getCastTypes().add(type);
-            mapping.push(domains.outerIds().getQuick(k), columnId);
+        final int enclosingOperation = domains.beginOperation(operation);
+        try {
+            final int leftBase = mapping.mark();
+            operation.replaceInput(0, decorrelateBranch(operation.getLeft(), leftBase));
+            operation.replaceInput(0, domains.joinMissing(operation.getLeft(), leftBase, operation.getPosition()));
+            final int rightBase = mapping.mark();
+            final int rightProducerBase = domains.producerMark();
+            operation.replaceInput(1, decorrelateBranch(operation.getRight(), rightBase));
+            operation.replaceInput(1, domains.joinMissing(operation.getRight(), rightBase, operation.getRightPosition()));
+            if (operation.getOperation().isRightReleasedFirst()) {
+                domains.retireProducers(rightProducerBase);
+            }
+            final int rightEnd = mapping.mark();
+            domains.coverMappedMaster(leftBase, rightEnd);
+            operation.replaceInput(0, alignBranch(operation.getLeft(), leftBase, rightBase, operation.getPosition()));
+            operation.replaceInput(1, alignBranch(operation.getRight(), rightBase, rightEnd, operation.getRightPosition()));
+            mapping.reset(base);
+            final OutputSchema output = operation.getOutput();
+            final OutputSchema leftOutput = operation.getLeft().getOutput();
+            SetOperationCasts.recordCasts(operation);
+            for (int i = output.getColumnCount(), k = 0, n = leftOutput.getColumnCount(); i < n; i++, k++) {
+                final int columnId = context.newColumnId();
+                output.add(columnId, leftOutput.getColumnName(i), operation.getCastTypes().getQuick(i), false);
+                mapping.push(domains.outerIds().getQuick(k), columnId);
+            }
+            return operation;
+        } finally {
+            domains.endOperation(enclosingOperation);
         }
-        return operation;
     }
 
     /**
@@ -884,7 +897,10 @@ final class Decorrelation implements OptimiserPass {
 
     /**
      * Satisfies the outer columns the block chain reads and the mapping does not: by WHERE equalities when
-     * the block allows it, otherwise by a domain joined to the block source.
+     * the block allows it, otherwise by a domain joined to the block source. A set-operation branch allows it only
+     * when it restores its values over no rows, see {@link ScalarCompensation#isScalarChain}, from a domain that
+     * covers every outer column the operation reads; so does the domain of any other branch that its WHERE
+     * equalities key on each of those columns, see {@link DecorrelationDomains#coverOperation}.
      */
     private LogicalPlan satisfyOuterColumns(LogicalPlan source, int chainBase, int chainOuterBase, boolean isBodyTop, boolean isBranch, int base,
                                             int deferredBase) throws SqlException {
@@ -899,7 +915,7 @@ final class Decorrelation implements OptimiserPass {
         }
         keys.clearDroppedEqualities();
         final int equatedBase = mapping.mark();
-        if (!isBranch) {
+        if (!isBranch || compensation.isScalarChain(chainBase)) {
             final JoinPlan sourceJoin = source instanceof JoinPlan join ? join : null;
             if (filter != null) {
                 keys.collectEqualities(filter.getPredicate(), filter.getChild().getOutput(), sourceJoin, base);
@@ -946,6 +962,9 @@ final class Decorrelation implements OptimiserPass {
         final int start = keys.droppedEqualityCount();
         if (filter != null && !(source instanceof JoinPlan)) {
             keys.collectEqualities(filter.getPredicate(), source.getOutput(), null, base);
+        }
+        if (isBranch && !(source instanceof JoinPlan) && keys.isEveryOuterColumnEquated(domains.outerIds(), 0, base)) {
+            domains.coverOperation();
         }
         final LogicalPlan domain = domains.buildDomain(source.getPosition());
         if (!(source instanceof JoinPlan join)) {

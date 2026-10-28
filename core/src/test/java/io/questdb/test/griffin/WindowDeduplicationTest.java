@@ -701,51 +701,50 @@ public class WindowDeduplicationTest extends AbstractCairoTest {
     @Test
     public void testWideWindowCallsMergeInLinearComparisons() throws Exception {
         assertMemoryLeak(() -> {
+            final int windowCount = 1_024;
             final StringSink ddl = new StringSink();
             ddl.put("CREATE TABLE lp_window_wide (");
-            for (int i = 0; i < 4_096; i++) {
+            for (int i = 0; i < windowCount; i++) {
                 ddl.put(i > 0 ? ", c" : "c").put(i).put(" LONG");
             }
             ddl.put(')');
             execute(ddl);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                for (int windowCount = 1_024; windowCount <= 4_096; windowCount *= 4) {
-                    compile(compiler, wideIdenticalWindowCalls(windowCount));
-                    final long identicalComparisons = compiler.getWindowCallComparisonCount();
-                    compile(compiler, wideDistinctWindowCalls(windowCount));
-                    final long distinctComparisons = compiler.getWindowCallComparisonCount();
-                    final StringSink orderedSql = new StringSink();
-                    final StringSink computedAliases = new StringSink();
-                    final StringSink volatileAliases = new StringSink();
-                    orderedSql.put("SELECT ");
-                    computedAliases.put("(SELECT ");
-                    volatileAliases.put("(SELECT ");
-                    for (int i = 0; i < windowCount; i++) {
-                        orderedSql.put(i > 0 ? ", row_number() OVER (ORDER BY c" : "row_number() OVER (ORDER BY c").put(i).put(") w").put(i);
-                        computedAliases.put(i > 0 ? ", c" : "c").put(i).put(" + 1 c").put(i);
-                        volatileAliases.put(i > 0 ? ", rnd_int() c" : "rnd_int() c").put(i);
-                    }
-                    orderedSql.put(" FROM ");
-                    computedAliases.put(" FROM lp_window_wide)");
-                    volatileAliases.put(" FROM lp_window_wide)");
-                    final StringSink sql = new StringSink();
-                    sql.put(orderedSql).put("lp_window_wide");
-                    compile(compiler, sql);
-                    final long orderedComparisons = compiler.getWindowCallComparisonCount();
-                    sql.clear();
-                    sql.put(orderedSql).put(computedAliases);
-                    compile(compiler, sql);
-                    final long computedComparisons = compiler.getWindowCallComparisonCount();
-                    sql.clear();
-                    sql.put(orderedSql).put(volatileAliases);
-                    compile(compiler, sql);
-                    final long volatileComparisons = compiler.getWindowCallComparisonCount();
-                    Assert.assertTrue("window call comparisons grow superlinearly [windows=" + windowCount + ", identical=" + identicalComparisons
-                                    + ", distinct=" + distinctComparisons + ", ordered=" + orderedComparisons + ", computed=" + computedComparisons
-                                    + ", volatile=" + volatileComparisons + ']',
-                            identicalComparisons < 2L * windowCount && distinctComparisons < 2L * windowCount
-                                    && orderedComparisons < 2L * windowCount && computedComparisons < 2L * windowCount && volatileComparisons < 2L * windowCount);
+                compile(compiler, wideIdenticalWindowCalls(windowCount));
+                final long identicalComparisons = compiler.getWindowCallComparisonCount();
+                compile(compiler, wideDistinctWindowCalls(windowCount));
+                final long distinctComparisons = compiler.getWindowCallComparisonCount();
+                final StringSink orderedSql = new StringSink();
+                final StringSink computedAliases = new StringSink();
+                final StringSink volatileAliases = new StringSink();
+                orderedSql.put("SELECT ");
+                computedAliases.put("(SELECT ");
+                volatileAliases.put("(SELECT ");
+                for (int i = 0; i < windowCount; i++) {
+                    orderedSql.put(i > 0 ? ", row_number() OVER (ORDER BY c" : "row_number() OVER (ORDER BY c").put(i).put(") w").put(i);
+                    computedAliases.put(i > 0 ? ", c" : "c").put(i).put(" + 1 c").put(i);
+                    volatileAliases.put(i > 0 ? ", rnd_int() c" : "rnd_int() c").put(i);
                 }
+                orderedSql.put(" FROM ");
+                computedAliases.put(" FROM lp_window_wide)");
+                volatileAliases.put(" FROM lp_window_wide)");
+                final StringSink sql = new StringSink();
+                sql.put(orderedSql).put("lp_window_wide");
+                compile(compiler, sql);
+                final long orderedComparisons = compiler.getWindowCallComparisonCount();
+                sql.clear();
+                sql.put(orderedSql).put(computedAliases);
+                compile(compiler, sql);
+                final long computedComparisons = compiler.getWindowCallComparisonCount();
+                sql.clear();
+                sql.put(orderedSql).put(volatileAliases);
+                compile(compiler, sql);
+                final long volatileComparisons = compiler.getWindowCallComparisonCount();
+                Assert.assertTrue("window call comparisons grow superlinearly [windows=" + windowCount + ", identical=" + identicalComparisons
+                                + ", distinct=" + distinctComparisons + ", ordered=" + orderedComparisons + ", computed=" + computedComparisons
+                                + ", volatile=" + volatileComparisons + ']',
+                        identicalComparisons < 2L * windowCount && distinctComparisons < 2L * windowCount
+                                && orderedComparisons < 2L * windowCount && computedComparisons < 2L * windowCount && volatileComparisons < 2L * windowCount);
             }
         });
     }

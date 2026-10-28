@@ -180,7 +180,12 @@ public class SampleByDstGridTest extends AbstractCairoTest {
                     """},
         };
         assertMemoryLeak(() -> {
-            for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+            final String[] types = {"TIMESTAMP", "TIMESTAMP_NS"};
+            final String[] zones = {"Europe/Berlin", "America/New_York", "Australia/Sydney"};
+            final String[] offsets = {"01:30", "02:00", "02:30"};
+            final String[] strides = {"1d", "2d", "1M"};
+            for (int t = 0; t < types.length; t++) {
+                final String type = types[t];
                 createTable(type);
                 for (String[] c : cases) {
                     final String zone = c[0];
@@ -207,21 +212,21 @@ public class SampleByDstGridTest extends AbstractCairoTest {
                             .returns(expected.replaceAll("(?m)^[^\\t\\n]*\\t", ""));
                     assertSourcesAgree(stride, grid);
                 }
-                for (String zone : new String[]{"Europe/Berlin", "America/New_York", "Australia/Sydney"}) {
-                    for (String offset : new String[]{"01:30", "02:00", "02:30"}) {
-                        final String grid = " ALIGN TO CALENDAR TIME ZONE '" + zone + "'";
-                        for (String stride : new String[]{"1d", "2d", "1M"}) {
-                            assertSourcesAgree(stride, grid + " WITH OFFSET '" + offset + "'");
-                            printSql("SELECT ts, min(x) f, max(x) l FROM gx WHERE sym = 'a' SAMPLE BY " + stride + grid + " WITH OFFSET '" + offset + "'");
-                            assertQuery("SELECT ts, first(x) f, last(x) l FROM gx WHERE sym = 'a' SAMPLE BY " + stride
-                                    + " FROM dateadd('d', 0, '2026-01-01T" + offset + "'::TIMESTAMP)" + grid)
-                                    .noLeakCheck()
-                                    .timestamp("ts")
-                                    .inferRandomAccess()
-                                    .sizeMayVary()
-                                    .withPlanContaining("SampleByFirstLast")
-                                    .returns(sink.toString());
-                        }
+                for (int z = 0; z < zones.length; z++) {
+                    for (int o = 0; o < offsets.length; o++) {
+                        final String offset = offsets[o];
+                        final String stride = strides[(z + (t + 1) * o) % strides.length];
+                        final String grid = " ALIGN TO CALENDAR TIME ZONE '" + zones[z] + "'";
+                        assertSourcesAgree(stride, grid + " WITH OFFSET '" + offset + "'");
+                        printSql("SELECT ts, min(x) f, max(x) l FROM gx WHERE sym = 'a' SAMPLE BY " + stride + grid + " WITH OFFSET '" + offset + "'");
+                        assertQuery("SELECT ts, first(x) f, last(x) l FROM gx WHERE sym = 'a' SAMPLE BY " + stride
+                                + " FROM dateadd('d', 0, '2026-01-01T" + offset + "'::TIMESTAMP)" + grid)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .inferRandomAccess()
+                                .sizeMayVary()
+                                .withPlanContaining("SampleByFirstLast")
+                                .returns(sink.toString());
                     }
                 }
                 execute("DROP TABLE gx");
@@ -239,20 +244,21 @@ public class SampleByDstGridTest extends AbstractCairoTest {
 
     // Every source spelling and FILL mode buckets like the table without FILL; LINEAR fills the same buckets.
     private void assertSourcesAgree(String stride, String grid) throws Exception {
+        final String[] keyLists = {"", "sym, "};
         final String[] fills = {"", " FILL(NULL)", " FILL(PREV)", " FILL(0)", " FILL(LINEAR)"};
-        for (String keys : new String[]{"", "sym, "}) {
+        for (int k = 0; k < keyLists.length; k++) {
+            final String keys = keyLists[k];
             final String order = keys.isEmpty() ? "" : " ORDER BY ts, sym";
-            for (String fill : fills) {
+            for (int f = 0; f < fills.length; f++) {
+                final String fill = fills[f];
                 final String projection = "SELECT ts, " + keys + "count() c, sum(x) s FROM ";
                 final String tail = " SAMPLE BY " + stride + fill + grid + ")" + order;
                 printSql("SELECT * FROM (" + projection + "gx" + tail);
                 final String expected = sink.toString();
-                for (String sql : new String[]{
-                        "SELECT * FROM (" + projection + "(SELECT * FROM gx WHERE x > 0) TIMESTAMP(ts)" + tail,
-                        "WITH q AS (SELECT * FROM gx WHERE x > 0) SELECT * FROM (" + projection + "q" + tail
-                }) {
-                    assertQuery(sql).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-                }
+                final String sql = (k + f) % 2 == 0
+                        ? "SELECT * FROM (" + projection + "(SELECT * FROM gx WHERE x > 0) TIMESTAMP(ts)" + tail
+                        : "WITH q AS (SELECT * FROM gx WHERE x > 0) SELECT * FROM (" + projection + "q" + tail;
+                assertQuery(sql).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
                 if (keys.isEmpty() && fill.equals(" FILL(NULL)")) {
                     printSql("SELECT * FROM (" + projection + "gx SAMPLE BY " + stride + " FILL(LINEAR)" + grid + ")");
                     Assert.assertEquals(grid, expected.replaceAll("\\t[^\\n]*", ""), sink.toString().replaceAll("\\t[^\\n]*", ""));

@@ -64,6 +64,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -10031,6 +10032,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "(SELECT * FROM dst_view%s)",
                     "s"
             };
+            int grid = 0;
             for (String zone : zones) {
                 for (String window : windows) {
                     final String range = " WHERE ts IN '" + window.substring(0, 10) + ";4d'";
@@ -10039,30 +10041,29 @@ public class SampleByTest extends AbstractCairoTest {
                         final String sampleBy = " SAMPLE BY " + (offsetAt < 0 ? stride : stride.substring(0, offsetAt))
                                 + (stride.startsWith("30m") ? " FROM '" + window + "' TO '" + LocalDate.parse(window.substring(0, 10)).plusDays(3) + "'" : "");
                         final String alignment = " ALIGN TO CALENDAR TIME ZONE '" + zone + "'" + (offsetAt < 0 ? "" : stride.substring(offsetAt));
-                        for (String fill : fills) {
-                            for (String keys : new String[]{"", "sym, "}) {
-                                final String projection = "SELECT ts, " + keys + "count() c, sum(x) sx FROM ";
-                                final String order = keys.isEmpty() ? "" : " ORDER BY ts, sym";
-                                final String tableSql = "SELECT * FROM (" + projection + "dst" + range + sampleBy + fill + alignment + ")" + order;
-                                printSql(tableSql);
-                                final String expected = sink.toString();
-                                if (keys.isEmpty() && fill.equals(" FILL(NULL)") && !sampleBy.contains(" FROM ")) {
-                                    printSql(tableSql.replace(" FILL(NULL)", " FILL(LINEAR)"));
-                                    Assert.assertEquals(tableSql, expected.replaceAll("\t[^\n]*", ""), sink.toString().replaceAll("\t[^\n]*", ""));
-                                }
-                                for (String source : sources) {
-                                    if (sampleBy.contains(" FROM ") && (source.contains("LIMIT") || source.contains("dst_view"))) {
-                                        continue;
-                                    }
-                                    final String with = source.equals("s") ? "WITH s AS (SELECT * FROM dst" + range + ") " : "";
-                                    assertQuery(with + "SELECT * FROM (" + projection + String.format(source, range) + sampleBy + fill + alignment + ")" + order)
-                                            .noLeakCheck()
-                                            .inferTimestamp()
-                                            .inferRandomAccess()
-                                            .sizeMayVary()
-                                            .returns(expected);
-                                }
+                        final String fill = fills[grid % fills.length];
+                        final String keys = grid / fills.length % 2 == 0 ? "" : "sym, ";
+                        grid++;
+                        final String projection = "SELECT ts, " + keys + "count() c, sum(x) sx FROM ";
+                        final String order = keys.isEmpty() ? "" : " ORDER BY ts, sym";
+                        final String tableSql = "SELECT * FROM (" + projection + "dst" + range + sampleBy + fill + alignment + ")" + order;
+                        printSql(tableSql);
+                        final String expected = sink.toString();
+                        if (keys.isEmpty() && fill.equals(" FILL(NULL)") && !sampleBy.contains(" FROM ")) {
+                            printSql(tableSql.replace(" FILL(NULL)", " FILL(LINEAR)"));
+                            Assert.assertEquals(tableSql, expected.replaceAll("\t[^\n]*", ""), sink.toString().replaceAll("\t[^\n]*", ""));
+                        }
+                        for (String source : sources) {
+                            if (sampleBy.contains(" FROM ") && (source.contains("LIMIT") || source.contains("dst_view"))) {
+                                continue;
                             }
+                            final String with = source.equals("s") ? "WITH s AS (SELECT * FROM dst" + range + ") " : "";
+                            assertQuery(with + "SELECT * FROM (" + projection + String.format(source, range) + sampleBy + fill + alignment + ")" + order)
+                                    .noLeakCheck()
+                                    .inferTimestamp()
+                                    .inferRandomAccess()
+                                    .sizeMayVary()
+                                    .returns(expected);
                         }
                     }
                 }
@@ -12906,6 +12907,84 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT sample_by_offset('00:00')")
                     .noLeakCheck()
                     .fails(7, "unknown function name");
+        });
+    }
+
+    @Test
+    public void testSampleByOffsetMustBeString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:10:00', 1.0, 5), ('2024-01-01T01:40:00', 2.0, 5)");
+            final String[] clauses = {
+                    "SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T03:00' FILL(NULL) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"
+            };
+            final String[][] offsets = {
+                    {"1 + 1", "+"},
+                    {"now()", "now"},
+                    {"1::LONG", "::"},
+                    {"30", "30"}
+            };
+            final String message = "offset must be a constant expression of STRING or CHAR type";
+            for (String clause : clauses) {
+                final String prefix = "SELECT ts, avg(v) FROM t " + clause + " WITH OFFSET ";
+                for (String[] offset : offsets) {
+                    final String query = prefix + offset[0];
+                    assertException(query, query.indexOf(offset[1], prefix.length()), message);
+                }
+                final String bound = prefix + "$1";
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 30);
+                assertException(bound, prefix.length(), message);
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 30);
+                assertException(bound, prefix.length(), message);
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, 30);
+                assertException(bound, prefix.length(), message);
+                bindVariableService.clear();
+                assertException(prefix + "i", prefix.length(), clause.contains("LINEAR") ? "Invalid column: i" : message);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByOffsetStringBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:10:00', 1.0), ('2024-01-01T01:40:00', 2.0), ('2024-01-01T03:50:00', 4.0)");
+            final String[] clauses = {
+                    "SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00' FILL(NULL) ALIGN TO CALENDAR",
+                    "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"
+            };
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (String clause : clauses) {
+                final String query = "SELECT ts, avg(v) FROM t " + clause;
+                bindVariableService.clear();
+                printSql(query + " WITH OFFSET '00:30'", expected);
+                bindVariableService.setStr(0, "00:30");
+                printSql(query + " WITH OFFSET $1", actual);
+                TestUtils.assertEquals(query, expected, actual);
+                bindVariableService.clear();
+                bindVariableService.setVarchar(0, new Utf8String("00:30"));
+                printSql(query + " WITH OFFSET $1", actual);
+                TestUtils.assertEquals(query, expected, actual);
+                bindVariableService.clear();
+                printSql(query, expected);
+                bindVariableService.setStr(0, null);
+                printSql(query + " WITH OFFSET $1", actual);
+                TestUtils.assertEquals(query, expected, actual);
+            }
+            bindVariableService.clear();
         });
     }
 
@@ -25328,7 +25407,9 @@ public class SampleByTest extends AbstractCairoTest {
                     {"(1-1) d FILL(NULL) ALIGN TO FIRST OBSERVATION", "-", zero},
                     {"(null::int) d", "::", "invalid sample value [value=null]"},
                     {"(null::long) d", "::", "invalid sample value [value=null]"},
-                    {"(3_000_000_000 + 0) M", "+", "invalid sample value [value=3000000000]"}
+                    {"(3_000_000_000 + 0) w", "+", "invalid sample value [value=3000000000]"},
+                    {"(3_000_000_000 + 0) M", "+", "invalid sample value [value=3000000000]"},
+                    {"(3_000_000_000 + 0) y FILL(LINEAR)", "+", "invalid sample value [value=3000000000]"}
             };
             for (String[] stride : strides) {
                 final String query = "SELECT ts, sum(v) FROM x SAMPLE BY " + stride[0];

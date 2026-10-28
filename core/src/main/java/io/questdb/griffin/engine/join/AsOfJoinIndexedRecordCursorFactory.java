@@ -134,9 +134,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Indexed Scan");
         sink.attr("condition").val(joinContext);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

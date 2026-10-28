@@ -74,6 +74,7 @@ import io.questdb.std.ObjectPool;
  * decorrelation domain other consumers read, see {@link AggregatePlan#getReaderCount()}.
  */
 final class FilterPushdown implements OptimiserPass {
+    private static final int NULL_REJECTION_UNDECIDED = -1;
     private static final int OFFSET_LEAVES = 3;
     private static final ConjunctTest ORDER_INDEPENDENT_CONJUNCTS = LogicalPlans::isOrderIndependent;
     private static final int OTHER_LEAVES = 4;
@@ -96,6 +97,7 @@ final class FilterPushdown implements OptimiserPass {
         return TreeWalk.CONTINUE;
     };
     private final ObjList<BoundExpression> tmpExpressions;
+    private final IntList transitiveFactNullRejections;
     private final IntList transitiveFactOrigins;
     private final ObjList<BoundExpression> transitiveFacts;
     private final ConjunctTest unhoistedJoinConjuncts = conjunct -> !hoistEarlierJoinConjunct(conjunct);
@@ -135,6 +137,7 @@ final class FilterPushdown implements OptimiserPass {
             IntIntHashMap columnMap,
             IntList joinConjunctTargets,
             IntList transitiveFactOrigins,
+            IntList transitiveFactNullRejections,
             ObjList<BoundExpression> transitiveFacts
     ) {
         this.context = context;
@@ -146,6 +149,7 @@ final class FilterPushdown implements OptimiserPass {
         this.keyConjuncts = conjunct -> LogicalPlans.readsOnly(conjunct, columnMap);
         this.joinConjunctTargets = joinConjunctTargets;
         this.transitiveFactOrigins = transitiveFactOrigins;
+        this.transitiveFactNullRejections = transitiveFactNullRejections;
         this.transitiveFacts = transitiveFacts;
     }
 
@@ -584,6 +588,7 @@ final class FilterPushdown implements OptimiserPass {
                 transitiveFactOrigins.setQuick(index, origin);
             }
         }
+        transitiveFactNullRejections.setAll(transitiveFacts.size(), NULL_REJECTION_UNDECIDED);
     }
 
     private void deriveTransitiveFilter(BoundExpression predicate, int masterId, JoinInput slave, int keyIndex) throws SqlException {
@@ -739,6 +744,24 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
+     * Whether the fact rejects NULL, see {@link OptimiserContext#isNullRejecting}, which the pass decides once per
+     * transitive fact of the join, see {@link #collectTransitiveFacts}.
+     */
+    private boolean isNullRejectingFact(BoundExpression fact) {
+        for (int i = 0, n = transitiveFacts.size(); i < n; i++) {
+            if (transitiveFacts.getQuick(i) == fact) {
+                int verdict = transitiveFactNullRejections.getQuick(i);
+                if (verdict == NULL_REJECTION_UNDECIDED) {
+                    verdict = context.isNullRejecting(fact) ? 1 : 0;
+                    transitiveFactNullRejections.setQuick(i, verdict);
+                }
+                return verdict == 1;
+            }
+        }
+        return context.isNullRejecting(fact);
+    }
+
+    /**
      * An INNER ON fact holds for every output row only up to the first master-nulling join after its
      * column's source; rows that join NULL-extends satisfy it only when the fact rejects NULL.
      */
@@ -751,7 +774,7 @@ final class FilterPushdown implements OptimiserPass {
         final int sourcePosition = ordered.indexOf(join.getInputs().getQuick(source));
         return LogicalPlans.canPushJoinFilterPast(ordered, sourcePosition, ordered.indexOf(target), false)
                 && (LogicalPlans.canPushJoinFilterPast(ordered, sourcePosition, ordered.indexOf(join.getInputs().getQuick(origin)), false)
-                || context.isNullRejecting(fact));
+                || isNullRejectingFact(fact));
     }
 
     private boolean isSelectedJoinConjunct(BoundExpression conjunct) {
@@ -773,7 +796,7 @@ final class FilterPushdown implements OptimiserPass {
         if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType().isBarrier()) {
             return false;
         }
-        return LogicalPlans.lastMasterNullingStep(join) < 0 ? LogicalPlans.canPushJoinFilter(join, source, last) : context.isNullRejecting(fact);
+        return LogicalPlans.lastMasterNullingStep(join) < 0 ? LogicalPlans.canPushJoinFilter(join, source, last) : isNullRejectingFact(fact);
     }
 
     /**

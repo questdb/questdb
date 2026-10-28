@@ -66,7 +66,6 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -816,8 +815,8 @@ final class SampleByFactoryGenerator {
                 from = toSampleByUtc(from, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
                 to = toSampleByUtc(to, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
             }
-            final TimestampSampler sampler = plan.getPeriod() instanceof ConstantExpression period
-                    ? TimestampSamplerFactory.getInstance(driver, period.getLongValue(), plan.getPeriodUnit(), plan.getPeriodUnitPosition())
+            final TimestampSampler sampler = plan.getPeriodToken() == null
+                    ? TimestampSamplerFactory.getInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition())
                     : TimestampSamplerFactory.getInstance(driver, plan.getPeriodToken(), plan.getPeriodPosition());
 
             final ArrayColumnTypes keyTypes = frame.keyTypes;

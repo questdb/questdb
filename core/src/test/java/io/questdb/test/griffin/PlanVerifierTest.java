@@ -434,6 +434,41 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDomainReadReleasedBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, x INT)");
+            execute("CREATE TABLE c (id INT, x INT)");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("""
+                            SELECT o.id, l.v FROM o JOIN LATERAL (
+                                SELECT t.v FROM (
+                                    SELECT a.id v FROM a WHERE a.x <= o.x
+                                    UNION ALL
+                                    SELECT b.id v FROM b WHERE b.id <= o.id
+                                ) t
+                                JOIN (SELECT c.id w FROM c WHERE c.x <= o.id) u ON u.w = t.v
+                            ) l
+                            """, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final SetOperationPlan operation = find(plan, SetOperationPlan.class);
+                Assert.assertNotNull(operation);
+                verifier.verifyAccessPaths(plan);
+
+                operation.of(operation.getLeft(), operation.getRight(), SetOperationKind.EXCEPT_ALL, operation.getPosition(),
+                        operation.getRightPosition(), operation.isSymbolRestorationRequired());
+                assertFails(plan, PlanVerifier.DOMAIN_READ_RELEASED, "DomainReadPlan");
+                operation.of(operation.getLeft(), operation.getRight(), SetOperationKind.UNION_ALL, operation.getPosition(),
+                        operation.getRightPosition(), operation.isSymbolRestorationRequired());
+                verifier.verifyAccessPaths(plan);
+            }
+        });
+    }
+
+    @Test
     public void testDuplicateColumnId() {
         final FunctionSourcePlan source = source();
         source.getOutput().add(1, "again", ColumnType.LONG, true);
@@ -518,6 +553,25 @@ public class PlanVerifierTest extends AbstractCairoTest {
         verifier.verify(filter, PASS);
         filter.setAlgorithm(FilterPlan.Algorithm.SERIAL);
         assertFails(filter, PlanVerifier.FILTER_ALGORITHM, "FilterPlan");
+    }
+
+    @Test
+    public void testFilterUpdateScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fu_t (id INT, x INT)");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT * FROM (SELECT id, count() c FROM fu_t) WHERE c > 1", sqlExecutionContext)
+                            .getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final FilterPlan filter = find(plan, FilterPlan.class);
+                Assert.assertFalse(filter.hasUpdateScan());
+                verifier.verifyAccessPaths(plan);
+                filter.setUpdateScan(true);
+                assertAccessPathsFail(plan, PlanVerifier.FILTER_UPDATE_SCAN, "FilterPlan");
+            }
+        });
     }
 
     @Test
@@ -721,6 +775,12 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertEquals(JoinInput.NullExtension.BY_KEYS, step.getNullExtension());
                 Assert.assertNull(step.getNullKeyCheck());
                 step.setNullKeyCheck(nullKeyCheck);
+            }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+            assertAlgorithmContradicts(query.replace("LEFT JOIN", "RIGHT JOIN"), JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertEquals(JoinKind.RIGHT_OUTER, step.getJoinType());
+                Assert.assertNull(step.getNullKeyCheck());
+                step.setNullKeyCheck(ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0));
             }, PlanVerifier.JOIN_NULL_KEY_CHECK);
         });
     }
@@ -1078,6 +1138,15 @@ public class PlanVerifierTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertAlgorithmContradicts("SELECT 1::INT a UNION ALL SELECT 2::LONG a", SetOperationPlan.class, operation -> {
             Assert.assertTrue(operation.isCastRequired());
             operation.setCastRequired(false);
+        }, PlanVerifier.SET_OPERATION_CAST));
+    }
+
+    @Test
+    public void testSetOperationCastTypeStale() throws Exception {
+        assertMemoryLeak(() -> assertAlgorithmContradicts("SELECT 1::INT a UNION ALL SELECT 2::LONG a", SetOperationPlan.class, operation -> {
+            Assert.assertTrue(operation.isCastRequired());
+            Assert.assertEquals(ColumnType.LONG, operation.getCastTypes().getQuick(0));
+            operation.getCastTypes().setQuick(0, ColumnType.INT);
         }, PlanVerifier.SET_OPERATION_CAST));
     }
 

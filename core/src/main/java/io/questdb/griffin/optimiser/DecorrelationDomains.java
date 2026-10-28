@@ -36,6 +36,7 @@ import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -45,7 +46,8 @@ import io.questdb.std.ObjList;
 /**
  * Builds decorrelation domains: the distinct values of outer columns, read from a copy of the master input or
  * prefix and shared with the master where the generator can re-read it. A step builds each domain once; its further
- * consumers read it, see {@link DomainReadPlan}. Crosses them into the inputs of block sources. Records the steps
+ * consumers read it, see {@link DomainReadPlan}, until the step retires it, see {@link #retireProducers}. Crosses them
+ * into the inputs of block sources and joins them to set-operation branches, see {@link #joinMissing}. Records the steps
  * decorrelation rewrote, whose columns a domain then reads from the master prefix.
  */
 final class DecorrelationDomains implements Mutable {
@@ -54,9 +56,11 @@ final class DecorrelationDomains implements Mutable {
     private final ObjList<JoinInput> decorrelatedSteps;
     private final IntList domainOuterIds = new IntList();
     private final OuterColumnMapping mapping;
+    private final IntList operationOuterIds = new IntList();
     private final PlanNodePools planNodes;
     private final ObjList<Producer> producers = new ObjList<>();
     private JoinInput domainStep;
+    private int operationOuterBase;
     private int producerCount;
     private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
 
@@ -80,13 +84,15 @@ final class DecorrelationDomains implements Mutable {
     @Override
     public void clear() {
         domainOuterIds.clear();
+        operationOuterIds.clear();
+        operationOuterBase = 0;
         domainStep = null;
         beginStep();
     }
 
     /**
-     * The first domain of the step that copies the master input or prefix {@code source}, see {@link #sourceKey},
-     * and covers the outer columns {@link #domainOuterIds} holds, in any order; null when none does.
+     * The first domain the step built and did not retire that copies the master input or prefix {@code source}, see
+     * {@link #sourceKey}, and covers the outer columns {@link #domainOuterIds} holds, in any order; null when none does.
      */
     private Producer findProducer(int source) {
         for (int i = 0; i < producerCount; i++) {
@@ -242,6 +248,18 @@ final class DecorrelationDomains implements Mutable {
     }
 
     /**
+     * Records the outer columns of the master that the set operation reads, which the domains of its branches cover,
+     * see {@link #coverOperation} and {@link #joinMissing}, until {@link #endOperation}. Returns the mark of the
+     * enclosing set operation for {@link #endOperation}.
+     */
+    int beginOperation(SetOperationPlan operation) {
+        final int enclosingBase = operationOuterBase;
+        operationOuterBase = operationOuterIds.size();
+        ctx.collectMasterOuterIds(operation, operationOuterIds, operationOuterBase);
+        return enclosingBase;
+    }
+
+    /**
      * Records the start of the decorrelation of the next step, whose domains read no domain of the step before.
      */
     void beginStep() {
@@ -289,6 +307,15 @@ final class DecorrelationDomains implements Mutable {
         }
     }
 
+    /**
+     * Makes the next domain also cover each outer column the set operation reads, see {@link #beginOperation}.
+     */
+    void coverOperation() {
+        for (int i = operationOuterBase, n = operationOuterIds.size(); i < n; i++) {
+            coverOuter(operationOuterIds.getQuick(i));
+        }
+    }
+
     void coverOuter(int outerId) {
         if (!domainOuterIds.contains(outerId)) {
             domainOuterIds.add(outerId);
@@ -324,18 +351,11 @@ final class DecorrelationDomains implements Mutable {
     }
 
     /**
-     * Crosses a set-operation branch with a domain of the outer columns the other branch maps and this one
-     * does not.
+     * Ends the set operation {@link #beginOperation} began, restoring the enclosing one from its mark.
      */
-    LogicalPlan crossMissing(LogicalPlan branch, int otherLo, int otherHi, int ownLo, int ownHi, int position) {
-        domainOuterIds.clear();
-        for (int i = otherLo; i < otherHi; i++) {
-            final int outerId = mapping.outerIdAt(i);
-            if (mapping.mappedColumn(outerId, ownLo, ownHi) < 0 && !domainOuterIds.contains(outerId)) {
-                domainOuterIds.add(outerId);
-            }
-        }
-        return domainOuterIds.size() == 0 ? branch : crossDomain(branch, buildDomain(position), position);
+    void endOperation(int enclosingBase) {
+        operationOuterIds.setPos(operationOuterBase);
+        operationOuterBase = enclosingBase;
     }
 
     boolean hasDecorrelatedSteps() {
@@ -359,6 +379,42 @@ final class DecorrelationDomains implements Mutable {
     }
 
     /**
+     * Joins a set-operation branch, when the mapping above {@code ownBase} lacks an outer column the operation reads,
+     * see {@link #beginOperation}, to the domain of those columns, keyed on the columns the branch maps: each row of
+     * the branch pairs only with the outer values that share its own. Maps each outer column to its domain column.
+     */
+    LogicalPlan joinMissing(LogicalPlan branch, int ownBase, int position) {
+        final int ownEnd = mapping.mark();
+        domainOuterIds.clear();
+        for (int i = operationOuterBase, n = operationOuterIds.size(); i < n; i++) {
+            final int outerId = operationOuterIds.getQuick(i);
+            if (mapping.mappedColumn(outerId, ownBase, ownEnd) < 0) {
+                domainOuterIds.add(outerId);
+            }
+        }
+        if (domainOuterIds.size() == 0) {
+            return branch;
+        }
+        final int keyBase = domainOuterIds.size();
+        for (int i = ownBase; i < ownEnd; i++) {
+            coverOuter(mapping.outerIdAt(i));
+        }
+        final LogicalPlan domain = buildDomain(position);
+        final JoinPlan join = crossDomain(branch, domain, position);
+        final JoinInput step = join.getInputs().getQuick(1);
+        final OutputSchema branchOutput = branch.getOutput();
+        final OutputSchema domainOutput = domain.getOutput();
+        for (int i = keyBase, n = domainOuterIds.size(); i < n; i++) {
+            final int outerId = domainOuterIds.getQuick(i);
+            final int columnId = mapping.mappedColumn(outerId, ownBase, ownEnd);
+            final int domainId = mapping.mappedColumn(outerId, ownEnd, mapping.mark());
+            step.addKey(columnId, domainId, branchOutput.getColumnName(branchOutput.getColumnIndexById(columnId)),
+                    domainOutput.getColumnName(domainOutput.getColumnIndexById(domainId)), position);
+        }
+        return join;
+    }
+
+    /**
      * Returns the conjuncts of the predicate that read none of {@link #outerIds}, moving the others to the domain
      * step, which joins after every input.
      */
@@ -374,8 +430,23 @@ final class DecorrelationDomains implements Mutable {
         return domainOuterIds;
     }
 
+    /**
+     * The number of domains the step built and did not retire, a mark for {@link #retireProducers}.
+     */
+    int producerMark() {
+        return producerCount;
+    }
+
     void resetOuterIds() {
         domainOuterIds.clear();
+    }
+
+    /**
+     * Retires the domains the step built since {@code mark}, see {@link #producerMark}: their consumer releases them
+     * before the step's later consumers read, so those build their own, see {@link #buildDomain}.
+     */
+    void retireProducers(int mark) {
+        producerCount = mark;
     }
 
     /**

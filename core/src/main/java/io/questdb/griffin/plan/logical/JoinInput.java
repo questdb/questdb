@@ -196,8 +196,9 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * The predicate over the master row of a step its ON residual NULL-extends, see {@link NullExtension#BY_ON_RESIDUAL},
-     * that the master columns of its keys are all NULL, which operator planning records; null for any other step.
+     * The predicate over the master row that the master columns of the keys are all NULL, which operator planning
+     * records for a step that NULL-extends master rows by its ON residual, see
+     * {@link PlanToFactoryRules#isMasterNullKeyChecked}; null for any other step.
      */
     public BoundExpression getNullKeyCheck() {
         return nullKeyCheck;

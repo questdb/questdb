@@ -1450,6 +1450,1295 @@ public class LateralJoinTest extends AbstractCairoTest {
     // The LIMIT reads o.k through the inner key it equals, also for the t2 rows with k = 0 that no outer row has,
     // where o.k - 1 would be negative; the step rejects a negative LIMIT per outer row only.
     @Test
+    public void testLateralExceptIntersectOverDifferentOuterColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String equality = """
+                    SELECT id, s FROM ol o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(equality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery(equality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(equality.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            final String nonEquality = """
+                    SELECT id, s, x FROM ol o, LATERAL (
+                        SELECT s, x FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT s, y::INT FROM b WHERE b.y <= o.id
+                    ) ORDER BY id, s, x
+                    """;
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tx
+                            2\tq\t2
+                            3\tq\t2
+                            3\tr\t3
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tx
+                            1\tp\t1
+                            2\tp\t1
+                            3\tp\t1
+                            3\tp\t3
+                            3\tq\t3
+                            """);
+            assertQuery(nonEquality.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tx
+                            1\tp\t1
+                            1\tp\t1
+                            1\tp\t1
+                            2\tp\t1
+                            2\tp\t1
+                            2\tp\t1
+                            2\tq\t2
+                            2\tr\t2
+                            3\tp\t1
+                            3\tp\t1
+                            3\tp\t1
+                            3\tp\t3
+                            3\tp\t3
+                            3\tq\t2
+                            3\tq\t3
+                            3\tq\t3
+                            3\tr\t2
+                            3\tr\t3
+                            4\tp\t1
+                            4\tp\t3
+                            4\tq\t3
+                            4\tr\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralExceptIntersectOverDifferentOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String differentColumns = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(differentColumns.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery(differentColumns.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(differentColumns.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            assertQuery(differentColumns.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            1\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            """);
+            final String nonEquality = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT s FROM b WHERE b.y <= o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(nonEquality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tp
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            2\tp
+                            2\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            """);
+            final String mixed = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y >= o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(mixed.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\tr
+                            """);
+            assertQuery(mixed.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tq
+                            3\tp
+                            3\tq
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralExceptIntersectOverThreeBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String correlated = """
+                    SELECT id, s FROM ol o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %1$s
+                        SELECT s FROM b WHERE b.y = o.id
+                        %1$s
+                        SELECT s FROM c WHERE c.z <= o.k
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(correlated.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(correlated.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(correlated.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(correlated.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\tp
+                            3\tq
+                            """);
+            final String middleUncorrelated = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        %1$s
+                        SELECT s FROM b
+                        %1$s
+                        SELECT s FROM c WHERE c.z = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(middleUncorrelated.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            3\tq
+                            """);
+            assertQuery(middleUncorrelated.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            2\tp
+                            3\tq
+                            3\tq
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralExceptIntersectWithUncorrelatedBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String leftUncorrelated = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(leftUncorrelated.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tq
+                            1\tr
+                            2\tp
+                            2\tq
+                            3\tr
+                            4\tp
+                            4\tq
+                            4\tr
+                            """);
+            assertQuery(leftUncorrelated.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tq
+                            1\tq
+                            1\tr
+                            2\tp
+                            2\tp
+                            2\tp
+                            2\tq
+                            2\tq
+                            3\tr
+                            4\tp
+                            4\tp
+                            4\tp
+                            4\tq
+                            4\tq
+                            4\tr
+                            """);
+            assertQuery(leftUncorrelated.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tr
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(leftUncorrelated.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tq
+                            1\tr
+                            2\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tq
+                            3\tr
+                            4\tp
+                            4\tq
+                            4\tr
+                            """);
+            final String rightUncorrelated = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(rightUncorrelated.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            """);
+            assertQuery(rightUncorrelated.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            2\tq
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralIntersectDomainReadByJoinedBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String joined = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT t.s FROM (
+                            SELECT s FROM a WHERE a.x <= o.k
+                            %s
+                            SELECT s FROM b WHERE b.y <= o.id
+                        ) t
+                        JOIN (SELECT s s2 FROM c WHERE c.z <= o.id) u ON u.s2 = t.s
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(joined.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            assertQuery(joined.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            2\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationJoinsJointDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            assertQuery("""
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        EXCEPT
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, s]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: _xQdbA1.__qdb_outer_ref__0_k=o.k and _xQdbA1.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            Except
+                                                SelectedRecord
+                                                    Hash Join Light
+                                                      condition: __qdb_outer_ref__0_k=x
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: a
+                                                        Hash
+                                                            Async Group By workers: 1
+                                                              keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                              filter: null
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: o
+                                                Hash
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_id=y
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: b
+                                                            Hash
+                                                                SelectedRecord
+                                                                    (Shared)
+                                                                        Async Group By workers: 1
+                                                                          keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                                          filter: null
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery("""
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        UNION ALL
+                        SELECT s FROM b WHERE b.y <= o.id
+                    ) ORDER BY id, s
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, s]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: _xQdbA1.__qdb_outer_ref__0_k=o.k and _xQdbA1.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            UnionSymbolCast
+                                              functions: [s::symbol,__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                Union All
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_k=__qdb_outer_ref__0_k
+                                                            SelectedRecord
+                                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k>=x
+                                                                    Cross Join
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: a
+                                                                        GroupBy vectorized: true workers: 1
+                                                                          keys: [k]
+                                                                          values: [count(*)]
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                                                            Hash
+                                                                Async Group By workers: 1
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_k]
+                                                                  filter: null
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: o
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                            SelectedRecord
+                                                                Filter filter: __qdb_outer_ref__0_2.__qdb_outer_ref__0_id>=y
+                                                                    Cross Join
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: b
+                                                                        GroupBy vectorized: true workers: 1
+                                                                          keys: [id]
+                                                                          values: [count(*)]
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                                                            Hash
+                                                                SelectedRecord
+                                                                    (Shared)
+                                                                        Async Group By workers: 1
+                                                                          keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_k]
+                                                                          filter: null
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            1\tp
+                            2\tp
+                            2\tp
+                            2\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tq
+                            3\tr
+                            3\tr
+                            4\tp
+                            4\tp
+                            4\tq
+                            4\tr
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesNonEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String nonEquality = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x > o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y < o.id
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(nonEquality.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t3
+                            5\t0
+                            5\t4
+                            """);
+            assertQuery(nonEquality.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t3
+                            5\t0
+                            5\t4
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesNullComparisons() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (NULL, 2), (3, NULL), (2, 3), (NULL, NULL), (4, 0)");
+            execute("CREATE TABLE a (s SYMBOL, x INT)");
+            execute("INSERT INTO a VALUES ('p', 1), ('q', NULL), ('r', 3), ('p', 2)");
+            execute("CREATE TABLE b (s SYMBOL, y INT)");
+            execute("INSERT INTO b VALUES ('p', 1), ('q', NULL), ('r', 2), ('q', 3)");
+            final String nullComparisons = """
+                    SELECT o.id, o.k, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y >= o.id
+                    ) ORDER BY o.id, o.k, c
+                    """;
+            assertQuery(nullComparisons.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tk\tc
+                            null\tnull\t1
+                            null\tnull\t1
+                            null\t2\t1
+                            null\t2\t2
+                            1\t1\t1
+                            1\t1\t3
+                            2\t3\t2
+                            2\t3\t3
+                            3\tnull\t1
+                            3\tnull\t1
+                            4\t0\t0
+                            4\t0\t0
+                            """);
+            assertQuery(nullComparisons.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tk\tc
+                            null\tnull\t1
+                            3\tnull\t1
+                            4\t0\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesOverDifferentOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String differentColumns = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(differentColumns.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, c]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: _xQdbA1.__qdb_outer_ref__0_k=o.k and _xQdbA1.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            Union All
+                                                VirtualRecord
+                                                  functions: [coalesce(c,0),__qdb_outer_ref__0.__qdb_outer_ref__0_k,__qdb_outer_ref__0.__qdb_outer_ref__0_id]
+                                                    Hash Left Outer Join Light
+                                                      condition: __qdb_outer_ref__0_k=__qdb_outer_ref__0_k
+                                                        Async Group By workers: 1
+                                                          keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                          filter: null
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: o
+                                                        Hash
+                                                            SelectedRecord
+                                                                GroupBy vectorized: true workers: 1
+                                                                  keys: [x]
+                                                                  values: [count(*)]
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: a
+                                                SelectedRecord
+                                                    VirtualRecord
+                                                      functions: [coalesce(c,0),__qdb_outer_ref__0_1.__qdb_outer_ref__0_id,__qdb_outer_ref__0_1.__qdb_outer_ref__0_k]
+                                                        Hash Left Outer Join Light
+                                                          condition: __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                            SelectedRecord
+                                                                (Shared)
+                                                                    Async Group By workers: 1
+                                                                      keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                                      filter: null
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: o
+                                                            Hash
+                                                                SelectedRecord
+                                                                    GroupBy vectorized: true workers: 1
+                                                                      keys: [y]
+                                                                      values: [count(*)]
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery(differentColumns.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            """);
+            assertQuery(differentColumns.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\t1
+                            4\t0
+                            """);
+            assertQuery(differentColumns.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\t1
+                            4\t0
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            5\t0
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesOverSameOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String sameColumn = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y = o.k
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(sameColumn.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t0
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery(sameColumn.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(sameColumn.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t1
+                            """);
+            assertQuery(sameColumn.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t1
+                            """);
+            assertQuery(sameColumn.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(sameColumn.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            4\t0
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesUnderConsumers() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.k
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            2\t1
+                            3\t0
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, d FROM o CROSS JOIN LATERAL (
+                        SELECT c * 10 d FROM (
+                            SELECT count() c FROM a WHERE a.x = o.k
+                            UNION ALL
+                            SELECT count() c FROM b WHERE b.y = o.id
+                        )
+                    ) ORDER BY o.id, d
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\td
+                            1\t10
+                            1\t20
+                            2\t0
+                            2\t10
+                            3\t10
+                            3\t20
+                            4\t0
+                            4\t10
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) l WHERE c = 0 ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t0
+                            4\t0
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        (SELECT count() c FROM a WHERE a.x = o.k LIMIT 1)
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k AND a.v = o.id
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            2\t0
+                            2\t0
+                            3\t0
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationEmptyInputAggregateBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count(v) c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT sum(w) c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t7
+                            2\tnull
+                            2\t1
+                            3\t0
+                            3\t17
+                            4\t0
+                            4\t3
+                            5\tnull
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT min(v) c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() + 1 c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t1
+                            2\t5
+                            3\tnull
+                            3\t3
+                            4\tnull
+                            4\t2
+                            5\tnull
+                            5\t1
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT coalesce(sum(v), -1) c FROM a WHERE a.x = o.k
+                        UNION
+                        SELECT count(w) c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t0
+                            2\t5
+                            3\t-1
+                            3\t2
+                            4\t-1
+                            4\t1
+                            5\t-1
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c, n FROM o, LATERAL (
+                        SELECT count() c, min(v) n FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() c, sum(w) n FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c, n
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc\tn
+                            1\t1\t7
+                            1\t2\t1
+                            2\t0\tnull
+                            2\t1\t5
+                            3\t1\tnull
+                            3\t2\t17
+                            4\t0\tnull
+                            4\t1\t3
+                            5\t0\tnull
+                            5\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationMixedCountAndRowBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String rowsAndCount = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT w - 3 c FROM b WHERE b.y = o.id
+                        %s
+                        SELECT count() c FROM a WHERE a.x = o.k
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(rowsAndCount.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t4
+                            2\t1
+                            3\t1
+                            3\t5
+                            3\t6
+                            4\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(rowsAndCount.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t4
+                            2\t1
+                            3\t1
+                            3\t5
+                            3\t6
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(rowsAndCount.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t4
+                            3\t5
+                            3\t6
+                            """);
+            assertQuery(rowsAndCount.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            4\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT w c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t7
+                            2\t1
+                            3\t1
+                            3\t8
+                            3\t9
+                            4\t0
+                            4\t3
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT 42 c FROM long_sequence(1)
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t42
+                            2\t1
+                            2\t42
+                            3\t1
+                            3\t42
+                            4\t0
+                            4\t42
+                            5\t0
+                            5\t42
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k GROUP BY a.v
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            1\t1
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t1
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testLateralLatestOnSampleByFillLeftJoinKeepsOuterRowWithEmptyBody() throws Exception {
         // Outer row 2 starts after every lt row, so its lateral body is empty. LEFT JOIN
         // LATERAL must keep that outer row with NULLs while row 1 still gets its gap row.
@@ -5748,7 +7037,211 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLeftLateralUnionCountBodyNotCompensated() throws Exception {
+    public void testLeftLateralExceptIntersectOverDifferentOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String equality = """
+                    SELECT id, s FROM o LEFT JOIN LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) t ON true ORDER BY id, s
+                    """;
+            assertQuery(equality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\tq
+                            3\tr
+                            4\t
+                            """);
+            assertQuery(equality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            2\t
+                            3\tp
+                            3\tq
+                            4\t
+                            """);
+            final String nonEquality = """
+                    SELECT id, s FROM ol o LEFT JOIN LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT s FROM b WHERE b.y > o.id
+                    ) t ON true ORDER BY id, s
+                    """;
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\t
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            4\t
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tp
+                            2\tq
+                            3\t
+                            4\t
+                            """);
+            final String threeBranches = """
+                    SELECT id, s FROM o LEFT JOIN LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %1$s
+                        SELECT s FROM b WHERE b.y = o.id
+                        %1$s
+                        SELECT s FROM c WHERE c.z <= o.id
+                    ) t ON true ORDER BY id, s
+                    """;
+            assertQuery(threeBranches.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\tq
+                            3\t
+                            4\t
+                            """);
+            assertQuery(threeBranches.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\t
+                            3\tp
+                            3\tq
+                            4\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralSetOperationCountBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String equality = """
+                    SELECT o.id, c FROM o LEFT JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) l ORDER BY o.id, c
+                    """;
+            assertQuery(equality.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery(equality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\t1
+                            4\t0
+                            5\tnull
+                            """);
+            assertQuery(equality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            4\tnull
+                            5\t0
+                            """);
+            final String nonEquality = """
+                    SELECT o.id, c FROM o LEFT JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x > o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y < o.id
+                    ) l ORDER BY o.id, c
+                    """;
+            assertQuery(nonEquality.formatted("UNION"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t3
+                            5\t0
+                            5\t4
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\tnull
+                            3\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\tnull
+                            2\t1
+                            3\tnull
+                            4\tnull
+                            5\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o LEFT JOIN LATERAL (
+                        SELECT sum(v) c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT sum(w) c FROM b WHERE b.y = o.id
+                    ) l ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t7
+                            2\tnull
+                            2\t5
+                            3\tnull
+                            3\t17
+                            4\tnull
+                            4\t3
+                            5\tnull
+                            5\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralUnionCountBranchKeepsZeroCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             createOrders("""
@@ -5763,8 +7256,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // a correlated empty UNION-ALL branch defeats the zero-rejection proof, so the
-            // count body is not admitted for compensation and the unmatched row keeps NULL
             assertQuery("""
                     SELECT o.id, sub.c
                     FROM orders o
@@ -5780,7 +7271,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tc
                             1\t2
                             2\t1
-                            3\tnull
+                            3\t0
                             """);
         });
     }
@@ -17540,6 +19031,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                 .assertBinds(cases);
     }
 
+    private void createCountSetOperationTables() throws Exception {
+        execute("CREATE TABLE o (id INT, k INT)");
+        execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
+        execute("CREATE TABLE a (x INT, v INT)");
+        execute("INSERT INTO a VALUES (10, 1), (10, NULL), (20, 5), (30, NULL)");
+        execute("CREATE TABLE b (y INT, w INT)");
+        execute("INSERT INTO b VALUES (1, 7), (3, 8), (3, 9), (4, 3), (20, 6)");
+    }
+
     private void createOrders(String rows) throws Exception {
         execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO orders VALUES " + rows);
@@ -17562,6 +19062,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    private void createSetOperationTables() throws Exception {
+        execute("CREATE TABLE o (id INT, k INT)");
+        execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, 3), (4, NULL)");
+        execute("CREATE TABLE ol (id INT, k LONG)");
+        execute("INSERT INTO ol VALUES (1, 1), (2, 2), (3, 3), (4, NULL)");
+        execute("CREATE TABLE a (s SYMBOL, x INT)");
+        execute("INSERT INTO a VALUES ('p', 1), ('p', 1), ('q', 2), ('r', 3), ('p', 3), ('q', 3)");
+        execute("CREATE TABLE b (s SYMBOL, y INT)");
+        execute("INSERT INTO b VALUES ('p', 1), ('q', 3), ('p', 3), ('r', 2)");
+        execute("CREATE TABLE c (s SYMBOL, z LONG)");
+        execute("INSERT INTO c VALUES ('p', 2), ('r', 1), ('q', 3)");
     }
 
     private void createT0(String rows) throws Exception {

@@ -123,7 +123,7 @@ final class OrderBinder implements Mutable {
                 }
                 final BoundExpression expression;
                 OutputSchema nested = null;
-                CharSequence hiddenName = order.type == ExpressionNode.LITERAL ? unqualified(order.token) : order.token;
+                CharSequence hiddenName = order.type == ExpressionNode.LITERAL ? parsedColumnName(order.token) : order.token;
                 if (ordering != null) {
                     scope.substitutionNodes.clear();
                     scope.substitutionColumns.clear();
@@ -359,7 +359,7 @@ final class OrderBinder implements Mutable {
             final ExpressionNode order = source.getOrderBy().getQuick(i);
             if (order.type != ExpressionNode.CONSTANT && !isRowCount(order)
                     && (order.type != ExpressionNode.LITERAL || FunctionBinder.qualifierEnd(order, null) >= 0
-                    || !isAliasOf(column.getName(), order.token))) {
+                    || !isNameSpelling(column.getName(), order.token))) {
                 return false;
             }
         }

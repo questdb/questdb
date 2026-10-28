@@ -270,6 +270,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case FilterPlan filter -> {
                 final FilterPlan filterClone = planNodes.filters.next().of(filter.getChild(), filter.getPredicate(), filter.getPosition());
                 filterClone.setAlgorithm(filter.getAlgorithm());
+                filterClone.setUpdateScan(filter.hasUpdateScan());
                 yield filterClone;
             }
             case ProjectPlan project -> cloneProject(project);
@@ -342,7 +343,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setTo(sampleBy.getTo());
         clone.setOffset(sampleBy.getOffset());
         clone.setTimezone(sampleBy.getTimezone());
-        clone.setPeriod(sampleBy.getPeriodToken(), sampleBy.getPeriod(), sampleBy.getPeriodPosition(),
+        clone.setPeriod(sampleBy.getPeriodToken(), sampleBy.getStride(), sampleBy.getPeriodPosition(),
                 sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
         clone.setTimestampColumnId(sampleBy.getTimestampColumnId());
         clone.setFillInput(sampleBy.isFillInput());

@@ -186,12 +186,8 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
         sink.child(masterFactory);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
-        if (slaveFilter != null) {
-            sink.attr("slave filter").val(slaveFilter, slaveFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
+        sink.optAttr("slave filter", slaveFilter, slaveFactory);
         sink.child(slaveFactory);
     }
 

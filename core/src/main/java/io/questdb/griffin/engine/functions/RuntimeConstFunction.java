@@ -609,7 +609,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
     /**
      * Text a comparison reads as a TIMESTAMP of its operand's type. Each cursor converts the text once, as
      * {@code FunctionBinder} converts the same text written as a literal in that comparison: at the precision the
-     * text spells ({@link IntervalUtils#parseTimestampText(TimestampDriver, CharSequence, int, int)}), which may be
+     * text spells ({@link IntervalUtils#parseTimestampText(TimestampDriver, int, CharSequence, int, int)}), which may be
      * finer than the operand's, then to the operand's precision, rounded up ({@link #getCeil()}) or down
      * ({@link #getFloor()}). A value of the operand's type therefore never fails for lying outside another
      * precision's range. Text that spells no timestamp fails with {@code inconvertible value} at the text's position,
@@ -673,7 +673,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
             arg.init(symbolTableSource, executionContext);
             final CharSequence text = arg.getStrA(null);
             valueType = IntervalUtils.timestampTextType(driver, text);
-            value = IntervalUtils.parseTimestampText(driver, text, arg.getType(), position);
+            value = IntervalUtils.parseTimestampText(driver, valueType, text, arg.getType(), position);
             ceil = driver.ceilFrom(value, valueType);
             floor = driver.floorFrom(value, valueType);
         }

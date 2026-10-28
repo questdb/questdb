@@ -27,6 +27,7 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SetOperationCasts;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -99,6 +100,7 @@ public final class PlanVerifier {
     public static final String DOMAIN_READ_ALGORITHM = "domain read reads its domain otherwise than the domain serves it";
     public static final String DOMAIN_READ_COLUMNS = "domain read column is paired with no key of its domain for the same outer column";
     public static final String DOMAIN_READ_PRODUCER = "domain read reads a decorrelation domain outside the plan";
+    public static final String DOMAIN_READ_RELEASED = "domain read reads a decorrelation domain that a set operation releases with its right branch";
     public static final String DUPLICATE_COLUMN_ID = "output lists a column id twice";
     public static final String EXPRESSION_NULL = "expression is null";
     public static final String EXPRESSION_SHARED = "expression node appears twice in one expression tree";
@@ -106,6 +108,7 @@ public final class PlanVerifier {
     public static final String FILL_SHAPE = "fill lists differ in length";
     public static final String FILL_TIMESTAMP = "fill does not designate its bucket timestamp";
     public static final String FILTER_ALGORITHM = "filter algorithm contradicts the filter the generator builds";
+    public static final String FILTER_UPDATE_SCAN = "filter update scan fact contradicts whether its input reads the target of an UPDATE";
     public static final String FUNCTION_OVERLOAD = "function call has no overload";
     public static final String HORIZON_ALGORITHM = "horizon join algorithm contradicts its consumer or inputs";
     public static final String HORIZON_CONSUMER = "horizon join consumer contradicts whether an aggregate reads it directly";
@@ -120,7 +123,7 @@ public final class PlanVerifier {
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
     public static final String JOIN_KEY_LOOKUP = "join key lookups contradict the keys operator planning checks instead of looking them up";
     public static final String JOIN_NULL_EXTENSION = "join step NULL-extended by its ON residual is not a LEFT, RIGHT or FULL hash join with an ON residual";
-    public static final String JOIN_NULL_KEY_CHECK = "join step has a NULL key check unless operator planning NULL-extends it by its ON residual";
+    public static final String JOIN_NULL_KEY_CHECK = "join step NULL key check contradicts whether it NULL-extends master rows by its ON residual";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTER_CROSS = "OUTER CROSS step does not directly follow a RIGHT or FULL step, or has a key or an ON residual";
@@ -173,12 +176,17 @@ public final class PlanVerifier {
     private final IntList checkedReadIds;
     private final IntHashSet columnIds;
     private final DecorrelationVerifier decorrelation;
-    private final IntHashSet expressionIdentities;
+    private final IntHashSet expressionIdentities = new IntHashSet();
     private final OutputSchema joinScope;
     private final OccurrenceCounter occurrences = new OccurrenceCounter();
     private final ObjList<JoinInput> outerInputs;
     private final IntList readIds = new IntList();
     private final ReadEnumerator readEnumerator = new ReadEnumerator();
+    /**
+     * The walk positions, see {@link #visited}, that each right branch a set operation releases before it reads its
+     * left branch spans, as pairs of first and past-last position.
+     */
+    private final IntList releasedBranches = new IntList();
     private final ObjList<LogicalPlan> visited;
     private int aliasCount;
     private OutputSchema aliasScope;
@@ -207,7 +215,6 @@ public final class PlanVerifier {
         this.visited = visited;
         this.joinScope = joinScope;
         this.columnIds = columnIds;
-        this.expressionIdentities = columnIds;
         this.outerInputs = outerInputs;
         this.checkedExpressions = checkedExpressions;
         this.checkedReadIds = checkedReadIds;
@@ -294,6 +301,26 @@ public final class PlanVerifier {
         }
     }
 
+    /**
+     * Whether the set operation records, for each of its {@code count} columns, the type it casts the branches to.
+     */
+    private static boolean hasRecordedCastTypes(SetOperationPlan operation, int count) {
+        final IntList castTypes = operation.getCastTypes();
+        if (castTypes.size() != count) {
+            return false;
+        }
+        try {
+            for (int i = 0; i < count; i++) {
+                if (castTypes.getQuick(i) != SetOperationCasts.getCastType(operation, i, true)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (SqlException e) {
+            return false;
+        }
+    }
+
     private static boolean sameColumns(OutputSchema output, OutputSchema input) {
         final int n = output.getColumnCount();
         if (n != input.getColumnCount()) {
@@ -342,8 +369,12 @@ public final class PlanVerifier {
             plan(root);
             for (int i = 0, n = domainReads.size(); i < n; i++) {
                 node = domainReads.getQuick(i);
-                if (visited.indexOf(domainReads.getQuick(i).getProducer()) < 0) {
+                final int producerIndex = visited.indexOf(domainReads.getQuick(i).getProducer());
+                if (producerIndex < 0) {
                     fail(DOMAIN_READ_PRODUCER);
+                }
+                if (isReleasedBefore(producerIndex, visited.indexOf(node))) {
+                    fail(DOMAIN_READ_RELEASED);
                 }
             }
         } finally {
@@ -361,6 +392,7 @@ public final class PlanVerifier {
         domainReads.clear();
         joinScope.clear();
         outerInputs.clear();
+        releasedBranches.clear();
         visited.clear();
     }
 
@@ -577,7 +609,6 @@ public final class PlanVerifier {
             failIfViolated(PhysicalChoiceVerifier.sampleBy(sample, isAccessPathRequired));
             site = "SAMPLE BY timestamp";
             timestampColumn(input, sample.getTimestampColumnId());
-            noColumnReads(sample.getPeriod());
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
             noColumnReads(sample.getOffset());
@@ -627,6 +658,22 @@ public final class PlanVerifier {
         if (index != output.getColumnCount()) {
             fail(HORIZON_JOIN_SHAPE);
         }
+    }
+
+    /**
+     * True when a right branch of {@link #releasedBranches} holds the node at walk position {@code producerIndex} and
+     * not the one at {@code readIndex}: its set operation releases the node before the other reads it, see
+     * {@link io.questdb.griffin.plan.logical.SetOperationKind#isRightReleasedFirst}.
+     */
+    private boolean isReleasedBefore(int producerIndex, int readIndex) {
+        for (int i = 0, n = releasedBranches.size(); i < n; i += 2) {
+            final int lo = releasedBranches.getQuick(i);
+            final int hi = releasedBranches.getQuick(i + 1);
+            if (producerIndex >= lo && producerIndex < hi && (readIndex < lo || readIndex >= hi)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void join(JoinPlan join) {
@@ -779,8 +826,7 @@ public final class PlanVerifier {
         }
         if (step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL) {
             final JoinInput.Algorithm algorithm = step.getAlgorithm();
-            if (type != JoinKind.LEFT_OUTER && type != JoinKind.RIGHT_OUTER && type != JoinKind.FULL_OUTER
-                    || step.getOnResidual() == null
+            if (!type.isOuter() || step.getOnResidual() == null
                     || algorithm != null && algorithm != JoinInput.Algorithm.HASH && algorithm != JoinInput.Algorithm.LIGHT_HASH) {
                 fail(JOIN_NULL_EXTENSION);
             }
@@ -1048,11 +1094,15 @@ public final class PlanVerifier {
             }
         }
         final boolean isCastRequired = operation.isCastRequired();
-        if (isCastRequired != SetOperationCasts.isCastRequired(operation) || isCastRequired && operation.getCastTypes().size() != count) {
+        if (isCastRequired != SetOperationCasts.isCastRequired(operation) || isCastRequired && !hasRecordedCastTypes(operation, count)) {
             fail(SET_OPERATION_CAST);
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
         failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isAccessPathRequired));
+        if (operation.getOperation().isRightReleasedFirst()) {
+            releasedBranches.add(visited.indexOf(operation.getRight()));
+            releasedBranches.add(visited.size());
+        }
     }
 
     private int sharedSource(LogicalPlan plan) {
@@ -1268,7 +1318,7 @@ public final class PlanVerifier {
 
         @Override
         public BoundExpression visitExpression(BoundExpression expression) {
-            boolean isChecked = false;
+            boolean isChecked = expressionCount < checkedExpressions.size() && checkedExpressions.getQuick(expressionCount) == expression;
             for (int i = 0, n = checkedExpressions.size(); i < n && !isChecked; i++) {
                 isChecked = checkedExpressions.getQuick(i) == expression;
             }

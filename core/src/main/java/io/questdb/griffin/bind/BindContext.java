@@ -206,18 +206,18 @@ final class BindContext implements Mutable {
     /**
      * A call {@code count(k)} of a non-null constant {@code k}, which counts the rows as {@code count()} does.
      */
-    /**
-     * Whether a select alias spells {@code name}. SqlParser keeps the quotes of an alias that holds a dot, see
-     * {@link SqlUtil#isQuoteProtectedAlias(CharSequence)}.
-     */
-    static boolean isAliasOf(CharSequence alias, CharSequence name) {
-        return Chars.equalsIgnoreCase(alias, name)
-                || SqlUtil.isQuoteProtectedAlias(alias) && Chars.equalsIgnoreCase(name, alias, 1, alias.length() - 1);
-    }
-
     static boolean isConstantCount(ExpressionNode expression) {
         return expression.type == ExpressionNode.FUNCTION && SqlKeywords.isCountKeyword(expression.token) && expression.paramCount == 1
                 && expression.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(expression.rhs.token);
+    }
+
+    /**
+     * Whether the spelling names {@code name}, as written or, where it keeps the quotes SqlParser keeps around a name
+     * that holds a dot or an operator token, within them, see {@link SqlUtil#isQuoteProtectedAlias(CharSequence)}.
+     */
+    static boolean isNameSpelling(CharSequence spelling, CharSequence name) {
+        return Chars.equalsIgnoreCase(spelling, name)
+                || SqlUtil.isQuoteProtectedAlias(spelling) && Chars.equalsIgnoreCase(name, spelling, 1, spelling.length() - 1);
     }
 
     static boolean isRowCount(ExpressionNode expression) {
@@ -258,14 +258,28 @@ final class BindContext implements Mutable {
         return SqlException.$(order.position, "ORDER BY expressions must appear in select list. Invalid column: ").put(order.token);
     }
 
+    /**
+     * The name SqlParser gives a select column without an alias, which the names of the columns the binder adds for
+     * an expression follow: the expression's token after its last unquoted dot. The token of a quoted literal holds no
+     * quotes, so the literal {@code "a.b"} names its column {@code b}, while it spells the column {@code a.b}, see
+     * {@link #unqualified}.
+     */
+    static CharSequence parsedColumnName(CharSequence token) {
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        return dot < 0 ? token : token.subSequence(dot + 1, token.length());
+    }
+
     static CharSequence sourceAlias(QueryModel source) {
         final ExpressionNode name = source.getAlias() == null ? source.getTableNameExpr() : source.getAlias();
         return name == null ? null : GenericLexer.unquote(name.token);
     }
 
-    static CharSequence unqualified(CharSequence token) {
-        final int dot = Chars.indexOfLastUnquoted(token, '.');
-        return dot < 0 ? token : token.subSequence(dot + 1, token.length());
+    /**
+     * The name of the column a literal spells, without its table qualifier, see {@link FunctionBinder#qualifierEnd}.
+     */
+    static CharSequence unqualified(ExpressionNode literal) {
+        final int dot = FunctionBinder.qualifierEnd(literal, null);
+        return dot < 0 ? literal.token : literal.token.subSequence(dot + 1, literal.token.length());
     }
 
     /**

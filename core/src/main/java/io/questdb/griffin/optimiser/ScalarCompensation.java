@@ -674,13 +674,17 @@ final class ScalarCompensation implements Mutable {
     /**
      * A keyless aggregate inside the body, now keyed by the outer columns, still yields one row per outer
      * row: its domain joins LEFT to the projection over it, and a projection above restores the empty-input
-     * values. The outer columns map to the domain.
+     * values. The outer columns map to the domain, which for a set-operation branch covers every outer column the
+     * operation reads, see {@link DecorrelationDomains#coverOperation}.
      */
-    LogicalPlan compensateBlock(ProjectPlan project, int base) throws SqlException {
+    LogicalPlan compensateBlock(ProjectPlan project, int base, boolean isBranch) throws SqlException {
         final int position = project.getPosition();
         final int columnCount = project.getOutput().getColumnCount() - (mapping.mark() - base);
         exposeCarriers(project);
         domains.coverMapping(base);
+        if (isBranch) {
+            domains.coverOperation();
+        }
         final int domainBase = mapping.mark();
         final LogicalPlan domain = domains.buildDomain(position);
         final JoinPlan join = planNodes.joins.next().of(position);
@@ -707,11 +711,14 @@ final class ScalarCompensation implements Mutable {
             compensated.getExpressions().add(value);
             compensated.getOutput().add(columnId, output.getColumnName(i), value.getDataType(), output.getMetadata(i), output.isVisible(i));
         }
+        final int mappedEnd = domainBase + domainBase - base;
         for (int i = domainBase, n = mapping.mark(); i < n; i++) {
-            mapping.setColumnIdAt(i - domainBase + base,
+            mapping.setColumnIdAt(i < mappedEnd ? i - domainBase + base : i,
                     ctx.exposeColumn(compensated, join.getOutput(), mapping.columnIdAt(i), ctx.outerRefName(mapping.outerIdAt(i)), position));
         }
-        mapping.reset(domainBase);
+        for (int i = domainBase; i < mappedEnd; i++) {
+            mapping.removeAt(domainBase);
+        }
         scalarAggregate = null;
         compensatedScalars.add(compensated);
         return compensated;
@@ -978,6 +985,23 @@ final class ScalarCompensation implements Mutable {
     boolean isEmptyRowRejected(JoinInput step, ProjectPlan scalar) {
         return scalar.getChild() instanceof AggregatePlan
                 && (rejectsZeroCount(step.getOnResidual(), scalar) || rejectsZeroCount(step.getPostJoinFilter(), scalar));
+    }
+
+    /**
+     * True when the block chain from {@code chainBase} is a projection, under at most a LIMIT, of a keyless aggregate,
+     * or one keyed only by outer columns, that the step does not keep uncompensated: once decorrelation keys the
+     * aggregate, the block restores its values over no rows, see {@link #compensateBlock}.
+     */
+    boolean isScalarChain(int chainBase) {
+        final int top = chainBase < chain.size() && chain.getQuick(chainBase) instanceof LimitPlan ? chainBase + 1 : chainBase;
+        if (top >= chain.size() || !(chain.getQuick(top) instanceof ProjectPlan project) || uncompensatedScalars.indexOf(project) > -1) {
+            return false;
+        }
+        LogicalPlan input = project.getChild();
+        while (input instanceof SortPlan || input instanceof FillPlan) {
+            input = input.inputAt(0);
+        }
+        return input instanceof AggregatePlan aggregate && isImplicitlyKeyedByOuterColumns(aggregate);
     }
 
     /**

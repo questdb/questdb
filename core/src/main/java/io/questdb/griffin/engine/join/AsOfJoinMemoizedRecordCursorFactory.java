@@ -169,9 +169,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Memoized Scan");
         sink.attr("condition").val(joinContext);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.attr("driveByCache").val(driveByCaching);
         sink.child(masterFactory);
         sink.child(slaveFactory);

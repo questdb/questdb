@@ -75,6 +75,17 @@ public interface TimestampDriver {
     }
 
     /**
+     * The interval of a sampler that counts it in INT, as the week, month and year samplers do; an interval beyond
+     * INT fails at {@code position}.
+     */
+    static int intSamplerInterval(long interval, int position) throws SqlException {
+        if (interval != (int) interval) {
+            throw SqlException.$(position, "invalid sample value [value=").put(interval).put(']');
+        }
+        return (int) interval;
+    }
+
+    /**
      * Adds a time period to a timestamp based on the specified type and stride.
      *
      * @param timestamp the base timestamp value

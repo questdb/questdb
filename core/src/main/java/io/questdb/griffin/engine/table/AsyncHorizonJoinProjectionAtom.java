@@ -37,7 +37,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
-import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -90,7 +89,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     private final long slotsPerRow;
     private final int workerCount;
     // Slaves whose filters and key checks initTimeFrameCursors() has initialized, and clear() has yet to close
-    private int initializedSlaveFilterCount;
+    private int initializedSlaveCount;
     private MemoryTracker memoryTracker;
 
     public AsyncHorizonJoinProjectionAtom(
@@ -158,8 +157,8 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         failure = Misc.clearObjListBestEffort(failure, perWorkerMatchers);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
-        final int count = initializedSlaveFilterCount;
-        initializedSlaveFilterCount = 0;
+        final int count = initializedSlaveCount;
+        initializedSlaveCount = 0;
         for (int s = 0; s < count; s++) {
             failure = slaveStates.getQuick(s).cursorClosed(failure);
         }
@@ -283,22 +282,8 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
             ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         // Count the slave first, so that clear() also closes a filter whose init() throws.
-        initializedSlaveFilterCount = slaveIndex + 1;
-        final HorizonJoinSlaveState state = slaveStates.getQuick(slaveIndex);
-        final Function slaveFilter = state.getFilter();
-        if (slaveFilter != null) {
-            slaveFilter.init(slavePageFrameCursor, executionContext);
-        }
-        if (state.getPerWorkerFilters() != null) {
-            final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(state.getPerWorkerFilters(), slavePageFrameCursor, executionContext, slaveFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(isCloneSymbolTables);
-            }
-        }
-        state.initKeyCheck(masterSymbolTableSource, executionContext);
+        initializedSlaveCount = slaveIndex + 1;
+        slaveStates.getQuick(slaveIndex).init(masterSymbolTableSource, slavePageFrameCursor, executionContext);
         // The matchers walk horizon timestamps in order, so MONOTONIC caps the decode buffers of a
         // Parquet slave to a quarter of the budget per pool. The output cursor revisits frames in
         // master row order, which jumps back and forth between the offsets of a row.
@@ -396,15 +381,8 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
                 perWorkerFilters.getQuick(i).toTop();
             }
         }
-        for (int s = 0; s < initializedSlaveFilterCount; s++) {
-            final HorizonJoinSlaveState state = slaveStates.getQuick(s);
-            if (state.getFilter() != null) {
-                state.getFilter().toTop();
-            }
-            if (state.getPerWorkerFilters() != null) {
-                GroupByUtils.toTop(state.getPerWorkerFilters());
-            }
-            state.toTopKeyCheck();
+        for (int s = 0; s < initializedSlaveCount; s++) {
+            slaveStates.getQuick(s).toTop();
         }
     }
 

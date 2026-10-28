@@ -308,6 +308,26 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Records on each filter of the plan, and of the decorrelation domains it reads, whether the input of the filter
+     * reads the target of an UPDATE, see {@link FilterPlan#hasUpdateScan}, and returns whether the plan reads it.
+     */
+    private static boolean recordUpdateScans(LogicalPlan plan) {
+        boolean hasUpdateScan = plan instanceof ScanPlan scan && scan.isUpdate();
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null && recordUpdateScans(input)) {
+                hasUpdateScan = true;
+            }
+        }
+        if (plan instanceof DomainReadPlan read) {
+            recordUpdateScans(read.getProducer());
+        } else if (plan instanceof FilterPlan filter) {
+            filter.setUpdateScan(hasUpdateScan);
+        }
+        return hasUpdateScan;
+    }
+
+    /**
      * The aggregate a decorrelation domain re-reads through its shared source, as the generator finds it: under the
      * column projections and the leading branches of the set operations of the source's input.
      */
@@ -895,7 +915,7 @@ final class OperatorPlanning implements Mutable {
     private void planRelationalStep(JoinPlan join, int inputIndex, JoinInput step) throws SqlException {
         final LogicalPlan slave = step.getInput();
         final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
-        step.setNullKeyCheck(step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL ? nullKeyCheck(step, master) : null);
+        step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master) : null);
         final int markoutIndex = master.getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
                 && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
@@ -1739,12 +1759,14 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Reads, for the UPDATE whose target the plan reads, see {@link ScanPlan#isUpdate}, the direction of the plan, see
-     * {@link #readOrder}: the UPDATE writes the target's rows back by row id in the order the target scan reads them,
-     * so every light INNER hash join they pass through keeps its master side.
+     * Records on each filter of the plan whether its input reads the target of an UPDATE, see
+     * {@link FilterPlan#hasUpdateScan}, and reads, for the UPDATE whose target the plan reads, see
+     * {@link ScanPlan#isUpdate}, the direction of the plan, see {@link #readOrder}: the UPDATE writes the target's rows
+     * back by row id in the order the target scan reads them, so every light INNER hash join they pass through keeps
+     * its master side.
      */
     void readUpdateOrder(LogicalPlan root) {
-        if (LogicalPlans.hasUpdateScan(root)) {
+        if (recordUpdateScans(root)) {
             readOrder(root, false, true);
         }
     }

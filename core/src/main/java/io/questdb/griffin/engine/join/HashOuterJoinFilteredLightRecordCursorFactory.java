@@ -49,6 +49,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -65,6 +66,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     private final int joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
+    private final JoinInput.NullExtension nullExtension;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private AbstractHashOuterJoinLightRecordCursor cursor;
@@ -90,10 +92,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            JoinInput.NullExtension nullExtension,
             @Nullable Function nullKeyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.filter = filter;
+        this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
@@ -171,7 +175,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             masterCursor = masterFactory.getCursor(executionContext);
             if (joinType == QueryModel.JOIN_FULL_OUTER) {
                 boolean swapped = false;
-                if (nullKeyCheck == null && masterFactory.recordCursorSupportsRandomAccess()) {
+                if (nullExtension == JoinInput.NullExtension.BY_KEYS && masterFactory.recordCursorSupportsRandomAccess()) {
                     long masterSize = masterCursor.size();
                     long slaveSize = slaveCursor.size();
 
@@ -266,7 +270,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
         AbstractHashOuterJoinFilteredLightRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
-            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterKeySink, nullKeyCheck);
+            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterKeySink, nullExtension, nullKeyCheck);
         }
 
         @Override

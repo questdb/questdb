@@ -47,6 +47,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -63,6 +64,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
     private final RecordSink masterSink;
+    private final JoinInput.NullExtension nullExtension;
     private final RecordSink slaveKeySink;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Function filter;
@@ -88,10 +90,12 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            JoinInput.NullExtension nullExtension,
             @Nullable Function nullKeyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.filter = filter;
+        this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
         try {
             this.masterSink = masterSink;
@@ -234,7 +238,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
         AbstractHashOuterJoinFilteredRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
-            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullKeyCheck);
+            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullExtension, nullKeyCheck);
         }
 
         @Override

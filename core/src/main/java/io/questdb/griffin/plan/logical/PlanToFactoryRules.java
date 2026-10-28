@@ -338,6 +338,16 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * Whether the join step checks that the master columns of its keys are all NULL, see
+     * {@link JoinInput#getNullKeyCheck}: its ON residual decides the rows it NULL-extends, see
+     * {@link JoinInput.NullExtension#BY_ON_RESIDUAL}, and it NULL-extends master rows, as a LEFT or FULL join does, whose
+     * factory evaluates the check on each master row no slave row matches.
+     */
+    public static boolean isMasterNullKeyChecked(JoinInput step) {
+        return step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL && step.getJoinType().isSlaveNulling();
+    }
+
+    /**
      * True when the factory of the relational join step at {@code position} of the join's ordered inputs can keep its
      * master's designated timestamp: the join leads with its first input, see {@link LogicalPlans#isFirstInputLeading},
      * and the step neither null-extends its master nor drives the join with the smaller input. A markout step

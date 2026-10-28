@@ -1386,6 +1386,47 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllOfSymbolOverPrunedAndCorrelatedBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s1 (a SYMBOL, b INT, k INT)");
+            execute("INSERT INTO s1 VALUES ('x', 1, 1), ('y', 2, 2)");
+            execute("CREATE TABLE v1 (a VARCHAR, b INT, k INT)");
+            execute("INSERT INTO v1 VALUES ('z', 3, 1), ('x', 4, 2)");
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            assertQuery("SELECT a FROM (SELECT a, b FROM s1 UNION ALL SELECT a, b FROM s1 UNION ALL SELECT a, b FROM v1) ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            x
+                            x
+                            x
+                            y
+                            y
+                            z
+                            """);
+            assertQuery("""
+                    SELECT o.k, a FROM o, LATERAL (
+                        SELECT a FROM s1 WHERE s1.k = o.k
+                        UNION ALL SELECT a FROM s1 WHERE s1.b = o.k
+                        UNION ALL SELECT a FROM v1 WHERE v1.k = o.k
+                    ) ORDER BY 1, 2""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta
+                            1\tx
+                            1\tx
+                            1\tz
+                            2\tx
+                            2\ty
+                            2\ty
+                            """);
+        });
+    }
+
+    @Test
     public void testUnionAllOfSymbolOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute(

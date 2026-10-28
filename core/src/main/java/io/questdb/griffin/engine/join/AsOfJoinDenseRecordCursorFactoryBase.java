@@ -142,9 +142,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     public void toPlan(PlanSink sink) {
         putFactoryType(sink);
         sink.attr("condition").val(joinContext);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

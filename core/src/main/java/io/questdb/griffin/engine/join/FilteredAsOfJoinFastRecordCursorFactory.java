@@ -188,9 +188,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     public void toPlan(PlanSink sink) {
         sink.type("Filtered AsOf Join Fast");
         sink.attr("filter").val(slaveRecordFilter, slaveFactory);
-        if (keyCheck != null) {
-            sink.attr("keyCheck").val(keyCheck, masterFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
