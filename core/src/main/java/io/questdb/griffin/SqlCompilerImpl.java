@@ -2134,6 +2134,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // parquet and remain readable; converting back to WAL restores normal parquet
                 // ingestion.
             }
+            validateAlterTableSetType(pos, tableToken);
 
             if (!executionContext.isValidationOnly()) {
                 // Demote write-fence for the parse-time SET TYPE marker write. The eager check above
@@ -6507,6 +6508,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... SET TYPE} before it writes the conversion marker. A no-op here:
+     * Enterprise overrides it to refuse a table with external state keyed by seqTxn, which the
+     * conversion restarts from 0.
+     */
+    protected void validateAlterTableSetType(int pos, TableToken tableToken) throws SqlException {
     }
 
     /**
