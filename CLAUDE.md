@@ -332,15 +332,18 @@ qdbr toolchain; the script prints the command when it is missing.
     - Good: `IPv4 filters with < or > no longer return wrong rows. Fixes #NNN`
     - Avoid: `Use unsigned comparison for IPv4 in the JIT backend`
   - Measure effects against the base branch: fixing a bug the PR itself
-    introduced is not an effect.
+    introduced is not an effect. When new commits land, rewrite the bullets
+    from the branch's net effects; never append to the body.
   - Give each regression, tradeoff and breaking change its own bullet, as
     plainly as the gains, and each slowdown its measured size, such as
     `up to 3x slower`. Don't sell: no superlatives, no bold numbers.
   - A change made for speed, or one on a data path, adds its JMH results as a
     table: case, before, after, with the slower cases included.
   - Link tandem PRs on one line.
-  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough
-    or design narrative. The code and its tests carry those.
+  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough,
+    design narrative or investigation output (probe results, "fails without
+    the fix" evidence, lists of covered shapes or configs, "Not changed"
+    lists). The code and its tests carry those.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit

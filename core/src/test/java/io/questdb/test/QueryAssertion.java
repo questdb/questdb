@@ -823,6 +823,9 @@ public class QueryAssertion {
         // registered query is returned to the pool (not freed) and would
         // otherwise trip the leak checker as a retained native block.
         engine.getMemoryTrackerProvider().clear();
+        // A composite-partition O3 commit returns its frames to the engine's frame pool rather
+        // than freeing them; drain the pool so the pooled frames do not trip the leak checker.
+        engine.getFrameFactory().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
@@ -1048,7 +1051,8 @@ public class QueryAssertion {
         if (countingCircuitBreaker != null && countingCircuitBreaker.getCheckCount() == 0) {
             Assert.fail("expected the cursor to check the execution context's circuit breaker at least once, " +
                     "but it never did, so the query is not cancellable " +
-                    "(remove .expectCircuitBreakerChecks() if this cursor legitimately performs no checks)");
+                    "(remove .expectCircuitBreakerChecks() if this cursor legitimately performs no checks) [query=`" +
+                    query + "`]");
         }
     }
 
@@ -1916,6 +1920,9 @@ public class QueryAssertion {
             try {
                 engine.execute(ddl, context);
                 runDdlMore();
+                // Drain for the same reason runDdl() does: a WAL table's rows sit in the WAL until
+                // applied, and a query over an empty table does not reach the failure under test.
+                drainWalQueue(engine);
                 assertThrows(errorPos, contains, false);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
