@@ -8489,10 +8489,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Sample By
                               fill: linear
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  keys: [__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('hour',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -8570,16 +8573,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [s,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [s,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             // PREV(col_ref) cross-column: fill aggregate `a` with prev value of aggregate `s`.
@@ -8592,16 +8594,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [k,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),first(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [k,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),first(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
                             """);
 
             // Negative: PREV references an alias that does not exist in the select list.
@@ -8713,16 +8714,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [s,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [s,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -9106,16 +9106,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [l,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [l,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -9142,10 +9141,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Sample By
                               fill: linear
                               keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor('day',ts)
+                                  keys: [l,__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('day',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -9172,10 +9175,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Sample By
                               fill: linear
                               keys: [l,m]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor('day',ts)
+                                  keys: [l,m,__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('day',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -9203,16 +9210,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1d'
                                   fill: value
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [l,ts]
-                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                          values: [first(i),last(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [l,ts]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [first(i),last(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -9240,16 +9246,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1d'
                                   fill: prev
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [l,ts]
-                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                          values: [first(i),last(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [l,ts]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [first(i),last(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }

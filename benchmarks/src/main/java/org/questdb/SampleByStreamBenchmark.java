@@ -86,7 +86,7 @@ public class SampleByStreamBenchmark {
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -168,6 +168,7 @@ public class SampleByStreamBenchmark {
                 case "distinct_byte" -> "count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
                 case "expression" -> "sum(v + 1), avg(d * 2), sum(sqrt(d))";
                 case "keyed", "keyed_filtered", "hash_filtered" -> "sym, count(*), sum(v), avg(d)";
+                case "keyed_double" -> "sym, sum(d), avg(d), min(d), max(d)";
                 case "keyed_string" -> "sym::varchar name, count(*), sum(v), avg(d)";
                 case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
                 case "keyed_distinct_byte" -> "sym, count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
@@ -185,12 +186,20 @@ public class SampleByStreamBenchmark {
             }
             final TextPlanSink plan = new TextPlanSink();
             plan.of(factory, context);
+            boolean parallelStream = false;
+            boolean sample = false;
             boolean stream = false;
             for (int i = 1; i <= plan.getLineCount(); i++) {
-                stream |= plan.getLine(i).toString().contains("Stream Group By");
+                final String line = plan.getLine(i).toString();
+                sample |= "Sample By".equals(line.trim());
+                if (line.contains("Stream Group By")) {
+                    stream = true;
+                    parallelStream |= line.contains("Async");
+                }
             }
             final boolean expectStream = "stream".equals(expectedStrategy) && !isHashControl;
-            if (stream != expectStream) {
+            if (stream != expectStream || (expectStream && parallelStream != (workers > 0))
+                    || ("sample".equals(expectedStrategy) && !sample)) {
                 throw new IllegalStateException("unexpected aggregation strategy: " + expectedStrategy);
             }
         } catch (Throwable th) {

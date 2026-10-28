@@ -24,13 +24,16 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
@@ -38,12 +41,15 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.RecordValueSink;
+import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -75,6 +81,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private final int groupByTwoPointFunctionCount;
     private ObjList<GroupByFunction> groupByTwoPointFunctions;
     private ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
+    private final boolean isPreAggregated;
     private final RecordSink mapSink;
     private Function offsetFunc;
     private Function sampleFromFunc;
@@ -86,6 +93,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private final TimestampSampler sampler;
     private ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final int timestampIndex;
+    private final RecordValueSink valueSink;
     private final int yDataSize;
     private long yData;
 
@@ -112,7 +120,38 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Function sampleFromFunc,
             Function sampleToFunc
     ) throws SqlException {
+        this(asm, configuration, base, metadata, groupByFunctions, recordFunctions, timestampSampler, model,
+                listColumnFilter, keyTypes, valueTypes, entityColumnFilter, groupByFunctionPositions,
+                timestampIndex, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos,
+                sampleFromFunc, sampleToFunc, false);
+    }
+
+    public SampleByInterpolateRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
+            CairoConfiguration configuration,
+            RecordCursorFactory base,
+            RecordMetadata metadata,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
+            @NotNull TimestampSampler timestampSampler,
+            @Transient @NotNull IQueryModel model,
+            @Transient @NotNull ListColumnFilter listColumnFilter,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
+            @Transient @NotNull EntityColumnFilter entityColumnFilter,
+            @Transient @NotNull IntList groupByFunctionPositions,
+            int timestampIndex,
+            int timestampType,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            Function sampleToFunc,
+            boolean isPreAggregated
+    ) throws SqlException {
         super(metadata);
+        this.isPreAggregated = isPreAggregated;
         try {
             final int columnCount = model.getBottomUpColumns().size();
             this.base = base;
@@ -179,16 +218,33 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             this.groupByScalarFunctionCount = groupByScalarFunctions.size();
             this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
-            this.timestampIndex = timestampIndex;
+            this.timestampIndex = isPreAggregated ? valueTypes.getColumnCount() + keyTypes.getColumnCount() : timestampIndex;
             this.yDataSize = groupByFunctionCount * 16;
             this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
-            // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
+            final ArrayColumnTypes preAggregatedTypes;
+            final RecordSink preAggregatedSink;
+            if (isPreAggregated) {
+                preAggregatedTypes = new ArrayColumnTypes().addAll(valueTypes).addAll(keyTypes).add(timestampType);
+                final ListColumnFilter keyFilter = new ListColumnFilter();
+                for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                    keyFilter.add(valueTypes.getColumnCount() + i + 1);
+                }
+                this.mapSink = RecordSinkFactory.getInstance(configuration, asm, preAggregatedTypes, keyFilter);
+                entityColumnFilter.of(preAggregatedTypes.getColumnCount());
+                preAggregatedSink = keyTypes.getColumnCount() > 0
+                        ? RecordSinkFactory.getInstance(configuration, asm, preAggregatedTypes, entityColumnFilter) : null;
+            } else {
+                preAggregatedTypes = null;
+                preAggregatedSink = null;
+                this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
+            }
             entityColumnFilter.of(keyTypes.getColumnCount());
             this.mapSink2 = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
+            entityColumnFilter.of(valueTypes.getColumnCount());
+            this.valueSink = isPreAggregated ? RecordValueSinkFactory.getInstance(asm, valueTypes, entityColumnFilter) : null;
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc, preAggregatedTypes, preAggregatedSink);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -212,7 +268,16 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext, null);
+            if (isPreAggregated) {
+                for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+                    final Function function = recordFunctions.getQuick(i);
+                    if (!(function instanceof GroupByFunction)) {
+                        function.init(baseCursor, executionContext);
+                    }
+                }
+            } else {
+                Function.init(recordFunctions, baseCursor, executionContext, null);
+            }
         } catch (Throwable th) {
             baseCursor.close();
             throw th;
@@ -237,7 +302,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         sink.type("Sample By");
         sink.attr("fill").val("linear");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
-        sink.optAttr("values", groupByFunctions, true);
+        if (!isPreAggregated) {
+            sink.optAttr("values", groupByFunctions, true);
+        }
         sink.child(base);
     }
 
@@ -316,6 +383,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Map dataMap;
         private final Function offsetFunc;
         private final int offsetFuncPos;
+        private final RecordChain preAggregatedRecords;
         private final Function sampleFromFunc;
         private final int sampleFromFuncType;
         private final Function sampleToFunc;
@@ -349,7 +417,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Function offsetFunc,
                 int offsetFuncPos,
                 Function sampleFromFunc,
-                Function sampleToFunc
+                Function sampleToFunc,
+                ColumnTypes preAggregatedTypes,
+                RecordSink preAggregatedSink
         ) {
             super(functions);
             try {
@@ -364,6 +434,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
                 allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
+                if (preAggregatedSink != null) {
+                    final long pageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
+                    final long maxPages = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(pageSize));
+                    preAggregatedRecords = new RecordChain(preAggregatedTypes, preAggregatedSink, pageSize,
+                            (int) Math.min(maxPages, Integer.MAX_VALUE), PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath());
+                } else {
+                    preAggregatedRecords = null;
+                }
 
                 this.timezoneNameFunc = timezoneNameFunc;
                 this.timezoneNameFuncPos = timezoneNameFuncPos;
@@ -381,15 +459,27 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         @Override
         public void close() {
-            super.close();
+            final RecordCursor sourceCursor = managedCursor;
+            managedCursor = null;
+            managedRecord = null;
+            Throwable failure = Misc.freeBestEffort(null, preAggregatedRecords);
+            if (preAggregatedRecords != null) {
+                preAggregatedRecords.setMemoryTracker(null);
+            }
+            try {
+                super.close();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
+            failure = Misc.freeBestEffort(failure, sourceCursor);
             if (isOpen) {
                 isOpen = false;
-                Misc.free(recordKeyMap);
-                Misc.free(dataMap);
-                Misc.free(allocator);
-                Misc.clearObjList(groupByFunctions);
-                super.close();
+                failure = Misc.freeBestEffort(failure, recordKeyMap);
+                failure = Misc.freeBestEffort(failure, dataMap);
+                failure = Misc.freeBestEffort(failure, allocator);
+                failure = Misc.clearObjListBestEffort(failure, groupByFunctions);
             }
+            CairoException.rethrowCleanupFailure(failure);
             // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from
             // the owning factory, which closes them exactly once at teardown; per-execution
             // cursor close must leave them usable for the next execution of the cached factory.
@@ -413,11 +503,16 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 allocator.reopen();
             }
             circuitBreaker = executionContext.getCircuitBreaker();
-            managedRecord = managedCursor.getRecord();
+            if (preAggregatedRecords != null) {
+                preAggregatedRecords.setMemoryTracker(executionContext.getMemoryTracker());
+                managedRecord = preAggregatedRecords.getRecord();
+            } else {
+                managedRecord = isPreAggregated ? ((VirtualRecord) managedCursor.getRecord()).getBaseRecord() : managedCursor.getRecord();
+            }
             loSample = -1;
             hiSample = -1;
             prevSample = -1;
-            rowId = 0;
+            rowId = isPreAggregated ? -1 : 0;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
@@ -447,9 +542,16 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 loSample = -1;
                 hiSample = -1;
                 prevSample = -1;
-                rowId = 0;
+                rowId = isPreAggregated ? -1 : 0;
                 isMapInitialized = false;
                 isMapFilled = false;
+                if (isPreAggregated) {
+                    managedCursor.toTop();
+                    if (preAggregatedRecords != null) {
+                        preAggregatedRecords.clear();
+                    }
+                    areTimestampsInitialized = false;
+                }
             }
         }
 
@@ -640,9 +742,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // entries. Values for these entries will be interpolated later.
 
             assert prevSample != -1;
+            final RecordCursor aggregationCursor = preAggregatedRecords != null ? preAggregatedRecords : managedCursor;
 
             do {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                if (isPreAggregated && preAggregatedRecords == null) {
+                    managedRecord = ((VirtualRecord) managedCursor.getRecord()).getBaseRecord();
+                }
 
                 // this seems inefficient, but we only double-sample
                 // very first record and nothing else
@@ -664,7 +770,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 key.putLong(sample);
 
                 MapValue value = key.createValue();
-                if (value.isNew()) {
+                if (isPreAggregated) {
+                    valueSink.copy(managedRecord, value);
+                    value.putByte(0, (byte) 0);
+                } else if (value.isNew()) {
                     value.putByte(0, (byte) 0); // not a gap
                     for (int i = 0; i < groupByFunctionCount; i++) {
                         groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
@@ -674,11 +783,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
                     }
                 }
-            } while (managedCursor.hasNext());
+            } while (aggregationCursor.hasNext());
 
             hiSample = sampler.nextTimestamp(prevSample);
             // fill gaps if any at the end of base cursor
             fillGaps(prevSample, hiSample);
+            if (preAggregatedRecords != null) {
+                preAggregatedRecords.clear();
+            }
         }
 
         private MapValue findDataMapValue(Record record, long timestamp) {
@@ -703,6 +815,25 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         private boolean initMap() {
+            if (isPreAggregated) {
+                if (preAggregatedRecords == null) {
+                    if (!managedCursor.hasNext()) {
+                        return false;
+                    }
+                    recordKeyMap.withKey().createValue();
+                    return true;
+                }
+                while (managedCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    final Record record = ((VirtualRecord) managedCursor.getRecord()).getBaseRecord();
+                    final MapKey key = recordKeyMap.withKey();
+                    mapSink.copy(record, key);
+                    key.createValue();
+                    rowId = preAggregatedRecords.put(record, rowId);
+                }
+                preAggregatedRecords.toTop();
+                return recordKeyMap.size() > 0;
+            }
             // Collect map of unique key values.
             // using these values we will fill gaps in main
             // data before jumping to another timestamp.
@@ -777,8 +908,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 return;
             }
 
-            final boolean good = managedCursor.hasNext();
+            final boolean good = (isPreAggregated && preAggregatedRecords == null)
+                    || (preAggregatedRecords != null ? preAggregatedRecords : managedCursor).hasNext();
             assert good;
+
+            if (isPreAggregated && preAggregatedRecords == null) {
+                managedRecord = ((VirtualRecord) managedCursor.getRecord()).getBaseRecord();
+            }
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             // TIMESTAMP(col) can designate a column that holds NULL, and an ascending base puts the NULL first. No

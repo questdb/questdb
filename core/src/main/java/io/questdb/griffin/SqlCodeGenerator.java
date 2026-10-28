@@ -181,6 +181,7 @@ import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFactory;
@@ -192,6 +193,7 @@ import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFa
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -401,6 +403,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1890,8 +1893,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (fill == null || fill.size() == 0 || (fill.size() == 1 && isNoneKeyword(fill.getQuick(0).token))) {
                 continue;
             }
-            if (keyCount != 1) {
-                return false;
+            if (keyCount > 1) {
+                continue;
             }
             for (int i = 0, n = fill.size(); i < n; i++) {
                 if (isPrevKeyword(fill.getQuick(i).token)) {
@@ -5103,9 +5106,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Key discovery replays the input; variable-size PREV values need recordAt.
+            // Keyed fills cache forward-only input; non-keyed wide PREV values need recordAt.
             if (!isBaseTimestampAscending(groupByFactory, timestampIndex)
-                    || keyColIndices.size() > 0 || needsPrevPositioning) {
+                    || (keyColIndices.size() == 0 && needsPrevPositioning)) {
                 final RecordMetadata sortMetadata = groupByFactory.getMetadata();
                 listColumnFilterA.clear();
                 listColumnFilterA.add(timestampIndex + 1); // positive = ascending
@@ -10104,6 +10107,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null
                 );
 
+                final ArrayColumnTypes interpolationKeyTypes = new ArrayColumnTypes().addAll(keyTypes);
+                final ArrayColumnTypes interpolationValueTypes = new ArrayColumnTypes().addAll(valueTypes);
+                final ListColumnFilter interpolationColumnFilter = listColumnFilterA.copy();
+                final IntList interpolationFunctionPositions = new IntList(groupByFunctionPositions);
+                boolean isPreAggregated = false;
+                final long linearOffset = offsetFunc.isConstant() && offsetFunc.getStrA(null) != null
+                        ? Dates.parseOffset(offsetFunc.getStrA(null)) : Numbers.LONG_NULL;
+                if (timestampSampler instanceof SimpleTimestampSampler
+                        && sampleByUnits == null
+                        && model.getSampleByOffset() != null
+                        && model.getSampleByFrom() == null
+                        && model.getSampleByTo() == null
+                        && timezoneNameFunc.isConstant()
+                        && (timezoneNameFunc.getStrA(null) == null || Chars.equalsIgnoreCase(timezoneNameFunc.getStrA(null), "UTC"))
+                        && linearOffset != Numbers.LONG_NULL
+                        && Numbers.decodeLowInt(linearOffset) == 0
+                        && isBaseTimestampAscending(factory, timestampIndex)) {
+                    boolean isSupported = true;
+                    for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                        final GroupByFunction function = groupByFunctions.getQuick(i);
+                        if (!function.isScalar() || !function.isStateSelfContained() || !function.isStableWithinExecution()) {
+                            isSupported = false;
+                            break;
+                        }
+                    }
+                    if (isSupported) {
+                        final RecordCursorFactory base = factory;
+                        factory = null;
+                        factory = generateSampleByLinearStream(model, executionContext, base, timestampIndex,
+                                outerProjectionFunctions, interpolationValueTypes, interpolationKeyTypes);
+                        isPreAggregated = factory != base;
+                    }
+                }
+
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
                 innerProjectionFunctions = null;
@@ -10118,20 +10155,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 offsetFunc = null;
                 sampleFromFunc = null;
                 sampleToFunc = null;
+                final RecordCursorFactory base0 = factory;
+                factory = null;
                 return new SampleByInterpolateRecordCursorFactory(
                         asm,
                         configuration,
-                        factory,
+                        base0,
                         projectionMetadata,
                         groupByFunctions0,
                         outerProjectionFunctions0,
                         timestampSampler,
                         model,
-                        listColumnFilterA,
-                        keyTypes,
-                        valueTypes,
+                        interpolationColumnFilter,
+                        interpolationKeyTypes,
+                        interpolationValueTypes,
                         entityColumnFilter,
-                        groupByFunctionPositions,
+                        interpolationFunctionPositions,
                         timestampIndex,
                         timestampType,
                         timezoneNameFunc0,
@@ -10139,7 +10178,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFunc0,
                         offsetFuncPos,
                         sampleFromFunc0,
-                        sampleToFunc0
+                        sampleToFunc0,
+                        isPreAggregated
                 );
             }
 
@@ -10605,6 +10645,162 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(offsetFunc, e);
             Misc.free(factory, e);
             throw e;
+        }
+    }
+
+    private RecordCursorFactory generateSampleByLinearStream(
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory base,
+            int timestampIndex,
+            ObjList<Function> interpolationFunctions,
+            ArrayColumnTypes interpolationValueTypes,
+            ArrayColumnTypes interpolationKeyTypes
+    ) throws SqlException {
+        ObjList<Function> recordFunctions = new ObjList<>();
+        ObjList<Function> innerFunctions = new ObjList<>();
+        ObjList<ObjList<GroupByFunction>> perWorkerFunctions = null;
+        ObjList<ObjList<Function>> perWorkerKeys = null;
+        ObjList<Function> perWorkerFilters = null;
+        Function filter = null;
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
+        try {
+            final RecordMetadata baseMetadata = base.getMetadata();
+            final ObjList<QueryColumn> columns = new ObjList<>();
+            for (int i = 0, n = interpolationFunctions.size(); i < n; i++) {
+                if (interpolationFunctions.getQuick(i) != null) {
+                    columns.add(model.getColumns().getQuick(i));
+                }
+            }
+            final ExpressionNode bucket = expressionNodePool.next().of(FUNCTION, "timestamp_floor", 0, model.getSampleBy().position);
+            bucket.paramCount = 2;
+            bucket.lhs = expressionNodePool.next().of(CONSTANT, "'" + model.getSampleBy().token + "'", 0, bucket.position);
+            bucket.rhs = expressionNodePool.next().of(LITERAL, baseMetadata.getColumnName(timestampIndex), 0, bucket.position);
+            String bucketAlias = "__sample_by_bucket";
+            while (model.getAliasToColumnMap().contains(bucketAlias)) {
+                bucketAlias += '_';
+            }
+            columns.add(queryColumnPool.next().of(bucketAlias, bucket));
+
+            final ObjList<GroupByFunction> functions = new ObjList<>();
+            final IntList flags = new IntList();
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            final ArrayColumnTypes values = new ArrayColumnTypes().add(BYTE);
+            final ArrayColumnTypes keys = new ArrayColumnTypes();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser, sqlNodeStack, model, executionContext, baseMetadata, timestampIndex, true, true,
+                    functions, new IntList(), recordFunctions, innerFunctions, new IntList(), flags, metadata,
+                    values, keys, columnFilter, null, false, columns, null
+            );
+            final ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerFunctions, flags);
+            final int streamKeyIndex = keys.getColumnCount() - 1;
+            if (GroupByUtils.getStreamGroupByKeyIndex(base, keys, columnFilter, keyFunctions, functions) != streamKeyIndex
+                    || values.getColumnCount() != interpolationValueTypes.getColumnCount()
+                    || keys.getColumnCount() != interpolationKeyTypes.getColumnCount() + 1) {
+                final ObjList<Function> unusedRecordFunctions = recordFunctions;
+                final ObjList<Function> unusedInnerFunctions = innerFunctions;
+                recordFunctions = null;
+                innerFunctions = null;
+                GroupByUtils.freeAssembledProjectionFunctions(unusedRecordFunctions, unusedInnerFunctions);
+                return base;
+            }
+            metadata.setTimestampIndex(columns.size() - 1);
+            final Function streamKey = GroupByUtils.getGroupByKeyFunction(base, keys, columnFilter, keyFunctions, streamKeyIndex);
+            for (int i = 0, columnIndex = 0, n = interpolationFunctions.size(); i < n; i++) {
+                if (interpolationFunctions.getQuick(i) != null) {
+                    if (interpolationFunctions.getQuick(i) instanceof MapSymbolColumn symbol) {
+                        interpolationFunctions.setQuick(i, new MapSymbolColumn(symbol, columnIndex));
+                        symbol.close();
+                    }
+                    columnIndex++;
+                }
+            }
+
+            final boolean isParallel = executionContext.isParallelGroupByEnabled()
+                    && SqlUtil.isParallelismSupported(keyFunctions)
+                    && GroupByUtils.isParallelismSupported(functions)
+                    && (base.supportsPageFrameCursor() || base.supportsFilterStealing());
+            if (isParallel) {
+                IntHashSet filterColumns = null;
+                ExpressionNode filterExpr = null;
+                if (!base.supportsPageFrameCursor()) {
+                    final RecordCursorFactory filtered = base;
+                    compiledFilter = filtered.getCompiledFilter();
+                    bindVarMemory = filtered.getBindVarMemory();
+                    bindVarFunctions = filtered.getBindVarFunctions();
+                    filter = filtered.getFilter();
+                    filterExpr = filtered.getStealFilterExpr();
+                    base = filtered.getBaseFactory();
+                    filtered.halfClose();
+                    filterColumns = new IntHashSet();
+                    collectColumnIndexes(sqlNodeStack, base.getMetadata(), filterExpr, filterColumns);
+                }
+                final WorkerFunctionLists workers = compilePerWorkerInnerProjectionFunctions(
+                        executionContext, columns, innerFunctions, executionContext.getSharedQueryWorkerCount(), baseMetadata, flags
+                );
+                if (workers != null) {
+                    perWorkerFunctions = workers.getGroupByFunctions();
+                    perWorkerKeys = workers.getKeyFunctions();
+                }
+                perWorkerFilters = compileWorkerFiltersConditionally(executionContext, filter,
+                        executionContext.getSharedQueryWorkerCount(), filterExpr, base.getMetadata());
+
+                final RecordCursorFactory base0 = base;
+                final ObjList<Function> recordFunctions0 = recordFunctions;
+                final ObjList<ObjList<GroupByFunction>> perWorkerFunctions0 = perWorkerFunctions;
+                final ObjList<ObjList<Function>> perWorkerKeys0 = perWorkerKeys;
+                final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
+                final Function filter0 = filter;
+                final CompiledFilter compiledFilter0 = compiledFilter;
+                final MemoryCARW bindVarMemory0 = bindVarMemory;
+                final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+                base = null;
+                recordFunctions = null;
+                innerFunctions = null;
+                perWorkerFunctions = null;
+                perWorkerKeys = null;
+                perWorkerFilters = null;
+                filter = null;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                return new AsyncStreamGroupByRecordCursorFactory(
+                        executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(),
+                        base0, metadata, columnFilter, keys, values, streamKeyIndex, streamKey,
+                        functions, perWorkerFunctions0, keyFunctions, perWorkerKeys0, recordFunctions0,
+                        compiledFilter0, bindVarMemory0, bindVarFunctions0, filter0, filterColumns, perWorkerFilters0,
+                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
+                );
+            }
+            final RecordCursorFactory base0 = base;
+            final ObjList<Function> recordFunctions0 = recordFunctions;
+            base = null;
+            recordFunctions = null;
+            innerFunctions = null;
+            return new StreamGroupByRecordCursorFactory(asm, configuration, base0, metadata, keys, values,
+                    columnFilter, streamKeyIndex, streamKey, functions, keyFunctions, recordFunctions0);
+        } catch (Throwable th) {
+            GroupByUtils.freeAssembledProjectionFunctions(recordFunctions, innerFunctions, th);
+            if (perWorkerFunctions != null) {
+                for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerFunctions.getQuick(i), th);
+                }
+            }
+            if (perWorkerKeys != null) {
+                for (int i = 0, n = perWorkerKeys.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerKeys.getQuick(i), th);
+                }
+            }
+            Misc.freeObjList(perWorkerFilters, th);
+            Misc.freeObjList(bindVarFunctions, th);
+            Misc.free(bindVarMemory, th);
+            Misc.free(compiledFilter, th);
+            Misc.free(filter, th);
+            Misc.free(base, th);
+            throw th;
         }
     }
 

@@ -625,7 +625,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "select timestamp_floor('3n', ts), sum(v) from trades",
                     "select dateadd('M', 1, ts), sum(v) from trades",
                     "select timestamp_floor('1h', ts, null, '00:00', 'America/New_York'), sum(v) from trades",
-                    "select ts, sym, sum(v) from trades sample by 1m fill(prev) align to calendar"
+                    "select ts, sym, count_distinct(v) from trades sample by 1m fill(prev) align to calendar"
             }) {
                 try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                     assertStream(factory, false);
