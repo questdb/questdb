@@ -1344,19 +1344,34 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
             assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery(
-                    "SELECT ts, sym FROM trades UNION ALL SELECT ts, sym FROM trades WHERE ts >= '2024-01-01T00:30'",
-                    expectedHead,
-                    """
-                            x\tcount
-                            2024-01-01T00:00:00.000000Z\t599
-                            2024-01-01T00:10:00.000000Z\t600
-                            2024-01-01T00:20:00.000000Z\t600
-                            2024-01-01T00:30:00.000000Z\t401
-                            """,
-                    0,
-                    NO_DESIGNATED_TIMESTAMP_ERROR
-            );
+            // UNION ALL concatenates its branches, so ORDER BY x sorts the rows. SAMPLE BY gets them in
+            // timestamp order without a sort: restateTimestampOrderForOrderSensitiveBase() in SqlOptimiser
+            // writes ORDER BY ts above the union, the code generator merges the branches in ts order, and
+            // x keeps the designated timestamp of the merged rows.
+            final String unionAll = "SELECT ts, sym FROM trades UNION ALL SELECT ts, sym FROM trades WHERE ts >= '2024-01-01T00:30'";
+            final String unionAllBuckets = """
+                    x\tcount
+                    2024-01-01T00:00:00.000000Z\t599
+                    2024-01-01T00:10:00.000000Z\t600
+                    2024-01-01T00:20:00.000000Z\t600
+                    2024-01-01T00:30:00.000000Z\t401
+                    """;
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + unionAll + ") ORDER BY x LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .sizeMayVary()
+                    .returns(expectedHead);
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + unionAll + ")) SAMPLE BY 10m")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .withPlanContaining("Union All Merge", "order: [ts asc]")
+                    .returns(unionAllBuckets);
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + unionAll + ") ORDER BY x) SAMPLE BY 10m")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns(unionAllBuckets);
             // the join output follows trades, so the slave timestamp cycles through the five marks
             assertDateaddOverUnorderedSubQuery(
                     "SELECT m.ts, t.price FROM trades t JOIN marks m ON (sym)",
