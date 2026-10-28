@@ -59,6 +59,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
@@ -812,6 +813,16 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         // columnTop == -1 means column did not exist at the partition
                         purgingOperator.add(columnIndex, columnName, columnType, indexType, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
+                    final long newVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    if (newVersion != existingVersion) {
+                        // A rolled-back attempt can leave a file under the new version, even a hard link to the
+                        // committed data of an indexed column (see moveIndexedColumnToNewVersion). Unlink it rather
+                        // than write into it.
+                        removeStaleFile(dFile(path.trimTo(pathTrimToLen), columnName, newVersion));
+                        if (isVarSize(columnType)) {
+                            removeStaleFile(iFile(path.trimTo(pathTrimToLen), columnName, newVersion));
+                        }
+                    }
                 }
 
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -895,5 +906,14 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         }
         indexBuilder.clear();
         path.trimTo(pathTrimToLen);
+    }
+
+    private void removeStaleFile(LPSZ file) {
+        if (!ff.removeQuiet(file)) {
+            final int errno = ff.errno();
+            if (ff.exists(file)) {
+                throw CairoException.critical(errno).put("cannot remove stale column file [path=").put(file).put(']');
+            }
+        }
     }
 }

@@ -27,13 +27,17 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
@@ -85,6 +89,10 @@ public class DropIndexOperator {
                     final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
                     if (partitionFormat == PartitionFormat.NATIVE) {
+                        if (columnDropIndexVersion != columnVersion) {
+                            // A rolled-back operation can leave files under the new version behind.
+                            removeStaleFiles(timestampType, partitionBy, pTimestamp, pVersion, columnName, indexType, columnDropIndexVersion);
+                        }
                         // create hard link to column data
                         // src
                         partitionDFile(path, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
@@ -147,5 +155,42 @@ public class DropIndexOperator {
                 partitionNameTxn
         );
         dFile(path, columnName, columnNameTxn);
+    }
+
+    private void removeStaleFile(LPSZ file) {
+        if (!ff.removeQuiet(file)) {
+            final int errno = ff.errno();
+            if (ff.exists(file)) {
+                throw CairoException.critical(errno).put("cannot remove stale column file [path=").put(file).put(']');
+            }
+        }
+    }
+
+    /**
+     * Removes the column's files under its new version in the partition. A rolled-back UPDATE can leave there a hard
+     * link to the committed data, which the new link would collide with, and an index of the data, which ADD INDEX
+     * would later adopt as the column's index instead of building one.
+     */
+    private void removeStaleFiles(
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            CharSequence columnName,
+            byte indexType,
+            long columnNameTxn
+    ) {
+        TableUtils.setPathForNativePartition(other.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int plen = other.size();
+        removeStaleFile(dFile(other, columnName, columnNameTxn));
+        if (IndexType.isPosting(indexType)) {
+            if (PostingIndexUtils.removeAllSealedFiles(ff, other, plen, columnName, columnNameTxn)) {
+                throw CairoException.critical(0).put("cannot remove stale index files [path=").put(other.trimTo(plen))
+                        .put(", column=").put(columnName).put(']');
+            }
+        } else {
+            removeStaleFile(IndexFactory.valueFileName(indexType, other.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+        }
+        removeStaleFile(IndexFactory.keyFileName(indexType, other.trimTo(plen), columnName, columnNameTxn));
     }
 }

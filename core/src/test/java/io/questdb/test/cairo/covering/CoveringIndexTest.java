@@ -45,6 +45,8 @@ import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -7334,6 +7336,68 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringQueryArrayOverUnpublishedSidecar() throws Exception {
+        // Simulates a chain entry that publishes a zero end offset for a covered slot, as
+        // PostingIndexWriter.captureCoverEndOffsets() does for a never-written slot or for a
+        // new-sealTxn entry before its sidecar is rebuilt. The reader's ensureSidecarOpen() then
+        // maps nothing for the slot and getCoveredArray() hands back a Java null.
+        // CoveringRecord.getArray() has to turn that into a NULL ArrayView:
+        // getArrayDimLen() and getArrayDouble1d2d() dereference whatever getArray() returns.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_arr_unpub (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr_unpub VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0, 3.0], 1),
+                    ('2024-01-01T01:00:00', 'A', ARRAY[4.0, 5.0], 2)
+                    """);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Zero the head entry's published end offset for cover slot 0 (vals).
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("t_arr_unpub")).concat("2024-01-01").slash();
+                final int plen = path.size();
+                final long len = ff.length(PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE));
+                try (MemoryCMARWImpl pk = new MemoryCMARWImpl(
+                        ff,
+                        PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(),
+                        len,
+                        MemoryTag.MMAP_DEFAULT,
+                        0
+                )) {
+                    final PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                    Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(pk, header));
+                    final PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+                    PostingIndexChainEntry.read(pk, header.headEntryOffset, entry);
+                    Assert.assertTrue("vals sidecar must be published before the tamper", entry.coverFileEndOffsets.getQuick(0) > 0);
+                    pk.putLong(PostingIndexChainEntry.resolveCoverFooterOffset(header.headEntryOffset, entry.genCount, entry.coveringFormat), 0L);
+                }
+            }
+
+            // Every stored array is non-null, so a NULL here can only come from the unpublished slot.
+            assertQuery("SELECT extra, vals, dim_length(vals, 1) len, vals[1] first FROM t_arr_unpub WHERE sym = 'A'")
+                    .withPlanContaining("CoveringIndex on: sym with: extra, vals")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            extra\tvals\tlen\tfirst
+                            1\tnull\tnull\tnull
+                            2\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveringQueryBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -11695,6 +11759,78 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             sym\ttag\tts
                             A\tx\t2024-01-01T00:00:00.000000Z
                             A\tz\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDropIndexOnCoveredColumnThenSealBypassWal() throws Exception {
+        // DROP INDEX moves the covered column to a new name txn, so the live index that INCLUDEs it must write the
+        // covered values of its next seal, which the commits after DROP INDEX trigger at the generation threshold,
+        // under that txn.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_cov_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag SYMBOL INDEX
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_drop_cov_seal VALUES ('2024-01-01T00:00:00', 'A', 'x'), ('2024-01-02T00:00:00', 'A', 'y')");
+            execute("ALTER TABLE t_drop_cov_seal ALTER COLUMN tag DROP INDEX");
+            commitRowsThenOpenNextPartition("t_drop_cov_seal", "'z1'", "'z2'", "'z3'", "'z4'", "'w'");
+
+            assertQuery("SELECT sym, tag, ts FROM t_drop_cov_seal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: tag, ts")
+                    .returns("""
+                            sym\ttag\tts
+                            A\tx\t2024-01-01T00:00:00.000000Z
+                            A\ty\t2024-01-02T00:00:00.000000Z
+                            A\tz1\t2024-01-02T00:00:01.000000Z
+                            A\tz2\t2024-01-02T00:00:02.000000Z
+                            A\tz3\t2024-01-02T00:00:03.000000Z
+                            A\tz4\t2024-01-02T00:00:04.000000Z
+                            A\tw\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDropIndexOnCoveredColumnThenSealWal() throws Exception {
+        // WAL counterpart of testDropIndexOnCoveredColumnThenSealBypassWal.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_cov_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag SYMBOL INDEX
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("INSERT INTO t_drop_cov_wal VALUES ('2024-01-01T00:00:00', 'A', 'x'), ('2024-01-02T00:00:00', 'A', 'y')");
+            drainWalQueue();
+            execute("ALTER TABLE t_drop_cov_wal ALTER COLUMN tag DROP INDEX");
+            drainWalQueue();
+            commitRowsThenOpenNextPartition("t_drop_cov_wal", "'z1'", "'z2'", "'z3'", "'z4'", "'w'");
+
+            assertQuery("SELECT sym, tag, ts FROM t_drop_cov_wal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: tag, ts")
+                    .returns("""
+                            sym\ttag\tts
+                            A\tx\t2024-01-01T00:00:00.000000Z
+                            A\ty\t2024-01-02T00:00:00.000000Z
+                            A\tz1\t2024-01-02T00:00:01.000000Z
+                            A\tz2\t2024-01-02T00:00:02.000000Z
+                            A\tz3\t2024-01-02T00:00:03.000000Z
+                            A\tz4\t2024-01-02T00:00:04.000000Z
+                            A\tw\t2024-01-03T00:00:00.000000Z
                             """);
         });
     }
@@ -17986,6 +18122,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameCoveredColumnOfIndexWithNameTxnZeroBypassWal() throws Exception {
+        // A column added before the first commit has name txn 0, which the sidecar file names cannot tell apart from
+        // no name txn. RENAME of the covered column must still link the sidecars of that column's index.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rename_cov_txn0 (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t_rename_cov_txn0 ADD COLUMN sym SYMBOL");
+            execute("ALTER TABLE t_rename_cov_txn0 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("INSERT INTO t_rename_cov_txn0 VALUES ('2024-01-01T00:00:00', 1.0, 'A'), ('2024-01-02T00:00:00', 2.0, 'A')");
+            execute("ALTER TABLE t_rename_cov_txn0 RENAME COLUMN val TO price");
+
+            assertQuery("SELECT sym, price, ts FROM t_rename_cov_txn0 WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: price, ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameCoveredColumnOfIndexWithNameTxnZeroWal() throws Exception {
+        // WAL counterpart of testRenameCoveredColumnOfIndexWithNameTxnZeroBypassWal.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rename_cov_txn0_wal (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t_rename_cov_txn0_wal ADD COLUMN sym SYMBOL");
+            execute("ALTER TABLE t_rename_cov_txn0_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("INSERT INTO t_rename_cov_txn0_wal VALUES ('2024-01-01T00:00:00', 1.0, 'A'), ('2024-01-02T00:00:00', 2.0, 'A')");
+            drainWalQueue();
+            execute("ALTER TABLE t_rename_cov_txn0_wal RENAME COLUMN val TO price");
+            drainWalQueue();
+
+            assertQuery("SELECT sym, price, ts FROM t_rename_cov_txn0_wal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: price, ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRenameCoveredColumnOnParquetPartition() throws Exception {
         // Same as testRenameCoveredColumn, but with a var-size covered column, a parquet partition, and a write
         // after the rename that reseals only the last partition.
@@ -18029,6 +18214,80 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameCoveredColumnThenSealBypassWal() throws Exception {
+        // RENAME moves the covered column to a new name txn, so the live index that INCLUDEs it must write the covered
+        // values of its next seal, which the commits after RENAME trigger at the generation threshold, under that txn.
+        // An open reader keeps the files of the old name txn from the purge.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_cov_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_rename_cov_seal VALUES ('2024-01-01T00:00:00', 'A', 1.0), ('2024-01-02T00:00:00', 'A', 2.0)");
+            try (TableReader ignore = getReader("t_rename_cov_seal")) {
+                execute("ALTER TABLE t_rename_cov_seal RENAME COLUMN val TO price");
+                commitRowsThenOpenNextPartition("t_rename_cov_seal", "3.0", "4.0", "5.0", "6.0", "300.0");
+            }
+
+            assertQuery("SELECT sym, price, ts FROM t_rename_cov_seal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: price, ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
+                            A\t3.0\t2024-01-02T00:00:01.000000Z
+                            A\t4.0\t2024-01-02T00:00:02.000000Z
+                            A\t5.0\t2024-01-02T00:00:03.000000Z
+                            A\t6.0\t2024-01-02T00:00:04.000000Z
+                            A\t300.0\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameCoveredColumnThenSealWal() throws Exception {
+        // WAL counterpart of testRenameCoveredColumnThenSealBypassWal.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_cov_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("INSERT INTO t_rename_cov_wal VALUES ('2024-01-01T00:00:00', 'A', 1.0), ('2024-01-02T00:00:00', 'A', 2.0)");
+            drainWalQueue();
+            execute("ALTER TABLE t_rename_cov_wal RENAME COLUMN val TO price");
+            drainWalQueue();
+            commitRowsThenOpenNextPartition("t_rename_cov_wal", "3.0", "4.0", "5.0", "6.0", "300.0");
+
+            assertQuery("SELECT sym, price, ts FROM t_rename_cov_wal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: price, ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
+                            A\t3.0\t2024-01-02T00:00:01.000000Z
+                            A\t4.0\t2024-01-02T00:00:02.000000Z
+                            A\t5.0\t2024-01-02T00:00:03.000000Z
+                            A\t6.0\t2024-01-02T00:00:04.000000Z
+                            A\t300.0\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRenameIndexedColumn() throws Exception {
         // Rename a column that has INDEX TYPE POSTING
         assertMemoryLeak(() -> {
@@ -18058,6 +18317,96 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             val
                             10.5
                             11.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameIndexedColumnCoveredByOtherIndexThenSealBypassWal() throws Exception {
+        // RENAME of an indexed column rebinds its own index to the new name txn, and the index that INCLUDEs the
+        // column must seal under that txn too.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_idx_cov (
+                        ts TIMESTAMP,
+                        grp SYMBOL INDEX TYPE POSTING INCLUDE (sym),
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_rename_idx_cov VALUES ('2024-01-01T00:00:00', 'A', 'x'), ('2024-01-02T00:00:00', 'A', 'y')");
+            execute("ALTER TABLE t_rename_idx_cov RENAME COLUMN sym TO s");
+            commitRowsThenOpenNextPartition("t_rename_idx_cov", "'z1'", "'z2'", "'z3'", "'z4'", "'w'");
+
+            assertQuery("SELECT grp, s, ts FROM t_rename_idx_cov WHERE grp = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: grp with: s, ts")
+                    .returns("""
+                            grp\ts\tts
+                            A\tx\t2024-01-01T00:00:00.000000Z
+                            A\ty\t2024-01-02T00:00:00.000000Z
+                            A\tz1\t2024-01-02T00:00:01.000000Z
+                            A\tz2\t2024-01-02T00:00:02.000000Z
+                            A\tz3\t2024-01-02T00:00:03.000000Z
+                            A\tz4\t2024-01-02T00:00:04.000000Z
+                            A\tw\t2024-01-03T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT s, ts FROM t_rename_idx_cov WHERE s = 'z2'")
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts
+                            z2\t2024-01-02T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameIndexedColumnWithNameTxnZeroBypassWal() throws Exception {
+        // A column added before the first commit has name txn 0, which the sidecar file names cannot tell apart from
+        // no name txn. RENAME of that column must still link the sidecars of its index under the new name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rename_idx_txn0 (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t_rename_idx_txn0 ADD COLUMN sym SYMBOL");
+            execute("ALTER TABLE t_rename_idx_txn0 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("INSERT INTO t_rename_idx_txn0 VALUES ('2024-01-01T00:00:00', 1.0, 'A'), ('2024-01-02T00:00:00', 2.0, 'A')");
+            execute("ALTER TABLE t_rename_idx_txn0 RENAME COLUMN sym TO s");
+
+            assertQuery("SELECT s, val, ts FROM t_rename_idx_txn0 WHERE s = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s with: val, ts")
+                    .returns("""
+                            s\tval\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameIndexedColumnWithNameTxnZeroWal() throws Exception {
+        // WAL counterpart of testRenameIndexedColumnWithNameTxnZeroBypassWal.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rename_idx_txn0_wal (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t_rename_idx_txn0_wal ADD COLUMN sym SYMBOL");
+            execute("ALTER TABLE t_rename_idx_txn0_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("INSERT INTO t_rename_idx_txn0_wal VALUES ('2024-01-01T00:00:00', 1.0, 'A'), ('2024-01-02T00:00:00', 2.0, 'A')");
+            drainWalQueue();
+            execute("ALTER TABLE t_rename_idx_txn0_wal RENAME COLUMN sym TO s");
+            drainWalQueue();
+
+            assertQuery("SELECT s, val, ts FROM t_rename_idx_txn0_wal WHERE s = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s with: val, ts")
+                    .returns("""
+                            s\tval\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
                             """);
         });
     }
@@ -19111,6 +19460,174 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             sym\tval\tts
                             A\t110.5\t2024-01-01T00:00:00.000000Z
                             A\t11.5\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateCoveredColumnThenSealBypassWal() throws Exception {
+        // UPDATE of the active partition moves the covered column to a new name txn, and the index that INCLUDEs it
+        // must go on sealing that partition under the new txn.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_upd_cov_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_upd_cov_seal VALUES ('2024-01-01T00:00:00', 'A', 1.0), ('2024-01-02T00:00:00', 'A', 2.0)");
+            execute("UPDATE t_upd_cov_seal SET val = val + 100");
+            commitRowsThenOpenNextPartition("t_upd_cov_seal", "3.0", "4.0", "5.0", "6.0", "300.0");
+
+            assertQuery("SELECT sym, val, ts FROM t_upd_cov_seal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: val, ts")
+                    .returns("""
+                            sym\tval\tts
+                            A\t101.0\t2024-01-01T00:00:00.000000Z
+                            A\t102.0\t2024-01-02T00:00:00.000000Z
+                            A\t3.0\t2024-01-02T00:00:01.000000Z
+                            A\t4.0\t2024-01-02T00:00:02.000000Z
+                            A\t5.0\t2024-01-02T00:00:03.000000Z
+                            A\t6.0\t2024-01-02T00:00:04.000000Z
+                            A\t300.0\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRolledBackSymbolThenDropAndAddIndex() throws Exception {
+        // The rolled-back UPDATE of sym leaves a sealed index of its rolled-back values under sym's next version, which
+        // DROP INDEX then moves sym to. ADD INDEX must index the committed values rather than adopt that index.
+        assertMemoryLeak(() -> {
+            createRolledBackUpdateTable();
+            assertUpdateFailsOnParquet("UPDATE t_upd_rb SET sym = 'Z'");
+            execute("ALTER TABLE t_upd_rb ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE t_upd_rb ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: ts, val")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-02T00:00:00.000000Z\tA\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-04T00:00:00.000000Z\tA\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRolledBackThenChangeIndexedColumnType() throws Exception {
+        // The rolled-back UPDATE leaves sym's data file hard-linked under the next version, which ALTER COLUMN TYPE
+        // then writes the converted column to.
+        assertMemoryLeak(() -> {
+            createRolledBackUpdateTable();
+            assertUpdateFailsOnParquet("UPDATE t_upd_rb SET val = val + 100");
+            execute("ALTER TABLE t_upd_rb ALTER COLUMN sym TYPE STRING");
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t1.5
+                            2024-01-02T00:00:00.000000Z\tA\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-04T00:00:00.000000Z\tA\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRolledBackThenDropAndAddIndex() throws Exception {
+        // The rolled-back UPDATE leaves a sealed index under sym's next version, covering the rolled-back values of val,
+        // and DROP INDEX then moves sym to that version. ADD INDEX must build a new index rather than adopt that one.
+        assertMemoryLeak(() -> {
+            createRolledBackUpdateTable();
+            assertUpdateFailsOnParquet("UPDATE t_upd_rb SET val = val + 100");
+            execute("ALTER TABLE t_upd_rb ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE t_upd_rb ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: ts, val")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-02T00:00:00.000000Z\tA\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-04T00:00:00.000000Z\tA\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRolledBackThenDropIndex() throws Exception {
+        // The rolled-back UPDATE leaves sym's data file hard-linked under the next version, which DROP INDEX
+        // then links to again.
+        assertMemoryLeak(() -> {
+            createRolledBackUpdateTable();
+            assertUpdateFailsOnParquet("UPDATE t_upd_rb SET val = val + 100");
+            execute("ALTER TABLE t_upd_rb ALTER COLUMN sym DROP INDEX");
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb WHERE sym = 'A'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-02T00:00:00.000000Z\tA\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-04T00:00:00.000000Z\tA\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRolledBackThenUpdateIndexedColumn() throws Exception {
+        // The rolled-back UPDATE leaves sym's data file hard-linked under the next version. The next UPDATE of sym
+        // must not write its new values through that link into the committed data.
+        assertMemoryLeak(() -> {
+            createRolledBackUpdateTable();
+            assertUpdateFailsOnParquet("UPDATE t_upd_rb SET val = val + 100");
+            assertUpdateFailsOnParquet("UPDATE t_upd_rb SET sym = 'Z'");
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb WHERE ts IN '2024-01-01'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t1.5
+                            """);
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: ts, val")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-02T00:00:00.000000Z\tA\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-04T00:00:00.000000Z\tA\t4.0
+                            """);
+
+            // A successful UPDATE of sym still works after the rolled-back ones.
+            execute("UPDATE t_upd_rb SET sym = 'Z' WHERE ts IN '2024-01-01'");
+            assertQuery("SELECT ts, sym, val FROM t_upd_rb WHERE sym = 'Z'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: ts, val")
+                    .returns("""
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tZ\t1.0
+                            2024-01-01T01:00:00.000000Z\tZ\t1.5
                             """);
         });
     }
@@ -20216,6 +20733,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertUpdateFailsOnParquet(String sql) throws Exception {
+        try {
+            execute(sql);
+            Assert.fail("UPDATE must fail on the parquet partition: " + sql);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot update parquet-format partition");
+        }
+    }
+
+    /**
+     * Commits a row of 'A' and each value but the last into the 2024-01-02 partition, a row per commit, then a row of
+     * 'A' and the last value that opens the 2024-01-03 partition.
+     */
+    private static void commitRowsThenOpenNextPartition(String tableName, String... values) throws SqlException {
+        for (int i = 0, n = values.length - 1; i < n; i++) {
+            execute("INSERT INTO " + tableName + " VALUES ('2024-01-02T00:00:0" + (i + 1) + "', 'A', " + values[i] + ")");
+            drainWalQueue();
+        }
+        execute("INSERT INTO " + tableName + " VALUES ('2024-01-03T00:00:00', 'A', " + values[values.length - 1] + ")");
+        drainWalQueue();
+    }
+
     /**
      * Builds a minimal RecordMetadata for direct PostingIndexReader construction.
      * Pads slots up to the highest covered index with placeholder LONG columns;
@@ -20432,6 +20971,29 @@ public class CoveringIndexTest extends AbstractCairoTest {
         execute("ALTER TABLE t_np_historic ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (grp, price)");
         engine.releaseAllWriters();
         engine.releaseAllReaders();
+    }
+
+    /**
+     * A non-WAL table whose third partition is parquet, so an UPDATE of every row finishes the first two native
+     * partitions and then fails and rolls back.
+     */
+    private static void createRolledBackUpdateTable() throws Exception {
+        execute("""
+                CREATE TABLE t_upd_rb (
+                    ts TIMESTAMP,
+                    sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                    val DOUBLE
+                ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                """);
+        execute("""
+                INSERT INTO t_upd_rb VALUES
+                ('2024-01-01T00:00:00', 'A', 1.0),
+                ('2024-01-01T01:00:00', 'B', 1.5),
+                ('2024-01-02T00:00:00', 'A', 2.0),
+                ('2024-01-03T00:00:00', 'A', 3.0),
+                ('2024-01-04T00:00:00', 'A', 4.0)
+                """);
+        execute("ALTER TABLE t_upd_rb CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
     }
 
     @SuppressWarnings("unchecked")

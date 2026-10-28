@@ -2591,6 +2591,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexers.setQuick(columnIndex, null);
                 populateDenseIndexerList();
             }
+            configureCoveringIndexesOf(columnIndex);
 
             // purge old column versions
             finishColumnPurge();
@@ -3987,6 +3988,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 }
+                configureCoveringIndexesOf(index);
 
                 // commit to _txn file
                 bumpMetadataAndColumnStructureVersion();
@@ -7279,6 +7281,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Points the live posting indexes that INCLUDE the column at its current name and name txn in the last open
+     * partition, after RENAME or DROP INDEX moved it to a new one. A seal names the covered values it writes after
+     * the name txn the index was configured with, while readers look them up under the column's current one. See
+     * {@link #linkCoveringSidecars(int, int, long, long, long)} for the values sealed before the move.
+     */
+    private void configureCoveringIndexesOf(int coveredColumnIndex) {
+        if (lastOpenPartitionTs == Long.MIN_VALUE) {
+            return;
+        }
+        for (int i = 0, n = Math.min(columnCount, indexers.size()); i < n; i++) {
+            if (i == coveredColumnIndex || metadata.getColumnType(i) <= 0 || !metadata.isColumnIndexed(i)
+                    || !IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                continue;
+            }
+            final IntList coveredColumns = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (coveredColumns == null || coveredColumns.indexOf(coveredColumnIndex, 0, coveredColumns.size()) < 0) {
+                continue;
+            }
+            final ColumnIndexer indexer = indexers.getQuick(i);
+            if (indexer != null && indexer.getWriter().isOpen()) {
+                configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
+            }
+        }
+    }
+
+    /**
      * A composite (or parquet) active partition leaves {@code columns[]} closed, so {@link #openPartition(long, long)}
      * - the only thing that reconfigures a BITMAP indexer's live follower - never runs for it, and the indexer keeps
      * whatever closed, unmapped {@code IndexWriter} an earlier {@link #closeActivePartition(boolean)} left behind.
@@ -10404,7 +10432,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             final CharSequence indexColumnName = metadata.getColumnName(i);
-            final long indexColumnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+            // A sidecar name writes name txn 0 of the index column as no name txn, and the scan reads it back so.
+            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+            final long indexColumnNameTxn = columnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : columnNameTxn;
             PostingIndexUtils.scanSealedFiles(ff, path, plen, indexColumnName, new PostingIndexUtils.SealedFileVisitor() {
                 @Override
                 public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long fileCoveredColumnNameTxn, long sealTxn) {
@@ -10489,14 +10519,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // than reading the (includeIdx, coveredColumnNameTxn) tuples from .pci:
         // ALTER on covered columns can leave .pci's per-column count out of
         // sync with the on-disk reality, so the directory listing is the
-        // source of truth.
+        // source of truth. A sidecar name writes name txn 0 as no name txn, and the scan reads it back so.
+        final long srcSidecarColumnNameTxn = srcColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : srcColumnNameTxn;
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
                 // Match the live generation. pvSealTxn folds the empty
                 // chain into sealTxn=0 so pre-seal .pc<N>.<col>.0.* files
                 // are linked alongside the live .pv.<col>.0.
-                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != pvSealTxn) {
+                if (postingColumnNameTxn != srcSidecarColumnNameTxn || sealTxn != pvSealTxn) {
                     return;
                 }
                 linkFile(ff,

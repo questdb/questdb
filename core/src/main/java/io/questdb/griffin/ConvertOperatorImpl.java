@@ -51,6 +51,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
@@ -716,7 +717,12 @@ public class ConvertOperatorImpl implements Closeable {
 
     private void openColumnsRW(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        // The column is new, so a file under its name txn is left behind by a rolled-back operation, possibly a hard
+        // link to the committed data of the column it replaces (see UpdateOperatorImpl). Unlink it rather than write
+        // into it.
+        removeStaleFile(dFile(path.trimTo(pathTrimToLen), name, columnNameTxn));
         if (isVarSize(columnType)) {
+            removeStaleFile(iFile(path.trimTo(pathTrimToLen), name, columnNameTxn));
             fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             try {
                 varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
@@ -727,6 +733,15 @@ public class ConvertOperatorImpl implements Closeable {
         } else {
             fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             varFd = -1;
+        }
+    }
+
+    private void removeStaleFile(LPSZ file) {
+        if (!ff.removeQuiet(file)) {
+            final int errno = ff.errno();
+            if (ff.exists(file)) {
+                throw CairoException.critical(errno).put("cannot remove stale column file [path=").put(file).put(']');
+            }
         }
     }
 
