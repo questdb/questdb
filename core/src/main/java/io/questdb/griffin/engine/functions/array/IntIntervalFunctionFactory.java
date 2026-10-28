@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -73,7 +74,7 @@ public class IntIntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            interval.of(left.getInt(rec), right.getInt(rec));
+            interval.of(Numbers.intToLong(left.getInt(rec)), Numbers.intToLong(right.getInt(rec)));
             return interval;
         }
 

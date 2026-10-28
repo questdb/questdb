@@ -544,6 +544,10 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("[]\nnull\n");
+            assertQuery("SELECT arr[CASE WHEN n = 1 THEN 1:2 END] FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("[]\nnull\n");
             assertQuery("SELECT arr2[1, null::int] FROM tango")
                     .noLeakCheck()
                     .expectSize()
@@ -4416,6 +4420,12 @@ public class ArrayTest extends AbstractCairoTest {
             );
             assertExceptionNoLeakCheck("SELECT arr[(arr[1, 1] - 1)::int : 2] FROM tango",
                     32, "array slice bounds must be non-zero [dim=1, lowerBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[interval('2020-01-01'::TIMESTAMP, '2020-01-02'::TIMESTAMP)] FROM tango",
+                    11, "invalid type for array access [type=INTERVAL]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1:2, NULL::INTERVAL] FROM tango",
+                    20, "invalid type for array access [type=INTERVAL]"
             );
         });
     }

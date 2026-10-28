@@ -168,6 +168,18 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testInconvertibleTypedNull() throws Exception {
+        for (String type : new String[]{"DATE", "DECIMAL(9,2)", "GEOHASH(1c)", "INTERVAL", "IPv4", "LONG256", "STRING", "SYMBOL", "TIMESTAMP", "UUID", "VARCHAR"}) {
+            assertQuery("SELECT l2price(100, 5, 1, 5, NULL::" + type + ")")
+                    .fails(33, "l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `" + type + "`.");
+        }
+        assertQuery("SELECT l2price(NULL::STRING, 8, 17.2)")
+                .fails(19, "l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.");
+        assertQuery("SELECT l2price(NULL::TIMESTAMP, 8, 17.2)")
+                .fails(19, "l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `TIMESTAMP`.");
+    }
+
+    @Test
     public void testInconvertibleTypes() throws Exception {
         assertMemoryLeak(() -> {
             assertFailure("[20] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(1.3, '31', 5)");
@@ -210,6 +222,9 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testLevelTwoPriceReturnsNullWithNullTarget() throws Exception {
         assertQuery("select l2price(null, 8, 17.2);").expectSize().returns("l2price\nnull\n");
+        assertQuery("SELECT typeof(l2price(NULL, 8, 17.2)) t, typeof(l2price(NULL::INT, 8, 17.2)) ti")
+                .expectSize()
+                .returns("t\tti\nDOUBLE\tDOUBLE\n");
     }
 
     @Test

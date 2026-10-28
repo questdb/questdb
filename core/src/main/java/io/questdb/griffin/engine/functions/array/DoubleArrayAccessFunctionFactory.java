@@ -207,7 +207,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
             int argType = arg.getType();
-            if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
+            if (!isIndexArg(argType) && argType != ColumnType.INTERVAL_RAW) {
                 throw SqlException.position(argPositions.get(i))
                         .put("invalid type for array access [type=").put(ColumnType.nameOf(argType)).put(']');
             }
@@ -464,7 +464,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
                     long hiLong = range.getHi();
-                    if (loLong == Numbers.INT_NULL || hiLong == Numbers.INT_NULL) {
+                    if (loLong == Numbers.LONG_NULL || hiLong == Numbers.LONG_NULL) {
                         derivedArray.ofNull();
                         return derivedArray;
                     }

@@ -59,6 +59,11 @@ public class NullIfIPv4FunctionFactory implements FunctionFactory {
         return new NullIfIPv4FunctionFactory.NullIfIPv4Function(args.getQuick(0), args.getQuick(1));
     }
 
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
+    }
+
     private static class NullIfIPv4Function extends IPv4Function implements BinaryFunction {
         private final Function arg1;
         private final Function arg2;

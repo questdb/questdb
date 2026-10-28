@@ -56,16 +56,15 @@ import java.util.List;
  * {@code getResultType} throws, when the {@code -ea} check in {@code FunctionResolver.createFunction} finds a
  * built type other than the declared one, when a call the binder left unconstructed builds into a function
  * with other semantics than the binder recorded, or when compiling a call throws anything other than a
- * SqlException, CairoException or ImplicitCastException that is not a known crash master shares. Every call
- * that builds a {@link ComparisonFunction} also runs beside its NOT over rows holding NULLs and values, and
- * fails when the folded NOT does not return the negation of the comparison.
+ * SqlException, CairoException or ImplicitCastException. Every call that builds a {@link ComparisonFunction}
+ * also runs beside its NOT over rows holding NULLs and values, and fails when the folded NOT does not return
+ * the negation of the comparison.
  */
 public class FunctionResultTypeContractTest extends AbstractCairoTest {
     private static final int KIND_COUNT = 3;
     private static final int MAX_BASE_COMBINATIONS = 100;
     private static final int MAX_VALUE_COMBINATIONS = 3;
     private static final int MAX_VAR_ARGS = 3;
-    private static final HashSet<String> knownMasterCrashes = new HashSet<>();
     private static final ObjList<String> cursors = new ObjList<>();
     private static final ObjList<Form> forms = new ObjList<>();
     private static final HashMap<String, Form> formsBySql = new HashMap<>();
@@ -162,19 +161,6 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         final StackTraceElement[] frames = e.getStackTrace();
         final String frame = frames.length > 0 ? frames[0].getClassName().substring(frames[0].getClassName().lastIndexOf('.') + 1) + '.' + frames[0].getMethodName() : "";
         return name + ' ' + e.getClass().getSimpleName() + " at " + frame;
-    }
-
-    private static boolean isContractViolation(Throwable e) {
-        final String message = e.getMessage();
-        if (message != null && (message.startsWith("function type differs") || message.startsWith("bound function semantics have changed"))) {
-            return true;
-        }
-        for (StackTraceElement frame : e.getStackTrace()) {
-            if (frame.getMethodName().equals("getResultType")) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isIdentifier(String name) {
@@ -487,9 +473,7 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
 
     private void recordCrash(String sql, Throwable e) {
         final String crash = crashKey(functionName, e);
-        if (!isContractViolation(e) && knownMasterCrashes.contains(crash)) {
-            rejected++;
-        } else if (crashes.add(crash)) {
+        if (crashes.add(crash)) {
             failures.add(crash + " :: " + sql + " -> " + e);
         }
     }
@@ -567,20 +551,6 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
     }
 
     static {
-        // Each entry is a crash master raises with the same exception class for the same SQL (probe-confirmed);
-        // the key is the function name, the exception class and the throwing frame.
-        // nullif over IPv4 reads a CHAR operand as IPv4.
-        knownMasterCrashes.add("nullif UnsupportedOperationException at CharFunction.getIPv4");
-        // l2price reads non-numeric var-arg constants as DOUBLE.
-        knownMasterCrashes.add("l2price UnsupportedOperationException at AbstractGeoHashFunction.getDouble");
-        knownMasterCrashes.add("l2price UnsupportedOperationException at DecimalFunction.getDouble");
-        knownMasterCrashes.add("l2price UnsupportedOperationException at IPv4Function.getDouble");
-        knownMasterCrashes.add("l2price UnsupportedOperationException at IntervalFunction.getDouble");
-        knownMasterCrashes.add("l2price UnsupportedOperationException at Long256Function.getDouble");
-        knownMasterCrashes.add("l2price UnsupportedOperationException at UuidFunction.getDouble");
-        // Slicing a constant array by a timestamp interval overflows the int index.
-        knownMasterCrashes.add("[] AssertionError at DoubleArrayAccessFunctionFactory$SliceDoubleArrayFunction.toIndex");
-
         addConstant("null", ColumnType.NULL);
 
         addColumn("bo", ColumnType.BOOLEAN);
