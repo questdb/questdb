@@ -34,10 +34,11 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.MemoryTag;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -64,6 +65,87 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     public AlterTableConvertPartitionTest() {
         this.timestampType = TestUtils.getTimestampType();
+    }
+
+    @Test
+    public void testConvertActiveSplitPartitionToParquetClosesNativeColumns() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createActiveSplitPartition();
+
+            try (TableWriter writer = getWriter(token)) {
+                final long partitionTimestamp = writer.getPartitionTimestamp(0);
+                Assert.assertEquals(
+                        "test setup must leave the active logical partition split",
+                        partitionTimestamp,
+                        writer.getTxWriter().getLogicalPartitionTimestamp(writer.getPartitionTimestamp(1))
+                );
+
+                writer.convertPartitionNativeToParquet(partitionTimestamp, null, Double.NaN);
+
+                for (int i = 0, n = writer.getColumnCount(); i < n; i++) {
+                    final MemoryMA column = writer.getStorageColumn(i);
+                    Assert.assertTrue(
+                            "native storage column must be closed [index=" + i + ']',
+                            column == null || !column.isOpen());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConvertParquetPrefixToNativeKeepsActiveSplitTailOpen() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 2);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createActiveSplitPartition();
+
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2020-01-01'");
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            drainWalQueue();
+            execute("INSERT INTO x VALUES (12, 120, '2020-01-01T15:00:00.000000Z')");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final var txReader = reader.getTxFile();
+                Assert.assertEquals(
+                        "test setup must create a parquet prefix and native tail",
+                        2,
+                        reader.getPartitionCount()
+                );
+                Assert.assertEquals(
+                        "test setup prefix and tail must share a logical partition",
+                        txReader.getPartitionTimestampByIndex(0),
+                        txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(1))
+                );
+                Assert.assertTrue("test setup prefix must be parquet", txReader.isPartitionParquet(0));
+                Assert.assertFalse("test setup active tail must be native", txReader.isPartitionParquet(1));
+            }
+
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+            drainWalQueue();
+            execute("INSERT INTO x VALUES (13, 130, '2020-01-01T20:00:00.000000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "parquet prefix conversion suspended WAL apply",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT value, marker FROM x ORDER BY ts")
+                    .expectSize()
+                    .returns("""
+                            value\tmarker
+                            12\t120
+                            11\t110
+                            10\t100
+                            13\t130
+                            """);
+        });
     }
 
     @Test
@@ -1454,6 +1536,35 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         } else {
             Assert.assertFalse(ff.exists(path.$()));
         }
+    }
+
+    private TableToken createActiveSplitPartition() throws Exception {
+        execute("CREATE TABLE x (value LONG, marker INT, ts " + timestampType.getTypeName()
+                + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO x VALUES
+                (1, 10, '2020-01-01T00:00:00.000000Z'),
+                (2, 20, '2020-01-01T02:00:00.000000Z'),
+                (3, 30, '2020-01-01T04:00:00.000000Z'),
+                (4, 40, '2020-01-01T06:00:00.000000Z'),
+                (5, 50, '2020-01-01T08:00:00.000000Z'),
+                (6, 60, '2020-01-01T10:00:00.000000Z'),
+                (7, 70, '2020-01-01T12:00:00.000000Z'),
+                (8, 80, '2020-01-01T14:00:00.000000Z'),
+                (9, 90, '2020-01-01T16:00:00.000000Z'),
+                (10, 100, '2020-01-01T18:00:00.000000Z')
+                """);
+        drainWalQueue();
+
+        final TableToken token = engine.verifyTableName("x");
+        try (TableReader pinReader = engine.getReader(token)) {
+            execute("INSERT INTO x VALUES (11, 110, '2020-01-01T17:00:00.000000Z')");
+            drainWalQueue();
+
+            pinReader.reload();
+            Assert.assertEquals("test setup must create a split partition", 2, pinReader.getPartitionCount());
+        }
+        return token;
     }
 
     private void createTable(String tableName, String... inserts) throws Exception {
