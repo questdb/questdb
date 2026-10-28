@@ -46,6 +46,7 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
@@ -55,6 +56,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -69,9 +71,12 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Regression test for the cumulative-ACK leapfrog over a silently gate-rejected
@@ -1707,6 +1712,330 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNothingFollowsRoleChangeCloseAtClientClose() throws Exception {
+        assertNothingFollowsRoleChangeClose(clientCloseFrame());
+    }
+
+    @Test
+    public void testNothingFollowsRoleChangeCloseAtContinuationFrame() throws Exception {
+        assertNothingFollowsRoleChangeClose(createMaskedFrame(WebSocketOpcode.CONTINUATION, new byte[]{'x'}));
+    }
+
+    @Test
+    public void testNothingFollowsRoleChangeCloseAtFragmentedFrame() throws Exception {
+        assertNothingFollowsRoleChangeClose(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L), false));
+    }
+
+    @Test
+    public void testNothingFollowsRoleChangeCloseAtOversizedFrame() throws Exception {
+        assertNothingFollowsRoleChangeClose(oversizedFrameHeader(new DefaultHttpServerConfiguration(configuration).getRecvBufferSize() + 1L));
+    }
+
+    @Test
+    public void testNothingFollowsRoleChangeCloseAtPing() throws Exception {
+        assertNothingFollowsRoleChangeClose(createMaskedFrame(WebSocketOpcode.PING, new byte[0]));
+    }
+
+    @Test
+    public void testNothingFollowsRoleChangeCloseAtText() throws Exception {
+        assertNothingFollowsRoleChangeClose(createMaskedFrame(WebSocketOpcode.TEXT, new byte[]{'x'}));
+    }
+
+    /**
+     * A control frame, a fragment or an oversized frame behind a commit batch makes
+     * the batch commit first. When a demote refuses that commit, the server sends its
+     * role-change CLOSE and half-closes; without durable acks the connection then
+     * drains instead of waiting for the echo. Nothing may follow that CLOSE: on a real
+     * socket a write after the half-close fails, and the abortive teardown can discard
+     * the client's unread final ack.
+     */
+    private void assertNothingFollowsRoleChangeClose(byte[] trailingFrame) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                demotableEngine.demoteAtNextCommit();
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                        trailingFrame
+                )) {
+                    connection.deliverFrames(3);
+                    Assert.assertTrue("test setup: the demote must land at the batch commit", demotableEngine.isReadOnlyMode());
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                }
+                assertTableEmpty(demotableEngine);
+            }
+        });
+    }
+
+    /**
+     * On a durable-ack connection with no work awaiting upload, the server waits for
+     * the client to echo its role-change CLOSE before tearing the connection down: the
+     * echo proves the client read the frames before that CLOSE. A CLOSE the client
+     * pipelined before the server's CLOSE reached it proves nothing of the kind, so it
+     * must not complete the handshake, whether it directly follows the refused batch
+     * or sits behind another frame.
+     */
+    @Test
+    public void testClientClosePipelinedBeforeRoleChangeCloseIsNotTheEcho() throws Exception {
+        assertPipelinedClientCloseIsNotTheEcho(clientCloseFrame());
+    }
+
+    @Test
+    public void testClientClosePipelinedBehindPingBeforeRoleChangeCloseIsNotTheEcho() throws Exception {
+        assertPipelinedClientCloseIsNotTheEcho(createMaskedFrame(WebSocketOpcode.PING, new byte[0]), clientCloseFrame());
+    }
+
+    private void assertPipelinedClientCloseIsNotTheEcho(byte[]... pipelinedFrames) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final ObjList<byte[]> frames = new ObjList<>();
+            frames.add(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)));
+            frames.add(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)));
+            for (byte[] frame : pipelinedFrames) {
+                frames.add(frame);
+            }
+            frames.add(clientCloseFrame()); // the echo, sent after the client read the server's CLOSE
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                demotableEngine.demoteAtNextCommit();
+                try (Connection connection = new Connection(demotableEngine, httpConfig, AllowAllSecurityContext.INSTANCE, true, toArray(frames))) {
+                    Assert.assertFalse(
+                            "a CLOSE pipelined before the server's CLOSE must not complete the handshake",
+                            connection.deliverFrames(frames.size() - 1)
+                    );
+                    Assert.assertTrue("test setup: the demote must land at the batch commit", demotableEngine.isReadOnlyMode());
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                    Assert.assertTrue("the client's echo completes the handshake", connection.deliverFrames(1));
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                }
+                assertTableEmpty(demotableEngine);
+            }
+        });
+    }
+
+    /**
+     * As {@link #testClientClosePipelinedBeforeRoleChangeCloseIsNotTheEcho}, but the
+     * client's pipelined CLOSE straddles two reads: the batch commits at the end of the
+     * first read with the head of that CLOSE buffered, and the demote refuses the
+     * commit. Completing that CLOSE in the next read must not complete the handshake.
+     */
+    @Test
+    public void testClientCloseStraddlingReadsBeforeRoleChangeCloseIsNotTheEcho() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            final byte[] close = clientCloseFrame();
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                demotableEngine.demoteAtNextCommit();
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        true,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                        Arrays.copyOfRange(close, 0, close.length - 1),
+                        Arrays.copyOfRange(close, close.length - 1, close.length)
+                )) {
+                    Assert.assertFalse(connection.deliverFrames(3));
+                    Assert.assertTrue("test setup: the demote must land at the batch commit", demotableEngine.isReadOnlyMode());
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                    Assert.assertFalse(
+                            "a CLOSE begun before the server's CLOSE must not complete the handshake",
+                            connection.deliverFrames(1)
+                    );
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                }
+                assertTableEmpty(demotableEngine);
+            }
+        });
+    }
+
+    /**
+     * An oversized frame behind the batch on a durable-ack connection: the demote
+     * refuses the batch commit and the server sends its role-change CLOSE, not a
+     * second one for the oversized frame. That frame's payload can never be
+     * buffered, so the bytes the client streams as its payload must not be parsed as
+     * frames; here they spell a CLOSE that would complete the handshake.
+     */
+    @Test
+    public void testOversizedFramePayloadIsNotParsedAfterRoleChangeClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                demotableEngine.demoteAtNextCommit();
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        true,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                        oversizedFrameHeader(httpConfig.getRecvBufferSize() + 1L),
+                        clientCloseFrame()
+                )) {
+                    Assert.assertFalse(connection.deliverFrames(3));
+                    Assert.assertTrue("test setup: the demote must land at the batch commit", demotableEngine.isReadOnlyMode());
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                    Assert.assertFalse(
+                            "payload bytes of the oversized frame must not be parsed as a CLOSE",
+                            connection.deliverFrames(1)
+                    );
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                }
+                assertTableEmpty(demotableEngine);
+            }
+        });
+    }
+
+    /**
+     * Control for the role-change tests above: a batch commit that fails for a reason
+     * other than a demote sends a NACK, not a CLOSE, so the frame behind the batch is
+     * still handled -- here a PING gets its PONG after the NACK.
+     */
+    @Test
+    public void testPingBehindFailedBatchCommitIsAnsweredAfterTheNack() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    denyCommitTo("tab"),
+                    false,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.PING, new byte[0])
+            )) {
+                Assert.assertFalse(connection.deliverFrames(3));
+                final ObjList<byte[]> sent = connection.sentFrames();
+                Assert.assertEquals("the batch's NACK, then the PONG", 2, sent.size());
+                Assert.assertEquals("the NACK names the batch's first frame", 0, indexOfErrorResponse(sent, 0));
+                Assert.assertEquals("the PING must get its PONG", WebSocketOpcode.PONG, sent.getQuick(1)[0] & 0x0F);
+            }
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    /**
+     * Same control for an oversized frame behind the batch: the batch's NACK goes out,
+     * then the server closes for the oversized frame.
+     */
+    @Test
+    public void testOversizedFrameBehindFailedBatchCommitIsClosedAfterTheNack() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    denyCommitTo("tab"),
+                    false,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    oversizedFrameHeader(httpConfig.getRecvBufferSize() + 1L)
+            )) {
+                connection.deliverFrames(3);
+                final ObjList<byte[]> sent = connection.sentFrames();
+                Assert.assertEquals("the batch's NACK, then the CLOSE", 2, sent.size());
+                Assert.assertEquals("the NACK names the batch's first frame", 0, indexOfErrorResponse(sent, 0));
+                Assert.assertEquals("the oversized frame must still be closed", WebSocketOpcode.CLOSE, sent.getQuick(1)[0] & 0x0F);
+                Assert.assertEquals(WebSocketCloseCode.MESSAGE_TOO_BIG, closeCode(sent.getQuick(1)));
+            }
+            drainWalQueue();
+            assertQuery("select v from tab").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    /**
+     * Control for the role-change tests above: a demote that refuses the batch commit
+     * while earlier committed work still awaits durable upload defers the role-change
+     * CLOSE. No CLOSE is on the wire, so the connection keeps serving the client until
+     * the final durable ack can go out, and the PING behind the batch gets its PONG.
+     */
+    @Test
+    public void testPingBehindDemoteRefusedBatchIsAnsweredWhileCloseIsDeferred() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        true,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.PING, new byte[0])
+                )) {
+                    // The first frame commits on its own; its durable upload never catches up.
+                    Assert.assertFalse(connection.deliverFrames(1));
+                    demotableEngine.demoteAtNextCommit();
+                    Assert.assertFalse(connection.deliverFrames(3));
+                    Assert.assertTrue("test setup: the demote must land at the batch commit", demotableEngine.isReadOnlyMode());
+                    final ObjList<byte[]> sent = connection.sentFrames();
+                    Assert.assertEquals("a deferred close sends no CLOSE", -1, indexOfCloseFrame(sent));
+                    Assert.assertEquals("the PING behind the refused batch must get its PONG", WebSocketOpcode.PONG, sent.getLast()[0] & 0x0F);
+                    Assert.assertEquals("the refused batch must not be acked", 0, maxCumulativeOkAck(sent));
+                }
+                drainWalQueue(demotableEngine);
+                try (TableReader reader = demotableEngine.getReader("tab")) {
+                    Assert.assertEquals("only the first frame is committed", 1, reader.size());
+                }
+            }
+        });
+    }
+
+    private static void assertOnlyRoleChangeCloseSent(ObjList<byte[]> sent) {
+        Assert.assertEquals("the server's role-change CLOSE must be the only frame it sends", 1, sent.size());
+        Assert.assertEquals("the frame must be a CLOSE", WebSocketOpcode.CLOSE, sent.getQuick(0)[0] & 0x0F);
+        Assert.assertEquals("a role-change CLOSE is reconnect-eligible", WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(0)));
+    }
+
+    private static void assertTableEmpty(CairoEngine engine) {
+        drainWalQueue(engine);
+        try (TableReader reader = engine.getReader("tab")) {
+            Assert.assertEquals("nothing of the refused batch may be committed", 0, reader.size());
+        }
+    }
+
+    private static byte[] clientCloseFrame() {
+        return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+    }
+
+    private static int closeCode(byte[] serverCloseFrame) {
+        // server frames are unmasked and CLOSE payloads are short: the code is at offset 2
+        return (serverCloseFrame[2] & 0xFF) << 8 | (serverCloseFrame[3] & 0xFF);
+    }
+
+    private static int indexOfErrorResponse(ObjList<byte[]> frames, long seq) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (isBinaryFrame(f) && f[2] != QwpConstants.STATUS_OK && readLeLong(f, 3) == seq) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static byte[][] toArray(ObjList<byte[]> frames) {
+        byte[][] array = new byte[frames.size()][];
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            array[i] = frames.getQuick(i);
+        }
+        return array;
+    }
+
     /**
      * The control for
      * {@link #testBatchCommittedAfterTransientGateRefusalIsAckedBeforeRoleChangeClose}:
@@ -2709,6 +3038,181 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
     }
 
     /**
+     * One server connection fed a scripted client byte stream, frame by frame, over a
+     * socket whose half-close succeeds, as a real socket's does: a server CLOSE leaves
+     * the connection draining or awaiting the client's echo instead of disconnecting at
+     * once.
+     */
+    private static final class Connection implements QuietCloseable {
+        private final TestableContext context;
+        private final byte[][] frames;
+        private final HalfClosingNetworkFacade nf;
+        private final QwpIngressUpgradeProcessor processor;
+        private final RecordingRawSocket rawSocket;
+        private final long recvBuf;
+        private final long sendBuf;
+        private int nextFrame;
+
+        Connection(
+                CairoEngine engine,
+                HttpFullFatServerConfiguration httpConfig,
+                SecurityContext securityContext,
+                boolean isDurableAckEnabled,
+                byte[]... frames
+        ) throws Exception {
+            this.frames = frames;
+            this.processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            this.nf = new HalfClosingNetworkFacade(concat(frames));
+            this.recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            this.sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            this.rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            this.context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(
+                    RECV_BUFFER_SIZE,
+                    httpConfig.getSendBufferSize(),
+                    engine,
+                    httpConfig.getLineHttpProcessorConfiguration()
+            );
+            state.of(-1, securityContext);
+            state.setDurableAckEnabled(isDurableAckEnabled);
+            getLV().set(context, state);
+        }
+
+        @Override
+        public void close() {
+            context.close();
+            Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        /**
+         * Delivers the client's next {@code count} frames in one receive pass. Returns
+         * true when the server tore the connection down.
+         */
+        boolean deliverFrames(int count) throws Exception {
+            int bytes = 0;
+            for (int i = 0; i < count; i++) {
+                bytes += frames[nextFrame++].length;
+            }
+            try {
+                drive(processor, context, nf, bytes);
+                return false;
+            } catch (ServerDisconnectException e) {
+                return true;
+            }
+        }
+
+        ObjList<byte[]> sentFrames() {
+            return rawSocket.sentFrames;
+        }
+    }
+
+    /**
+     * An engine the test demotes to read-only. {@link #demoteAtNextCommit()} arms the
+     * demote, and it lands when the next commit takes the role-switch read lock. That
+     * commit's in-lock read-only re-check then refuses it -- the race
+     * {@code TableUpdateDetails.commit} guards against -- while every frame prepared
+     * before it passed the live read-only gate. Durable uploads never catch up, so
+     * committed work stays pending a durable ack.
+     */
+    private static final class DemotableEngine extends CairoEngine {
+        private final AtomicBoolean isDemoteArmed = new AtomicBoolean();
+        private final AtomicBoolean isReadOnly = new AtomicBoolean();
+        private final DurableAckRegistry laggingRegistry = new DurableAckRegistry() {
+            @Override
+            public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                return -1L;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+        };
+        private Lock roleSwitchReadLock;
+
+        DemotableEngine() {
+            super(new DefaultTestCairoConfiguration(root));
+        }
+
+        @Override
+        public @NotNull DurableAckRegistry getDurableAckRegistry() {
+            return laggingRegistry;
+        }
+
+        @Override
+        public Lock getRoleSwitchReadLock() {
+            if (roleSwitchReadLock == null) {
+                roleSwitchReadLock = new DemotingLock(super.getRoleSwitchReadLock());
+            }
+            return roleSwitchReadLock;
+        }
+
+        @Override
+        public boolean isReadOnlyMode() {
+            return isReadOnly.get();
+        }
+
+        void demoteAtNextCommit() {
+            isDemoteArmed.set(true);
+        }
+
+        private final class DemotingLock implements Lock {
+            private final Lock delegate;
+
+            DemotingLock(Lock delegate) {
+                this.delegate = delegate;
+            }
+
+            @Override
+            public void lock() {
+                delegate.lock();
+                onAcquired();
+            }
+
+            @Override
+            public void lockInterruptibly() throws InterruptedException {
+                delegate.lockInterruptibly();
+                onAcquired();
+            }
+
+            @Override
+            public @NotNull Condition newCondition() {
+                return delegate.newCondition();
+            }
+
+            @Override
+            public boolean tryLock() {
+                if (delegate.tryLock()) {
+                    onAcquired();
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
+                if (delegate.tryLock(time, unit)) {
+                    onAcquired();
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void unlock() {
+                delegate.unlock();
+            }
+
+            private void onAcquired() {
+                if (isDemoteArmed.compareAndSet(true, false)) {
+                    isReadOnly.set(true);
+                }
+            }
+        }
+    }
+
+    /**
      * Network facade that releases the client's wire bytes in explicit phases
      * so the engine's read-only flag can be flipped between frames — the
      * demote/re-promote race distilled to its deterministic core.
@@ -2741,6 +3245,21 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
 
         void release(int bytes) {
             limit = Math.min(data.length, limit + bytes);
+        }
+    }
+
+    /**
+     * A facade whose half-close succeeds, as a real socket's does, so a fatal CLOSE
+     * leaves the connection draining instead of disconnecting at once.
+     */
+    private static class HalfClosingNetworkFacade extends PhasedNetworkFacade {
+        HalfClosingNetworkFacade(byte[] data) {
+            super(data);
+        }
+
+        @Override
+        public int shutdown(long fd, int how) {
+            return 0;
         }
     }
 

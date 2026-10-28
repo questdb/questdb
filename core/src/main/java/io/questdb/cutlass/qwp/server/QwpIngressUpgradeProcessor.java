@@ -1428,7 +1428,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             boolean isDurableAckPollAllowed,
             boolean isDurableProgressCollected
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.isAwaitingCloseEcho() || state.isCloseDraining()) {
+        if (state.hasSentClose()) {
             // A server CLOSE is already on the wire and RFC 6455 forbids any
             // frame following it. The final ACKs went out before the CLOSE;
             // this gate keeps "no ack after CLOSE" structural for both the
@@ -2469,6 +2469,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
                                 .$(", bufferSize=").$(recvBufferSize).I$();
+                        if (state.isCommitBatchPending()) {
+                            // The fatal CLOSE flushes acks first: the frames before
+                            // this one must be committed by then. A demote refusing
+                            // the commit sends the role-change CLOSE instead, and the
+                            // checks below then stand down as they would for any
+                            // CLOSE already on the wire.
+                            commitPendingBatch(context, state);
+                        }
                         if (state.isAwaitingCloseEcho()) {
                             // The frame can never complete within the buffer, so
                             // frame sync is unrecoverable and the echo can never
@@ -2482,10 +2490,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                             pos = bufferEnd;
                             return;
                         }
-                        if (state.isCommitBatchPending()) {
-                            // The fatal CLOSE flushes acks first: the frames before
-                            // this one must be committed by then.
-                            commitPendingBatch(context, state);
+                        if (state.isCloseDraining()) {
+                            // The refused batch commit sent the role-change CLOSE and
+                            // half-closed: no second CLOSE may follow it.
+                            pos = bufferEnd;
+                            return;
                         }
                         sendFatalClose(context, state,
                                 WebSocketCloseCode.MESSAGE_TOO_BIG,
@@ -2509,7 +2518,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     // it: if the commit fails and its error send blocks, the frame
                     // stays buffered, still masked, and the resume pass parses and
                     // handles it once the batch is resolved.
-                    commitPendingBatch(context, state);
+                    if (!commitPendingBatch(context, state) && state.hasSentClose()) {
+                        // A demote refused the commit and the server sent its CLOSE.
+                        // This frame and the rest of the buffer arrived before that
+                        // CLOSE: drop them, as the checks after handleWebSocketFrame
+                        // below do. Nothing may follow the CLOSE, and none of these
+                        // bytes can be the client's close echo.
+                        pos = bufferEnd;
+                        return;
+                    }
                 }
                 boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
                 long payloadPtr = pos + frameParser.getHeaderSize();
@@ -2562,13 +2579,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
             }
 
+            if (state.isCommitBatchPending() && !commitPendingBatch(context, state) && state.hasSentClose()) {
+                // A demote refused the commit and the server sent its CLOSE. A
+                // partial frame still buffered arrived before that CLOSE, so it
+                // cannot be the start of the client's close echo: drop it.
+                pos = bufferEnd;
+                return;
+            }
             // Keep cumulative ACK progress available even when this recv ends
             // mid-frame. Durable progress polling is different: it scans every
             // table with outstanding work, so a partial-frame-only re-entry
             // must not repeat that scan without a meaningful frame event.
-            if (state.isCommitBatchPending()) {
-                commitPendingBatch(context, state);
-            }
             flushPendingAck(context, state, hasProcessedFrame && !hasPolledDurableProgress);
         } catch (ServerDisconnectException e) {
             if (state.isCommitBatchPending()) {

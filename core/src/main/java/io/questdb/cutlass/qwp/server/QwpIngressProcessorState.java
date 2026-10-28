@@ -953,6 +953,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * True once the server's CLOSE frame is on the wire: the connection either
+     * awaits the client's close echo or drains inbound bytes. RFC 6455 permits
+     * no frame after that CLOSE.
+     */
+    public boolean hasSentClose() {
+        return closeEchoDeadline != -1 || closeDrainDeadline != -1;
+    }
+
+    /**
      * Returns the full-coverage result produced by the most recent
      * {@link #collectDurableProgress(DurableAckRegistry)} traversal.
      */
