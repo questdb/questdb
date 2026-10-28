@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
@@ -35,6 +36,26 @@ import io.questdb.std.str.Path;
 public interface DeltaCheckpoint extends QuietCloseable {
     String CATALOG_SUFFIX = "_delta";
     String DIRECTORY_NAME = "_delta";
+
+    /**
+     * Whether the {@code _txn} at {@code txnPath} flags Delta state on any partition. Restore looks for
+     * Delta files only in a table whose checkpoint or live {@code _txn} does, so a table without Delta
+     * makes no per-partition probe. A missing {@code _txn} has none; one that cannot be read counts as
+     * having it.
+     */
+    static boolean hasDeltaState(FilesFacade ff, TxReader txn, LPSZ txnPath, int timestampType, int partitionBy) {
+        if (!ff.exists(txnPath)) {
+            return false;
+        }
+        try {
+            txn.ofRO(txnPath, timestampType, partitionBy);
+            return !txn.unsafeLoadAll() || txn.hasDeltaState();
+        } catch (CairoException e) {
+            return true;
+        } finally {
+            txn.clear();
+        }
+    }
 
     void capture(TableReader reader, Path checkpoint, SqlExecutionCircuitBreaker circuitBreaker);
 

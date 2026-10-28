@@ -41,7 +41,9 @@ import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DeltaCheckpoint;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -2761,6 +2763,19 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRefusesDeltaFlaggedOnlyInCheckpoint() throws Exception {
+        // The partition was Delta at the capture and dropped before the copy: only the checkpoint
+        // _txn flags it, and restore must still find its Delta files.
+        assertRestoreRefusesDelta(true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRefusesDeltaFlaggedOnlyInLiveTxn() throws Exception {
+        // The partition switched to Delta after the capture: only the live _txn flags it.
+        assertRestoreRefusesDelta(false);
+    }
+
+    @Test
     public void testCheckpointRestoreRegeneratesPmFromCommittedParquetSize() throws Exception {
         // A snapshot may capture data.parquet mid-append: bytes past the
         // committed size exist on disk but are not part of the MVCC-visible
@@ -3210,6 +3225,38 @@ public class CheckpointTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreSkipsDeltaProbeWithoutDeltaState() throws Exception {
+        // Neither the checkpoint nor the live _txn flags Delta state, so restore looks into no
+        // partition directory for Delta files.
+        final AtomicInteger deltaProbes = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Utf8s.endsWithAscii(path, Files.SEPARATOR + DeltaCheckpoint.DIRECTORY_NAME)) {
+                    deltaProbes.incrementAndGet();
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("create table test (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into test select timestamp_sequence('2023-09-20', 86400000000L), x from long_sequence(5)");
+            execute("checkpoint create");
+            execute("insert into test values ('2023-09-30', 6)");
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            deltaProbes.set(0);
+            engine.checkpointRecover();
+            Assert.assertEquals(0, deltaProbes.get());
+
+            assertQuery("select count() from test").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
+            engine.checkpointRelease();
         });
     }
 
@@ -4942,6 +4989,41 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private void assertRestoreRefusesDelta(boolean flaggedAtCapture) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("create table test (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into test select timestamp_sequence('2023-09-20', 86400000000L), x from long_sequence(3)");
+            final TableToken tableToken = engine.verifyTableName("test");
+            final long partitionTimestamp = MicrosTimestampDriver.floor("2023-09-21");
+            if (flaggedAtCapture) {
+                setPartitionDeltaActive(partitionTimestamp);
+            }
+            final File partitionDir = findNativePartitionDir(
+                    new File(configuration.getDbRoot(), tableToken.getDirName()), "2023-09-21", "x.d");
+            execute("checkpoint create");
+            try {
+                if (flaggedAtCapture) {
+                    execute("alter table test drop partition list '2023-09-21'");
+                } else {
+                    setPartitionDeltaActive(partitionTimestamp);
+                }
+                Assert.assertTrue(new File(partitionDir, DeltaCheckpoint.DIRECTORY_NAME).mkdirs());
+
+                engine.clear();
+                setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Delta checkpoint recovery is not supported");
+                }
+            } finally {
+                engine.checkpointRelease();
+            }
+        });
+    }
+
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
     }
@@ -5034,6 +5116,16 @@ public class CheckpointTest extends AbstractCairoTest {
             out[i] = buf.getInt();
         }
         return out;
+    }
+
+    private static void setPartitionDeltaActive(long partitionTimestamp) {
+        try (TableWriter writer = getWriter("test")) {
+            // The Delta switch stamps a native base, and a checkpoint keeps only stamped native words.
+            writer.getTxWriter().setPartitionSeqTxn(writer.getPartitionIndexByTimestamp(partitionTimestamp), 1);
+            writer.getTxWriter().setPartitionDeltaActiveByTimestamp(partitionTimestamp);
+            writer.bumpPartitionTableVersion();
+            writer.commit();
+        }
     }
 
     private static TestServerMain startServerMain(String root, String... envKeyValues) {
