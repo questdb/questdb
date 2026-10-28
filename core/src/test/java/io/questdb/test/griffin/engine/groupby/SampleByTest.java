@@ -25352,6 +25352,45 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSamplePeriodBucketBeyondLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-03-15T00:00:00.000000Z'), (2.0, '2024-12-15T00:00:00.000000Z')");
+            final String[][] strides = {
+                    {"(106_751_992 + 0::LONG) d", "+", "invalid sample value [value=106751992]"},
+                    {"(106_751_992 + 0::LONG) d FILL(NULL)", "+", "invalid sample value [value=106751992]"},
+                    {"(9_000_000 * 1_000_000_000L) s", "*", "invalid sample value [value=9000000000000000]"},
+                    {"(9_000_000 * 1_000_000_000L) s FILL(PREV)", "*", "invalid sample value [value=9000000000000000]"},
+                    {"(15_250_285 + 0) w FILL(0)", "+", "invalid sample value [value=15250285]"},
+                    {"106751992d", "d", "invalid sample value [value=106751992]"},
+                    {"106751992d FILL(NULL)", "d", "invalid sample value [value=106751992]"},
+                    {"106751992d ALIGN TO FIRST OBSERVATION", "d", "invalid sample value [value=106751992]"},
+                    {"15250285w", "w", "invalid sample value [value=15250285]"}
+            };
+            for (String[] stride : strides) {
+                final String query = "SELECT ts, sum(v) FROM x SAMPLE BY " + stride[0];
+                assertException(query, query.indexOf(stride[1], query.indexOf("SAMPLE BY")), stride[2]);
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (106_751_991 + 0::LONG) d FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            1970-01-01T00:00:00.000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY 15250284w")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            1969-12-29T00:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSamplePeriodInvalidWithNoUnits() throws Exception {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10 align to calendar",
@@ -25385,6 +25424,103 @@ public class SampleByTest extends AbstractCairoTest {
                 "select sum(a), k from x sample by 300/10 L".length() - 1,
                 "one letter sample by period unit expected"
         );
+    }
+
+    @Test
+    public void testSamplePeriodLongStrideFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1.0, '2024-01-01T10:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T11:00:00.000000Z'),
+                    ('a', 3.0, '2024-01-03T10:00:00.000000Z'),
+                    ('b', 4.0, '2024-01-05T10:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE y (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES (1.0, '2024-01-01T10:00:00.000000Z'), (2.0, '2024-01-01T12:00:00.000000Z')");
+            final String nullFill = """
+                    ts\tsum
+                    2024-01-01T00:00:00.000000Z\t3.0
+                    2024-01-02T00:00:00.000000Z\tnull
+                    2024-01-03T00:00:00.000000Z\t3.0
+                    2024-01-04T00:00:00.000000Z\tnull
+                    2024-01-05T00:00:00.000000Z\t4.0
+                    """;
+            final String[][] queries = {
+                    {"SELECT ts, sum(v) FROM x SAMPLE BY %s FILL(NULL)", nullFill},
+                    {"SELECT ts, sum(v) FROM x SAMPLE BY %s FILL(PREV)", """
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t3.0
+                            2024-01-02T00:00:00.000000Z\t3.0
+                            2024-01-03T00:00:00.000000Z\t3.0
+                            2024-01-04T00:00:00.000000Z\t3.0
+                            2024-01-05T00:00:00.000000Z\t4.0
+                            """},
+                    {"SELECT ts, sum(v) FROM x SAMPLE BY %s FILL(0)", """
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t3.0
+                            2024-01-02T00:00:00.000000Z\t0.0
+                            2024-01-03T00:00:00.000000Z\t3.0
+                            2024-01-04T00:00:00.000000Z\t0.0
+                            2024-01-05T00:00:00.000000Z\t4.0
+                            """},
+                    {"SELECT ts, sum(v) FROM x SAMPLE BY %s FROM '2024-01-01' TO '2024-01-07' FILL(NULL)", nullFill + """
+                            2024-01-06T00:00:00.000000Z\tnull
+                            """},
+                    {"WITH c AS (SELECT * FROM x) SELECT ts, sum(v) FROM c SAMPLE BY %s FILL(NULL)", nullFill},
+                    {"SELECT ts, sum(v) FROM (SELECT * FROM x) SAMPLE BY %s FILL(NULL)", nullFill}
+            };
+            for (String[] query : queries) {
+                for (String stride : new String[]{"(86_400 * 1_000_000L) U", "1d"}) {
+                    assertQuery(String.format(query[0], stride))
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .returns(query[1]);
+                }
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (86_400 * 1_000_000L) U")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t3.0
+                            2024-01-03T00:00:00.000000Z\t3.0
+                            2024-01-05T00:00:00.000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, k, sum(v) FROM x SAMPLE BY (86_400 * 1_000_000L) U FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T00:00:00.000000Z\tb\t2.0
+                            2024-01-02T00:00:00.000000Z\ta\tnull
+                            2024-01-02T00:00:00.000000Z\tb\tnull
+                            2024-01-03T00:00:00.000000Z\ta\t3.0
+                            2024-01-03T00:00:00.000000Z\tb\tnull
+                            2024-01-04T00:00:00.000000Z\ta\tnull
+                            2024-01-04T00:00:00.000000Z\tb\tnull
+                            2024-01-05T00:00:00.000000Z\ta\tnull
+                            2024-01-05T00:00:00.000000Z\tb\t4.0
+                            """);
+            for (String stride : new String[]{"(2_148_000_000 + 0L) U", "2148s"}) {
+                assertQuery("SELECT ts, sum(v) FROM y SAMPLE BY " + stride + " FILL(NULL)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tsum
+                                2024-01-01T09:55:12.000000Z\t1.0
+                                2024-01-01T10:31:00.000000Z\tnull
+                                2024-01-01T11:06:48.000000Z\tnull
+                                2024-01-01T11:42:36.000000Z\t2.0
+                                """);
+            }
+        });
     }
 
     @Test

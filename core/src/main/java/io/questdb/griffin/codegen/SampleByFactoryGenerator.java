@@ -691,11 +691,7 @@ final class SampleByFactoryGenerator {
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
                     : functionInstantiator.instantiate(plan.getTo(), input, metadata, executionContext);
             assignUndefinedType(to, timestampType, executionContext);
-            final int intervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(plan.getPeriodToken(), plan.getPeriodPosition(), "sample");
-            final long interval = TimestampSamplerFactory.parsePositiveInterval(plan.getPeriodToken(), intervalEnd,
-                    plan.getPeriodPosition(), "sample", Numbers.INT_NULL, ' ');
-            final char unit = plan.getPeriodToken().charAt(intervalEnd);
-            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, interval, unit, plan.getPeriodPosition());
+            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
             if (plan.getTimezone() != null) {
                 timezone = functionInstantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
                 assignUndefinedType(timezone, STRING, executionContext);
@@ -747,7 +743,7 @@ final class SampleByFactoryGenerator {
                 }
             }
             isTransferred = true;
-            return generateFillFactory(frame, plan.getAlgorithm(), groupByFactory, timestampIndex, timestampType, interval, unit, sampler,
+            return generateFillFactory(frame, plan.getAlgorithm(), groupByFactory, timestampIndex, timestampType, plan.getStride(), plan.getPeriodUnit(), sampler,
                     modes, constants, values, from, to, plan.getToPosition(), offset, plan.getOffsetPosition(),
                     timezone, plan.getTimezonePosition());
         } catch (Throwable th) {
@@ -815,9 +811,7 @@ final class SampleByFactoryGenerator {
                 from = toSampleByUtc(from, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
                 to = toSampleByUtc(to, plan, input, baseMetadata, timezone, driver, timestampType, executionContext);
             }
-            final TimestampSampler sampler = plan.getPeriodToken() == null
-                    ? TimestampSamplerFactory.getInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition())
-                    : TimestampSamplerFactory.getInstance(driver, plan.getPeriodToken(), plan.getPeriodPosition());
+            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
 
             final ArrayColumnTypes keyTypes = frame.keyTypes;
             final ArrayColumnTypes valueTypes = frame.valueTypes;

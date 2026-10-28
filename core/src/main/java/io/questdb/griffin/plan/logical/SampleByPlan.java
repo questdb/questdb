@@ -129,8 +129,8 @@ public final class SampleByPlan extends GroupingPlan {
     }
 
     /**
-     * The number of {@link #getPeriodUnit() units} in a period a constant expression states, which the binder
-     * validated; 0 when the {@link #getPeriodToken() period token} spells the period.
+     * The number of {@link #getPeriodUnit() units} in a period, which the binder validated, whether the
+     * {@link #getPeriodToken() period token} or a constant expression states it.
      */
     public long getStride() {
         return stride;

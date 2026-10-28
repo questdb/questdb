@@ -861,7 +861,8 @@ final class JoinFactoryGenerator {
                             masterSymbolKeyCols,
                             slaveSymbolKeyCols,
                             step.getNullExtension(),
-                            nullKeyCheck
+                            nullKeyCheck,
+                            step.getNullKeyMatch()
                     );
                 }
 
@@ -932,7 +933,8 @@ final class JoinFactoryGenerator {
                         masterSymbolKeyCols,
                         slaveSymbolKeyCols,
                         step.getNullExtension(),
-                        nullKeyCheck
+                        nullKeyCheck,
+                        step.getNullKeyMatch()
                 );
             }
 

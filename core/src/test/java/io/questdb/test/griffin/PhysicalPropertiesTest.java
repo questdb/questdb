@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -557,9 +558,9 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             assertRowBound("SELECT x, count() FROM t GROUP BY x", "t", Long.MAX_VALUE);
             assertRowBound("SELECT DISTINCT x FROM t", "t", Long.MAX_VALUE);
             assertRowBound("SELECT * FROM (SELECT * FROM t LIMIT 3) LIMIT 2", "t", 2);
-            assertRowBound("SELECT * FROM t LIMIT 1, 3", "t", Long.MAX_VALUE);
+            assertRowBound("SELECT * FROM t LIMIT 1, 3", "t", 2);
             bindVariableService.setLong("n", 2);
-            assertRowBound("SELECT * FROM t LIMIT :n", "t", PhysicalProperties.RUNTIME_LIMIT_ROWS);
+            assertRowBound("SELECT * FROM t LIMIT :n", "t", Long.MAX_VALUE);
             assertRowBound("SELECT * FROM (SELECT * FROM t LIMIT :n) LIMIT 2", "t", 2);
             // a sort and a window return the rows of their input
             assertRowBound("SELECT * FROM (SELECT * FROM t ORDER BY x) LIMIT 2", "t", 2);
@@ -576,6 +577,39 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\t1
                             2024-01-01T01:00:00.000000Z\t2
                             """);
+        });
+    }
+
+    @Test
+    public void testRowBoundLimitCountsRowsOfConstantBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lt AS (SELECT x FROM long_sequence(20))");
+            assertLimitCount("3", 3, 3);
+            assertLimitCount("-3", 3, 3);
+            assertLimitCount("0", 0, 0);
+            assertLimitCount("2, 5", 3, 3);
+            assertLimitCount("5, 2", 3, 3);
+            assertLimitCount("4, 4", 0, 0);
+            assertLimitCount("-5, -2", 3, 3);
+            assertLimitCount("-2, -5", 3, 3);
+            assertLimitCount("-3, 0", 3, 3);
+            assertLimitCount("2, -1", Long.MAX_VALUE, 17);
+            assertLimitCount("0, -2", Long.MAX_VALUE, 18);
+            assertLimitCount("NULL::LONG", Long.MAX_VALUE, 20);
+        });
+    }
+
+    @Test
+    public void testRuntimeLimitsFollowBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            bindVariableService.setLong("n", 2);
+            bindVariableService.setLong("m", 2);
+            assertRuntimeLimits("SELECT a.x, b.x FROM t a JOIN t b ON a.x = b.x", true, true);
+            assertRuntimeLimits("SELECT a.x, b.x FROM t a JOIN (SELECT * FROM t WHERE x > 1 LIMIT :n) b ON a.x = b.x", false, true);
+            assertRuntimeLimits("SELECT a.x, b.x FROM (SELECT * FROM t LIMIT :n) a JOIN (SELECT * FROM (SELECT * FROM t LIMIT :n) LIMIT 2) b ON a.x = b.x", true, true);
+            assertRuntimeLimits("SELECT a.x, b.x FROM (SELECT * FROM t LIMIT :n) a JOIN (SELECT * FROM t LIMIT :m) b ON a.x = b.x", false, false);
+            assertRuntimeLimits("SELECT a.x, b.x FROM (SELECT * FROM t LIMIT :n) a JOIN (SELECT * FROM t LIMIT 1, :n) b ON a.x = b.x", false, false);
         });
     }
 
@@ -904,6 +938,18 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertLimitCount(String limit, long bound, long expectedRowCount) throws Exception {
+        final String sql = "SELECT * FROM lt LIMIT " + limit;
+        assertRowBound(sql, "lt", bound);
+        long rowCount = 0;
+        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            while (cursor.hasNext()) {
+                rowCount++;
+            }
+        }
+        Assert.assertEquals(sql, expectedRowCount, rowCount);
+    }
+
     private static void assertRandomAccess(Capability expected, String sql) throws Exception {
         try (
                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -994,6 +1040,15 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                 Assert.assertEquals(sql, table, scan.getTableToken().getTableName());
             }
             Assert.assertEquals(sql, limit, PhysicalProperties.rowBoundLimit(plan));
+        });
+    }
+
+    private static void assertRuntimeLimits(String sql, boolean isMasterBoundBySlaveLimits, boolean isSlaveBoundByMasterLimits) throws Exception {
+        assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class, join -> {
+            final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
+            final LogicalPlan slave = join.getOrderedInputs().getQuick(1).getInput();
+            Assert.assertEquals(sql, isMasterBoundBySlaveLimits, PhysicalProperties.hasRuntimeLimitsOf(master, slave));
+            Assert.assertEquals(sql, isSlaveBoundByMasterLimits, PhysicalProperties.hasRuntimeLimitsOf(slave, master));
         });
     }
 

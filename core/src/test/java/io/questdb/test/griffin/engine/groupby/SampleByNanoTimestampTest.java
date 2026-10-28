@@ -16533,6 +16533,45 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSamplePeriodBucketBeyondLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-03-15T00:00:00.000000000Z'), (2.0, '2024-12-15T00:00:00.000000000Z')");
+            final String[][] strides = {
+                    {"(106_752 + 0::LONG) d", "+", "invalid sample value [value=106752]"},
+                    {"(106_752 + 0::LONG) d FILL(NULL)", "+", "invalid sample value [value=106752]"},
+                    {"(10_000_000_000 + 0L) s", "+", "invalid sample value [value=10000000000]"},
+                    {"(9_300_000_000_000_000 + 0L) U FILL(PREV)", "+", "invalid sample value [value=9300000000000000]"},
+                    {"106752d", "d", "invalid sample value [value=106752]"},
+                    {"106752d FILL(NULL)", "d", "invalid sample value [value=106752]"},
+                    {"106752d ALIGN TO FIRST OBSERVATION", "d", "invalid sample value [value=106752]"},
+                    {"2562048h FILL(0)", "h", "invalid sample value [value=2562048]"},
+                    {"15251w", "w", "invalid sample value [value=15251]"}
+            };
+            for (String[] stride : strides) {
+                final String query = "SELECT ts, sum(v) FROM x SAMPLE BY " + stride[0];
+                assertException(query, query.indexOf(stride[1], query.indexOf("SAMPLE BY")), stride[2]);
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (106_751 + 0::LONG) d FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            1970-01-01T00:00:00.000000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY 15250w")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            1969-12-29T00:00:00.000000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSamplePeriodInvalidWithNoUnits() throws Exception {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10 align to calendar",
@@ -16566,6 +16605,40 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "select sum(a), k from x sample by 300/10 L".length() - 1,
                 "one letter sample by period unit expected"
         );
+    }
+
+    @Test
+    public void testSamplePeriodLongStrideFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2024-01-01T10:00:00.000000000Z'),
+                    (2.0, '2024-01-01T10:00:01.000000000Z'),
+                    (3.0, '2024-01-01T10:00:12.000000000Z')
+                    """);
+            for (String stride : new String[]{"(5 * 1_000_000_000L) n", "5s"}) {
+                assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY " + stride + " FILL(NULL)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tsum
+                                2024-01-01T10:00:00.000000000Z\t3.0
+                                2024-01-01T10:00:05.000000000Z\tnull
+                                2024-01-01T10:00:10.000000000Z\t3.0
+                                """);
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (5 * 1_000_000_000L) n")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T10:00:00.000000000Z\t3.0
+                            2024-01-01T10:00:10.000000000Z\t3.0
+                            """);
+        });
     }
 
     @Test

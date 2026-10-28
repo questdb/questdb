@@ -28,7 +28,6 @@ import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -40,8 +39,9 @@ import org.jetbrains.annotations.Nullable;
  * {@link JoinInput.NullExtension#BY_ON_RESIDUAL}: the join NULL-extends a master row whose keys are all NULL when no
  * slave row passes the ON residual with it, and a slave row whose keys are all NULL when no master row does; a join
  * that NULL-extends {@link JoinInput.NullExtension#BY_KEYS} does neither. The NULL key check of a LEFT or FULL join,
- * see {@link JoinInput#getNullKeyCheck}, tells a master row whose keys are all NULL. The {@link SlaveChains} of the
- * join walk the chains of slave rows its join key map refers to.
+ * see {@link JoinInput#getNullKeyCheck}, tells a master row whose keys are all NULL, and the NULL key match of the
+ * join, see {@link JoinInput#getNullKeyMatch}, tells whether a master row changes which slave rows pass the ON
+ * residual. The {@link SlaveChains} of the join walk the chains of slave rows its join key map refers to.
  */
 final class HashOuterJoinNullKeys {
     private final SlaveChains chains;
@@ -50,7 +50,11 @@ final class HashOuterJoinNullKeys {
     private final RecordSink masterSink;
     private final JoinInput.NullExtension nullExtension;
     private final @Nullable Function nullKeyCheck;
+    private final @Nullable JoinInput.NullKeyMatch nullKeyMatch;
+    private boolean hasMasterRow;
     private boolean hasNullKeyChain;
+    private boolean hasPassingSlaveRow;
+    private boolean isPassingSlaveRowSought;
     private long nullKeyChainHead;
     private long nullKeyRowsToMatch;
 
@@ -60,7 +64,8 @@ final class HashOuterJoinNullKeys {
             Map joinKeyMap,
             RecordSink masterSink,
             JoinInput.NullExtension nullExtension,
-            @Nullable Function nullKeyCheck
+            @Nullable Function nullKeyCheck,
+            @Nullable JoinInput.NullKeyMatch nullKeyMatch
     ) {
         this.chains = chains;
         this.filter = filter;
@@ -68,6 +73,16 @@ final class HashOuterJoinNullKeys {
         this.masterSink = masterSink;
         this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
+        this.nullKeyMatch = nullKeyMatch;
+    }
+
+    /**
+     * Starts an execution, whose rows the join reads anew: forgets whether the master has a row and whether a slave row
+     * passes the ON residual.
+     */
+    void clear() {
+        hasMasterRow = false;
+        isPassingSlaveRowSought = false;
     }
 
     /**
@@ -84,7 +99,7 @@ final class HashOuterJoinNullKeys {
             if (value != null) {
                 hasNullKeyChain = true;
                 nullKeyChainHead = chains.chainHead(value);
-                nullKeyRowsToMatch = chains.chainSize(value);
+                nullKeyRowsToMatch = nullKeyMatch != JoinInput.NullKeyMatch.PER_SLAVE_ROW ? chains.chainSize(value) : 0;
             }
         }
     }
@@ -92,8 +107,9 @@ final class HashOuterJoinNullKeys {
     /**
      * Whether the join drops {@code masterRecord}, which no slave row on its key chain passes the ON residual with,
      * instead of NULL-extending it: a key of the row is not NULL, or some slave row passes the ON residual with it on
-     * {@code joined}, which pairs the master row with the slave record. The ON residual reads the master row, so a
-     * master row whose keys are all NULL costs one evaluation per row of the build side.
+     * {@code joined}, which pairs the master row with the slave record. Per pair of rows, see
+     * {@link JoinInput.NullKeyMatch#PER_PAIR}, a master row whose keys are all NULL costs one evaluation per slave row;
+     * per slave row, the first such master row of an execution does, and every later one reuses its answer.
      */
     boolean isMasterRowDropped(Record masterRecord, Record joined) {
         if (nullExtension != JoinInput.NullExtension.BY_ON_RESIDUAL) {
@@ -103,20 +119,29 @@ final class HashOuterJoinNullKeys {
         if (!nullKeyCheck.getBool(masterRecord)) {
             return true;
         }
-        final MapRecordCursor keys = joinKeyMap.getCursor();
-        try {
-            while (keys.hasNext()) {
-                chains.toChain(chains.chainHead(keys.getRecord().getValue()));
-                while (chains.nextChainRow()) {
-                    if (filter.getBool(joined)) {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        } finally {
-            keys.toTop();
+        if (nullKeyMatch != JoinInput.NullKeyMatch.PER_SLAVE_ROW) {
+            return chains.hasPassingSlaveRow(filter, joined);
         }
+        if (!isPassingSlaveRowSought) {
+            hasPassingSlaveRow = chains.hasPassingSlaveRow(filter, joined);
+            isPassingSlaveRowSought = true;
+        }
+        return hasPassingSlaveRow;
+    }
+
+    /**
+     * Whether the join NULL-extends {@code slaveRecord}, a row of a chain it does not skip, see
+     * {@link #isUnmatchedChainSkipped}, when it emits the slave rows no master row matched: {@code matchIdsMap} does
+     * not record it as matched and, per slave row, see {@link JoinInput.NullKeyMatch#PER_SLAVE_ROW}, the master has no
+     * row or the row fails the ON residual on {@code joined}, which pairs the NULL master record with the slave record.
+     */
+    boolean isSlaveRowUnmatched(Record joined, Record slaveRecord, Map matchIdsMap) {
+        if (nullKeyMatch == JoinInput.NullKeyMatch.PER_SLAVE_ROW && hasMasterRow && filter.getBool(joined)) {
+            return false;
+        }
+        final MapKey keys = matchIdsMap.withKey();
+        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+        return keys.findValue() == null;
     }
 
     /**
@@ -128,11 +153,14 @@ final class HashOuterJoinNullKeys {
     }
 
     /**
-     * Records as matched in {@code matchIdsMap} each slave row of the NULL key chain, see {@link #findNullKeyChain},
-     * that passes the ON residual with the current master row on {@code joined}, which pairs the master row with
-     * {@code slaveRecord}.
+     * Records that the master has a row and, per pair of rows, see {@link JoinInput.NullKeyMatch#PER_PAIR}, records as
+     * matched in {@code matchIdsMap} each slave row of the NULL key chain, see {@link #findNullKeyChain}, that passes
+     * the ON residual with the current master row on {@code joined}, which pairs the master row with
+     * {@code slaveRecord}. Per slave row, {@link #isSlaveRowUnmatched} evaluates the ON residual on each row of the
+     * chain instead.
      */
     void matchNullKeyRows(Record joined, Record slaveRecord, Map matchIdsMap) {
+        hasMasterRow = true;
         if (nullKeyRowsToMatch > 0) {
             chains.toChain(nullKeyChainHead);
             while (chains.nextChainRow()) {
@@ -160,6 +188,12 @@ final class HashOuterJoinNullKeys {
          * The number of slave rows on the chain that the key map value refers to.
          */
         long chainSize(MapValue value);
+
+        /**
+         * Whether {@code filter} passes on {@code joined} with some slave row the key map refers to, which it moves the
+         * slave record to.
+         */
+        boolean hasPassingSlaveRow(Function filter, Record joined);
 
         /**
          * Moves the slave record to the next row of the chain {@link #toChain} started, and returns false past its

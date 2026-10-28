@@ -141,6 +141,20 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         this.memoryTracker = memoryTracker;
     }
 
+    /**
+     * The value the chain put {@code index}-th since it was last cleared, whichever chain holds it.
+     */
+    public long valueAt(long index) {
+        return Unsafe.getLong(heapStart + index * CHAIN_VALUE_SIZE);
+    }
+
+    /**
+     * The number of values the chain put since it was last cleared, see {@link #valueAt}.
+     */
+    public long valueCount() {
+        return (heapPos - heapStart) / CHAIN_VALUE_SIZE;
+    }
+
     private void checkCapacity() {
         if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
             grow();

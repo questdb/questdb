@@ -115,77 +115,79 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                 && engine.isWalApplySuspended(tableToken));
         try {
             operation.validate();
-            try (TableWriterAPI writer = !forceWalBypass ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
-                // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
-                // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below
-                // fires only inside the fence, so a reverted/absent dispatcher fence would fire nothing and
-                // a demote-race witness would degrade to a timing-only sleep window. Firing the shared mint
-                // observer before the fence lets a witness arm one seam that trips whether or not the fence
-                // wraps the externalization. A strict no-op in production (the observer field is null) and on
-                // the existing fenced path (the post-fence preApplyObserver still fires).
-                engine.fireRoleSwitchMintObserver();
-                final long result = applyFenced(operation, writer, forceWalBypass);
-                return doneFuture.of(result);
-            }
-        } catch (EntryUnavailableException busyException) {
-            // For non-WAL tables, when another thread holds the writer, this code enqueues the operation
-            // on the TableWriter's async queue. The writer processes enqueued operations when it becomes free.
-            // The operation does not require re-authorization when executed from the async queue, because the
-            // caller already authorized it before enqueuing.
-            // The caller blocks on the returned future until the writer executes the operation or the timeout
-            // expires.
-            if (eventSubSeq == null) {
-                throw busyException;
-            }
-            fireAsyncEnqueueObserver();
-            // Demote write-fence for the async-enqueue fallback. The success path is fenced in
-            // applyFenced, but a WAL writer-pool exhaustion routes here: the enqueue applies the
-            // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
-            // no replicated sequencer txn for a WAL table, so on a demoting node the change is
-            // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
-            // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
-            // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
-            // role-switch-independent robustness gap is left for a dedicated fix.)
-            //
-            // The eager check below is a fast-refuse optimization; the authoritative re-check runs
-            // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the
-            // re-check and the enqueue serializes the externalization against the role flip, which
-            // takes the WRITE side around its REPLICA flag publish: either the flip ran first (the
-            // in-lock re-check sees read-only and refuses without enqueuing) or the enqueue runs fully
-            // as PRIMARY and the flip's write acquire waits for this read hold to release. The
-            // authorized force/WAL-bypass break-glass path is exempt for the same reason as in
-            // applyFenced (see isWriteRefused).
-            if (isWriteRefused(forceWalBypass)) {
-                throw CairoException.readOnlyAccess();
-            }
-            // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
-            // inline-apply path above: fire the shared role-switch mint observer before acquiring the
-            // role-switch read lock so a reverted/absent fence here still trips a witness. A strict
-            // no-op in production (the observer field is null).
-            engine.fireRoleSwitchMintObserver();
-            final Lock lock = engine.getRoleSwitchReadLock();
-            lock.lock();
             try {
+                try (TableWriterAPI writer = !forceWalBypass ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
+                    // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
+                    // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below
+                    // fires only inside the fence, so a reverted/absent dispatcher fence would fire nothing and
+                    // a demote-race witness would degrade to a timing-only sleep window. Firing the shared mint
+                    // observer before the fence lets a witness arm one seam that trips whether or not the fence
+                    // wraps the externalization. A strict no-op in production (the observer field is null) and on
+                    // the existing fenced path (the post-fence preApplyObserver still fires).
+                    engine.fireRoleSwitchMintObserver();
+                    final long result = applyFenced(operation, writer, forceWalBypass);
+                    return doneFuture.of(result);
+                }
+            } catch (EntryUnavailableException busyException) {
+                // For non-WAL tables, when another thread holds the writer, this code enqueues the operation
+                // on the TableWriter's async queue. The writer processes enqueued operations when it becomes free.
+                // The operation does not require re-authorization when executed from the async queue, because the
+                // caller already authorized it before enqueuing.
+                // The caller blocks on the returned future until the writer executes the operation or the timeout
+                // expires.
+                if (eventSubSeq == null) {
+                    throw busyException;
+                }
+                fireAsyncEnqueueObserver();
+                // Demote write-fence for the async-enqueue fallback. The success path is fenced in
+                // applyFenced, but a WAL writer-pool exhaustion routes here: the enqueue applies the
+                // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
+                // no replicated sequencer txn for a WAL table, so on a demoting node the change is
+                // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
+                // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
+                // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
+                // role-switch-independent robustness gap is left for a dedicated fix.)
+                //
+                // The eager check below is a fast-refuse optimization; the authoritative re-check runs
+                // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the
+                // re-check and the enqueue serializes the externalization against the role flip, which
+                // takes the WRITE side around its REPLICA flag publish: either the flip ran first (the
+                // in-lock re-check sees read-only and refuses without enqueuing) or the enqueue runs fully
+                // as PRIMARY and the flip's write acquire waits for this read hold to release. The
+                // authorized force/WAL-bypass break-glass path is exempt for the same reason as in
+                // applyFenced (see isWriteRefused).
                 if (isWriteRefused(forceWalBypass)) {
                     throw CairoException.readOnlyAccess();
                 }
-                OperationFutureImpl future = futurePool.pop();
-                // The future is responsible for closing the operation from here on, so this method
-                // must not close it too: of() calls close() from its catch block, the caller closes
-                // through the future otherwise. One gap is left for a dedicated fix: on a full writer
-                // command queue, publishAsyncWriterCommand() calls startAsync() before the publish
-                // fails, so close() leaves an UPDATE's plan to a writer that never gets the command.
-                isHandedToFuture = true;
-                future.of(
-                        operation,
-                        sqlExecutionContext,
-                        eventSubSeq,
-                        operation.getTableNamePosition(),
-                        closeOnDone
-                );
-                return future;
-            } finally {
-                lock.unlock();
+                // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
+                // inline-apply path above: fire the shared role-switch mint observer before acquiring the
+                // role-switch read lock so a reverted/absent fence here still trips a witness. A strict
+                // no-op in production (the observer field is null).
+                engine.fireRoleSwitchMintObserver();
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    if (isWriteRefused(forceWalBypass)) {
+                        throw CairoException.readOnlyAccess();
+                    }
+                    OperationFutureImpl future = futurePool.pop();
+                    // The future is responsible for closing the operation from here on, so this method
+                    // must not close it too: of() calls close() from its catch block, the caller closes
+                    // through the future otherwise. One gap is left for a dedicated fix: on a full writer
+                    // command queue, publishAsyncWriterCommand() calls startAsync() before the publish
+                    // fails, so close() leaves an UPDATE's plan to a writer that never gets the command.
+                    isHandedToFuture = true;
+                    future.of(
+                            operation,
+                            sqlExecutionContext,
+                            eventSubSeq,
+                            operation.getTableNamePosition(),
+                            closeOnDone
+                    );
+                    return future;
+                } finally {
+                    lock.unlock();
+                }
             }
         } finally {
             if (closeOnDone && !isHandedToFuture) {

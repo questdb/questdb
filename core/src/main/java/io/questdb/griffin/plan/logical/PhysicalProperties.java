@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -40,12 +42,6 @@ import org.jetbrains.annotations.Nullable;
  * also finds the table and the LIMITs that bound the rows the factory returns, see {@link #rowBoundScan}.
  */
 public final class PhysicalProperties {
-    /**
-     * The rows a LIMIT whose count only execution knows, a bind variable or another runtime constant, is estimated to
-     * allow, see {@link #rowBoundLimit}: the planner cannot read the count when it compiles the statement, and most
-     * LIMITs are small.
-     */
-    public static final long RUNTIME_LIMIT_ROWS = 100;
     public static final int UNKNOWN_TIMESTAMP = -2;
     private static final int DIRECTION = 8;
     private static final int LIMIT = 4;
@@ -63,6 +59,21 @@ public final class PhysicalProperties {
      */
     public static Capability followsOrderAdvice(LogicalPlan plan) {
         return capability(derive(plan, null), ORDER_ADVICE);
+    }
+
+    /**
+     * Whether the LIMITs whose count only execution knows along the inputs that bound the rows of {@code other}, see
+     * {@link #rowBoundScan}, bound the rows of the plan too, as a LIMIT of the same bind variable along its inputs does;
+     * true when no such LIMIT bounds the rows of {@code other}. A row bound of the plan no larger than that of
+     * {@code other}, see {@link #rowBoundLimit}, then stays no larger for every count execution reads.
+     */
+    public static boolean hasRuntimeLimitsOf(LogicalPlan plan, LogicalPlan other) {
+        for (LogicalPlan node = other; node != null; node = boundingInput(node)) {
+            if (node instanceof LimitPlan limit && isRuntimeLimit(limit) && !hasRuntimeLimit(plan, limit)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -118,15 +129,15 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The fewest rows a LIMIT of a count allows along the inputs that bound the rows of the plan, see
-     * {@link #rowBoundScan}: the count of a constant, and {@link #RUNTIME_LIMIT_ROWS} for a count only execution knows;
-     * {@link Long#MAX_VALUE} for none.
+     * The fewest rows a LIMIT of constant bounds allows along the inputs that bound the rows of the plan, see
+     * {@link #rowBoundScan} and {@link #limitCount}; {@link Long#MAX_VALUE} for none. A LIMIT whose count only
+     * execution knows may allow fewer, see {@link #hasRuntimeLimitsOf}.
      */
     public static long rowBoundLimit(LogicalPlan plan) {
         long limit = Long.MAX_VALUE;
         for (LogicalPlan node = plan; node != null; node = boundingInput(node)) {
-            if (node instanceof LimitPlan limitPlan && limitPlan.getHi() == null) {
-                final long count = limitPlan.getLo() instanceof ConstantExpression lo ? LogicalPlans.limitValue(lo) : RUNTIME_LIMIT_ROWS;
+            if (node instanceof LimitPlan limitPlan) {
+                final long count = limitCount(limitPlan);
                 if (count > -1) {
                     limit = Math.min(limit, count);
                 }
@@ -531,6 +542,23 @@ public final class PhysicalProperties {
         return !isSource ? timestampIndex : timestampIndex == -1 ? -1 : 0;
     }
 
+    /**
+     * Whether {@code limit} counts its rows by a bind variable, without a hi, and a LIMIT that counts them by the same
+     * bind variable, without a hi, lies along the inputs that bound the rows of the plan, see {@link #rowBoundScan}.
+     */
+    private static boolean hasRuntimeLimit(LogicalPlan plan, LimitPlan limit) {
+        if (limit.getHi() != null || !(limit.getLo() instanceof BindVariableExpression variable)) {
+            return false;
+        }
+        for (LogicalPlan node = plan; node != null; node = boundingInput(node)) {
+            if (node instanceof LimitPlan other && other.getHi() == null && other.getLo() instanceof BindVariableExpression otherVariable
+                    && Chars.equals(variable.getName(), otherVariable.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static Capability isLightLatestBy(LatestByPlan latest) {
         return latest.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(latest.getAlgorithm() != LatestByPlan.Algorithm.MATERIALIZED);
     }
@@ -542,6 +570,10 @@ public final class PhysicalProperties {
     private static Capability isLimitPassedThrough(LimitPlan limit) {
         final LimitPlan.Application application = limit.getApplication();
         return application == null ? Capability.UNKNOWN : Capability.of(application == LimitPlan.Application.INPUT);
+    }
+
+    private static boolean isRuntimeLimit(LimitPlan limit) {
+        return !(limit.getLo() instanceof ConstantExpression) || limit.getHi() != null && !(limit.getHi() instanceof ConstantExpression);
     }
 
     /**
@@ -652,6 +684,33 @@ public final class PhysicalProperties {
     /**
      * Whether the join step runs the markout join, UNKNOWN before operator planning records its algorithm.
      */
+    /**
+     * The most rows a LIMIT of constant bounds returns, as {@link io.questdb.griffin.engine.LimitRecordCursorFactory}
+     * resolves them: {@code n} for {@code LIMIT n} and {@code LIMIT -n}, and the distance between the bounds of
+     * {@code LIMIT lo, hi} where both are non-negative or both negative, which it swaps when {@code lo} exceeds
+     * {@code hi}, or where {@code lo} is negative and {@code hi} is zero. -1 where the count is not a constant: a bound
+     * only execution knows or a NULL one, a non-negative {@code lo} with a negative {@code hi}, which ends the rows that
+     * many rows before the last row of the input, and a negative {@code lo} with a positive {@code hi}, which execution
+     * rejects.
+     */
+    private static long limitCount(LimitPlan limit) {
+        if (!(limit.getLo() instanceof ConstantExpression loConstant)) {
+            return -1;
+        }
+        final long lo = LogicalPlans.limitValue(loConstant);
+        if (lo == Numbers.LONG_NULL) {
+            return -1;
+        }
+        if (limit.getHi() == null) {
+            return Math.abs(lo);
+        }
+        if (!(limit.getHi() instanceof ConstantExpression hiConstant)) {
+            return -1;
+        }
+        final long hi = LogicalPlans.limitValue(hiConstant);
+        return hi != Numbers.LONG_NULL && (Numbers.sameSign(lo, hi) || lo < 0 && hi == 0) ? Math.abs(hi - lo) : -1;
+    }
+
     private static Capability markout(JoinInput step) {
         return step.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(step.getAlgorithm() == JoinInput.Algorithm.MARKOUT);
     }

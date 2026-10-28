@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
@@ -33,6 +34,8 @@ import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TableFunctionSources;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -116,10 +119,17 @@ final class OptimiserContext implements Mutable {
     }
 
     /**
-     * Binds {@code IS NULL} over the column of {@code output}, as the parser spells it: {@code = NULL}.
+     * Binds the predicate that the column of {@code output} holds the value a NULL record reads for its type, see
+     * {@link NullRecordFactory}: {@code = NULL}, the parser's spelling of {@code IS NULL}, or, for a type with no NULL
+     * sentinel, see {@link ColumnType#isNoNullSentinelFixedType}, {@code =} its NULL constant, false or 0, which
+     * {@code = NULL} never matches.
      */
-    BoundExpression bindIsNull(int columnId, OutputSchema output, int position) throws SqlException {
-        return bindCall("=", position, column(output, columnId, position), planNodes.constants.next().ofNull(position), output);
+    BoundExpression bindNullValueCheck(int columnId, OutputSchema output, int position) throws SqlException {
+        final ColumnExpression column = column(output, columnId, position);
+        final int type = column.getDataType();
+        return bindCall("=", position, column, ColumnType.isNoNullSentinelFixedType(type)
+                ? callBinder.constant(Constants.getNullConstant(type), position)
+                : planNodes.constants.next().ofNull(position), output);
     }
 
     /**
@@ -181,7 +191,7 @@ final class OptimiserContext implements Mutable {
     /**
      * An upper bound of the rows the factory of the plan returns, -1 when unknown: the row count of the table whose scan
      * bounds them, see {@link PhysicalProperties#rowBoundScan}, capped by the LIMITs along the way, see
-     * {@link PhysicalProperties#rowBoundLimit}, which estimates the count of a LIMIT only execution knows.
+     * {@link PhysicalProperties#rowBoundLimit}.
      */
     long rowBound(LogicalPlan plan) {
         final ScanPlan scan = PhysicalProperties.rowBoundScan(plan);

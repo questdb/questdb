@@ -392,6 +392,65 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     @Override
+    public ConstantExpression constant(Function function, int position) {
+        return switch (ColumnType.tagOf(function.getType())) {
+            case ColumnType.TIMESTAMP ->
+                    ctx.planNodes.constants.next().ofTimestamp(function.getTimestamp(null), function.getType(), position);
+            case ColumnType.STRING ->
+                    ctx.planNodes.constants.next().ofString(Chars.toString(function.getStrA(null)), position);
+            case ColumnType.SYMBOL ->
+                    ctx.planNodes.constants.next().ofSymbol(Chars.toString(function.getSymbol(null)), position);
+            case ColumnType.VARCHAR -> ctx.planNodes.constants.next().ofVarchar(function.getVarcharA(null), position);
+            case ColumnType.BYTE -> ctx.planNodes.constants.next().ofByte(function.getByte(null), position);
+            case ColumnType.SHORT -> ctx.planNodes.constants.next().ofShort(function.getShort(null), position);
+            case ColumnType.DATE -> ctx.planNodes.constants.next().ofDate(function.getDate(null), position);
+            case ColumnType.IPv4 -> ctx.planNodes.constants.next().ofIPv4(function.getIPv4(null), position);
+            case ColumnType.CHAR -> ctx.planNodes.constants.next().ofChar(function.getChar(null), position);
+            case ColumnType.BOOLEAN -> ctx.planNodes.constants.next().ofBoolean(function.getBool(null), position);
+            case ColumnType.INT -> ctx.planNodes.constants.next().ofInt(function.getInt(null), position);
+            case ColumnType.LONG -> ctx.planNodes.constants.next().ofLong(function.getLong(null), position);
+            case ColumnType.LONG256 -> ctx.planNodes.constants.next().ofLong256(function.getLong256A(null), position);
+            case ColumnType.UUID ->
+                    ctx.planNodes.constants.next().ofUuid(function.getLong128Lo(null), function.getLong128Hi(null), position);
+            case ColumnType.LONG128 ->
+                    ctx.planNodes.constants.next().ofLong128(function.getLong128Lo(null), function.getLong128Hi(null), position);
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    ctx.planNodes.constants.next().ofGeoHash(GeoHashes.getGeoLong(function.getType(), function, null), function.getType(), position);
+            case ColumnType.FLOAT -> ctx.planNodes.constants.next().ofFloat(function.getFloat(null), position);
+            case ColumnType.DOUBLE -> ctx.planNodes.constants.next().ofDouble(function.getDouble(null), position);
+            case ColumnType.NULL -> ctx.planNodes.constants.next().ofNull(position);
+            case ColumnType.DECIMAL8 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal8(null), position);
+            case ColumnType.DECIMAL16 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal16(null), position);
+            case ColumnType.DECIMAL32 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal32(null), position);
+            case ColumnType.DECIMAL64 ->
+                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal64(null), position);
+            case ColumnType.DECIMAL128 -> {
+                function.getDecimal128(null, decimal128);
+                yield ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, decimal128.getHigh(), decimal128.getLow(), position);
+            }
+            case ColumnType.DECIMAL256 -> {
+                function.getDecimal256(null, decimal256);
+                yield ctx.planNodes.constants.next().ofDecimal(function.getType(), decimal256.getHh(), decimal256.getHl(),
+                        decimal256.getLh(), decimal256.getLl(), position);
+            }
+            case ColumnType.INTERVAL -> {
+                final Interval interval = function.getInterval(null);
+                yield ctx.planNodes.constants.next().ofInterval(interval.getLo(), interval.getHi(), function.getType(), position);
+            }
+            case ColumnType.BINARY -> {
+                if (function.getBin(null) != null) {
+                    throw new IllegalStateException("non-null BINARY constant");
+                }
+                yield ctx.planNodes.constants.next().ofBinaryNull(position);
+            }
+            default -> throw new IllegalStateException("unexpected constant type");
+        };
+    }
+
+    @Override
     public boolean descend(ExpressionNode node) throws SqlException {
         final BindScope scope = ctx.scope();
         final ObjList<ExpressionNode> replacementNodes = scope.replacementNodes;
@@ -2152,64 +2211,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     BoundExpression bindStandalone(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         return bind(node, BindingRole.STANDALONE, ctx.emptySchema, null, ColumnType.UNDEFINED, null, null, null, executionContext);
-    }
-
-    ConstantExpression constant(Function function, int position) {
-        return switch (ColumnType.tagOf(function.getType())) {
-            case ColumnType.TIMESTAMP ->
-                    ctx.planNodes.constants.next().ofTimestamp(function.getTimestamp(null), function.getType(), position);
-            case ColumnType.STRING ->
-                    ctx.planNodes.constants.next().ofString(Chars.toString(function.getStrA(null)), position);
-            case ColumnType.SYMBOL ->
-                    ctx.planNodes.constants.next().ofSymbol(Chars.toString(function.getSymbol(null)), position);
-            case ColumnType.VARCHAR -> ctx.planNodes.constants.next().ofVarchar(function.getVarcharA(null), position);
-            case ColumnType.BYTE -> ctx.planNodes.constants.next().ofByte(function.getByte(null), position);
-            case ColumnType.SHORT -> ctx.planNodes.constants.next().ofShort(function.getShort(null), position);
-            case ColumnType.DATE -> ctx.planNodes.constants.next().ofDate(function.getDate(null), position);
-            case ColumnType.IPv4 -> ctx.planNodes.constants.next().ofIPv4(function.getIPv4(null), position);
-            case ColumnType.CHAR -> ctx.planNodes.constants.next().ofChar(function.getChar(null), position);
-            case ColumnType.BOOLEAN -> ctx.planNodes.constants.next().ofBoolean(function.getBool(null), position);
-            case ColumnType.INT -> ctx.planNodes.constants.next().ofInt(function.getInt(null), position);
-            case ColumnType.LONG -> ctx.planNodes.constants.next().ofLong(function.getLong(null), position);
-            case ColumnType.LONG256 -> ctx.planNodes.constants.next().ofLong256(function.getLong256A(null), position);
-            case ColumnType.UUID ->
-                    ctx.planNodes.constants.next().ofUuid(function.getLong128Lo(null), function.getLong128Hi(null), position);
-            case ColumnType.LONG128 ->
-                    ctx.planNodes.constants.next().ofLong128(function.getLong128Lo(null), function.getLong128Hi(null), position);
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    ctx.planNodes.constants.next().ofGeoHash(GeoHashes.getGeoLong(function.getType(), function, null), function.getType(), position);
-            case ColumnType.FLOAT -> ctx.planNodes.constants.next().ofFloat(function.getFloat(null), position);
-            case ColumnType.DOUBLE -> ctx.planNodes.constants.next().ofDouble(function.getDouble(null), position);
-            case ColumnType.NULL -> ctx.planNodes.constants.next().ofNull(position);
-            case ColumnType.DECIMAL8 ->
-                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal8(null), position);
-            case ColumnType.DECIMAL16 ->
-                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal16(null), position);
-            case ColumnType.DECIMAL32 ->
-                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal32(null), position);
-            case ColumnType.DECIMAL64 ->
-                    ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal64(null), position);
-            case ColumnType.DECIMAL128 -> {
-                function.getDecimal128(null, decimal128);
-                yield ctx.planNodes.constants.next().ofDecimal(function.getType(), 0, 0, decimal128.getHigh(), decimal128.getLow(), position);
-            }
-            case ColumnType.DECIMAL256 -> {
-                function.getDecimal256(null, decimal256);
-                yield ctx.planNodes.constants.next().ofDecimal(function.getType(), decimal256.getHh(), decimal256.getHl(),
-                        decimal256.getLh(), decimal256.getLl(), position);
-            }
-            case ColumnType.INTERVAL -> {
-                final Interval interval = function.getInterval(null);
-                yield ctx.planNodes.constants.next().ofInterval(interval.getLo(), interval.getHi(), function.getType(), position);
-            }
-            case ColumnType.BINARY -> {
-                if (function.getBin(null) != null) {
-                    throw new IllegalStateException("non-null BINARY constant");
-                }
-                yield ctx.planNodes.constants.next().ofBinaryNull(position);
-            }
-            default -> throw new IllegalStateException("unexpected constant type");
-        };
     }
 
     /**

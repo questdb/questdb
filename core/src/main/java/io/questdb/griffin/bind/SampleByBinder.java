@@ -389,18 +389,6 @@ final class SampleByBinder {
                 ? SqlParser.ZERO_OFFSET : offset;
     }
 
-    /**
-     * The SAMPLE BY period as a stride literal; a constant period expression contributes its value.
-     */
-    private CharSequence sampleByPeriod(QueryModel source, GroupingPlan aggregate) {
-        if (aggregate instanceof SampleByPlan sampleBy && sampleBy.getPeriodToken() == null) {
-            final CharacterStoreEntry entry = ctx.characterStore.newEntry();
-            entry.put(sampleBy.getStride()).put(sampleBy.getPeriodUnit());
-            return entry.toImmutable();
-        }
-        return source.getSampleBy().token;
-    }
-
     private ExpressionNode sampleByRangeBound(ExpressionNode bound, ExpressionNode timezone, int timestampType) {
         if (bound == null || timezone == null) {
             return bound;
@@ -660,17 +648,23 @@ final class SampleByBinder {
             final ExpressionNode expression = signedFillLiteral(fill.getQuick(i));
             scope.fillBindings.add(SqlKeywords.isPrevKeyword(expression.token) ? null : bindFillValue(expression, executionContext));
         }
-        final FillPlan plan = ctx.planNodes.fills.next().of(aggregate, source.getSampleBy().position);
+        final ExpressionNode period = source.getSampleBy();
+        final FillPlan plan = ctx.planNodes.fills.next().of(aggregate, period.position);
         final OutputSchema output = aggregate.getOutput();
         plan.setTimestampColumnId(output.getColumnId(timestampIndex));
         plan.deriveOutput();
-        final CharSequence period = sampleByPeriod(source, aggregate);
-        plan.setPeriod(period, source.getSampleBy().position);
+        final int timestampType = output.getColumnType(timestampIndex);
+        if (aggregate instanceof SampleByPlan sampleBy) {
+            plan.setPeriod(sampleBy.getStride(), sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
+        } else {
+            final long stride = TimestampSamplerFactory.getSampleByStride(ColumnType.getTimestampDriver(timestampType), period.token, period.position);
+            final int unitIndex = period.token.length() - 1;
+            plan.setPeriod(stride, period.token.charAt(unitIndex), period.position + unitIndex);
+        }
         final ExpressionNode timezone = sampleByTimezone(source);
-        final boolean isSubDay = CommonUtils.isSubDayUnit(period.charAt(period.length() - 1));
+        final boolean isSubDay = CommonUtils.isSubDayUnit(plan.getPeriodUnit());
         final ExpressionNode from = source.getSampleByFrom();
         final ExpressionNode to = source.getSampleByTo();
-        final int timestampType = output.getColumnType(timestampIndex);
         final ExpressionNode rangeTimezone = isSubDay ? timezone : null;
         plan.setFrom(bindSampleByBound(sampleByRangeBound(from, rangeTimezone, timestampType), timestampType, FROM_BOUND_ERROR, executionContext));
         plan.setTo(bindSampleByBound(sampleByRangeBound(to, rangeTimezone, timestampType), timestampType, TO_BOUND_ERROR, executionContext));
@@ -788,9 +782,9 @@ final class SampleByBinder {
         final ExpressionNode unit = source.getSampleByUnit();
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
-            plan.setPeriod(sampleBy.token, 0, sampleBy.position,
-                    sampleBy.token.isEmpty() ? (char) 0 : sampleBy.token.charAt(sampleBy.token.length() - 1), sampleBy.position);
-            TimestampSamplerFactory.getInstance(driver, sampleBy.token, sampleBy.position);
+            final long stride = TimestampSamplerFactory.getSampleByStride(driver, sampleBy.token, sampleBy.position);
+            final int unitIndex = sampleBy.token.length() - 1;
+            plan.setPeriod(sampleBy.token, stride, sampleBy.position, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
         } else {
             final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
             if (!(bound instanceof ConstantExpression period)
@@ -839,7 +833,10 @@ final class SampleByBinder {
         final CharacterStoreEntry interval = ctx.characterStore.newEntry();
         interval.put('\'').put(sampleBy.token).put('\'');
         floor.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, interval.toImmutable(), 0, sampleBy.position));
-        return ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
+        final BoundExpression bucket = ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
+        TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(bucket.getDataType()), CommonUtils.getStrideMultiple(sampleBy.token, sampleBy.position),
+                CommonUtils.getStrideUnit(sampleBy.token, sampleBy.position), sampleBy.position + sampleBy.token.length() - 1);
+        return bucket;
     }
 
     /**

@@ -277,6 +277,15 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * True when the plan, of {@code rows} row bound, never holds more rows than {@code other}, of {@code otherRows}, see
+     * {@link OptimiserContext#rowBound}: both have a bound, its bound is no larger, and every LIMIT whose count only
+     * execution knows that bounds {@code other} bounds the plan too, see {@link PhysicalProperties#hasRuntimeLimitsOf}.
+     */
+    private static boolean isNeverLarger(LogicalPlan plan, long rows, LogicalPlan other, long otherRows) {
+        return rows > -1 && otherRows > -1 && rows <= otherRows && PhysicalProperties.hasRuntimeLimitsOf(plan, other);
+    }
+
+    /**
      * True when the generator runs the filter over the residual of a fused scan in parallel, given the parallel filter
      * is enabled: over page frames and within a pattern scan; over a covering index without a backup index scan,
      * unless a LIMIT that may be negative asks a multi-key covering index for the backward frames it cannot serve.
@@ -599,7 +608,7 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * The predicate over {@code master}, the output the master columns of the keys come from, that the master columns of
-     * the keys are all NULL, see {@link JoinInput#getNullKeyCheck}.
+     * the keys all hold the values a NULL record reads for them, see {@link JoinInput#getNullKeyCheck}.
      */
     private BoundExpression nullKeyCheck(JoinInput step, OutputSchema master) throws SqlException {
         final ObjList<JoinKey> keys = step.getKeys();
@@ -608,7 +617,7 @@ final class OperatorPlanning implements Mutable {
             final JoinKey key = keys.getQuick(k);
             if (step.indexOfMasterKey(key.getMasterColumnId()) == k) {
                 nullKeyCheck = context.getRewriter().combineConjunction(nullKeyCheck,
-                        context.bindIsNull(key.getMasterColumnId(), master, key.getPosition()), key.getPosition());
+                        context.bindNullValueCheck(key.getMasterColumnId(), master, key.getPosition()), key.getPosition());
             }
         }
         return nullKeyCheck;
@@ -692,11 +701,12 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Records the input the light INNER hash join step that the smaller input drives hashes: the one with the smaller
-     * row bound, see {@link OptimiserContext#rowBound}, the slave on a tie, where only a master with random access can
-     * be hashed, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. A step over a master of
-     * several inputs, {@code master} null, an input without a bound and a smaller master whose random access codegen
-     * decides leave the choice to execution, {@link JoinInput.BuildSide#SMALLER}.
+     * Records the input the light INNER hash join step that the smaller input drives hashes: the slave when it never
+     * holds more rows than the master, see {@link #isNeverLarger}, else the master when it never holds more rows than
+     * the slave and has random access, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. Any
+     * other step leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}: one over a master of several
+     * inputs, {@code master} null, one with an input without a bound, one where a LIMIT whose count only execution knows
+     * may make either input the smaller, and one whose smaller master has the random access codegen decides.
      */
     private void planBuildSide(JoinInput step, @Nullable LogicalPlan master) {
         if (master == null) {
@@ -706,15 +716,14 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan slave = step.getInput();
         final long masterRows = context.rowBound(master);
         final long slaveRows = context.rowBound(slave);
-        JoinInput.BuildSide side = JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.SLAVE);
-        if (side == JoinInput.BuildSide.MASTER && !isRandomAccess(master)) {
-            side = JoinInput.BuildSide.SMALLER;
-        }
-        step.setBuildSide(side);
-        if (side == JoinInput.BuildSide.MASTER) {
-            keepBuildSide(master, masterRows, slave, slaveRows);
-        } else if (side == JoinInput.BuildSide.SLAVE) {
+        if (isNeverLarger(slave, slaveRows, master, masterRows)) {
+            step.setBuildSide(JoinInput.BuildSide.SLAVE);
             keepBuildSide(slave, slaveRows, master, masterRows);
+        } else if (isNeverLarger(master, masterRows, slave, slaveRows) && isRandomAccess(master)) {
+            step.setBuildSide(JoinInput.BuildSide.MASTER);
+            keepBuildSide(master, masterRows, slave, slaveRows);
+        } else {
+            step.setBuildSide(JoinInput.BuildSide.SMALLER);
         }
     }
 
@@ -916,6 +925,7 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan slave = step.getInput();
         final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
         step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master) : null);
+        step.setNullKeyMatch(PlanToFactoryRules.nullKeyMatch(step));
         final int markoutIndex = master.getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
                 && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
@@ -1634,8 +1644,8 @@ final class OperatorPlanning implements Mutable {
      * counts that guarantee it: the probed one at least half its rows and at least the square root of half the product
      * of the two, and the hashed one at most twice that, so it may grow to at least the rows of the probed one. A cursor
      * open past them compiles the statement again, and a compile at the same row counts keeps them. Inputs that one
-     * table bounds record none when the LIMITs of the hashed one allow no more rows than those of the other, as it then
-     * never holds more rows.
+     * table bounds record none when the LIMITs of the hashed one allow no more rows than those of the other, see
+     * {@link PhysicalProperties#rowBoundLimit}, as its row bound then never exceeds the other's.
      */
     static void keepBuildSide(LogicalPlan built, long builtRows, LogicalPlan probe, long probeRows) {
         final ScanPlan builtScan = PhysicalProperties.rowBoundScan(built);

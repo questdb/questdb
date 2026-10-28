@@ -191,6 +191,23 @@ public class UpdateJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinReadsTargetInRowOrderUnderRuntimeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dst (k INT, v INT)");
+            execute("CREATE TABLE src (k INT, v INT)");
+            execute("INSERT INTO dst VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO src VALUES (2, 200), (1, 100), (3, 300)");
+            bindVariableService.setLong("n", 3);
+            Assert.assertEquals(2, update("UPDATE dst d SET v = s.v FROM (SELECT k, v FROM src LIMIT :n) s WHERE d.k = s.k"));
+            assertQuery("SELECT k, v FROM dst").expectSize().returns("""
+                    k\tv
+                    1\t100
+                    2\t200
+                    """);
+        });
+    }
+
+    @Test
     public void testHashJoinTargetRowOrderPlan() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelFilterEnabled(false);

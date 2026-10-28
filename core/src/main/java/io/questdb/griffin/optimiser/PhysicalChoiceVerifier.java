@@ -132,8 +132,10 @@ final class PhysicalChoiceVerifier {
      * Whether the join step records the input it hashes as operator planning settles it: none for a step that is not a
      * light INNER hash join, or whose master side is undecided, and the slave for one whose master is fixed. A step the
      * smaller input drives records the input to hash where its master is one input and both inputs have a row bound,
-     * see {@link PhysicalProperties#rowBoundScan}, and leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER},
-     * only where they do not, or where codegen decides the random access of the master.
+     * see {@link PhysicalProperties#rowBoundScan}: one that every LIMIT whose count only execution knows that bounds the
+     * other input bounds too, see {@link PhysicalProperties#hasRuntimeLimitsOf}. It leaves the choice to execution,
+     * {@link JoinInput.BuildSide#SMALLER}, only where the inputs have no row bound, where such LIMITs differ between
+     * them, or where codegen decides the random access of the master.
      */
     private static boolean isBuildSideSettled(JoinPlan join, int position, JoinInput step) {
         final JoinInput.BuildSide side = step.getBuildSide();
@@ -143,10 +145,17 @@ final class PhysicalChoiceVerifier {
         if (step.getMasterSide() == JoinInput.MasterSide.FIXED) {
             return side == JoinInput.BuildSide.SLAVE;
         }
-        final boolean isBounded = position == 1 && hasRowBound(join.getOrderedInputs().getQuick(0).getInput()) && hasRowBound(step.getInput());
-        return side == JoinInput.BuildSide.SMALLER
-                ? !isBounded || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
-                : side != null && isBounded;
+        final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
+        final LogicalPlan slave = step.getInput();
+        final boolean isBounded = position == 1 && hasRowBound(master) && hasRowBound(slave);
+        return switch (side) {
+            case SMALLER ->
+                    !isBounded || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
+                            || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave);
+            case SLAVE -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(slave, master);
+            case MASTER -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(master, slave);
+            case null -> false;
+        };
     }
 
     /**
@@ -565,6 +574,9 @@ final class PhysicalChoiceVerifier {
         }
         if ((step.getNullKeyCheck() != null) != PlanToFactoryRules.isMasterNullKeyChecked(step)) {
             return PlanVerifier.JOIN_NULL_KEY_CHECK;
+        }
+        if (step.getNullKeyMatch() != PlanToFactoryRules.nullKeyMatch(step)) {
+            return PlanVerifier.JOIN_NULL_KEY_MATCH;
         }
         if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
             return PlanVerifier.JOIN_SLAVE_VALUE_TYPE;

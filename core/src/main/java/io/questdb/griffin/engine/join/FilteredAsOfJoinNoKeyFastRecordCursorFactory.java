@@ -118,9 +118,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        TimeFrameCursor baseTimeFrameCursor = null;
         TimeFrameCursor slaveCursor = null;
         try {
-            TimeFrameCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
             slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
@@ -128,7 +129,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            Misc.free(slaveCursor);
+            Misc.free(slaveCursor != null ? slaveCursor : baseTimeFrameCursor);
             Misc.free(masterCursor);
             throw e;
         }

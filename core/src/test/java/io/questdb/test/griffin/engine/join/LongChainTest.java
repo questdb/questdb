@@ -257,6 +257,28 @@ public class LongChainTest {
         });
     }
 
+    @Test
+    public void testValueAtWalksEveryChainInPutOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(1024, Integer.MAX_VALUE)) {
+                Assert.assertEquals(0, chain.valueCount());
+                final int[] tails = {-1, -1, -1};
+                for (int i = 0; i < 1_000; i++) {
+                    tails[i % 3] = chain.put(i * 7L, tails[i % 3]);
+                }
+                Assert.assertEquals(1_000, chain.valueCount());
+                for (int i = 0; i < 1_000; i++) {
+                    Assert.assertEquals(i * 7L, chain.valueAt(i));
+                }
+                chain.clear();
+                Assert.assertEquals(0, chain.valueCount());
+            }
+            try (LongChain chain = new LongChain(1024, Integer.MAX_VALUE, true)) {
+                Assert.assertEquals(0, chain.valueCount());
+            }
+        });
+    }
+
     /**
      * Puts {@code count} values, linking every {@code step}-th value to the previous {@code step}-th one.
      *

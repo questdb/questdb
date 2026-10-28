@@ -24,10 +24,17 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -173,6 +180,40 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
                 Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
             }
+            assertQuery("SELECT ts, v FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
+        });
+    }
+
+    @Test
+    public void testFullReaderPoolFailsAsBusyBeforeSequencing() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        assertMemoryLeak(() -> {
+            createTargetTable();
+            final ObjList<TableReader> readers = new ObjList<>();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("UPDATE t SET v = v + 100 WHERE v < (SELECT max(v) FROM t)", sqlExecutionContext);
+                try {
+                    while (true) {
+                        readers.add(getReader("t"));
+                    }
+                } catch (EntryUnavailableException ignore) {
+                }
+                try (OperationFuture future = cq.execute(new SCSequence())) {
+                    future.await();
+                    Assert.fail();
+                } catch (EntryUnavailableException ignore) {
+                }
+            } finally {
+                Misc.freeObjList(readers);
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
             assertQuery("SELECT ts, v FROM t")
                     .noLeakCheck()
                     .expectSize()

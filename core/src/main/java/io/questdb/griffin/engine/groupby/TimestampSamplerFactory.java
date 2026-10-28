@@ -203,6 +203,17 @@ public final class TimestampSamplerFactory {
     }
 
     /**
+     * The stride of a SAMPLE BY period literal, such as 15 for {@code 15m} or 1 for {@code m}, which
+     * {@link #getInstance(TimestampDriver, CharSequence, int)} accepts; the literal's last character is its unit.
+     *
+     * @param position position in SQL text to report error against
+     */
+    public static long getSampleByStride(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
+        getInstance(driver, cs, position);
+        return parsePositiveInterval(cs, cs.length() - 1, position, "sample", Numbers.INT_NULL, '?');
+    }
+
+    /**
      * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
      * has been called and returned a valid index. Supports negative and zero values.
      *

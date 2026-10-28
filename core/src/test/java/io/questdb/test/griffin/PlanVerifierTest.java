@@ -633,6 +633,21 @@ public class PlanVerifierTest extends AbstractCairoTest {
                         Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
                         step.setBuildSide(JoinInput.BuildSide.SLAVE);
                     }, PlanVerifier.JOIN_BUILD_SIDE);
+            bindVariableService.setLong("n", 2);
+            bindVariableService.setLong("m", 2);
+            // The LIMIT never holds more rows than bs_b, which holds no more rows than bs_a, so the plan hashes it.
+            assertAlgorithmContradicts("SELECT a.x, l.x FROM bs_a a JOIN (SELECT k, x FROM bs_b LIMIT :n) l ON a.k = l.k", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
+                step.setBuildSide(JoinInput.BuildSide.MASTER);
+            }, PlanVerifier.JOIN_BUILD_SIDE);
+            // LIMITs of two bind variables bound the inputs, so execution picks the input to hash.
+            assertAlgorithmContradicts("SELECT a.x, l.x FROM (SELECT k, x FROM bs_a LIMIT :m) a JOIN (SELECT k, x FROM bs_b LIMIT :n) l ON a.k = l.k",
+                    JoinPlan.class, join -> {
+                        final JoinInput step = join.getOrderedInputs().getQuick(1);
+                        Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                        step.setBuildSide(JoinInput.BuildSide.SLAVE);
+                    }, PlanVerifier.JOIN_BUILD_SIDE);
             final String union = "(SELECT k, x FROM bs_b UNION ALL SELECT k, x FROM bs_b)";
             // A full-fat hash join of a slave without random access always hashes its slave.
             assertAlgorithmContradicts("SELECT b.x, u.x FROM bs_b b JOIN " + union + " u ON b.k = u.k", JoinPlan.class, join -> {
@@ -782,6 +797,37 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertNull(step.getNullKeyCheck());
                 step.setNullKeyCheck(ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0));
             }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+        });
+    }
+
+    @Test
+    public void testJoinNullKeyMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nm_a (id INT, x INT, w INT)");
+            execute("CREATE TABLE nm_b (id INT, x INT, k INT)");
+            execute("CREATE TABLE nm_c (id INT, k INT)");
+            final String query = "SELECT a.id, b.id, c.id FROM nm_a a %s JOIN nm_b b ON %s JOIN nm_c c ON a.w = c.k AND b.k = c.k";
+            assertAlgorithmContradicts(query.formatted("LEFT", "b.x > 1"), JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertEquals(JoinInput.NullKeyMatch.PER_SLAVE_ROW, step.getNullKeyMatch());
+                step.setNullKeyMatch(JoinInput.NullKeyMatch.PER_PAIR);
+            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
+            assertAlgorithmContradicts(query.formatted("RIGHT", "b.x > a.x"), JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertEquals(JoinInput.NullKeyMatch.PER_PAIR, step.getNullKeyMatch());
+                step.setNullKeyMatch(JoinInput.NullKeyMatch.PER_SLAVE_ROW);
+            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
+            assertAlgorithmContradicts(query.formatted("FULL", "b.x > rnd_int()"), JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertEquals(JoinInput.NullKeyMatch.PER_PAIR, step.getNullKeyMatch());
+                step.setNullKeyMatch(null);
+            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
+            assertAlgorithmContradicts(query.formatted("LEFT", "b.x > 1"), JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getLast();
+                Assert.assertEquals(JoinInput.NullExtension.BY_KEYS, step.getNullExtension());
+                Assert.assertNull(step.getNullKeyMatch());
+                step.setNullKeyMatch(JoinInput.NullKeyMatch.PER_PAIR);
+            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
         });
     }
 

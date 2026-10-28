@@ -80,9 +80,24 @@ public interface TimestampDriver {
      */
     static int intSamplerInterval(long interval, int position) throws SqlException {
         if (interval != (int) interval) {
-            throw SqlException.$(position, "invalid sample value [value=").put(interval).put(']');
+            throw invalidSampleValue(interval, position);
         }
         return (int) interval;
+    }
+
+    /**
+     * The bucket of a sampler whose unit spans a fixed {@code unitSize}: the interval times that size. An interval
+     * whose bucket exceeds LONG fails at {@code position}, as one beyond {@link #intSamplerInterval INT} does.
+     */
+    static long samplerBucket(long interval, long unitSize, int position) throws SqlException {
+        if (interval > Long.MAX_VALUE / unitSize || interval < Long.MIN_VALUE / unitSize) {
+            throw invalidSampleValue(interval, position);
+        }
+        return interval * unitSize;
+    }
+
+    private static SqlException invalidSampleValue(long interval, int position) {
+        return SqlException.$(position, "invalid sample value [value=").put(interval).put(']');
     }
 
     /**

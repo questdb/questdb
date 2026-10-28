@@ -823,25 +823,27 @@ public class NanosTimestampDriver implements TimestampDriver {
                     new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
             case 'U' ->
                 // micros
-                    new SimpleTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Nanos.MICRO_NANOS, position), ColumnType.TIMESTAMP_NANO);
             case 'T' ->
                 // millis
-                    new SimpleTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Nanos.MILLI_NANOS, position), ColumnType.TIMESTAMP_NANO);
             case 's' ->
                 // seconds
-                    new SimpleTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Nanos.SECOND_NANOS, position), ColumnType.TIMESTAMP_NANO);
             case 'm' ->
                 // minutes
-                    new SimpleTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Nanos.MINUTE_NANOS, position), ColumnType.TIMESTAMP_NANO);
             case 'h' ->
                 // hours
-                    new SimpleTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Nanos.HOUR_NANOS, position), ColumnType.TIMESTAMP_NANO);
             case 'd' ->
                 // days
-                    new SimpleTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
-            case 'w' ->
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Nanos.DAY_NANOS, position), ColumnType.TIMESTAMP_NANO);
+            case 'w' -> {
                 // weeks
-                    new WeekTimestampNanosSampler(TimestampDriver.intSamplerInterval(interval, position));
+                TimestampDriver.samplerBucket(interval, Nanos.WEEK_NANOS, position);
+                yield new WeekTimestampNanosSampler(TimestampDriver.intSamplerInterval(interval, position));
+            }
             case 'M' ->
                 // months
                     new MonthTimestampNanosSampler(TimestampDriver.intSamplerInterval(interval, position));

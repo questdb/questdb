@@ -38,8 +38,9 @@ public final class FillPlan extends ForwardingPlan {
     private Algorithm algorithm;
     private BoundExpression from;
     private BoundExpression offset;
-    private int periodPosition;
-    private CharSequence periodToken;
+    private char periodUnit;
+    private int periodUnitPosition;
+    private long stride;
     private int timestampColumnId = -1;
     private BoundExpression timezone;
     private BoundExpression to;
@@ -55,8 +56,9 @@ public final class FillPlan extends ForwardingPlan {
         algorithm = null;
         from = null;
         offset = null;
-        periodPosition = 0;
-        periodToken = null;
+        periodUnit = 0;
+        periodUnitPosition = 0;
+        stride = 0;
         timestampColumnId = -1;
         timezone = null;
         to = null;
@@ -97,16 +99,23 @@ public final class FillPlan extends ForwardingPlan {
         return offset == null ? 0 : offset.getPosition();
     }
 
-    public int getPeriodPosition() {
-        return periodPosition;
+    public char getPeriodUnit() {
+        return periodUnit;
     }
 
-    public CharSequence getPeriodToken() {
-        return periodToken;
+    public int getPeriodUnitPosition() {
+        return periodUnitPosition;
     }
 
     public IntList getSourceColumnIds() {
         return sourceColumnIds;
+    }
+
+    /**
+     * The number of {@link #getPeriodUnit() units} in a bucket, which the binder validated.
+     */
+    public long getStride() {
+        return stride;
     }
 
     public IntList getTargetColumnIds() {
@@ -158,9 +167,10 @@ public final class FillPlan extends ForwardingPlan {
         this.offset = offset;
     }
 
-    public void setPeriod(CharSequence token, int position) {
-        periodToken = token;
-        periodPosition = position;
+    public void setPeriod(long stride, char unit, int unitPosition) {
+        this.stride = stride;
+        this.periodUnit = unit;
+        this.periodUnitPosition = unitPosition;
     }
 
     public void setTimestampColumnId(int timestampColumnId) {

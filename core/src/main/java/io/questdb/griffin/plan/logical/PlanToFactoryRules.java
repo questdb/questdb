@@ -338,7 +338,7 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * Whether the join step checks that the master columns of its keys are all NULL, see
+     * Whether the join step checks that the master columns of its keys hold the values of a NULL record, see
      * {@link JoinInput#getNullKeyCheck}: its ON residual decides the rows it NULL-extends, see
      * {@link JoinInput.NullExtension#BY_ON_RESIDUAL}, and it NULL-extends master rows, as a LEFT or FULL join does, whose
      * factory evaluates the check on each master row no slave row matches.
@@ -546,6 +546,21 @@ public final class PlanToFactoryRules {
         }
         final ScanPlan scan = LogicalPlans.scanThroughFilter(LogicalPlans.skipProjects(join.getOrderedInputs().getQuick(0).getInput()));
         return scan != null && scan.getLimitLo() == limit.getLo() ? scan : null;
+    }
+
+    /**
+     * How the factory of the join step finds the rows that pass its ON residual with a row whose keys are all NULL, see
+     * {@link JoinInput#getNullKeyMatch}: per slave row when the ON residual reads only the slave input and takes the
+     * same value for a row on every evaluation, see {@link LogicalPlans#isOrderIndependent}, and per pair of rows
+     * otherwise; null for a step its keys NULL-extend.
+     */
+    public static JoinInput.NullKeyMatch nullKeyMatch(JoinInput step) {
+        if (step.getNullExtension() != JoinInput.NullExtension.BY_ON_RESIDUAL) {
+            return null;
+        }
+        final BoundExpression onResidual = step.getOnResidual();
+        return LogicalPlans.readsOnly(onResidual, step.getSourceOutput()) && LogicalPlans.isOrderIndependent(onResidual)
+                ? JoinInput.NullKeyMatch.PER_SLAVE_ROW : JoinInput.NullKeyMatch.PER_PAIR;
     }
 
     /**

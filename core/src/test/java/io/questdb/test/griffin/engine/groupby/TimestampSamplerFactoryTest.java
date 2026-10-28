@@ -58,6 +58,26 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testBucketBeyondLong() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        for (char unit : new char[]{'U', 'T', 's', 'm', 'h', 'd', 'w'}) {
+            final long unitSize = driver.from(1, unit);
+            if (unitSize == 1) {
+                continue;
+            }
+            final long maxInterval = Long.MAX_VALUE / unitSize;
+            Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, maxInterval, unit, 7));
+            try {
+                TimestampSamplerFactory.getInstance(driver, maxInterval + 1, unit, 7);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(7, e.getPosition());
+                TestUtils.assertEquals("invalid sample value [value=" + (maxInterval + 1) + "]", e.getFlyweightMessage());
+            }
+        }
+    }
+
+    @Test
     public void testFindIntervalEndIndex() throws SqlException {
         // Valid cases - positive values
         Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("5s", 0));
@@ -117,7 +137,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testIntervalBeyondIntForIntSamplers() throws SqlException {
         final TimestampDriver driver = timestampType.getDriver();
-        for (char unit : new char[]{'w', 'M', 'y'}) {
+        for (char unit : new char[]{'M', 'y'}) {
             Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE, unit, 7));
             try {
                 TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE + 1L, unit, 7);

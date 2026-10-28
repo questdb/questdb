@@ -148,9 +148,10 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        TimeFrameCursor baseTimeFrameCursor = null;
         TimeFrameCursor slaveCursor = null;
         try {
-            TimeFrameCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
             if (keyCheck != null) {
@@ -165,7 +166,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            Misc.free(slaveCursor);
+            Misc.free(slaveCursor != null ? slaveCursor : baseTimeFrameCursor);
             Misc.free(masterCursor);
             // of() reopens the sinks and caches before adopting the cursors, so close() here frees
             // only the partial heap.

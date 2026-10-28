@@ -785,22 +785,24 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
             case 'T' ->
                 // millis
-                    new SimpleTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.MILLI_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 's' ->
                 // seconds
-                    new SimpleTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.SECOND_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 'm' ->
                 // minutes
-                    new SimpleTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.MINUTE_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 'h' ->
                 // hours
-                    new SimpleTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.HOUR_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 'd' ->
                 // days
-                    new SimpleTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
-            case 'w' ->
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.DAY_MICROS, position), ColumnType.TIMESTAMP_MICRO);
+            case 'w' -> {
                 // weeks
-                    new WeekTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
+                TimestampDriver.samplerBucket(interval, Micros.WEEK_MICROS, position);
+                yield new WeekTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
+            }
             case 'M' ->
                 // months
                     new MonthTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));

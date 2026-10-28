@@ -24,9 +24,11 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -412,6 +414,47 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyEvaluatesSlaveOnlyOnResidualOncePerSlaveRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ev_a (id INT, w INT)");
+            execute("CREATE TABLE ev_a2 (id INT, w INT)");
+            execute("CREATE TABLE ev_b (id INT, x INT, k INT)");
+            execute("CREATE TABLE ev_b2 (id INT, x INT, k INT)");
+            execute("CREATE TABLE ev_c (id INT, k INT)");
+            execute("INSERT INTO ev_a VALUES (1, NULL), (2, NULL), (3, NULL), (4, 100), (5, 101)");
+            execute("INSERT INTO ev_a2 VALUES (1, 100), (2, 101), (3, 102)");
+            execute("INSERT INTO ev_b VALUES (10, 0, 7), (11, 0, 8), (12, 0, 9), (13, 0, 10)");
+            execute("INSERT INTO ev_b2 VALUES (10, 0, NULL), (11, 0, NULL), (12, 0, NULL), (13, 0, NULL)");
+            execute("INSERT INTO ev_c VALUES (20, NULL)");
+            final String query = "SELECT a.id aid, b.x bx, c.id cid FROM %s a %s JOIN %s b ON b.x = 0 AND test_latched_counter() "
+                    + "JOIN ev_c c ON a.w = c.k AND b.k = c.k";
+            final String masterRows = """
+                    aid\tbx\tcid
+                    1\tnull\t20
+                    2\tnull\t20
+                    3\tnull\t20
+                    """;
+            final String slaveRows = """
+                    aid\tbx\tcid
+                    null\t0\t20
+                    null\t0\t20
+                    null\t0\t20
+                    null\t0\t20
+                    """;
+            try {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    assertSlaveRowEvaluations(query.formatted("ev_a", "LEFT", "ev_b"), isFullFat, masterRows, 0);
+                    assertSlaveRowEvaluations(query.formatted("ev_a", "FULL", "ev_b"), isFullFat, masterRows, 0);
+                    assertSlaveRowEvaluations(query.formatted("ev_a2", "RIGHT", "ev_b2"), isFullFat, slaveRows, 4);
+                    assertSlaveRowEvaluations(query.formatted("ev_a2", "FULL", "ev_b2"), isFullFat, slaveRows, 4);
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
     public void testImpliedKeyFullJoinNullExtendsByOnClause() throws Exception {
         assertMemoryLeak(() -> {
             createImpliedKeyRows();
@@ -634,6 +677,101 @@ public class OuterJoinTest extends AbstractCairoTest {
                             1\t13\t20
                             2\t10\t21
                             """);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyWithoutNullSentinelNullExtendsByOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"LEFT", "a.x > b.y", """
+                            1\tnull\t20
+                            4\t10\t21
+                            4\t12\t21
+                            """},
+                    {"LEFT", "a.x > 15", """
+                            1\tnull\t20
+                            3\t11\t20
+                            4\t10\t21
+                            4\t12\t21
+                            """},
+                    {"LEFT", "b.y > 7", """
+                            1\t11\t20
+                            2\t10\t21
+                            3\t11\t20
+                            4\t10\t21
+                            """},
+                    {"LEFT", "b.y > 100", """
+                            1\tnull\t20
+                            3\tnull\t20
+                            """},
+                    {"RIGHT", "a.x > b.y", """
+                            null\t11\t20
+                            4\t10\t21
+                            4\t12\t21
+                            """},
+                    {"RIGHT", "a.x > 15", """
+                            3\t11\t20
+                            4\t10\t21
+                            4\t12\t21
+                            """},
+                    {"RIGHT", "b.y > 7", """
+                            1\t11\t20
+                            2\t10\t21
+                            3\t11\t20
+                            4\t10\t21
+                            """},
+                    {"RIGHT", "b.y > 100", """
+                            null\t11\t20
+                            """},
+                    {"FULL", "a.x > b.y", """
+                            null\t11\t20
+                            1\tnull\t20
+                            4\t10\t21
+                            4\t12\t21
+                            """},
+                    {"FULL", "a.x > 15", """
+                            1\tnull\t20
+                            3\t11\t20
+                            4\t10\t21
+                            4\t12\t21
+                            """},
+                    {"FULL", "b.y > 7", """
+                            1\t11\t20
+                            2\t10\t21
+                            3\t11\t20
+                            4\t10\t21
+                            """},
+                    {"FULL", "b.y > 100", """
+                            null\t11\t20
+                            1\tnull\t20
+                            3\tnull\t20
+                            """}
+            };
+            for (String[] type : new String[][]{{"BOOLEAN", "false", "true"}, {"BYTE", "0", "1"}, {"SHORT", "0", "1"}}) {
+                execute("CREATE TABLE ns_a (id INT, k %s, x INT)".formatted(type[0]));
+                execute("CREATE TABLE ns_b (id INT, k %s, y INT)".formatted(type[0]));
+                execute("CREATE TABLE ns_c (id INT, k %s)".formatted(type[0]));
+                execute("INSERT INTO ns_a VALUES (1, %1$s, 0), (2, %2$s, 0), (3, %1$s, 20), (4, %2$s, 20)".formatted(type[1], type[2]));
+                execute("INSERT INTO ns_b VALUES (10, %2$s, 10), (11, %1$s, 30), (12, %2$s, 5)".formatted(type[1], type[2]));
+                execute("INSERT INTO ns_c VALUES (20, %s), (21, %s)".formatted(type[1], type[2]));
+                for (String[] testCase : cases) {
+                    final String expected = "aid\tbid\tcid\n" + testCase[2];
+                    for (boolean isFullFat : new boolean[]{false, true}) {
+                        assertRows("SELECT a.id aid, b.id bid, c.id cid FROM ns_a a %s JOIN ns_b b ON %s JOIN ns_c c ON c.k = a.k AND c.k = b.k ORDER BY 1, 2, 3"
+                                .formatted(testCase[0], testCase[1]), isFullFat, "condition: b.k=a.k", expected);
+                        assertRows("""
+                                SELECT ab.aid, ab.bid, c.id cid
+                                FROM (SELECT a.id aid, a.k ak, b.id bid, b.k bk FROM ns_a a %s JOIN ns_b b ON %s LIMIT 1_000_000) ab
+                                JOIN ns_c c ON c.k = ab.ak AND c.k = ab.bk
+                                ORDER BY 1, 2, 3
+                                """.formatted(testCase[0], testCase[1]), isFullFat, null, expected);
+                    }
+                }
+                execute("DROP TABLE ns_a");
+                execute("DROP TABLE ns_b");
+                execute("DROP TABLE ns_c");
+            }
         });
     }
 
@@ -1561,6 +1699,31 @@ public class OuterJoinTest extends AbstractCairoTest {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         }
         assertRows(sql, false, null, expected);
+    }
+
+    private void assertSlaveRowEvaluations(String sql, boolean isFullFat, String expected, int rereadEvaluations) throws Exception {
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                return false;
+            }
+        });
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            compiler.setFullFatJoins(isFullFat);
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                TestUtils.assertContains(planText(factory), "condition: b.k=a.w");
+                for (int execution = 0; execution < 2; execution++) {
+                    final int executed = execution * (4 + rereadEvaluations);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                        Assert.assertEquals(executed + 4, TestLatchedCounterFunctionFactory.getCount());
+                        cursor.toTop();
+                        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                    }
+                    Assert.assertEquals(executed + 4 + rereadEvaluations, TestLatchedCounterFunctionFactory.getCount());
+                }
+            }
+        }
     }
 
     private void createImpliedCrossKeyRows() throws Exception {

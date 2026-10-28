@@ -124,6 +124,7 @@ public final class PlanVerifier {
     public static final String JOIN_KEY_LOOKUP = "join key lookups contradict the keys operator planning checks instead of looking them up";
     public static final String JOIN_NULL_EXTENSION = "join step NULL-extended by its ON residual is not a LEFT, RIGHT or FULL hash join with an ON residual";
     public static final String JOIN_NULL_KEY_CHECK = "join step NULL key check contradicts whether it NULL-extends master rows by its ON residual";
+    public static final String JOIN_NULL_KEY_MATCH = "join step NULL key match contradicts how it NULL-extends or what its ON residual reads";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTER_CROSS = "OUTER CROSS step does not directly follow a RIGHT or FULL step, or has a key or an ON residual";

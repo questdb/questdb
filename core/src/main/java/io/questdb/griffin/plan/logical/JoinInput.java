@@ -64,6 +64,7 @@ public final class JoinInput implements Mutable {
     private MasterSide masterSide;
     private NullExtension nullExtension = NullExtension.BY_KEYS;
     private BoundExpression nullKeyCheck;
+    private NullKeyMatch nullKeyMatch;
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
@@ -108,6 +109,7 @@ public final class JoinInput implements Mutable {
         masterSide = null;
         nullExtension = NullExtension.BY_KEYS;
         nullKeyCheck = null;
+        nullKeyMatch = null;
         onResidual = null;
         position = -1;
         postJoinFilter = null;
@@ -196,12 +198,21 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * The predicate over the master row that the master columns of the keys are all NULL, which operator planning
-     * records for a step that NULL-extends master rows by its ON residual, see
-     * {@link PlanToFactoryRules#isMasterNullKeyChecked}; null for any other step.
+     * The predicate over the master row that the master columns of the keys all hold the values a NULL record reads for
+     * them, see {@link NullExtension#BY_ON_RESIDUAL}, which operator planning records for a step that NULL-extends
+     * master rows by its ON residual, see {@link PlanToFactoryRules#isMasterNullKeyChecked}; null for any other step.
      */
     public BoundExpression getNullKeyCheck() {
         return nullKeyCheck;
+    }
+
+    /**
+     * How the factory finds the rows that pass the ON residual with a row whose keys are all NULL, see
+     * {@link #getNullKeyCheck}, which operator planning records for a step that NULL-extends by its ON residual, see
+     * {@link PlanToFactoryRules#nullKeyMatch}; null for any other step.
+     */
+    public NullKeyMatch getNullKeyMatch() {
+        return nullKeyMatch;
     }
 
     public BoundExpression getOnResidual() {
@@ -375,6 +386,10 @@ public final class JoinInput implements Mutable {
         this.nullKeyCheck = nullKeyCheck;
     }
 
+    public void setNullKeyMatch(NullKeyMatch nullKeyMatch) {
+        this.nullKeyMatch = nullKeyMatch;
+    }
+
     public void setOnResidual(BoundExpression onResidual) {
         this.onResidual = onResidual;
     }
@@ -485,13 +500,33 @@ public final class JoinInput implements Mutable {
          */
         BY_KEYS,
         /**
-         * A preserved row whose keys are all NULL and whom every row of the other input fails the ON residual; the step
-         * drops every other preserved row without a key partner that passes the ON residual. The keys are equalities a
-         * later INNER join implies, which hold for every row that join keeps, and the ON residual holds the whole ON
-         * clause: the later join drops every other row the ON clause pairs or NULL-extends, so every row the step emits
-         * holds its keys.
+         * A preserved row whose keys all hold the values the NULL record of the other input reads for them, NULL, or
+         * false or 0 for a type with no NULL sentinel, and whom every row of the other input fails the ON residual; the
+         * step drops every other preserved row without a key partner that passes the ON residual. The keys are
+         * equalities a later INNER join implies, which hold for every row that join keeps, and the ON residual holds
+         * the whole ON clause: the later join drops every other row the ON clause pairs or NULL-extends, so every row
+         * the step emits holds its keys.
          */
         BY_ON_RESIDUAL
+    }
+
+    /**
+     * How the factory of a step NULL-extended by its ON residual, see {@link NullExtension#BY_ON_RESIDUAL}, finds the
+     * rows that pass the ON residual with a row whose keys are all NULL: the slave rows that pass it with such a master
+     * row, and for a RIGHT or FULL step the rows of the NULL key chain that pass it with some master row.
+     */
+    public enum NullKeyMatch {
+        /**
+         * Evaluates the ON residual on each pair of a master and a slave row the factory walks.
+         */
+        PER_PAIR,
+        /**
+         * Evaluates the ON residual on slave rows alone: the ON residual reads only the slave input and takes the same
+         * value for a row on every evaluation, so no master row changes whether a slave row passes. The factory tests
+         * once per execution whether some slave row passes, and tests a row of the NULL key chain when it emits the
+         * slave rows no master row matched.
+         */
+        PER_SLAVE_ROW
     }
 
     /**

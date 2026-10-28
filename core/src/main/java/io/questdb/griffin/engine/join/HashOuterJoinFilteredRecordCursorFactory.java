@@ -65,6 +65,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     private final int joinType;
     private final RecordSink masterSink;
     private final JoinInput.NullExtension nullExtension;
+    private final @Nullable JoinInput.NullKeyMatch nullKeyMatch;
     private final RecordSink slaveKeySink;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Function filter;
@@ -91,12 +92,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             JoinInput.NullExtension nullExtension,
-            @Nullable Function nullKeyCheck
+            @Nullable Function nullKeyCheck,
+            @Nullable JoinInput.NullKeyMatch nullKeyMatch
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.filter = filter;
         this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
+        this.nullKeyMatch = nullKeyMatch;
         try {
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
@@ -238,7 +241,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
         AbstractHashOuterJoinFilteredRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
-            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullExtension, nullKeyCheck);
+            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullExtension, nullKeyCheck, nullKeyMatch);
         }
 
         @Override
@@ -262,6 +265,12 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
         }
 
+        @Override
+        protected void ofWithoutAdopt(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            super.ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
+            nullKeys.clear();
+        }
+
         void initFunctions(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             filterSymbolTableSource.of(masterCursor, slaveCursor);
             filter.init(filterSymbolTableSource, sqlExecutionContext);
@@ -279,6 +288,24 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             @Override
             public long chainSize(MapValue value) {
                 return value.getLong(2);
+            }
+
+            @Override
+            public boolean hasPassingSlaveRow(Function filter, Record joined) {
+                final MapRecordCursor keys = joinKeyMap.getCursor();
+                try {
+                    while (keys.hasNext()) {
+                        slaveChain.of(keys.getRecord().getValue().getLong(0));
+                        while (slaveChain.hasNext()) {
+                            if (filter.getBool(joined)) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                } finally {
+                    keys.toTop();
+                }
             }
 
             @Override
@@ -349,9 +376,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             return true;
                         }
                     } else {
-                        MapKey keys = matchIdsMap.withKey();
-                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
-                        if (keys.findValue() == null) {
+                        if (nullKeys.isSlaveRowUnmatched(record, slaveRecord, matchIdsMap)) {
                             return true;
                         }
                     }
@@ -396,9 +421,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 }
                 slaveChain.of(value.getLong(0));
                 while (slaveChain.hasNext()) {
-                    MapKey keys = matchIdsMap.withKey();
-                    keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
-                    if (keys.findValue() == null) {
+                    if (nullKeys.isSlaveRowUnmatched(record, slaveRecord, matchIdsMap)) {
                         useSlaveCursor = true;
                         return true;
                     }
@@ -568,9 +591,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             return true;
                         }
                     } else {
-                        MapKey keys = matchIdsMap.withKey();
-                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
-                        if (keys.findValue() == null) {
+                        if (nullKeys.isSlaveRowUnmatched(record, slaveRecord, matchIdsMap)) {
                             return true;
                         }
                     }
@@ -606,9 +627,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 }
                 slaveChain.of(value.getLong(0));
                 while (slaveChain.hasNext()) {
-                    MapKey keys = matchIdsMap.withKey();
-                    keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
-                    if (keys.findValue() == null) {
+                    if (nullKeys.isSlaveRowUnmatched(record, slaveRecord, matchIdsMap)) {
                         useSlaveCursor = true;
                         return true;
                     }

@@ -24,7 +24,9 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.ObjList;
 
@@ -63,6 +65,11 @@ public interface CallBinder {
             OutputSchema input,
             SqlExecutionContext executionContext
     ) throws SqlException;
+
+    /**
+     * The bound constant that holds the value of the constant {@code function}.
+     */
+    ConstantExpression constant(Function function, int position);
 
     /**
      * The arguments the next {@link #bindCall(CharSequence, int, OutputSchema, SqlExecutionContext)} binds.
