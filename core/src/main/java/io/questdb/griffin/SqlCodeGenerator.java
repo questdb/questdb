@@ -1881,12 +1881,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
     }
 
-    private static boolean isStreamGroupByFillSupported(IQueryModel model) {
+    private static boolean isStreamGroupByFillSupported(IQueryModel model, int keyCount, RecordMetadata metadata) {
         for (IQueryModel current = model; current != null; current = current.getNestedModel()) {
-            if (current.getFillStride() != null) {
-                final ObjList<ExpressionNode> fill = current.getFillValues();
-                if (fill == null || fill.size() > 1 || (fill.size() == 1 && !isNoneKeyword(fill.getQuick(0).token))) {
-                    return false;
+            if (current.getFillStride() == null) {
+                continue;
+            }
+            final ObjList<ExpressionNode> fill = current.getFillValues();
+            if (fill == null || fill.size() == 0 || (fill.size() == 1 && isNoneKeyword(fill.getQuick(0).token))) {
+                continue;
+            }
+            if (keyCount != 1) {
+                return false;
+            }
+            for (int i = 0, n = fill.size(); i < n; i++) {
+                if (isPrevKeyword(fill.getQuick(i).token)) {
+                    for (int col = 0, count = metadata.getColumnCount(); col < count; col++) {
+                        if (!isFixedSizePrevSlotEligible(ColumnType.tagOf(metadata.getColumnType(col)))) {
+                            return false;
+                        }
+                    }
                 }
             }
         }
@@ -5090,75 +5103,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // The fill cursor requires sorted input, but the optimizer strips
-            // rewriteSampleBy's ORDER BY before code generation, so build it here.
-            // Strategy comes from cairo.sql.sampleby.fill.sort.strategy; startup
-            // validation makes the switch exhaustive.
-            final RecordMetadata sortMetadata = groupByFactory.getMetadata();
-            listColumnFilterA.clear();
-            listColumnFilterA.add(timestampIndex + 1); // positive = ascending
-            entityColumnFilter.of(sortMetadata.getColumnCount());
-            final int sortStrategy = configuration.getSampleByFillSortStrategy();
-            // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
-            // SortedLight/SortedRecordCursorFactory's ctor catch cascades close()
-            // and frees `base`, so the outer catch's Misc.free(groupByFactory)
-            // would double-free unless we null first. Risky-arg calls (newInstance,
-            // RecordSinkFactory.getInstance, copy) run BEFORE the null so the
-            // outer catch still owns base on their failure. LIGHT_ENCODED and
-            // FULL_ENCODED have no such ctor catch -- the caller is the single
-            // owner there.
-            switch (sortStrategy) {
-                case SampleBySortStrategy.LIGHT_ENCODED -> {
-                    assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
-                            && groupByFactory.recordCursorSupportsRandomAccess();
-                    groupByFactory = new EncodedSortLightRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            groupByFactory,
-                            listColumnFilterA.copy()
-                    );
+            // Key discovery replays the input; variable-size PREV values need recordAt.
+            if (!isBaseTimestampAscending(groupByFactory, timestampIndex)
+                    || keyColIndices.size() > 0 || needsPrevPositioning) {
+                final RecordMetadata sortMetadata = groupByFactory.getMetadata();
+                listColumnFilterA.clear();
+                listColumnFilterA.add(timestampIndex + 1); // positive = ascending
+                entityColumnFilter.of(sortMetadata.getColumnCount());
+                int sortStrategy = configuration.getSampleByFillSortStrategy();
+                if (!groupByFactory.recordCursorSupportsRandomAccess()) {
+                    sortStrategy = switch (sortStrategy) {
+                        case SampleBySortStrategy.LIGHT_ENCODED -> SampleBySortStrategy.FULL_ENCODED;
+                        case SampleBySortStrategy.LIGHT_RECORDCHAIN -> SampleBySortStrategy.FULL_RECORDCHAIN;
+                        default -> sortStrategy;
+                    };
                 }
-                case SampleBySortStrategy.FULL_ENCODED -> {
-                    assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
-                    groupByFactory = new EncodedSortRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            groupByFactory,
-                            RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                            listColumnFilterA.copy()
-                    );
+                // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
+                // SortedLight/SortedRecordCursorFactory's ctor catch cascades close()
+                // and frees `base`, so the outer catch's Misc.free(groupByFactory)
+                // would double-free unless we null first. Risky-arg calls (newInstance,
+                // RecordSinkFactory.getInstance, copy) run BEFORE the null so the
+                // outer catch still owns base on their failure. LIGHT_ENCODED and
+                // FULL_ENCODED have no such ctor catch -- the caller is the single
+                // owner there.
+                switch (sortStrategy) {
+                    case SampleBySortStrategy.LIGHT_ENCODED -> {
+                        assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
+                                && groupByFactory.recordCursorSupportsRandomAccess();
+                        groupByFactory = new EncodedSortLightRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                groupByFactory,
+                                listColumnFilterA.copy()
+                        );
+                    }
+                    case SampleBySortStrategy.FULL_ENCODED -> {
+                        assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
+                        groupByFactory = new EncodedSortRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                groupByFactory,
+                                RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
+                                listColumnFilterA.copy()
+                        );
+                    }
+                    case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
+                        assert groupByFactory.recordCursorSupportsRandomAccess();
+                        final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
+                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+                        final RecordCursorFactory base = groupByFactory;
+                        groupByFactory = null;
+                        groupByFactory = new SortedLightRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                base,
+                                comparator,
+                                filterCopy
+                        );
+                    }
+                    case SampleBySortStrategy.FULL_RECORDCHAIN -> {
+                        final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
+                        final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
+                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+                        final RecordCursorFactory base = groupByFactory;
+                        groupByFactory = null;
+                        groupByFactory = new SortedRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                base,
+                                recordSink,
+                                comparator,
+                                filterCopy
+                        );
+                    }
+                    default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
+                            + SampleBySortStrategy.toString(sortStrategy));
                 }
-                case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
-                    assert groupByFactory.recordCursorSupportsRandomAccess();
-                    final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
-                    final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                    final RecordCursorFactory base = groupByFactory;
-                    groupByFactory = null;
-                    groupByFactory = new SortedLightRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            base,
-                            comparator,
-                            filterCopy
-                    );
-                }
-                case SampleBySortStrategy.FULL_RECORDCHAIN -> {
-                    final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
-                    final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
-                    final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                    final RecordCursorFactory base = groupByFactory;
-                    groupByFactory = null;
-                    groupByFactory = new SortedRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            base,
-                            recordSink,
-                            comparator,
-                            filterCopy
-                    );
-                }
-                default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
-                        + SampleBySortStrategy.toString(sortStrategy));
             }
 
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
@@ -11289,7 +11309,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            final int streamKeyIndex = sharedOuterProjectionFunctions == null && isStreamGroupByFillSupported(model)
+            final int streamKeyIndex = sharedOuterProjectionFunctions == null
+                    && isStreamGroupByFillSupported(model, keyTypes.getColumnCount(), outerProjectionMetadata)
                     ? GroupByUtils.getStreamGroupByKeyIndex(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
                     : -1;
             final Function streamKey = streamKeyIndex >= 0

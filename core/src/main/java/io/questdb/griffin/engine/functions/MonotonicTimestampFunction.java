@@ -237,7 +237,7 @@ public interface MonotonicTimestampFunction {
     Function getTimestampArg();
 
     /**
-     * Nondecreasing on a non-negative designated timestamp, without changing its precision.
+     * Nondecreasing on the non-negative domain of a designated timestamp.
      * This is stronger than the interval-pruning contract, which permits supersets.
      */
     default boolean preservesTimestampOrder() {

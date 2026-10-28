@@ -207,6 +207,75 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteAndBooleanDistinct() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(0, 1000L) ts, "
+                    + "(x - 129)::byte b, x % 2 = 0 flag, (x % 3)::symbol sym "
+                    + "FROM long_sequence(2048)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, b byte, flag boolean, sym symbol)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            final String values = "count(*) n, count_distinct(b) bytes, count(DISTINCT flag) flags, "
+                    + "approx_count_distinct(b) approx, approx_count_distinct(b, 4) low, "
+                    + "approx_count_distinct(b, 18) high, sum(b::int) total";
+            final String sql = "SELECT timestamp_floor('512T', ts) bucket, " + values + " FROM $table ORDER BY bucket";
+            for (int iteration = 0; iteration < 2; iteration++) {
+                if (iteration == 1) {
+                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                }
+                assertMatchesHash(compiler, context, sql);
+                assertMatchesHash(compiler, context, "SELECT timestamp_floor('512T', ts) bucket, sym, "
+                        + values + " FROM $table ORDER BY bucket, sym");
+                assertMatchesHash(compiler, context, "SELECT timestamp_floor('512T', ts) bucket, sym, "
+                        + values + " FROM $table WHERE b < 0 OR flag ORDER BY bucket, sym");
+                assertQuery(sql.replace("$table", "trades")).withEngine(engine).withContext(context)
+                        .noLeakCheck().timestamp("bucket").noRandomAccess().returns("""
+                        bucket\tn\tbytes\tflags\tapprox\tlow\thigh\ttotal
+                        1970-01-01T00:00:00.000000Z\t512\t256\t2\t256\t256\t256\t-256
+                        1970-01-01T00:00:00.512000Z\t512\t256\t2\t256\t256\t256\t-256
+                        1970-01-01T00:00:01.024000Z\t512\t256\t2\t256\t256\t256\t-256
+                        1970-01-01T00:00:01.536000Z\t512\t256\t2\t256\t256\t256\t-256
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testByteAndBooleanDistinctColumnTop() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(0, 1000000L) ts "
+                    + "FROM long_sequence(2)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("ALTER TABLE trades ADD COLUMN b BYTE, flag BOOLEAN", context);
+            engine.execute("INSERT INTO trades VALUES (3000000, -128, false), (3000000, 0, true), "
+                    + "(3000000, 127, false), (4000000, null, null)", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, b byte, flag boolean)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            final String values = "count(*) n, count_distinct(b) bytes, count_distinct(flag) flags, approx_count_distinct(b) approx";
+            for (int iteration = 0; iteration < 2; iteration++) {
+                if (iteration == 1) {
+                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                }
+                assertMatchesHash(compiler, context, "SELECT timestamp_floor('1s', ts) bucket, "
+                        + values + " FROM $table ORDER BY bucket");
+                assertMatchesHash(compiler, context, "SELECT timestamp_floor('1s', ts) bucket, "
+                        + values + " FROM $table WHERE b = 64 AND NOT flag ORDER BY bucket");
+                final String sql = "SELECT ts, " + values + " FROM trades SAMPLE BY 1s FILL(PREV) ALIGN TO CALENDAR";
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                }
+                assertQuery(sql).withEngine(engine).withContext(context)
+                        .noLeakCheck().timestamp("ts").noRandomAccess().returns("""
+                        ts\tn\tbytes\tflags\tapprox
+                        1970-01-01T00:00:00.000000Z\t1\t1\t1\t1
+                        1970-01-01T00:00:01.000000Z\t1\t1\t1\t1
+                        1970-01-01T00:00:02.000000Z\t1\t1\t1\t1
+                        1970-01-01T00:00:03.000000Z\t3\t3\t2\t3
+                        1970-01-01T00:00:04.000000Z\t1\t1\t1\t1
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testConstantTimestampShifts() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -556,7 +625,6 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "select timestamp_floor('3n', ts), sum(v) from trades",
                     "select dateadd('M', 1, ts), sum(v) from trades",
                     "select timestamp_floor('1h', ts, null, '00:00', 'America/New_York'), sum(v) from trades",
-                    "select ts, sum(v) from trades sample by 1m fill(prev) align to calendar",
                     "select ts, sym, sum(v) from trades sample by 1m fill(prev) align to calendar"
             }) {
                 try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
@@ -781,6 +849,15 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             Assert.assertEquals(expectedText, sink.toString());
                         }
                     }
+                }
+                final String yearSql = "SELECT year(x) bucket, count(*) c, sum(x) s FROM ";
+                try (RecordCursorFactory expected = compiler.compile(yearSql + "hash_input", context).getRecordCursorFactory();
+                     RecordCursorFactory actual = compiler.compile(yearSql + source, context).getRecordCursorFactory()) {
+                    assertStream(expected, false);
+                    assertStream(actual, true, false);
+                    final String expectedText = "bucket\tc\ts\n1970\t101\t5151\n";
+                    Assert.assertEquals(expectedText, read(expected, context));
+                    Assert.assertEquals(expectedText, read(actual, context));
                 }
             }
         });

@@ -1622,16 +1622,13 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: mixed
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(val),first(sym)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [sum(val),first(sym)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -1768,16 +1765,13 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: prev
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
+                                  values: [sum(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }

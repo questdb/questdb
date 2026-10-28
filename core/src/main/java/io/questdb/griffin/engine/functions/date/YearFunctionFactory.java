@@ -91,7 +91,7 @@ public class YearFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean preservesTimestampOrder() {
-            return ColumnType.isTimestamp(arg.getType());
+            return true;
         }
 
         @Override

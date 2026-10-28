@@ -76,16 +76,13 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [count(x),count(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [count(x),count(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """);
         });
     }
@@ -757,16 +754,13 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                     Sample By Fill
                                       stride: '1h'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                              values: [avg(val)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
                             """)
                     .returns("""
                             v\tts
@@ -2274,17 +2268,14 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                               range: ('2024-01-01',)
                               stride: '1h'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [first(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                  values: [first(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: x
+                                          intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
                             """);
         });
     }
@@ -3008,16 +2999,13 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: value
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }

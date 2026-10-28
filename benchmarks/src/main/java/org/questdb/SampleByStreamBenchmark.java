@@ -68,10 +68,14 @@ public class SampleByStreamBenchmark {
     public String dataFormat;
     @Param({"stream"})
     public String expectedStrategy;
+    @Param({"none"})
+    public String fill;
     @Param({"7"})
     public int filterModulo;
     @Param({"100000"})
     public int frameRows;
+    @Param({"0"})
+    public int gapEvery;
     @Param({"0"})
     public int nullEvery;
     @Param({"2000000"})
@@ -82,7 +86,7 @@ public class SampleByStreamBenchmark {
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_filtered", "keyed_string", "keyed_multi"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -142,8 +146,10 @@ public class SampleByStreamBenchmark {
             compiler = engine.getSqlCompiler();
             final String v = nullable("x % 97");
             final String d = nullable("(x % 31)::double");
+            final String timestamp = "timestamp_sequence('2024-01-01'::timestamp, 1000L)"
+                    + (gapEvery > 0 ? " + ((x - 1) / " + gapEvery + ") * 4_000_000L" : "");
             engine.execute("create table trades as (select "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000L) ts, "
+                    + timestamp + " ts, "
                     + v + " v, " + d + " d, (x % " + symbolCount + ")::symbol sym, "
                     + v + "::decimal(18,2) price from long_sequence(" + rowCount + ")) "
                     + "timestamp(ts) partition by day", context);
@@ -159,17 +165,19 @@ public class SampleByStreamBenchmark {
                 case "stats" -> "stddev_pop(d), corr(d, v), weighted_avg(d, v)";
                 case "decimal" -> "sum(price)::double, avg(price)::double, min(price)::double, max(price)::double";
                 case "first_last" -> "first(v), last(v), first_not_null(v), last_not_null(v), first(sym), last(sym)";
+                case "distinct_byte" -> "count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
                 case "expression" -> "sum(v + 1), avg(d * 2), sum(sqrt(d))";
                 case "keyed", "keyed_filtered", "hash_filtered" -> "sym, count(*), sum(v), avg(d)";
                 case "keyed_string" -> "sym::varchar name, count(*), sum(v), avg(d)";
                 case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
+                case "keyed_distinct_byte" -> "sym, count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
                 default -> throw new IllegalArgumentException("unknown workload: " + workload);
             };
             final boolean isHashControl = "hash_filtered".equals(workload);
             final boolean isFiltered = workload.contains("filtered");
             factory = compiler.compile("select " + (isHashControl ? "" : "ts, ") + select + " from trades "
                     + (isFiltered ? "where v % " + filterModulo + " = 0 " : "")
-                    + (isHashControl ? "" : "sample by " + bucket + " align to calendar time zone '" + timeZone + "'")
+                    + (isHashControl ? "" : "sample by " + bucket + " fill(" + fill + ") align to calendar time zone '" + timeZone + "'")
                     + ("filtered_desc".equals(workload) ? " order by ts desc limit 10" : ""), context).getRecordCursorFactory();
             columnTypes = new int[factory.getMetadata().getColumnCount()];
             for (int i = 0; i < columnTypes.length; i++) {

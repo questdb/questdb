@@ -23711,16 +23711,13 @@ public class SampleByTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '30m'
                               fill: value
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [k]
-                                    Async Group By workers: 1
-                                      keys: [k]
-                                      keyFunctions: [timestamp_floor_utc('30m',k,null,'00:00','Europe/Berlin')]
-                                      values: [sum(a)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('30m',k,null,'00:00','Europe/Berlin')]
+                                  values: [sum(a)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }

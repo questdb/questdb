@@ -8519,16 +8519,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             // with rewrite
@@ -8539,16 +8536,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8639,16 +8633,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar")
@@ -8683,16 +8674,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),first(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: c
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),first(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
                             """);
 
             // Negative: PREV references an alias that does not exist in the select list.
@@ -8761,16 +8749,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             // with rewrite
@@ -8781,16 +8766,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8815,16 +8797,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),sum(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),sum(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(prev) align to calendar")
@@ -8835,16 +8814,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),sum(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),sum(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }

@@ -58,17 +58,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                               range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
                               stride: '1h'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                  values: [sum(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: x
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
                             """);
         });
     }
@@ -1957,17 +1954,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                               range: (2024-05-31T23:00:00.000000Z,2024-06-01T03:00:00.000000Z)
                               stride: '1h'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
-                                      values: [sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: t
-                                              intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
+                                  values: [sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
                             """);
         });
     }
@@ -2020,16 +2014,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: mixed
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(a),first(b),first(c)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(a),first(b),first(c)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """)
                     .returns("""
                             first\tfirst1\tfirst2\tts
@@ -2183,16 +2174,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: value
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c-1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_minus
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [sum(c-1000)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t_fv_sum_minus
                             """)
                     .returns("""
                             s\tts
@@ -2220,16 +2208,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: value
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c+1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_plus
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [sum(c+1000)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t_fv_sum_plus
                             """)
                     .returns("""
                             s\tts
@@ -2259,16 +2244,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: value
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c*1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_mul
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [sum(c*1000)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t_fv_sum_mul
                             """)
                     .returns("""
                             s\tts
