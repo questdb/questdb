@@ -407,8 +407,9 @@ public final class PlanToFactoryRules {
 
     /**
      * True when a computing projection over the window join keeps the master's designated timestamp: the columns it
-     * reads, in the order the SELECT list names them, list the master timestamp at its position among the master's
-     * columns. {@code order} and {@code readIds} are scratch lists.
+     * reads, in the order the SELECT list names them, reach the master timestamp through distinct master columns
+     * alone, so that it sits at its position among the master columns the SELECT list orders. The order of the
+     * master's own output does not decide it. {@code order} and {@code readIds} are scratch lists.
      */
     public static boolean isWindowJoinTimestampKept(ProjectPlan project, WindowJoinPlan windowJoin, IntList order, IntList readIds) {
         final OutputSchema input = project.getChild().getOutput();
@@ -427,8 +428,24 @@ public final class PlanToFactoryRules {
             LogicalPlans.collectInputColumnIds(expressions.getQuick(order.getQuick(i)), input, readIds);
         }
         final OutputSchema master = windowJoin.getMaster().getOutput();
-        final int index = master.getTimestampIndex();
-        return index >= 0 && index < readIds.size() && readIds.getQuick(index) == master.getColumnId(index);
+        final int timestampIndex = master.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final int timestampId = master.getColumnId(timestampIndex);
+        order.setAll(master.getColumnCount(), 0);
+        for (int i = 0, n = readIds.size(); i < n; i++) {
+            final int readId = readIds.getQuick(i);
+            if (readId == timestampId) {
+                return true;
+            }
+            final int masterIndex = master.getColumnIndexById(readId);
+            if (masterIndex < 0 || order.getQuick(masterIndex) != 0) {
+                return false;
+            }
+            order.setQuick(masterIndex, 1);
+        }
+        return false;
     }
 
     /**

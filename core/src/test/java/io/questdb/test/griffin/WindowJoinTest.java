@@ -4602,6 +4602,54 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionKeepsMasterTimestampReadBeforeAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("INSERT INTO trades VALUES ('A', 10.0, '2000-01-01T00:00:00'), ('B', 20.0, '2000-01-01T00:00:01'), ('A', 30.0, '2000-01-01T00:00:02')");
+            execute("INSERT INTO quotes VALUES ('A', 1.0, '2000-01-01T00:00:00'), ('A', 2.0, '2000-01-01T00:00:01'), ('B', 3.0, '2000-01-01T00:00:01')");
+            final String fraction = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z";
+            final String windowJoin = " FROM trades t WINDOW JOIN quotes q ON (t.sym = q.sym) RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING";
+            assertQuery("SELECT 1 c, t.ts, count() n" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("c\tts\tn\n"
+                            + "1\t2000-01-01T00:00:00." + fraction + "\t2\n"
+                            + "1\t2000-01-01T00:00:01." + fraction + "\t1\n"
+                            + "1\t2000-01-01T00:00:02." + fraction + "\t1\n");
+            assertQuery("SELECT t.price, t.ts, count() n" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("price\tts\tn\n"
+                            + "10.0\t2000-01-01T00:00:00." + fraction + "\t2\n"
+                            + "20.0\t2000-01-01T00:00:01." + fraction + "\t1\n"
+                            + "30.0\t2000-01-01T00:00:02." + fraction + "\t1\n");
+            assertQuery("SELECT 1 c, t.ts, count() n" + windowJoin + " ORDER BY t.ts LIMIT 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("c\tts\tn\n"
+                            + "1\t2000-01-01T00:00:00." + fraction + "\t2\n"
+                            + "1\t2000-01-01T00:00:01." + fraction + "\t1\n");
+            assertQuery("SELECT count() n, t.ts, 1 c" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("n\tts\tc\n"
+                            + "2\t2000-01-01T00:00:00." + fraction + "\t1\n"
+                            + "1\t2000-01-01T00:00:01." + fraction + "\t1\n"
+                            + "1\t2000-01-01T00:00:02." + fraction + "\t1\n");
+        });
+    }
+
+    @Test
     public void testVectorizedAggregatesKeepDistinctArgumentExpressions() throws Exception {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
