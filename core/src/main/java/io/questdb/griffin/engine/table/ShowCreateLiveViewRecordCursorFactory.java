@@ -245,12 +245,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
             sink.putAscii(" AS (\n")
                     .put(viewSql)
                     .putAscii("\n)");
-            putAdditional();
             sink.putAscii(';');
-        }
-
-        // placeholder for ent, do not remove!
-        protected void putAdditional() {
         }
 
         /**

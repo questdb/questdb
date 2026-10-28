@@ -75,8 +75,8 @@ import java.util.Comparator;
  * chains. A view's dependencies come from the view graph; a materialized view's
  * dependencies are discovered by compiling its query and walking the plan for
  * the tables it reads (a materialized view may join tables beyond its declared
- * base). The enterprise build extends this with ACL principals (emitted first,
- * ahead of any inline {@code OWNED BY}) and the trailing grants and memberships.
+ * base). The enterprise build extends this with ACL principals, emitted ahead of
+ * the objects, and the trailing grants and memberships.
  * <p>
  * Each object's DDL is produced by delegating to the matching per-object
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
@@ -150,8 +150,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     protected void appendAclGrants(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
     }
 
-    // emitted before the object DDL so that inline OWNED BY targets already exist;
-    // no-op in OSS, overridden in ent to add CREATE USER/GROUP/SERVICE ACCOUNT
+    // emitted before the object DDL; no-op in OSS, overridden in ent to add CREATE USER/GROUP/SERVICE ACCOUNT
     protected void appendAclPrincipals(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
     }
 
