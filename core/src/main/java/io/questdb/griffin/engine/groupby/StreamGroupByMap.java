@@ -55,8 +55,11 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 public final class StreamGroupByMap implements QuietCloseable {
+    // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
+    private static final int SHRINK_RATIO = 8;
     private final DirectLongList batchRows;
     private final int batchSize;
     private final ObjList<GroupByFunction> functions;
@@ -67,11 +70,14 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final SelectedRecord record;
     private final int segmentIndex;
     private final int segmentType;
+    private final int smallMapKeyCapacity;
     private final RecordSink stateSink;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
     private final RecordValueSink valueSink;
+    // The most keys a batch of the current segment reserved map capacity for.
+    private long reservedKeys;
     private long segmentKey;
 
     public StreamGroupByMap(
@@ -91,6 +97,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         segmentIndex = valueTypes.getColumnCount();
         segmentType = keyTypes.getColumnType(streamKeyIndex);
         batchSize = configuration.getGroupByBatchSize();
+        smallMapKeyCapacity = configuration.getSqlSmallMapKeyCapacity();
         try {
             final ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes().addAll(valueTypes);
@@ -144,7 +151,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     public void aggregate(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, boolean isBatch, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!isBatch) {
             for (long row = lo; row < hi; row++) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final long rowIndex = rows == null ? row : rows.get(row);
                 record.setFilteredRowIndex(rowIndex, row);
                 update(record, baseRowId + rowIndex);
@@ -153,8 +160,12 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
         batchRows.ensureCapacity(batchSize);
         final long batchAddress = batchRows.getAddress();
+        reservedKeys = Math.max(reservedKeys, Math.min(hi - lo, batchSize));
         for (long start = lo; start < hi; start += batchSize) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            if (start > lo) {
+                // The caller checks the breaker once per segment, so only the later batches check it here.
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
             final long end = Math.min(start + batchSize, hi);
             GroupByUtils.aggregateKeyedBatch(record, map, inputSink, functions, value, batchAddress,
                     rows == null ? 0 : rows.getAddress(), start, end, baseRowId);
@@ -165,7 +176,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         final MapRecordCursor cursor = map.getCursor();
         final MapRecord record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             GroupByUtils.setStreamGroupByKey(record.getValue(), segmentIndex, segmentType, segmentKey);
             previous = chain.beginRecord(previous);
             stateSink.copy(record, chain);
@@ -174,7 +185,15 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void clear(long key) {
+        // Map.clear() zeroes the whole table, which keeps the capacity of the largest segment so far.
+        // Give that capacity back once a segment needs a fraction of it, so a single high-cardinality
+        // segment does not make every later segment pay for it.
+        if (map.getKeyCapacity() > SHRINK_RATIO * Math.max(map.size() + reservedKeys, smallMapKeyCapacity)) {
+            map.restoreInitialCapacity();
+        }
+        // OrderedMap.restoreInitialCapacity() clears only when it reallocates.
         map.clear();
+        reservedKeys = 0;
         segmentKey = key;
     }
 
@@ -199,6 +218,11 @@ public final class StreamGroupByMap implements QuietCloseable {
         final MapRecordCursor cursor = map.getCursor();
         record.of(cursor.getRecord());
         return cursor;
+    }
+
+    @TestOnly
+    public int getKeyCapacity() {
+        return map.getKeyCapacity();
     }
 
     public SelectedRecord getRecord() {

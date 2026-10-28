@@ -218,7 +218,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
                 for (long row = 0; row < rowCount; ) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     record.setFilteredRowIndex(rows == null ? row : rows.get(row), row);
                     final long key = keyFunction.getLong(record);
                     final long end = findGroupEnd(record, rows, keyFunction, key, row, rowCount);
@@ -239,7 +239,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final long stride = (value.getSizeInBytes() + 7) / 8;
             final DirectLongList results = task.getGroupByValues();
             for (long row = 0, groups = 0; row < rowCount; groups++) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final long firstRow = rows == null ? row : rows.get(row);
                 record.setFilteredRowIndex(firstRow, row);
                 final long key = keyFunction.getLong(record);
@@ -262,7 +262,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                         record.setFilteredRowIndex(firstRow, row);
                         function.computeFirst(value, record, baseRowId + firstRow);
                         for (long r = row + 1; r < end; r++) {
-                            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                             final long rowIndex = rows == null ? r : rows.get(r);
                             record.setFilteredRowIndex(rowIndex, r);
                             function.computeNext(value, record, baseRowId + rowIndex);

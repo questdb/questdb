@@ -7150,8 +7150,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .ddl(ddl)
+                .timestamp("")
                 .noRandomAccess()
-                .timestamp("a")
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
         assertQuery(query)
                 .noLeakCheck()
@@ -7204,8 +7204,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .ddl(ddl)
+                .timestamp("")
                 .noRandomAccess()
-                .timestamp("a")
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
         assertQuery(query)
                 .noLeakCheck()
@@ -7258,8 +7258,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .ddl(ddl)
+                .timestamp("")
                 .noRandomAccess()
-                .timestamp("a")
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
     }
 

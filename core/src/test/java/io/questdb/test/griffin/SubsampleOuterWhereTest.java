@@ -292,7 +292,7 @@ public class SubsampleOuterWhereTest extends AbstractCairoTest {
                             2024-01-01T04:00:00.000000Z\t50.0
                             """);
             assertQuery("SELECT * FROM (SELECT DISTINCT ts, x, v FROM t SUBSAMPLE uniform(2)) WHERE x > 0")
-                    .noLeakCheck().timestamp("ts").withPlanContaining("CachedWindow", "Async Stream Group By").returns(HEADER + LAST_ROW);
+                    .noLeakCheck().withPlanContaining("CachedWindow", "Async Stream Group By").returns(HEADER + LAST_ROW);
         });
     }
 

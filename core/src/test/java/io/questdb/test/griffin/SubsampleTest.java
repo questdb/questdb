@@ -3151,7 +3151,8 @@ public class SubsampleTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T02:00:00.000000Z')
                     """);
             final String query = "SELECT DISTINCT ts, price FROM t SUBSAMPLE uniform(2)";
-            assertQuery(query).timestamp("ts").returns("ts\tprice\n" +
+            // DISTINCT is implemented by a group-by cursor and does not retain timestamp designation.
+            assertQuery(query).returns("ts\tprice\n" +
                     "2024-01-01T00:00:00.000000Z\t10.0\n" +
                     "2024-01-01T02:00:00.000000Z\t30.0\n");
             printSql("EXPLAIN " + query);
@@ -5950,10 +5951,10 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "price\tsym\tts\n" +
                     "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
-            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").returns(expected);
             assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE uniform(2)")
                     .withPlanContaining("CachedWindow")
-                    .timestamp("ts").returns(expected);
+                    .returns(expected);
         });
     }
 
@@ -5969,8 +5970,8 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "price\tsym\tts\n" +
                     "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
-            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE m4(price, 2)").timestamp("ts").returns(expected);
-            assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE m4(price, 2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE m4(price, 2)").returns(expected);
+            assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE m4(price, 2)").returns(expected);
         });
     }
 
@@ -5983,8 +5984,8 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "price\tsym\tts\n" +
                     "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
-            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
-            assertQuery("SELECT DISTINCT t.* FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT t.* FROM t SUBSAMPLE uniform(2)").returns(expected);
         });
     }
 
@@ -6020,8 +6021,8 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "__keep_subsample\tx\tts\n" +
                     "false\t1\t1970-01-01T00:00:00.000001Z\n" +
                     "true\t4\t1970-01-01T00:00:00.000004Z\n";
-            assertQuery("SELECT DISTINCT __keep_subsample, x, ts FROM keep_tbl SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
-            assertQuery("SELECT DISTINCT * FROM keep_tbl SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT DISTINCT __keep_subsample, x, ts FROM keep_tbl SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT * FROM keep_tbl SUBSAMPLE uniform(2)").returns(expected);
         });
     }
 
@@ -6035,8 +6036,8 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "price\tsym\tts\n" +
                     "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
-            assertQuery("SELECT price, sym, ts FROM t GROUP BY price, sym, ts SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
-            assertQuery("SELECT * FROM t GROUP BY price, sym, ts SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT price, sym, ts FROM t GROUP BY price, sym, ts SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT * FROM t GROUP BY price, sym, ts SUBSAMPLE uniform(2)").returns(expected);
         });
     }
 
@@ -6051,8 +6052,8 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "price\tsym\tts\tcount\n" +
                     "10.0\tA\t1970-01-01T00:00:00.000001Z\t2\n" +
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\t1\n";
-            assertQuery("SELECT price, sym, ts, count() FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
-            assertQuery("SELECT *, count() FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT price, sym, ts, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT *, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
         });
     }
 
@@ -6069,8 +6070,8 @@ public class SubsampleTest extends AbstractCairoTest {
             final String expected = "price\tsym\tts\tcount\n" +
                     "10.0\tA\t1970-01-01T00:00:00.000001Z\t2\n" +
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\t1\n";
-            assertQuery("SELECT DISTINCT price, sym, ts, count() FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
-            assertQuery("SELECT DISTINCT *, count() FROM t SUBSAMPLE uniform(2)").timestamp("ts").returns(expected);
+            assertQuery("SELECT DISTINCT price, sym, ts, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT *, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
         });
     }
 
@@ -6104,7 +6105,6 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
             assertQuery("SELECT DISTINCT * FROM t")
                     .noRandomAccess()
-                    .timestamp("ts")
                     .returns("price\tsym\tts\n" +
                             "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
                             "20.0\tB\t1970-01-01T00:00:00.000002Z\n" +

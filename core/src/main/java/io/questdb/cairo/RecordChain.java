@@ -93,8 +93,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             int maxPages,
             String maxPagesConfigKey
     ) {
+        this(columnTypes, recordSink, Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey));
+    }
+
+    protected RecordChain(@Transient @NotNull ColumnTypes columnTypes, @Nullable RecordSink recordSink, MemoryCARW mem) {
+        this.mem = mem;
         try {
-            this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey);
             this.recordSink = recordSink;
             this.columnCount = columnTypes.getColumnCount();
             this.recordA = this.newChainRecord();

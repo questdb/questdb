@@ -220,8 +220,8 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	table_suspended	table_type
                             1	table1	ts	DAY	true	false	0	HOUR	false	T
                             2	table2	ts	DAY	true	false	0	HOUR	false	T
-                            3	view1	ts	N/A	true	false	0	HOUR	false	V
-                            4	view2	ts	N/A	true	false	0	HOUR	false	V
+                            3	view1		N/A	true	false	0	HOUR	false	V
+                            4	view2		N/A	true	false	0	HOUR	false	V
                             5	view3	ts	DAY	true	false	0	HOUR	false	M
                             6	view4	ts	DAY	true	false	0	HOUR	false	M
                             """,

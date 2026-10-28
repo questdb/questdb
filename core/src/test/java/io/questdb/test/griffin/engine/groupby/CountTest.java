@@ -192,7 +192,6 @@ public class CountTest extends AbstractCairoTest {
             // the projection over the same subquery agrees: it is empty
             assertQuery("SELECT ts, s, c FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("ts\ts\tc\n");
             // without the predicate, count() over the subquery counts the 12 groups

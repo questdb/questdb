@@ -340,7 +340,6 @@ public class DistinctTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
                         ") timestamp(created);")
-                .timestamp("created")
                 .noRandomAccess()
                 .returns("""
                         created

@@ -1333,11 +1333,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     2024-01-01T00:20:00.000000Z\t600
                     2024-01-01T00:30:00.000000Z\t201
                     """;
-            // The cast round-trip keeps these GROUP BY cases on the unordered hash path.
-            assertDateaddOverUnorderedSubQuery("SELECT ts::string::timestamp ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT ts::string::timestamp ts, sym, avg(price) a FROM trades GROUP BY ts::string::timestamp, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery(
-                    "SELECT DISTINCT ts::string::timestamp ts, price FROM trades",
+                    "SELECT DISTINCT ts, price FROM trades",
                     expectedHead,
                     expectedBuckets,
                     0,
@@ -1402,11 +1401,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """
                             WITH t AS (
                                 SELECT dateadd('s', -30, ts) AS x, sym
-                                FROM (SELECT ts::string::timestamp ts, sym, count() c FROM trades GROUP BY ts::string::timestamp, sym)
+                                FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym)
                             )
                             SELECT t.sym, m.ts mts FROM t ASOF JOIN marks m ON (sym) LIMIT 3
                             """,
-                    194,
+                    153,
                     "left side of time series join has no timestamp"
             );
 
@@ -3952,7 +3951,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
 
-            // LIMIT keeps the predicate above GROUP BY, where it must still be rebuilt.
+            // the GROUP BY output has no designated timestamp; generateFilter0() still rebuilds the
+            // optimiser's wrapper, over the column its predicate names
             assertQuery("""
                     SELECT * FROM (
                         SELECT dateadd('s', 1, ts) x, sym
@@ -3964,18 +3964,19 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("x")
                     .withPlan("""
-                            VirtualRecord
-                              functions: [dateadd('s',1,ts),sym]
-                                Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
-                                    Limit value: 100 skip-rows-max: 0 take-rows-max: 100
-                                        Async Stream Group By workers: 1
-                                          segmentKey: ts
-                                          keys: [ts,sym]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                            Encode sort
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
+                                        Limit value: 100 skip-rows-max: 0 take-rows-max: 100
+                                            Async Stream Group By workers: 1
+                                              segmentKey: ts
+                                              keys: [ts,sym]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
                             """)
-                    .noRandomAccess()
                     .returns("""
                             x\tsym
                             2024-01-01T00:00:01.000000Z\tS1
@@ -4368,18 +4369,19 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ORDER BY x
                     """)
                     .noLeakCheck()
-                    .noRandomAccess()
                     .timestamp("x")
                     .withPlan("""
-                            VirtualRecord
-                              functions: [dateadd('s',1,ts),sym]
-                                Async Stream Group By workers: 1
-                                  segmentKey: ts
-                                  keys: [ts,sym]
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trades
-                                          intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                            Encode sort
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
+                                      keys: [ts,sym]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
                             """)
                     .returns("""
                             x\tsym

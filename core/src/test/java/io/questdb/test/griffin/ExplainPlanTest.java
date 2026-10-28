@@ -1254,11 +1254,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async Stream Group By workers: 1
-                              keys: [ts]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                            Materialize
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 
@@ -1283,12 +1284,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async JIT Stream Group By workers: 1
-                              keys: [ts]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                            Materialize
+                                Async JIT Stream Group By workers: 1
+                                  keys: [ts]
+                                  filter: y=5
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 
@@ -1313,12 +1315,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async Stream Group By workers: 1
-                              keys: [ts]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                            Materialize
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  filter: abs(y)=5
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 

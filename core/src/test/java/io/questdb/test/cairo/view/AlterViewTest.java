@@ -46,7 +46,7 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -70,7 +70,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":0" +
+                    "\"timestampIndex\":-1" +
                     "}");
 
             final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
@@ -83,7 +83,7 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -107,7 +107,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_min\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":0" +
+                    "\"timestampIndex\":-1" +
                     "}");
 
             final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
@@ -188,7 +188,7 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -212,7 +212,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":0" +
+                    "\"timestampIndex\":-1" +
                     "}");
 
             final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
@@ -225,7 +225,7 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -249,7 +249,7 @@ public class AlterViewTest extends AbstractViewTest {
                     "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                     "{\"index\":2,\"name\":\"v_min\",\"type\":\"LONG\"}" +
                     "]," +
-                    "\"timestampIndex\":0" +
+                    "\"timestampIndex\":-1" +
                     "}");
 
             final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";

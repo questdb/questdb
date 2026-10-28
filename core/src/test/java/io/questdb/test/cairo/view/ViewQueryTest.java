@@ -497,7 +497,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\thohoho\t8
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -1522,7 +1522,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -1547,7 +1547,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t1\t16
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -1586,7 +1586,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -1612,7 +1612,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -1654,7 +1654,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     "QUERY PLAN\n" +
@@ -1678,7 +1678,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     query,
-                    "ts",
+                    null,
                     false,
                     false,
                     "QUERY PLAN\n" +
@@ -1830,15 +1830,16 @@ public class ViewQueryTest extends AbstractViewTest {
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Filter filter: 6<v_max
-                                    Async Stream Group By workers: 1
-                                      segmentKey: ts
-                                      keys: [ts,k]
-                                      values: [max(v)]
-                                      filter: 5<v
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table1
+                                SelectedRecord
+                                    Filter filter: 6<v_max
+                                        Async Stream Group By workers: 1
+                                          segmentKey: ts
+                                          keys: [ts,k]
+                                          values: [max(v)]
+                                          filter: 5<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
                             """,
                     VIEW1
             );
@@ -2162,7 +2163,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -2185,7 +2186,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:00.000000Z\tk6\t6
                             """,
                     VIEW1 + " where k = 'k6'",
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -2209,7 +2210,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1 + " where k in ('k6', 'k8')",
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -2232,7 +2233,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     "(" + VIEW1 + " where k in ('k6', 'k8')) where k = 'k8'",
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -2269,7 +2270,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     "select v1.ts, v_max from " + VIEW1 + " v1 join " + TABLE2 + " t2 on t2.v = v1.v_max",
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -2365,7 +2366,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:00.000000Z\tk6\t6\t1970-01-01T00:01:00.000000Z\tk6\t6
                             """,
                     VIEW1 + " v11 join " + VIEW1 + " v12 on v_max where v12.v_max < 7",
-                    "ts",
+                    null,
                     false,
                     true,
                     """
@@ -2877,7 +2878,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     "select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6",
-                    "ts",
+                    null,
                     false,
                     false,
                     """

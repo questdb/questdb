@@ -3064,7 +3064,6 @@ public class GroupByTest extends AbstractCairoTest {
                       SUM(1)\s
                     FROM foo;""";
             assertQuery(query)
-                    .timestamp("time")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""

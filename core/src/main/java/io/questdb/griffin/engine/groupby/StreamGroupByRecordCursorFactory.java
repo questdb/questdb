@@ -49,6 +49,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
 public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<GroupByFunction> groupByFunctions;
@@ -103,6 +104,42 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             cursor.close();
             throw th;
         }
+    }
+
+    @TestOnly
+    public StreamGroupByMap getSegmentMap() {
+        return cursor.segmentMap;
+    }
+
+    // Stable iff every key function and aggregate and the base are stable, as for the hash group-by.
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (keyFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
     }
 
     @Override
@@ -195,7 +232,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             if (done) {
                 return false;
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final Record baseRecord = baseCursor.getRecord();
             if (!pending) {
                 if (!baseCursor.hasNext()) {
@@ -209,7 +246,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             GroupByUtils.setStreamGroupByKey(value, keyIndex, keyFunction.getType(), key);
             updater.updateNew(value, baseRecord, rowId++);
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 pendingKey = keyFunction.getLong(baseRecord);
                 if (pendingKey != key) {
                     pending = true;
@@ -262,7 +299,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         private boolean hasNextSegment() {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (mapCursor != null && mapCursor.hasNext()) {
                 return true;
             }
@@ -281,7 +318,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             segmentMap.clear(key);
             pending = false;
             while (true) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 segmentMap.update(baseRecord, rowId++);
                 if (!baseCursor.hasNext()) {
                     done = true;

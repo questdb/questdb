@@ -126,7 +126,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         if (done) {
             return false;
         }
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         boolean found = false;
         while (nextPartial()) {
             source.of(results.getAddress() + resultOffset * Long.BYTES);
@@ -198,7 +198,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean hasNextSegment() {
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (mapCursor != null && mapCursor.hasNext()) {
             return true;
         }
@@ -219,7 +219,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         segmentMap.clear(key);
         do {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             segmentMap.merge(resultRecords.getRecord());
             hasPartial = false;
             if (!nextPartial()) {

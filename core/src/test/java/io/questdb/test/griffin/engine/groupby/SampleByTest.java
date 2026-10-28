@@ -1520,7 +1520,6 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertQuery("select symbol, sum(amount), timestamp_floor('1d', timestamp), last(timestamp) last_timestamp " +
                     "from trades\n")
-                    .timestamp("timestamp_floor")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1532,7 +1531,6 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertQuery("select symbol, sum(amount), timestamp_floor('1d', timestamp) timestamp, last(timestamp) last_timestamp " +
                     "from trades\n")
-                    .timestamp("timestamp")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""

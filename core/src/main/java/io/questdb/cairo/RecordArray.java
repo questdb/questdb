@@ -29,8 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,6 +79,11 @@ public class RecordArray extends RecordChain {
             super.close();
             throw th;
         }
+    }
+
+    protected RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, MemoryCARW mem, MemoryARW auxMem) {
+        super(columnTypes, recordSink, mem);
+        this.auxMem = varOffset > 0 ? auxMem : Misc.free(auxMem);
     }
 
     public long beginRecord() {

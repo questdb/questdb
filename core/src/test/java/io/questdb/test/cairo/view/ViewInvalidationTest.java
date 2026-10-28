@@ -223,7 +223,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                         "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
                         "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
                         "]," +
-                        "\"timestampIndex\":0" +
+                        "\"timestampIndex\":-1" +
                         "}",
                 "{" +
                         "\"columnCount\":3," +
@@ -232,7 +232,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                         "{\"index\":1,\"name\":\"k\",\"type\":\"VARCHAR\"}," +
                         "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
                         "]," +
-                        "\"timestampIndex\":0" +
+                        "\"timestampIndex\":-1" +
                         "}"
         );
     }

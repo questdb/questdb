@@ -77,8 +77,10 @@ import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
@@ -716,6 +718,16 @@ public class GroupByUtils {
         return -1;
     }
 
+    public static int getStreamGroupByTimestampIndex(RecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (ColumnType.isTimestamp(metadata.getColumnType(i))
+                    && functions.getQuick(i) instanceof ColumnFunction column && column.getColumnIndex() == keyIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -732,6 +744,21 @@ public class GroupByUtils {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns true when the factory streams the rows of a stream GROUP BY through factories without random
+     * access. Such a factory reruns the aggregation on every rewind of its cursor, unless a copy of its rows
+     * already sits in between.
+     */
+    public static boolean isStreamGroupBy(RecordCursorFactory factory) {
+        while (factory != null && !factory.recordCursorSupportsRandomAccess() && !(factory instanceof MaterializedRecordCursorFactory)) {
+            if (factory instanceof StreamGroupByRecordCursorFactory || factory instanceof AsyncStreamGroupByRecordCursorFactory) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
@@ -754,16 +781,6 @@ public class GroupByUtils {
             value.putInt(index, key == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) key);
         } else {
             value.putLong(index, key);
-        }
-    }
-
-    public static void setStreamGroupByTimestampIndex(GenericRecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            if (ColumnType.isTimestamp(metadata.getColumnType(i))
-                    && functions.getQuick(i) instanceof ColumnFunction column && column.getColumnIndex() == keyIndex) {
-                metadata.setTimestampIndex(i);
-                return;
-            }
         }
     }
 

@@ -256,6 +256,7 @@ import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
+import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
@@ -2023,6 +2024,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    /**
+     * Reports the stream group-by key as the designated timestamp only where a hash group-by gains one
+     * through a sort: for the SAMPLE BY bucket, which the rewrite orders by and the fill requires in
+     * order, and for an ORDER BY that leads with the key ascending, held by the model or advised by an
+     * enclosing one. generateFill and generateOrderBy then skip the sort. Any other GROUP BY reports no
+     * designated timestamp, so the schema that INSERT ... SELECT and CREATE TABLE AS see does not depend
+     * on which group-by implementation the aggregates select.
+     */
+    private static void setStreamGroupByTimestampIndex(IQueryModel model, GenericRecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
+        final int timestampIndex = GroupByUtils.getStreamGroupByTimestampIndex(metadata, functions, keyIndex);
+        if (timestampIndex < 0) {
+            return;
+        }
+        IQueryModel fillModel = model;
+        while (fillModel != null && fillModel.getFillStride() == null) {
+            fillModel = fillModel.getNestedModel();
+        }
+        if (fillModel != null && findFillBucketIndex(model, metadata, fillModel) == timestampIndex) {
+            metadata.setTimestampIndex(timestampIndex);
+            return;
+        }
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        IntList orderByDirection = model.getOrderByDirection();
+        if (orderBy.size() == 0) {
+            orderBy = model.getOrderByAdvice();
+            orderByDirection = model.getOrderByDirectionAdvice();
+        }
+        if (orderBy.size() > 0
+                && (orderByDirection.size() == 0 || orderByDirection.getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING)
+                && SqlUtil.getColumnIndexQuiet(metadata, orderBy.getQuick(0).token) == timestampIndex) {
+            metadata.setTimestampIndex(timestampIndex);
+        }
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -7076,6 +7111,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1
                                 );
                                 joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                // The nested loop rewinds its inner side, the master of a right join, per outer row.
+                                if (joinType == IQueryModel.JOIN_CROSS_RIGHT) {
+                                    if (GroupByUtils.isStreamGroupBy(master)) {
+                                        final RecordCursorFactory masterToMaterialize = master;
+                                        master = null;
+                                        master = materialize(masterToMaterialize, false);
+                                    }
+                                } else if (GroupByUtils.isStreamGroupBy(slaveToFree)) {
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    // The full join tracks matched slave rows by their row ids, which only the copy keeps stable.
+                                    slaveToFree = materialize(slaveToMaterialize, joinType == IQueryModel.JOIN_CROSS_FULL);
+                                }
                                 master = switch (joinType) {
                                     case IQueryModel.JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
                                             joinMetadata,
@@ -7138,7 +7186,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveRecordSink
                                     );
                                 } else {
-                                    // Fall back to standard CrossJoinRecordCursorFactory
+                                    // Fall back to standard CrossJoinRecordCursorFactory, which rewinds its slave per master row
+                                    if (GroupByUtils.isStreamGroupBy(slaveToFree)) {
+                                        final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                        slaveToFree = null;
+                                        slaveToFree = materialize(slaveToMaterialize, false);
+                                    }
                                     master = new CrossJoinRecordCursorFactory(
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                             master,
@@ -8667,6 +8720,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             loFunc = getLoFunction(model, executionContext);
             hiFunc = getHiFunction(model, executionContext);
+            // A negative bound makes the limit count the base rows and then rewind the base, which reruns
+            // a stream GROUP BY.
+            if (GroupByUtils.isStreamGroupBy(factory)
+                    && (mayBeNegativeLimit(loFunc, executionContext) || (hiFunc != null && mayBeNegativeLimit(hiFunc, executionContext)))) {
+                final RecordCursorFactory base = factory;
+                factory = null;
+                factory = materialize(base, false);
+            }
             final Function adoptedLoFunc = loFunc;
             final Function adoptedHiFunc = hiFunc;
             loFunc = null;
@@ -11642,7 +11703,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sharedOuterProjectionFunctions = null;
 
                     if (streamKey != null) {
-                        GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount() + streamKeyIndex);
+                        setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount() + streamKeyIndex);
                         return generateFill(
                                 model,
                                 new AsyncStreamGroupByRecordCursorFactory(
@@ -11718,7 +11779,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sharedOuterProjectionFunctions = null;
 
             if (streamKey != null) {
-                GroupByUtils.setStreamGroupByTimestampIndex(outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount() + streamKeyIndex);
+                setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount() + streamKeyIndex);
                 return generateFill(
                         model,
                         new StreamGroupByRecordCursorFactory(asm, configuration, factory, outerProjectionMetadata,
@@ -15135,6 +15196,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             filter.add(SqlUtil.getColumnIndex(metadata, columnNames.getQuick(i)) + 1);
         }
+    }
+
+    /**
+     * Consumes the base on entry, including on failure.
+     */
+    private RecordCursorFactory materialize(RecordCursorFactory base, boolean isStrict) {
+        final RecordSink recordSink;
+        try {
+            entityColumnFilter.of(base.getMetadata().getColumnCount());
+            recordSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), entityColumnFilter);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
+        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict);
     }
 
     /**

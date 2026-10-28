@@ -155,7 +155,6 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery(VIEW1)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tk\tv_max
@@ -167,7 +166,6 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery(VIEW2)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tk2\tv_max
@@ -203,7 +201,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -227,7 +225,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW2,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -251,7 +249,7 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW3,
-                    "ts",
+                    null,
                     false,
                     false,
                     """
@@ -329,7 +327,6 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery(VIEW1)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tk\tv_max
@@ -341,7 +338,6 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery("select ts, v_max from " + VIEW2)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tv_max

@@ -30,11 +30,15 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.MemoryTracker;
@@ -42,6 +46,7 @@ import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,6 +56,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicLong;
 
 @RunWith(Parameterized.class)
 public class StreamGroupByTest extends AbstractCairoTest {
@@ -414,6 +420,117 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesignatedTimestampOnlyWhenOrderedByKey() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("""
+                    CREATE TABLE src AS (
+                        SELECT timestamp_sequence('2024-01-01', 1_200_000_000L) ts, (CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END)::SYMBOL sym, x v
+                        FROM long_sequence(6)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""", context);
+            final String streamGroupBy = parallel ? "Async Stream Group By workers: " + Math.max(1, workers) : "Stream Group By";
+
+            // a plain GROUP BY reports no designated timestamp, like the hash group-by
+            final String unordered = "SELECT max(ts), timestamp_floor('1h', ts) b, count() FROM src GROUP BY b";
+            assertQuery(unordered).withEngine(engine).withContext(context).noLeakCheck().noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [max,b,count]
+                                %s
+                                  keys: [b]
+                                  keyFunctions: [timestamp_floor('hour',ts)]
+                                  values: [max(ts),count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: src
+                            """.formatted(streamGroupBy))
+                    .returns("""
+                            max\tb\tcount
+                            2024-01-01T00:40:00.000000Z\t2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T01:40:00.000000Z\t2024-01-01T01:00:00.000000Z\t3
+                            """);
+
+            // so INSERT ... SELECT without a column list maps max(ts) onto the designated timestamp
+            engine.execute("CREATE TABLE dst (ts TIMESTAMP, b TIMESTAMP, c LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO dst " + unordered, context);
+            assertQuery("dst").withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").expectSize()
+                    .returns("""
+                            ts\tb\tc
+                            2024-01-01T00:40:00.000000Z\t2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T01:40:00.000000Z\t2024-01-01T01:00:00.000000Z\t3
+                            """);
+
+            // SAMPLE BY and an ORDER BY led by the key report the key as the designated timestamp,
+            // so no sort runs above the stream group-by
+            assertQuery("SELECT ts, sum(v) s FROM src SAMPLE BY 1h").withEngine(engine).withContext(context)
+                    .noLeakCheck().timestamp("ts").noRandomAccess()
+                    .withPlan("""
+                            %s
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                              values: [sum(v)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: src
+                            """.formatted(streamGroupBy))
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\t6
+                            2024-01-01T01:00:00.000000Z\t15
+                            """);
+            assertQuery("SELECT timestamp_floor('1h', ts) b, count() c FROM src GROUP BY b ORDER BY b")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("b").noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [b,c]
+                                %s
+                                  keys: [b]
+                                  keyFunctions: [timestamp_floor('hour',ts)]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: src
+                            """.formatted(streamGroupBy))
+                    .returns("""
+                            b\tc
+                            2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T01:00:00.000000Z\t3
+                            """);
+            assertQuery("SELECT ts, count() c FROM src GROUP BY ts ORDER BY ts")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").noRandomAccess()
+                    .withPlan("""
+                            %s
+                              keys: [ts]
+                              values: [count(*)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: src
+                            """.formatted(streamGroupBy))
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-01T00:40:00.000000Z\t1
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T01:20:00.000000Z\t1
+                            2024-01-01T01:40:00.000000Z\t1
+                            """);
+
+            // CREATE TABLE AS adopts a designated timestamp only from the ordered queries
+            engine.execute("CREATE TABLE rollup AS (SELECT timestamp_floor('1h', ts) b, sym, sum(v) s FROM src GROUP BY b, sym)", context);
+            engine.execute("CREATE TABLE sampled AS (SELECT ts, sym, sum(v) s FROM src SAMPLE BY 1h)", context);
+            engine.execute("CREATE TABLE ordered AS (SELECT ts, count() c FROM src GROUP BY ts ORDER BY ts)", context);
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name IN ('rollup', 'sampled', 'ordered') ORDER BY table_name")
+                    .withEngine(engine).withContext(context).noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp
+                            ordered\tts
+                            rollup\t
+                            sampled\tts
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -517,6 +634,38 @@ public class StreamGroupByTest extends AbstractCairoTest {
             for (String key : new String[]{"sym", "sym::varchar"}) {
                 assertMatchesHash(compiler, context, "SELECT timestamp_floor('10m', ts) bucket, " + key
                         + " k, count(*), sum(v), first(v), last(v) FROM $table ORDER BY bucket, k");
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentedMapShrinksAfterHighCardinalitySegment() throws Exception {
+        run((engine, compiler, context) -> {
+            // The first second holds 5_000 distinct keys, each of the 1_000 seconds after it a single key.
+            engine.execute("""
+                    CREATE TABLE trades AS (
+                        SELECT '2024-01-01'::timestamp + CASE WHEN x <= 5_000 THEN 0 ELSE (x - 5_000) * 1_000_000 END ts,
+                            CASE WHEN x <= 5_000 THEN x ELSE 0 END k
+                        FROM long_sequence(6_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            for (String keys : new String[]{"k", "k::varchar k", "k, k % 7 m"}) {
+                try (RecordCursorFactory factory = compiler.compile("SELECT timestamp_floor('1s', ts) bucket, " + keys
+                        + ", count(*) FROM trades", context).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        final StreamGroupByMap map = getSegmentMap(factory);
+                        Assert.assertTrue(keys + ": " + map.getKeyCapacity(), map.getKeyCapacity() >= 5_000);
+                        long count = 1;
+                        while (cursor.hasNext()) {
+                            count++;
+                        }
+                        Assert.assertEquals(6_000, count);
+                        // The single-key segments must not keep clearing the capacity the first one grew.
+                        Assert.assertTrue(keys + ": " + map.getKeyCapacity(), map.getKeyCapacity() < 1_000);
+                    }
+                }
             }
         });
     }
@@ -630,6 +779,24 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                     assertStream(factory, false);
                     read(factory, context);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeterminismMatchesHash() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            for (String keys : new String[]{"", ", sym"}) {
+                final String sql = "SELECT timestamp_floor('1m', ts) bucket" + keys + ", count(*), sum(v) FROM ";
+                try (RecordCursorFactory expected = compiler.compile(sql + "hash_input", context).getRecordCursorFactory();
+                     RecordCursorFactory actual = compiler.compile(sql + "trades", context).getRecordCursorFactory()) {
+                    assertStream(actual, true);
+                    final RecordCursorFactory hash = getGroupBy(expected);
+                    final RecordCursorFactory stream = getGroupBy(actual);
+                    Assert.assertEquals(sql, hash.isNonDeterministic(), stream.isNonDeterministic());
+                    Assert.assertEquals(sql, hash.isStableWithinExecution(), stream.isStableWithinExecution());
                 }
             }
         });
@@ -1028,6 +1195,48 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeThrottledBreakerChecksArePerFrame() throws Exception {
+        run((engine, compiler, context) -> {
+            final int rows = 4_000;
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 100_000L) ts, x v, "
+                    + "(x % 3)::symbol sym FROM long_sequence(" + rows + ")) TIMESTAMP(ts) PARTITION BY DAY", context);
+            // Each time-throttled check reads the clock under a network breaker, so only coarse sites may use
+            // it. The frame loop of nextPartial() also checks while it waits for workers, so it does not count.
+            final StackWalker stackWalker = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+            final AtomicLong checks = new AtomicLong();
+            final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER) {
+                @Override
+                public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                    super.statefulThrowExceptionIfTrippedTimeThrottled();
+                    if (!stackWalker.walk(frames -> frames
+                            .filter(frame -> !SqlExecutionCircuitBreaker.class.isAssignableFrom(frame.getDeclaringClass()))
+                            .findFirst()
+                            .map(frame -> frame.getMethodName().equals("nextPartial"))
+                            .orElse(false))) {
+                        checks.incrementAndGet();
+                    }
+                }
+            };
+            final long frames = (rows + frameRows - 1) / frameRows;
+            try (SqlExecutionContextImpl counted = new SqlExecutionContextImpl(engine, Math.max(1, workers))
+                    .with(context.getSecurityContext(), null, null, -1, breaker)) {
+                for (String filter : new String[]{"", " WHERE v % 3 <> 0"}) {
+                    for (String keys : new String[]{"", ", sym"}) {
+                        final String sql = "SELECT timestamp_floor('1s', ts) bucket" + keys + ", count(*), sum(v) FROM trades" + filter;
+                        try (RecordCursorFactory factory = compiler.compile(sql, counted).getRecordCursorFactory()) {
+                            assertStream(factory, true);
+                            checks.set(0);
+                            Assert.assertFalse(read(factory, counted).isEmpty());
+                            Assert.assertTrue(sql + ": " + checks.get() + " checks over " + frames + " frames",
+                                    checks.get() <= 2 * frames + 2);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDstRepeatedBucketUsesHash() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("create table trades as (select "
@@ -1111,6 +1320,28 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 + "from long_sequence(1001)) timestamp(ts) partition by day", context);
         context.getCairoEngine().execute("create table hash_input (ts timestamp, v long, d double, sym symbol)", context);
         context.getCairoEngine().execute("insert into hash_input select * from trades", context);
+    }
+
+    private static RecordCursorFactory getGroupBy(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof GroupByRecordCursorFactory || f instanceof AsyncGroupByRecordCursorFactory
+                    || f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
+                return f;
+            }
+        }
+        throw new AssertionError("expected group by");
+    }
+
+    private static StreamGroupByMap getSegmentMap(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof AsyncStreamGroupByRecordCursorFactory stream) {
+                return stream.getAtom().getCollectorMap();
+            }
+            if (f instanceof StreamGroupByRecordCursorFactory stream) {
+                return stream.getSegmentMap();
+            }
+        }
+        throw new AssertionError("expected stream group by");
     }
 
     private static String read(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
