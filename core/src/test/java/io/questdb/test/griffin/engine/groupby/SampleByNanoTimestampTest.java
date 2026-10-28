@@ -18556,25 +18556,25 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "      fill: " + fill + "\n" +
                     (hasDesignatedTimestamp ?
                             "      cached: true\n" +
-                                    "        Async JIT Stream Group By workers: 1\n" +
-                                    "          segmentKey: timestamp_floor_utc('1m',ts)\n" +
-                                    "          keys: [tstmp,sym]\n" +
-                                    "          keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
-                                    "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                                    "          filter: sym='B'\n" +
-                                    "            PageFrame\n" +
-                                    "                Row forward scan\n" +
-                                    "                Frame forward scan on: #TABLE#\n" :
+                            "        Async JIT Stream Group By workers: 1\n" +
+                            "          segmentKey: timestamp_floor_utc('1m',ts)\n" +
+                            "          keys: [tstmp,sym]\n" +
+                            "          keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: sym='B'\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: #TABLE#\n" :
                             "        Encode sort light\n" +
-                                    "          keys: [tstmp]\n" +
-                                    "            Async JIT Group By workers: 1\n" +
-                                    "              keys: [tstmp,sym]\n" +
-                                    "              keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
-                                    "              values: [first(val),avg(val),last(val),max(val)]\n" +
-                                    "              filter: sym='B'\n" +
-                                    "                PageFrame\n" +
-                                    "                    Row forward scan\n" +
-                                    "                    Frame forward scan on: #TABLE#\n");
+                            "          keys: [tstmp]\n" +
+                            "            Async JIT Group By workers: 1\n" +
+                            "              keys: [tstmp,sym]\n" +
+                            "              keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: sym='B'\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: #TABLE#\n");
         }
         if (hasDesignatedTimestamp && "linear".equals(fill) && !"align to first observation".equals(align)) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
