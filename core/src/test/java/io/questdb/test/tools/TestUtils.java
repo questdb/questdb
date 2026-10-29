@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -1455,6 +1457,26 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Copies the section of {@code fileName} ({@code _txn}, {@code _cv} or {@code _meta}) saved in a table's
+     * save point generation into the file {@code dst}, which the file readers can load.
+     */
+    public static void copySavePointSection(FilesFacade ff, CharSequence dbRoot, TableToken tt, int generation, String fileName, LPSZ dst) {
+        try (Path p = new Path()) {
+            final long[] section = savePointSection(ff, p, dbRoot, tt, generation, fileName);
+            final long srcFd = ff.openRO(p.$());
+            final long dstFd = ff.openRW(dst, CairoConfiguration.O_NONE);
+            try {
+                Assert.assertTrue("must open " + p + " and " + dst, srcFd > -1 && dstFd > -1);
+                Assert.assertTrue(ff.truncate(dstFd, 0));
+                Assert.assertEquals(section[1], ff.copyData(srcFd, dstFd, section[0], 0, section[1]));
+            } finally {
+                ff.close(dstFd);
+                ff.close(srcFd);
+            }
+        }
+    }
+
     public static void createPopulateTable(
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel,
             int totalRows, String startDate, int partitionCount
@@ -1669,6 +1691,23 @@ public final class TestUtils {
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
+        // Publish the generation-zero epoch anchor, as CairoEngine's create path does before it registers
+        // the sequencer. Otherwise only TableWriter writes the anchor, so a table built here and never written
+        // to has none, and RecoveryCoordinator refuses to fall back to live state for an adaptive table without
+        // a save point: the whole engine fails on the next startup, not just that table.
+        if (structure.isWalEnabled() && !structure.isView()) {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                final int timestampIndex = structure.getTimestampIndex();
+                final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : structure.getColumnType(timestampIndex);
+                DurableEpochManifest.publishInitial(
+                        configuration,
+                        token,
+                        timestampType,
+                        structure.getPartitionBy()
+                );
+            }
+        }
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);
         }
@@ -2514,6 +2553,28 @@ public final class TestUtils {
         final long timeoutMillis = TimeUnit.NANOSECONDS.toMillis(timeoutNanos);
         final int remainderNanos = (int) (timeoutNanos - TimeUnit.MILLISECONDS.toNanos(timeoutMillis));
         thread.join(timeoutMillis, remainderNanos);
+    }
+
+    /**
+     * Points {@code p} at a table's save point file for {@code generation} and returns the offset and length of
+     * the section that holds {@code fileName} ({@code _txn}, {@code _cv} or {@code _meta}): the sections follow
+     * the header in that order, and the header records their sizes at 48, 64 and 80.
+     */
+    public static long[] savePointSection(FilesFacade ff, Path p, CharSequence dbRoot, TableToken tt, int generation, String fileName) {
+        p.of(dbRoot).concat(tt).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
+        final long fd = ff.openRO(p.$());
+        Assert.assertTrue("must open " + p, fd > -1);
+        final long txnSize = ff.readNonNegativeLong(fd, 48);
+        final long cvSize = ff.readNonNegativeLong(fd, 64);
+        final long metaSize = ff.readNonNegativeLong(fd, 80);
+        ff.close(fd);
+        final long header = DurableEpochManifest.FILE_SIZE;
+        return switch (fileName) {
+            case TableUtils.TXN_FILE_NAME -> new long[]{header, txnSize};
+            case TableUtils.COLUMN_VERSION_FILE_NAME -> new long[]{header + txnSize, cvSize};
+            case TableUtils.META_FILE_NAME -> new long[]{header + txnSize + cvSize, metaSize};
+            default -> throw new IllegalArgumentException(fileName);
+        };
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

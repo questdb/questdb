@@ -28,7 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -50,12 +52,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -67,6 +71,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -353,6 +358,199 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachRestoresDetachedDirWhenSymbolScanFailsInCopyMode() throws Exception {
         assertAttachRestoresDetachedDirWhenSymbolScanFails(true, false);
+    }
+
+    @Test
+    public void testAttachRetryAfterFailedLink() throws Exception {
+        assertAttachRetryAfterFailedLink(false);
+    }
+
+    @Test
+    public void testAttachRetryAfterFailedLinkWhenLeftoverStays() throws Exception {
+        assertAttachRetryAfterFailedLink(true);
+    }
+
+    /**
+     * Outside ADAPTIVE an ATTACH renames .attachable into the partition's directory. A failure after the rename whose
+     * rename back fails too leaves the whole partition, the only copy, under the txn name, and no .attachable. The
+     * file system reports no entry types, so no writer open purges it. The retry's message must name the step that
+     * keeps the data: rename it back, not remove it.
+     */
+    @Test
+    public void testAttachRetryAfterFailedRenameBack() throws Exception {
+        // ADAPTIVE links the source; the other modes rename it
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
+        final AtomicBoolean isPinFailing = new AtomicBoolean();
+        final AtomicBoolean isRenameBackFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int findType(long findPtr) {
+                return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
+            }
+
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                // The ATTACH lists the renamed partition to pin its column versions
+                if (isPinFailing.get() && isAttachDestination(path)) {
+                    isPinFailing.set(false);
+                    throw CairoException.critical(0).put("test: could not list ").put(path);
+                }
+                super.iterateDir(path, func);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (isRenameBackFailing.get() && isAttachDestination(from) && Utf8s.endsWithAscii(to, configuration.getAttachPartitionSuffix())) {
+                    isRenameBackFailing.set(false);
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-02T00:00:00Z', 3, 'C')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            renameDetachedToAttachable("tab", "2024-01-01");
+            final TableToken tableToken = engine.verifyTableName("tab");
+            final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot().toString(), tableToken.getDirName());
+            final String attachableName = "2024-01-01" + configuration.getAttachPartitionSuffix();
+
+            isEntryTypeUnknown.set(true);
+            try {
+                isPinFailing.set(true);
+                isRenameBackFailing.set(true);
+                execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                final String leftover = findAttachDestination(tableToken);
+                Assert.assertNotNull(leftover);
+                Assert.assertFalse(java.nio.file.Files.exists(tableDir.resolve(attachableName)));
+
+                execute("ALTER TABLE tab RESUME WAL");
+                drainWalQueue();
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+                TestUtils.assertContains(error, ATTACH_ERR_DIR_EXISTS.name());
+                TestUtils.assertContains(error, tableToken.getDirName() + Files.SEPARATOR + leftover + " may hold the partition");
+                TestUtils.assertContains(error, "rename it to ");
+                TestUtils.assertContains(error, tableToken.getDirName() + Files.SEPARATOR + attachableName);
+                TestUtils.assertContains(error, "then RESUME WAL");
+
+                // The step the message names
+                java.nio.file.Files.move(tableDir.resolve(leftover), tableDir.resolve(attachableName));
+                execute("ALTER TABLE tab RESUME WAL");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+                execute("INSERT INTO tab VALUES ('2024-01-03T00:00:00Z', 4, 'D')");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                execute("INSERT INTO tab VALUES ('2024-01-04T00:00:00Z', 5, 'E')");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                assertQuery("SELECT x, sym FROM tab")
+                        .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n4\tD\n5\tE\n");
+            } finally {
+                isEntryTypeUnknown.set(false);
+            }
+        });
+    }
+
+    /**
+     * An adaptive ATTACH of a soft-linked source (a partition kept on other storage) makes the partition a soft link
+     * to the same target and fails after that. Unlink fails until the end: the cleanup, the writer-open purge on
+     * RESUME and the retry must leave the link, never remove through it, so the target keeps every file.
+     */
+    @Test
+    public void testAttachRetryAfterFailedSoftLinkUnlink() throws Exception {
+        // Windows does not detect a directory soft link (isSoftLink is false), so the ATTACH hard-links a copy of the
+        // source instead of soft-linking it, its cleanup removes that copy, and the retry attaches
+        Assume.assumeFalse(Os.isWindows());
+        // Only ADAPTIVE links the source; the other modes rename it
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        final AtomicBoolean isPinFailing = new AtomicBoolean();
+        final AtomicBoolean isUnlinkFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                // The ATTACH lists the linked partition to pin its column versions
+                if (isPinFailing.get() && isAttachDestination(path)) {
+                    isPinFailing.set(false);
+                    throw CairoException.critical(0).put("test: could not list ").put(path);
+                }
+                super.iterateDir(path, func);
+            }
+
+            @Override
+            public int unlink(LPSZ softLink) {
+                if (isUnlinkFailing.get() && isAttachDestination(softLink)) {
+                    return -1;
+                }
+                return super.unlink(softLink);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-02T00:00:00Z', 3, 'C')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("tab");
+            final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot().toString(), tableToken.getDirName());
+            final java.nio.file.Path target = java.nio.file.Path.of(root, "cold", "2024-01-01" + DETACHED_DIR_MARKER);
+            java.nio.file.Files.createDirectories(target.getParent());
+            java.nio.file.Files.move(tableDir.resolve("2024-01-01" + DETACHED_DIR_MARKER), target);
+            java.nio.file.Files.createSymbolicLink(tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix()), target);
+            final List<String> targetFiles = listFileNames(target);
+
+            isUnlinkFailing.set(true);
+            isPinFailing.set(true);
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(targetFiles, listFileNames(target));
+
+            // RESUME reopens the writer, whose purge meets the link, then retries the ATTACH
+            execute("ALTER TABLE tab RESUME WAL");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(targetFiles, listFileNames(target));
+            final String leftover = findAttachDestination(tableToken);
+            Assert.assertNotNull(leftover);
+            final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            TestUtils.assertContains(error, ATTACH_ERR_DIR_EXISTS.name());
+            TestUtils.assertContains(error, "remove only the soft link ");
+            TestUtils.assertContains(error, tableToken.getDirName() + Files.SEPARATOR + leftover + " (not its target)");
+            TestUtils.assertContains(error, "then RESUME WAL");
+
+            isUnlinkFailing.set(false);
+            execute("ALTER TABLE tab RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            execute("INSERT INTO tab VALUES ('2024-01-03T00:00:00Z', 4, 'D')");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            execute("INSERT INTO tab VALUES ('2024-01-04T00:00:00Z', 5, 'E')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n4\tD\n5\tE\n");
+            Assert.assertEquals(targetFiles, listFileNames(target));
+        });
     }
 
     @Test
@@ -1052,6 +1250,92 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    /**
+     * Attaching a parquet partition whose {@code _pm} metadata file is absent regenerates it durably, and the
+     * rows come back. A converted partition already carries {@code _pm}, so the test removes it first. Both
+     * fsyncs on this path ({@code _pm} after {@code ParquetMetadataWriter.generate}, then the partition
+     * directory) stay eager under adaptive too, because no durable epoch re-derives an attach.
+     */
+    @Test
+    public void testCanAttachParquetPartitionMissingMetadataFile() throws Exception {
+        // The two durability gates this test reaches are guarded by `effectiveCommitMode != CommitMode.NOSYNC`,
+        // so under nosync the row counts below pass while neither fsync runs. The test skips nosync rather
+        // than pinning one mode, because sync, async and adaptive all exercise the gates.
+        Overrides.assumeDurableCommitMode();
+        assertMemoryLeak(() -> {
+            String tableName = "tabAttachParquetOk";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            final long before = countRows(tableName);
+            Assert.assertTrue("precondition: the table must hold rows to lose", before > 0);
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            final long afterDetach = countRows(tableName);
+            Assert.assertTrue("precondition: detaching must actually remove rows, otherwise the"
+                    + " re-attach below proves nothing", afterDetach < before);
+
+            renameDetachedToAttachable(tableName, "2022-06-01");
+
+            // Remove _pm, keeping data.parquet: the inverse of the sibling test's removal, and the only
+            // shape that reaches the regenerate-and-fsync block.
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(configuration.getDbRoot()).concat(tableToken)
+                    .concat("2022-06-01").put(configuration.getAttachPartitionSuffix())
+                    .concat(PARQUET_METADATA_FILE_NAME).$();
+            Assert.assertTrue("precondition: conversion must have produced _pm for us to evict",
+                    Files.exists(path.$()));
+            Assert.assertTrue(Files.remove(path.$()));
+
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            // The attach must regenerate _pm, not merely tolerate its absence. The attached directory
+            // carries a name-txn suffix, so resolve the path the way the engine does instead of assuming
+            // the bare partition name.
+            try (TableReader reader = engine.getReader(tableToken)) {
+                int parquetPartitions = 0;
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (!reader.getTxFile().isPartitionParquet(i)) {
+                        continue;
+                    }
+                    parquetPartitions++;
+                    path.of(configuration.getDbRoot()).concat(tableToken);
+                    TableUtils.setPathForParquetPartitionMetadata(
+                            path,
+                            timestampType.getTimestampType(),
+                            PartitionBy.DAY,
+                            reader.getTxFile().getPartitionTimestampByIndex(i),
+                            reader.getTxFile().getPartitionNameTxn(i)
+                    );
+                    Assert.assertTrue("attach must regenerate the missing _pm [path=" + path + "]",
+                            Files.exists(path.$()));
+                }
+                Assert.assertEquals("the re-attached partition must still be parquet",
+                        1, parquetPartitions);
+            }
+
+            Assert.assertEquals("every detached row must come back after re-attaching the parquet"
+                    + " partition", before, countRows(tableName));
+        });
+    }
+
+    private long countRows(String tableName) {
+        try (io.questdb.cairo.sql.RecordCursorFactory f = select("select count() from " + tableName)) {
+            try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                return c.hasNext() ? c.getRecord().getLong(0) : 0L;
+            }
+        } catch (io.questdb.griffin.SqlException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     @Test
     public void testCannotAttachParquetPartitionMissingDataFile() throws Exception {
         assertMemoryLeak(() -> {
@@ -1151,7 +1435,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         ff = new TestFilesFacadeImpl() {
             @Override
             public boolean rmdir(Path path, boolean lazy) {
-                if (Utf8s.containsAscii(path, "2022-06-03")) {
+                // The partition directory, not the temporary name the detached copy leaves.
+                if (Utf8s.containsAscii(path, "2022-06-03") && !Utf8s.containsAscii(path, TableUtils.DETACHING_DIR_MARKER)) {
                     if (counter.getAndIncrement() == 0) {
                         return false;
                     }
@@ -1985,6 +2270,201 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     2022-06-01T00:02:52.799000Z
                                     """));
                 });
+    }
+
+    /**
+     * A DETACH links the partition into a temporary copy named after its txn. A link that fails part-way used to leave
+     * that copy behind; once a later commit passed the txn, the next writer open finished the failed DETACH and gave
+     * the partial copy the .detached name, next to the partition that is still attached.
+     */
+    @Test
+    public void testDetachFailedLinkLeavesNoDetachedCopy() throws Exception {
+        final AtomicInteger linksBeforeFailure = new AtomicInteger(Integer.MAX_VALUE);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (Utf8s.containsAscii(hardLink, DETACHING_DIR_MARKER) && linksBeforeFailure.getAndDecrement() <= 0) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+
+            @Override
+            public boolean isCrossDeviceCopyError(int errno) {
+                return false;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-02T00:00:00Z', 3, 'C')
+                    """);
+            linksBeforeFailure.set(1);
+            assertFailure("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'", DETACH_ERR_HARD_LINK.name());
+            linksBeforeFailure.set(Integer.MAX_VALUE);
+
+            // A commit passes the failed DETACH's txn, then the writer opens again
+            execute("INSERT INTO tab VALUES ('2024-01-02T01:00:00Z', 4, 'D')");
+            engine.releaseAllWriters();
+            execute("INSERT INTO tab VALUES ('2024-01-02T02:00:00Z', 5, 'E')");
+
+            final java.nio.file.Path tablePath = java.nio.file.Path.of(configuration.getDbRoot().toString(), engine.verifyTableName("tab").getDirName());
+            try (Stream<java.nio.file.Path> entries = java.nio.file.Files.list(tablePath)) {
+                Assert.assertEquals(
+                        List.of(),
+                        entries.map(entry -> entry.getFileName().toString())
+                                .filter(name -> name.endsWith(DETACHED_DIR_MARKER) || name.endsWith(DETACHING_DIR_MARKER))
+                                .collect(Collectors.toList())
+                );
+            }
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n4\tD\n5\tE\n");
+        });
+    }
+
+    /**
+     * The rename that gives a committed DETACH its .detached name fails with a Windows-style errno, and the statement
+     * says so. Nothing retries it in the statement's writer; the next writer open gives the partition its name.
+     */
+    @Test
+    public void testDetachNamingFailureFinishedByWriterOpen() throws Exception {
+        final DetachedNameFailingFacade ff = new DetachedNameFailingFacade(5);
+        assertMemoryLeak(ff, () -> {
+            final java.nio.file.Path tableDir = createDetachNamingTable(false);
+            ff.isFailing = true;
+            try {
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                Assert.fail("DETACH must report that the partition is detached under its temporary name");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "partition is detached, its files are in ");
+            } finally {
+                ff.disarm();
+            }
+            final List<String> files = listFileNames(tableDir.resolve(assertTemporaryName(tableDir)));
+            engine.releaseAllWriters();
+            try (TableWriter writer = getWriter("tab")) {
+                Assert.assertNotNull(writer);
+            }
+            assertDetachNamed(tableDir, files);
+            assertAttachedBack(tableDir, false);
+        });
+    }
+
+    /**
+     * The DETACH commits before the partition gets its .detached name, so a failed rename cannot undo it: the
+     * statement fails at the partition literal, says the partition is detached and where its files are, and a
+     * repeated DETACH in the same writer finishes the name. The same fault fails the link-based naming this replaced.
+     */
+    @Test
+    public void testDetachNamingFailureIsReportedAndRetried() throws Exception {
+        final DetachedNameFailingFacade ff = new DetachedNameFailingFacade(28);
+        assertMemoryLeak(ff, () -> {
+            final java.nio.file.Path tableDir = createDetachNamingTable(false);
+            final String sql = "ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'";
+            ff.isFailing = true;
+            try {
+                execute(sql);
+                Assert.fail("DETACH must report that the partition is detached under its temporary name");
+            } catch (CairoException e) {
+                Assert.assertEquals(sql.indexOf('\''), e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "partition is detached, its files are in ");
+                TestUtils.assertContains(e.getFlyweightMessage(), DETACHING_DIR_MARKER);
+                TestUtils.assertContains(e.getFlyweightMessage(), "when the DETACH is repeated");
+            } finally {
+                ff.disarm();
+            }
+            final List<String> files = listFileNames(tableDir.resolve(assertTemporaryName(tableDir)));
+
+            // The statement's writer is still pooled (a query would release it): the repeat renames
+            execute(sql);
+            assertDetachNamed(tableDir, files);
+            assertQuery("SELECT count() FROM tab").noRandomAccess().expectSize().returns("count\n2\n");
+            assertAttachedBack(tableDir, false);
+        });
+    }
+
+    @Test
+    public void testDetachNamingFailureKeepsNosyncWalTableSuspended() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertDetachNamingFailureKeepsWalTableSuspended(CommitMode.NOSYNC, false, false);
+    }
+
+    @Test
+    public void testDetachNamingFailureKeepsSyncWalTableSuspended() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        assertDetachNamingFailureKeepsWalTableSuspended(CommitMode.SYNC, false, false);
+    }
+
+    @Test
+    public void testDetachNamingFailureKeepsWalTableSuspendedAfterWriterRelease() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertDetachNamingFailureKeepsWalTableSuspended(CommitMode.NOSYNC, false, true);
+    }
+
+    @Test
+    public void testDetachNamingFailureSuspendsAdaptiveWalTable() throws Exception {
+        // ADAPTIVE renames once a save point covers the DETACH; the rename failing there suspends the table too
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertDetachNamingFailureSuspendsWalTable(true);
+    }
+
+    @Test
+    public void testDetachNamingFailureSuspendsNosyncWalTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertDetachNamingFailureSuspendsWalTable(false);
+    }
+
+    @Test
+    public void testDetachNamingRefusalKeepsWalTableSuspended() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertDetachNamingFailureKeepsWalTableSuspended(CommitMode.NOSYNC, true, false);
+    }
+
+    /**
+     * A directory that takes the .detached name while a DETACH runs, a user's copy for one, is never replaced or
+     * merged into: the statement reports the partition under its temporary name, and so does every writer open until
+     * the name is free.
+     */
+    @Test
+    public void testDetachNamingRefusesExistingDetachedDirectory() throws Exception {
+        final DetachedNameFailingFacade ff = new DetachedNameFailingFacade(28);
+        assertMemoryLeak(ff, () -> {
+            final java.nio.file.Path tableDir = createDetachNamingTable(false);
+            final java.nio.file.Path userCopy = tableDir.resolve("2024-01-01" + DETACHED_DIR_MARKER);
+            final String sql = "ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'";
+            ff.isUserCopyArmed = true;
+            try {
+                execute(sql);
+                Assert.fail("DETACH must not name the partition over an existing directory");
+            } catch (CairoException e) {
+                Assert.assertEquals(sql.indexOf('\''), e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "partition is detached, its files are in ");
+                TestUtils.assertContains(e.getFlyweightMessage(), "already exists, move it away");
+            }
+            final String temporaryName = assertTemporaryName(tableDir);
+            final List<String> files = listFileNames(tableDir.resolve(temporaryName));
+            Assert.assertEquals(List.of("user-file"), listFileNames(userCopy));
+
+            engine.releaseAllWriters();
+            try (TableWriter writer = getWriter("tab")) {
+                Assert.assertNotNull(writer);
+            }
+            Assert.assertEquals(temporaryName, assertTemporaryName(tableDir));
+            Assert.assertEquals(List.of("user-file"), listFileNames(userCopy));
+
+            // The user moves the copy away; the next writer open names the partition
+            java.nio.file.Files.delete(userCopy.resolve("user-file"));
+            java.nio.file.Files.delete(userCopy);
+            engine.releaseAllWriters();
+            try (TableWriter writer = getWriter("tab")) {
+                Assert.assertNotNull(writer);
+            }
+            assertDetachNamed(tableDir, files);
+            assertAttachedBack(tableDir, false);
+        });
     }
 
     @Test
@@ -3114,6 +3594,61 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    /**
+     * A crash between a DETACH's commit and the rename that gives the partition its {@code .detached} name leaves the
+     * partition under its temporary name; the next writer open renames it. On a file system that reports no entry
+     * types (XFS without ftype, some FUSE and network file systems) the DETACH must still link the partition and the
+     * open's scan must still find the temporary name.
+     */
+    @Test
+    public void testFinishDetachAfterCrashWhenEntryTypesAreUnknown() throws Exception {
+        final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int findType(long findPtr) {
+                return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("create table tab (ts " + timestampType.getTypeName() + ", v long) timestamp(ts) partition by day bypass wal");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            // Every listing from the DETACH to the end reports unknown types: the DETACH's link, the writer open's
+            // scan and finish after the simulated crash, the ATTACH and the query.
+            isEntryTypeUnknown.set(true);
+            execute("alter table tab detach partition list '2024-01-01'");
+            final TableToken tt = engine.verifyTableName("tab");
+            final long detachTxn;
+            try (TableWriter writer = getWriter(tt)) {
+                detachTxn = writer.getTxn();
+            }
+            engine.releaseAllWriters();
+
+            final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot().toString(), tt.getDirName());
+            final java.nio.file.Path detached = tableDir.resolve("2024-01-01" + TableUtils.DETACHED_DIR_MARKER);
+            final java.nio.file.Path detaching = tableDir.resolve("2024-01-01." + detachTxn + TableUtils.DETACHING_DIR_MARKER);
+            java.nio.file.Files.move(detached, detaching);
+            final List<String> files;
+            try (Stream<java.nio.file.Path> list = java.nio.file.Files.list(detaching)) {
+                files = list.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList());
+            }
+            Assert.assertFalse("the temporary name must hold the partition's files", files.isEmpty());
+
+            try (TableWriter writer = getWriter(tt)) {
+                Assert.assertNotNull(writer);
+            }
+            engine.releaseAllWriters();
+            Assert.assertFalse("the open must finish the detach", java.nio.file.Files.exists(detaching));
+            try (Stream<java.nio.file.Path> list = java.nio.file.Files.list(detached)) {
+                Assert.assertEquals(files, list.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList()));
+            }
+
+            java.nio.file.Files.move(detached, tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix()));
+            execute("alter table tab attach partition list '2024-01-01'");
+            assertQuery("select count(), sum(v) from tab").noRandomAccess().expectSize().returns("count\tsum\n2\t3\n");
+            isEntryTypeUnknown.set(false);
+        });
+    }
+
     @Test
     public void testNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3211,6 +3746,115 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR,
                 tableModel
         );
+    }
+
+    // The detached partition renamed to .attachable and attached again brings back all its rows
+    private void assertAttachedBack(java.nio.file.Path tableDir, boolean isWal) throws Exception {
+        java.nio.file.Files.move(
+                tableDir.resolve("2024-01-01" + DETACHED_DIR_MARKER),
+                tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix())
+        );
+        execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+        if (isWal) {
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("tab")));
+        }
+        assertQuery("SELECT count() FROM tab").noRandomAccess().expectSize().returns("count\n3\n");
+    }
+
+    /**
+     * The fault that keeps a committed DETACH from its .detached name holds across RESUME WAL: a WAL table must stay
+     * suspended with the error, applying nothing after the DETACH, until the rename succeeds. The pending rename lives
+     * on the disk only (the apply job closes a writer whose apply failed), so every writer open retries it.
+     */
+    private void assertDetachNamingFailureKeepsWalTableSuspended(int commitMode, boolean isNameTaken, boolean isWriterReleased) throws Exception {
+        // A disk-full errno, which the suspension's error tag must still show after the failed writer open
+        final DetachedNameFailingFacade ff = new DetachedNameFailingFacade(Os.isWindows() ? 112 : 28);
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(commitMode, configuration.getCommitMode());
+            final java.nio.file.Path tableDir = createDetachNamingTable(true);
+            final java.nio.file.Path userCopy = tableDir.resolve("2024-01-01" + DETACHED_DIR_MARKER);
+            final TableToken tableToken = engine.verifyTableName("tab");
+            final String expectedError = isNameTaken ? "already exists, move it away" : "QuestDB renames them to ";
+            if (isNameTaken) {
+                ff.isUserCopyArmed = true;
+            } else {
+                ff.isFailing = true;
+            }
+            try {
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                TestUtils.assertContains(engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage(), expectedError);
+                final String temporaryName = assertTemporaryName(tableDir);
+                execute("INSERT INTO tab VALUES ('2024-01-03T01:00:00Z', 4)");
+                if (isWriterReleased) {
+                    engine.releaseAllWriters();
+                }
+
+                execute("ALTER TABLE tab RESUME WAL");
+                drainWalQueue();
+                Assert.assertTrue("a WAL table must not apply on while its detached partition has no .detached name",
+                        engine.getTableSequencerAPI().isSuspended(tableToken));
+                final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+                TestUtils.assertContains(error, "partition is detached, its files are in ");
+                TestUtils.assertContains(error, temporaryName);
+                TestUtils.assertContains(error, expectedError);
+                Assert.assertEquals(
+                        isNameTaken ? ErrorTag.NONE : ErrorTag.DISK_FULL,
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorTag()
+                );
+                Assert.assertEquals(temporaryName, assertTemporaryName(tableDir));
+                if (isNameTaken) {
+                    Assert.assertEquals(List.of("user-file"), listFileNames(userCopy));
+                }
+            } finally {
+                ff.disarm();
+            }
+            final List<String> files = listFileNames(tableDir.resolve(assertTemporaryName(tableDir)));
+            if (isNameTaken) {
+                // The user moves the copy away
+                java.nio.file.Files.delete(userCopy.resolve("user-file"));
+                java.nio.file.Files.delete(userCopy);
+            }
+
+            execute("ALTER TABLE tab RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertDetachNamed(tableDir, files);
+            assertQuery("SELECT count() FROM tab").noRandomAccess().expectSize().returns("count\n3\n");
+        });
+    }
+
+    private void assertDetachNamingFailureSuspendsWalTable(boolean isDeferred) throws Exception {
+        final DetachedNameFailingFacade ff = new DetachedNameFailingFacade(28);
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(isDeferred ? CommitMode.ADAPTIVE : CommitMode.NOSYNC, configuration.getCommitMode());
+            final java.nio.file.Path tableDir = createDetachNamingTable(true);
+            final TableToken tableToken = engine.verifyTableName("tab");
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertEquals(isDeferred, writer.isEnrolledAdaptive());
+            }
+            ff.isFailing = true;
+            try {
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+            } finally {
+                ff.disarm();
+            }
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            TestUtils.assertContains(error, "partition is detached, its files are in ");
+            TestUtils.assertContains(error, "RESUME WAL");
+            final List<String> files = listFileNames(tableDir.resolve(assertTemporaryName(tableDir)));
+
+            execute("ALTER TABLE tab RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertDetachNamed(tableDir, files);
+            assertQuery("SELECT count() FROM tab").noRandomAccess().expectSize().returns("count\n2\n");
+            assertAttachedBack(tableDir, true);
+        });
     }
 
     private void assertCannotCopyMeta(String tableName, int copyCallId) throws Exception {
@@ -3392,6 +4036,146 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    /**
+     * An adaptive WAL ATTACH links .attachable into the partition's directory and fails after the link. The file
+     * system reports no entry types, so no writer open purges what the failure leaves. The retry used to find that
+     * directory, skip the ATTACH silently and leave the writer's path inside it: the next new partition was created
+     * in it, and its rows were lost at the next writer open.
+     */
+    private void assertAttachRetryAfterFailedLink(boolean isLeftoverStuck) throws Exception {
+        // Only ADAPTIVE links the source; the other modes rename it
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
+        final AtomicBoolean isPinFailing = new AtomicBoolean();
+        final AtomicBoolean isLeftoverRemovalFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int findType(long findPtr) {
+                return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
+            }
+
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                // The ATTACH lists the linked partition to pin its column versions
+                if (isPinFailing.get() && isAttachDestination(path)) {
+                    isPinFailing.set(false);
+                    throw CairoException.critical(0).put("test: could not list ").put(path);
+                }
+                super.iterateDir(path, func);
+            }
+
+            @Override
+            public boolean rmdir(Path name, boolean haltOnError) {
+                if (isLeftoverRemovalFailing.get() && isAttachDestination(name)) {
+                    return false;
+                }
+                return super.rmdir(name, haltOnError);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-02T00:00:00Z', 3, 'C')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            renameDetachedToAttachable("tab", "2024-01-01");
+            final TableToken tableToken = engine.verifyTableName("tab");
+
+            isEntryTypeUnknown.set(true);
+            try {
+                isLeftoverRemovalFailing.set(isLeftoverStuck);
+                isPinFailing.set(true);
+                execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                final String leftover = findAttachDestination(tableToken);
+
+                if (isLeftoverStuck) {
+                    // The retry stops on the leftover instead of skipping the ATTACH, and names the manual step
+                    execute("ALTER TABLE tab RESUME WAL");
+                    drainWalQueue();
+                    Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    Assert.assertNotNull(leftover);
+                    final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+                    TestUtils.assertContains(error, ATTACH_ERR_DIR_EXISTS.name());
+                    TestUtils.assertContains(error, tableToken.getDirName() + Files.SEPARATOR + leftover);
+                    TestUtils.assertContains(error, "RESUME WAL");
+                    isLeftoverRemovalFailing.set(false);
+                    try (Path leftoverPath = new Path()) {
+                        Assert.assertTrue(ff.rmdir(leftoverPath.of(configuration.getDbRoot()).concat(tableToken).concat(leftover)));
+                    }
+                }
+                execute("ALTER TABLE tab RESUME WAL");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+                // A new partition, then a writer open: every row stays
+                execute("INSERT INTO tab VALUES ('2024-01-03T00:00:00Z', 4, 'D')");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                execute("INSERT INTO tab VALUES ('2024-01-04T00:00:00Z', 5, 'E')");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                assertQuery("SELECT x, sym FROM tab")
+                        .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n4\tD\n5\tE\n");
+                if (!isLeftoverStuck) {
+                    Assert.assertNull("the failed ATTACH left its directory", leftover);
+                }
+            } finally {
+                isEntryTypeUnknown.set(false);
+            }
+        });
+    }
+
+    // The 2024-01-01 partition's directory that an ATTACH makes, named with the txn: not its source, not a detached copy
+    private static @Nullable String findAttachDestination(TableToken tableToken) throws IOException {
+        final java.nio.file.Path tablePath = java.nio.file.Path.of(configuration.getDbRoot().toString(), tableToken.getDirName());
+        try (Stream<java.nio.file.Path> entries = java.nio.file.Files.list(tablePath)) {
+            return entries.map(entry -> entry.getFileName().toString())
+                    .filter(name -> name.startsWith("2024-01-01.") && !name.endsWith(configuration.getAttachPartitionSuffix()))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    private static void assertDetachNamed(java.nio.file.Path tableDir, List<String> files) throws IOException {
+        Assert.assertEquals(List.of("2024-01-01" + DETACHED_DIR_MARKER), listDetachNames(tableDir));
+        Assert.assertEquals(files, listFileNames(tableDir.resolve("2024-01-01" + DETACHED_DIR_MARKER)));
+    }
+
+    // The single temporary DETACH name of 2024-01-01, which must hold the partition's files
+    private static String assertTemporaryName(java.nio.file.Path tableDir) throws IOException {
+        final List<String> temporaryNames = listDetachNames(tableDir).stream()
+                .filter(name -> name.endsWith(DETACHING_DIR_MARKER))
+                .collect(Collectors.toList());
+        Assert.assertEquals(temporaryNames.toString(), 1, temporaryNames.size());
+        Assert.assertFalse(listFileNames(tableDir.resolve(temporaryNames.getFirst())).isEmpty());
+        return temporaryNames.getFirst();
+    }
+
+    private static List<String> listDetachNames(java.nio.file.Path tableDir) throws IOException {
+        return listFileNames(tableDir).stream()
+                .filter(name -> name.startsWith("2024-01-01") && (name.endsWith(DETACHED_DIR_MARKER) || name.endsWith(DETACHING_DIR_MARKER)))
+                .collect(Collectors.toList());
+    }
+
+    private static List<String> listFileNames(java.nio.file.Path dir) throws IOException {
+        try (Stream<java.nio.file.Path> entries = java.nio.file.Files.list(dir)) {
+            return entries.map(entry -> entry.getFileName().toString()).sorted().collect(Collectors.toList());
+        }
+    }
+
+    private static boolean isAttachDestination(Utf8Sequence path) {
+        return Utf8s.containsAscii(path, "2024-01-01.")
+                && !Utf8s.containsAscii(path, configuration.getAttachPartitionSuffix())
+                && !Utf8s.containsAscii(path, DETACHED_DIR_MARKER);
+    }
+
     private static void assertOnlyAttachableDir(String tableName, String partitionName) throws IOException {
         final java.nio.file.Path tablePath = java.nio.file.Path.of(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName());
         try (Stream<java.nio.file.Path> entries = java.nio.file.Files.list(tablePath)) {
@@ -3547,6 +4331,75 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     .returns("x\ts\n2\t\n");
             Assert.assertTrue(containsSymbolNullValue("tab", "s"));
         });
+    }
+
+    // Fails the step that names a committed DETACH .detached, whether it renames the temporary name or links it
+    private static class DetachedNameFailingFacade extends TestFilesFacadeImpl {
+        // What errno() reports after the fault, as the operating system would
+        private final int failErrno;
+        private volatile boolean hasFailed;
+        private volatile boolean isFailing;
+        // A user's copy takes the .detached name while the DETACH runs, after it found the name free
+        private volatile boolean isUserCopyArmed;
+
+        private DetachedNameFailingFacade(int failErrno) {
+            this.failErrno = failErrno;
+        }
+
+        @Override
+        public int copy(LPSZ from, LPSZ to) {
+            // The last copy into the temporary name
+            if (isUserCopyArmed && Utf8s.containsAscii(to, DETACHING_DIR_MARKER) && Utf8s.endsWithAscii(to, TXN_FILE_NAME)) {
+                isUserCopyArmed = false;
+                final java.nio.file.Path userCopy = java.nio.file.Path.of(to.asAsciiCharSequence().toString()).getParent()
+                        .resolveSibling("2024-01-01" + DETACHED_DIR_MARKER);
+                try {
+                    java.nio.file.Files.createDirectories(userCopy);
+                    java.nio.file.Files.writeString(userCopy.resolve("user-file"), "kept");
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            return super.copy(from, to);
+        }
+
+        @Override
+        public int errno() {
+            return hasFailed ? failErrno : super.errno();
+        }
+
+        @Override
+        public int hardLink(LPSZ src, LPSZ hardLink) {
+            if (isFailing && Utf8s.containsAscii(hardLink, DETACHED_DIR_MARKER + Files.SEPARATOR)) {
+                hasFailed = true;
+                return -1;
+            }
+            return super.hardLink(src, hardLink);
+        }
+
+        @Override
+        public int mkdir(LPSZ path, int mode) {
+            if (isFailing && Utf8s.endsWithAscii(path, DETACHED_DIR_MARKER)) {
+                hasFailed = true;
+                return -1;
+            }
+            return super.mkdir(path, mode);
+        }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            if (isFailing && Utf8s.containsAscii(from, DETACHING_DIR_MARKER) && Utf8s.endsWithAscii(to, DETACHED_DIR_MARKER)) {
+                hasFailed = true;
+                return Files.FILES_RENAME_ERR_OTHER;
+            }
+            return super.rename(from, to);
+        }
+
+        private void disarm() {
+            isFailing = false;
+            hasFailed = false;
+            isUserCopyArmed = false;
+        }
     }
 
     private static class SymbolDataMapFailingFilesFacade extends TestFilesFacadeImpl {
@@ -3748,6 +4601,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
             }
         }
+    }
+
+    // Table tab with one row on each of 2024-01-01..03; returns the table directory
+    private java.nio.file.Path createDetachNamingTable(boolean isWal) throws Exception {
+        execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1), ('2024-01-02T00:00:00Z', 2), ('2024-01-03T00:00:00Z', 3)");
+        if (isWal) {
+            drainWalQueue();
+        }
+        return java.nio.file.Path.of(configuration.getDbRoot(), engine.verifyTableName("tab").getDirName());
     }
 
     private void dropCurrentVersionOfPartition(String tableName, String partitionName) throws SqlException {

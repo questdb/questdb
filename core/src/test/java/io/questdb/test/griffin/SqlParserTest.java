@@ -5401,6 +5401,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    /**
+     * The commit mode is instance-wide ({@code cairo.commit.mode}), read once at startup. The per-table
+     * {@code WITH commit_mode='...'} syntax is rejected like any other unknown WITH parameter, so no DDL can
+     * quietly ask for a durability grade the server will not give.
+     */
+    @Test
+    public void testCreateTableWithCommitModeIsRejected() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH commit_mode='adaptive'",
+                93,
+                "unrecognized commit_mode after WITH"
+        );
+    }
+
     @Test
     public void testCreateTableWithInvalidParameter2() throws Exception {
         assertSyntaxError(
