@@ -1343,8 +1343,12 @@ public class FuzzRunner {
 
                     boolean increment = false;
 
+                    // Writers of every table share one list, and a writer's token keeps the name it had when it was
+                    // last opened or activated, so after a table rename another table's writer can carry this table's
+                    // name. The dir name is unique to the table, so reopen only the writers that share it.
+                    final String writerDirName = walWriter.getTableToken().getDirName();
                     if (transaction.reopenTable) {
-                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(writerDirName);
                         if (updatedTableToken == null) {
                             throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
                         }
@@ -1359,7 +1363,7 @@ public class FuzzRunner {
                     if (transaction.reopenTable) {
                         synchronized (writers) {
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
+                                if (writers.get(ii).getTableToken().getDirName().equals(writerDirName)) {
                                     writers.get(ii).close();
                                     writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
