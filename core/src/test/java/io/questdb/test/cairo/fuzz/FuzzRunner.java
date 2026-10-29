@@ -47,6 +47,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -266,6 +267,14 @@ public class FuzzRunner {
             Rnd rnd = new Rnd();
             int failuresObserved = 0;
             for (int i = 0; i < transactionSize; i++) {
+                if (writer == null) {
+                    // A prior transaction's IO-failure recovery could not re-acquire the writer: a re-armed
+                    // one-shot fault fired during that recovery's getWriter(), and the catch below handles
+                    // only the drop/recreate case, so writer is null. Re-acquire it here, once the one-shot
+                    // fault has cleared, so no operation dereferences a null writer. A persistent failure
+                    // throws from here.
+                    writer = TestUtils.getWriter(engine, tableName);
+                }
                 if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
@@ -368,47 +377,53 @@ public class FuzzRunner {
     }
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        // Acquisition and use are inside the try so a mid-loop Error/Exception (e.g. a fault-injected crash
+        // propagating synchronously out of writer.commit() under W=0) still returns every checked-out
+        // WalWriter to the pool via the finally below, instead of leaking it (a leaked writer later fails a
+        // pool's releaseAll() with "table left behind on pool shutdown").
         ObjList<WalWriter> writers = new ObjList<>();
-        for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
-        }
-
-        Rnd tempRnd = new Rnd();
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
-            writer.goActive();
-            FuzzTransaction transaction = transactions.getQuick(i);
-            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                // WAL tables support replace range commits
-                // we apply them by using special commit rather than excluding Ts ranges from the commit
-                operation.apply(tempRnd, engine, writer, -1, null);
+        try {
+            for (int i = 0; i < walWriterCount; i++) {
+                writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
             }
 
-            if (transaction.reopenTable) {
-                // Table is dropped, reopen all writers.
-                for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
-                    writers.getQuick(writerIndex).close();
-                    writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            Rnd tempRnd = new Rnd();
+            for (int i = 0, n = transactions.size(); i < n; i++) {
+                WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+                writer.goActive();
+                FuzzTransaction transaction = transactions.getQuick(i);
+                for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                    // WAL tables support replace range commits
+                    // we apply them by using special commit rather than excluding Ts ranges from the commit
+                    operation.apply(tempRnd, engine, writer, -1, null);
                 }
-            } else {
-                if (transaction.rollback) {
-                    writer.rollback();
+
+                if (transaction.reopenTable) {
+                    // Table is dropped, reopen all writers.
+                    for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
+                        writers.getQuick(writerIndex).close();
+                        writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                    }
                 } else {
-                    if (transaction.hasReplaceRange()) {
-                        writer.commitWithParams(
-                                transaction.getReplaceLoTs(),
-                                transaction.getReplaceHiTs(),
-                                WAL_DEDUP_MODE_REPLACE_RANGE
-                        );
+                    if (transaction.rollback) {
+                        writer.rollback();
                     } else {
-                        writer.commit();
+                        if (transaction.hasReplaceRange()) {
+                            writer.commitWithParams(
+                                    transaction.getReplaceLoTs(),
+                                    transaction.getReplaceHiTs(),
+                                    WAL_DEDUP_MODE_REPLACE_RANGE
+                            );
+                        } else {
+                            writer.commit();
+                        }
                     }
                 }
             }
+        } finally {
+            Misc.freeObjList(writers);
         }
-
-        Misc.freeObjList(writers);
     }
 
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
@@ -884,11 +899,14 @@ public class FuzzRunner {
     }
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+        // No memory usage check: it reads process-wide memory counters, and the shared pool's purge jobs run
+        // alongside these queries, so their scratch buffers would count as the cursor's
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit 1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
@@ -902,6 +920,7 @@ public class FuzzRunner {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit -1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
@@ -1191,6 +1210,23 @@ public class FuzzRunner {
         engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
     }
 
+    // The sum of the seqTxns the WAL tables have committed, WAL lag excluded.
+    private long committedWalTxnCount(ObjHashSet<TableToken> tableTokenBucket) {
+        tableTokenBucket.clear();
+        engine.getTableTokens(tableTokenBucket, false);
+        long committed = 0;
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            final TableToken tableToken = tableTokenBucket.get(i);
+            if (tableToken.isWal()) {
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+                if (tracker != null) {
+                    committed += tracker.getWriterTxn();
+                }
+            }
+        }
+        return committed;
+    }
+
     private TableToken createInitialTable(String tableName, ObjList<FuzzTransaction> transactions) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         final Rnd schemaRnd = newSchemaRnd();
@@ -1461,8 +1497,10 @@ public class FuzzRunner {
              TableReader rdr2 = getReaderWithRetries(tableName, null)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+            long committedAtRelease = -1;
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
-                forceReleaseTableWriter(applyRnd);
+                committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
             }
             // This path is the ONLY compaction coverage for single-writer tables driven through
@@ -1473,12 +1511,22 @@ public class FuzzRunner {
         }
     }
 
-    private void forceReleaseTableWriter(Rnd applyRnd) {
-        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
-        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+    // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
+    // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+    // A reopened writer applies its WAL lag again from the WAL, so the writers are closed only once
+    // the apply has committed something since the last close. Closing them after every run would
+    // discard a lag that takes several runs to commit (one transaction per run under a small apply
+    // time quota) as often as it is rebuilt, and the apply would never finish. Returns the committed
+    // count at the last close.
+    private long forceReleaseTableWriter(Rnd applyRnd, ObjHashSet<TableToken> tableTokenBucket, long committedAtRelease) {
         if (applyRnd.nextDouble() < 0.8) {
-            engine.releaseInactive();
+            final long committed = committedWalTxnCount(tableTokenBucket);
+            if (committed != committedAtRelease) {
+                engine.releaseInactive();
+                return committed;
+            }
         }
+        return committedAtRelease;
     }
 
     private TableReader getReader(String tableName) {
@@ -1505,21 +1553,20 @@ public class FuzzRunner {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
+            long committedAtRelease = -1;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.loadFence();
                     while (job.run() || checkJob.run()) {
-                        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
-                        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
-                        forceReleaseTableWriter(applyRnd);
+                        committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                     }
                     Os.sleep(1);
                     checkNoSuspendedTables(tableTokenBucket);
                     i++;
                 }
                 while (job.run() || checkJob.run()) {
-                    forceReleaseTableWriter(applyRnd);
+                    committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                 }
                 i++;
             }
